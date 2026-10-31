@@ -146,12 +146,12 @@
 | 尚在 PR 的 Gmail 下载页 | #419 的 `1342bf7` 上专项 60 项通过 | gmail-download、webmail-gmail、sidepanel-mail-gmail；核对精确下载域 CSP、重定向后的邮件／账号绑定、临时状态释放及确认。与主分支测试分开记录，不宣称 Gmail PR 已合入 |
 | 前端与文件清单 | 桌面类型检查、生产前端构建通过；dist 检查通过，80 个插件运行文件清单通过 | `npm run typecheck`、`npm run build`、`check-desktop-release.js --dist desktop/dist`、`check-plugin-release-allowlist.js`；dist 无 sourcemap／.env／测试夹具。只构建前端，不是安装包签名、安装／升级或 Windows 实机检查 |
 | 现有测试环境日志 | 两个隔离环境共 6 个日志／遥测／反馈状态文件，所查标记未命中 | 只读读取 Dev358 与通知测试宿主的现有文件，分别以已入档邮件的账号、主题和发件人作本机精确标记检索，并查 `sid=`、Cookie／Authorization 头和 IMAP 协议转储形状。公开只记文件数和零命中，不输出标记／文件内容。不读取或比对真实专用密码，不宣称搜索覆盖所有正文变体、历史文件或任意泄漏路径 |
-| Windows／macOS 自动平台证据 | [Desktop CI 41216640724](https://github.com/ptjworks/resume-form-assistant-plugin/actions/runs/41216640724) 在 `94cfa14` 的 windows-x64、macos-arm64 均通过 | 已核对前端检查、备份、邮箱、证据导入、App、NM host 进程及原生二进制编译步骤；它是已有基线的自动证据，不是本机运行 Windows 或最终安装包签收。当前基线 `a58e3c6` 的 [CI 41221021385](https://github.com/ptjworks/resume-form-assistant-plugin/actions/runs/41221021385) 在本轮取证时仍运行，未提前记为通过 |
+| Windows／macOS 自动平台证据 | [Desktop CI 41216640724](https://github.com/ptjworks/resume-form-assistant-plugin/actions/runs/41216640724) 在 `94cfa14` 的 windows-x64、macos-arm64 均通过 | 已核对前端检查、备份、邮箱、证据导入、App、NM host 进程及原生二进制编译步骤；它是已有基线的自动证据，不是本机运行 Windows 或最终安装包签收。当前基线 `a58e3c6` 的 [CI 41221021385](https://github.com/ptjworks/resume-form-assistant-plugin/actions/runs/41221021385) 在首次取证时仍运行；后续收尾复核 windows-x64 已成功、macos-arm64 仍运行，整体尚未记为通过 |
 | 文档与权限 | 已核对主分支指南、data-privacy、privacy-policy、store-listing 与实际读取／入档边界；#419 三份披露随 PR 单列 | IMAP 在 TLS 验证后才登录，先指定信头字段、确认才取 MIME；网页原件经 Native Messaging，本功能不自动调用 AI。插件未申请 cookies／浏览器密码权限，Gmail PR 未增加权限；已有 all_urls／scripting 用途不因此扩大承诺。商店后台未登录核查，未修改权限或送审设置 |
 
 本轮合计 246 项通过（主分支 186、Gmail PR 60），另有上述 2 项既有忽略。独立依赖按锁文件安装；测试日志仅留本机，不提交测试邮箱、主题、正文、原件、Cookie、会话参数或凭据。本次是有明确边界的检查结果，不能证明所有潜在隐私风险均已排除。
 
-以下仍为发布前缺口，不能由本轮自动检查打勾：实际包含邮箱功能的最终 EXE／DMG 与插件 ZIP 的双端提交和哈希、Windows／Edge 等拟承诺环境的代表性邮件保存／附件／恢复隔离实机闭环、最低系统版本、签名／安装升级，以及商店后台数据类型／用途与实际产物的核对。目前公开 `desktop-v0.4.4`／`v0.4.4` 仍早于邮箱接入；没有新候选可据此宣称已交付，也未恢复之前取消的 Windows 测试包。平台烟测无须每家邮箱重复整套，按代表入口执行并引用已验证的共用守卫即可。
+以下仍为发布前缺口，不能由本轮自动检查打勾：实际包含邮箱功能的最终 EXE／DMG 与插件 ZIP 的双端提交和哈希、Windows／Edge 等拟承诺环境的代表性邮件保存／附件／恢复隔离实机闭环、最低系统版本、签名／安装升级，以及商店后台数据类型／用途与实际产物的核对。目前公开 `desktop-v0.4.4`／`v0.4.4` 仍早于邮箱接入；没有新候选可据此宣称已交付，也未恢复之前取消的 Windows 测试包。共用逻辑的自动守卫和既有实测可以按适用范围引用，避免重复执行相同用例；代表入口的平台烟测只证明该被测组合。每个拟承诺的邮箱、入口和平台仍须分别登记实际证据，服务商／页面差异需针对性核验；未测项保持未完成，缩小承诺范围须记录维护者决定，不能由代表入口默认豁免。
 
 ## 5. 可执行验收清单
 
