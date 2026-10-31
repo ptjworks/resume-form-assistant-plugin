@@ -313,6 +313,13 @@
     return { ...result, target };
   }
   function validateTarget(doc, target, consume = true) {
+    try { return checkTarget(doc, target, consume); }
+    catch {
+      releaseTarget();
+      return { status: 'changed' };
+    }
+  }
+  function checkTarget(doc, target, consume) {
     if (!mailTarget || mailTarget.doc !== doc || mailTarget.target !== target) return { status: 'changed' };
     const snapshot = mailTarget;
     if (consume) releaseTarget(); // Acceptance consumes the one-use binding.
@@ -534,7 +541,7 @@
         if (!looksLikeMail(bytes)) continue; // Login/error pages are never called an original.
         if (!unchanged()) return { status: 'changed' };
         const result = { status: 'original', kind: 'eml', bytesBase64: base64(bytes), subject: ctx.data.subject };
-        return name === 'gmail' ? rememberTarget(ctx, result) : result;
+        return rememberTarget(ctx, result, doc);
       } catch (error) {
         if (error.message === 'too_large') reason = 'too_large';
       } finally { clearTimeout(timer); controller.abort(); }
@@ -559,17 +566,20 @@
       if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('') + 'sidepanel.html') {
         reply({ status: 'forbidden' }); return false;
       }
-      if (message.type === 'WEBMAIL_DISCARD') {
-        reply(discardTarget(document, message.target)); return false;
+      try {
+        if (message.type === 'WEBMAIL_DISCARD') {
+          reply(discardTarget(document, message.target)); return false;
+        }
+        if (message.type === 'WEBMAIL_CHECK' || message.type === 'WEBMAIL_VALIDATE') {
+          reply(validateTarget(document, message.target, message.type === 'WEBMAIL_VALIDATE')); return false;
+        }
+        capture(document).then(reply, () => { releaseTarget(); reply({ status: 'unavailable' }); });
+        return true;
+      } catch {
+        releaseTarget();
+        reply({ status: 'changed' });
+        return false;
       }
-      if (message.type === 'WEBMAIL_CHECK') {
-        reply(validateTarget(document, message.target, false)); return false;
-      }
-      if (message.type === 'WEBMAIL_VALIDATE') {
-        reply(validateTarget(document, message.target)); return false;
-      }
-      capture(document).then(reply, () => reply({ status: 'unavailable' }));
-      return true;
     });
   }
 })(typeof self === 'object' ? self : globalThis);

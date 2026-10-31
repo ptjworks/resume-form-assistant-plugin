@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
+const fs = require('node:fs');
+const vm = require('node:vm');
 const webmail = require('../webmail.js');
 
 const fixtures = [
@@ -71,5 +73,55 @@ test('non-Gmail targets are discarded on cancellation, navigation, and the next 
     const navigated=await webmail.capture(d,unavailable);
     d.defaultView.dispatchEvent(new d.defaultView.Event('pagehide'));
     assert.equal(webmail.validateTarget(d,navigated.target,false).status,'changed');
+  }
+});
+
+test('QQ, 163 and 126 originals bind a one-use final target after the download',async()=>{
+  const raw=Buffer.from('From: hr@example.test\r\nSubject: Original\r\nMessage-ID: <guard@example.test>\r\n\r\nBody');
+  for(const fixture of fixtures) {
+    for(const changed of [false,true]) {
+      const d=documentFor(fixture);
+      const toolbar=d.createElement('div');toolbar.className='nui-toolbar';
+      toolbar.innerHTML='<a href="/js6/read/readdata.jsp?sid=synthetic&mid=one&mode=download">下载邮件</a>';d.body.prepend(toolbar);
+      const original=await webmail.capture(d,async()=>new Response(raw));
+      assert.equal(original.status,'original'); assert.ok(original.target);
+      if(changed) d.querySelector(fixture.body).replaceWith(d.querySelector(fixture.body).cloneNode(true));
+      assert.equal(webmail.validateTarget(d,original.target).status,changed?'changed':'current');
+      assert.equal(webmail.validateTarget(d,original.target).status,'changed');
+    }
+  }
+});
+
+test('unexpected DOM failures during target checks return changed and release reusable snapshots',async()=>{
+  const d=documentFor(fixtures[0]);
+  const proposal=await webmail.capture(d,unavailable);
+  const original=d.querySelectorAll;
+  d.querySelectorAll=()=>{throw new Error('reading surface unavailable');};
+  assert.doesNotThrow(()=>assert.equal(webmail.validateTarget(d,proposal.target,false).status,'changed'));
+  d.querySelectorAll=original;
+  assert.equal(webmail.validateTarget(d,proposal.target,false).status,'changed');
+});
+
+test('content-script validation messages always answer once on DOM errors and allow a fresh capture',async t=>{
+  for(const type of ['WEBMAIL_CHECK','WEBMAIL_VALIDATE']) {
+    const f=fixtures[0],dom=new JSDOM(f.html,{url:f.url,runScripts:'outside-only'});t.after(()=>dom.window.close());
+    const win=dom.window;let listener;
+    win.fetch=unavailable;win.TextEncoder=TextEncoder;
+    win.chrome={runtime:{id:'own',getURL:file=>'chrome-extension://own/'+file,onMessage:{addListener:fn=>{listener=fn;}}}};
+    vm.runInContext(fs.readFileSync('webmail.js','utf8'),dom.getInternalVMContext());
+    const proposal=await win.ResumeProWebmail.capture(win.document,unavailable);
+    const original=win.document.querySelectorAll;
+    win.document.querySelectorAll=()=>{throw new Error('DOM read failed');};
+    const replies=[];
+    assert.equal(listener({type,target:proposal.target},{id:'own',url:'chrome-extension://own/sidepanel.html'},reply=>replies.push(reply)),false);
+    assert.equal(replies.length,1);assert.equal(replies[0].status,'changed');
+    win.document.querySelectorAll=original;
+    assert.equal(win.ResumeProWebmail.validateTarget(win.document,proposal.target,false).status,'changed');
+    const fresh=await win.ResumeProWebmail.capture(win.document,unavailable);
+    assert.equal(fresh.status,'excerpt_offer');
+    assert.equal(win.ResumeProWebmail.validateTarget(win.document,fresh.target,false).status,'current');
+    const discarded=[];
+    assert.equal(listener({type:'WEBMAIL_DISCARD',target:fresh.target},{id:'own',url:'chrome-extension://own/sidepanel.html'},reply=>discarded.push(reply)),false);
+    assert.equal(discarded.length,1);assert.equal(discarded[0].status,'discarded');
   }
 });

@@ -15,7 +15,7 @@ async function panel(capture = { status: 'original', bytesBase64: 'eA==' }) {
       if (msg.type === 'WEBMAIL_CHECK' || msg.type === 'WEBMAIL_VALIDATE') return typeof validation === 'function' ? validation(msg) : validation;
       if (msg.type === 'WEBMAIL_DISCARD') return {status:'discarded'};
       const value = typeof capture === 'function' ? await capture() : capture;
-      return value?.status === 'excerpt_offer' ? {target:'synthetic-target',...value} : value;
+      return ['excerpt_offer','original'].includes(value?.status) ? {target:'synthetic-target',...value} : value;
     },
       onActivated: { addListener: fn => { handlers.activate = fn; } }, onUpdated: { addListener: fn => { handlers.update = fn; } } },
     runtime: { sendMessage: async msg => { calls.push({ target: 'desktop', msg }); return msg.type === 'DESKTOP_CANDIDATES_FOR'
@@ -30,7 +30,8 @@ test('opening a mailbox side panel reads URL metadata only; save button starts c
   const p = await panel(); assert.equal(p.get('mail-save').hidden, false); assert.equal(p.calls.length, 0);
   p.get('mail-save-button').click(); await p.flush();
   assert.equal(p.calls[0].msg.type, 'WEBMAIL_CAPTURE');
-  assert.equal(p.calls[1].msg.type, 'DESKTOP_SAVE_MAIL'); assert.equal(p.calls[1].msg.kind, 'eml');
+  assert.equal(p.calls[1].msg.type, 'WEBMAIL_VALIDATE');
+  assert.equal(p.calls[2].msg.type, 'DESKTOP_SAVE_MAIL'); assert.equal(p.calls[2].msg.kind, 'eml');
   assert.match(p.get('mail-save-status').textContent, /已保存完整邮件/);
 });
 test('fallback requires a second explicit click and cancellation does not write', async () => {
@@ -169,5 +170,44 @@ test('actual QQ capture and content validation block a retry after switching mai
   p.get('mail-excerpt-accept').click();await p.flush();
   assert.equal(p.calls.filter(c=>c.msg.type==='DESKTOP_SAVE_MAIL').length,1);
   assert.equal(p.get('mail-excerpt-offer').hidden,true);
+  assert.match(p.get('mail-save-status').textContent,/邮件已切换/);
+});
+
+test('all non-Gmail originals require final validation before any desktop transfer',async t=>{
+  for(const url of ['https://mail.qq.com/','https://mail.163.com/','https://mail.126.com/']) {
+    for(const failure of [{status:'changed'},()=>{throw new Error('content script gone');}]) {
+      const p=await panel();t.after(p.close);await p.change({id:1,url});p.validation(failure);
+      p.get('mail-save-button').click();await p.flush();
+      assert.equal(p.calls.filter(c=>c.msg.type==='WEBMAIL_VALIDATE').length,1);
+      assert.equal(p.calls.filter(c=>c.msg.type==='DESKTOP_SAVE_MAIL').length,0);
+      assert.equal(p.get('mail-save-button').disabled,false);
+      assert.doesNotMatch(p.get('mail-save-status').textContent,/已保存完整邮件/);
+    }
+  }
+});
+
+test('a foreground switch during final original validation blocks the archive write',async t=>{
+  const p=await panel();t.after(p.close);
+  let finish;p.validation(()=>new Promise(resolve=>{finish=resolve;}));
+  p.get('mail-save-button').click();await p.flush();
+  await p.change({id:2,url:'https://mail.163.com/'});
+  finish({status:'current'});await p.flush();
+  assert.equal(p.calls.filter(c=>c.msg.type==='DESKTOP_SAVE_MAIL').length,0);
+  assert.match(p.get('mail-save-status').textContent,/邮件已切换/);
+  assert.equal(p.get('mail-save-button').disabled,false);
+});
+
+test('actual QQ original capture rejects a same-URL mail switch at the final transfer boundary',async t=>{
+  const webmail=require('../webmail.js');
+  const d=new JSDOM('<h1 id="subject">Mail A</h1><div id="mailContentContainer">Body A</div>',{url:'https://mail.qq.com/cgi-bin/readmail?sid=synthetic&mailid=one'}).window.document;
+  const raw='From: hr@example.test\r\nSubject: Original\r\nMessage-ID: <guard@example.test>\r\n\r\nBody';
+  const p=await panel(()=>webmail.capture(d,async()=>new Response(raw)));t.after(p.close);
+  await p.change({id:1,url:d.location.href});
+  p.validation(msg=>{
+    d.querySelector('#subject').textContent='Mail B';
+    return webmail.validateTarget(d,msg.target);
+  });
+  p.get('mail-save-button').click();await p.flush();
+  assert.equal(p.calls.filter(c=>c.msg.type==='DESKTOP_SAVE_MAIL').length,0);
   assert.match(p.get('mail-save-status').textContent,/邮件已切换/);
 });

@@ -132,7 +132,6 @@
     return chrome.runtime.sendMessage({ type: 'DESKTOP_SAVE_MAIL', kind, ...data, applicationId: applicationId || null });
   }
   async function validateTarget(tab, capture, consume = true) {
-    if (self.ResumeProWebmail.provider(tab.url) !== 'gmail' && capture.status === 'original') return true;
     if (typeof capture.target !== 'string' || !capture.target) return false;
     const result = await chrome.tabs.sendMessage(tab.id, { type: consume ? 'WEBMAIL_VALIDATE' : 'WEBMAIL_CHECK', target: capture.target }, { frameId: 0 });
     const [front] = await chrome.tabs.query({ active: true, currentWindow: true });
