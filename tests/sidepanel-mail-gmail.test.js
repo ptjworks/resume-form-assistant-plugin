@@ -36,8 +36,8 @@ test('Gmail source downloads between target checks, consumes only before archive
   const p = await panel(source); t.after(p.close);
   assert.equal(p.calls.length, 0);
   p.get('mail-save-button').click(); await p.flush();
-  assert.deepEqual(p.calls.map(call => call.msg?.type || call.destination), ['WEBMAIL_CAPTURE', 'WEBMAIL_CHECK', 'download', 'WEBMAIL_CHECK', 'WEBMAIL_VALIDATE', 'DESKTOP_SAVE_MAIL']);
-  const save = p.calls.at(-1).msg;
+  assert.deepEqual(p.calls.map(call => call.msg?.type || call.destination), ['WEBMAIL_CAPTURE', 'WEBMAIL_CHECK', 'download', 'WEBMAIL_CHECK', 'WEBMAIL_VALIDATE', 'DESKTOP_SAVE_MAIL', 'WEBMAIL_DISCARD']);
+  const save = p.calls.find(call => call.destination === 'desktop').msg;
   assert.equal(save.bytesBase64, 'eA=='); assert.equal(save.originals, undefined); assert.equal(save.target, undefined);
   assert.match(p.get('mail-save-status').textContent, /已保存完整邮件/);
 });
@@ -67,7 +67,7 @@ test('Gmail URL enables saving without reading mail; explicit save validates the
   assert.equal(p.get('mail-context-title').textContent, 'Gmail');
   assert.match(p.get('mail-context-hint').textContent, /只展开/);
   p.get('mail-save-button').click(); await p.flush();
-  assert.deepEqual(p.calls.map(call => call.msg.type), ['WEBMAIL_CAPTURE', 'WEBMAIL_VALIDATE', 'DESKTOP_SAVE_MAIL']);
+  assert.deepEqual(p.calls.map(call => call.msg.type), ['WEBMAIL_CAPTURE', 'WEBMAIL_VALIDATE', 'DESKTOP_SAVE_MAIL', 'WEBMAIL_DISCARD']);
   assert.equal(p.calls[2].msg.target, undefined, 'temporary binding is never transmitted to the archive');
   assert.match(p.get('mail-save-status').textContent, /已保存完整邮件/);
 });
@@ -163,4 +163,37 @@ test('content-script channel failures during excerpt validation report the mailb
   assert.equal(p.get('mail-excerpt-offer').hidden,true);
   assert.match(p.get('mail-save-status').textContent,/无法核验当前邮箱页面.*重新读取邮件/);
   assert.doesNotMatch(p.get('mail-save-status').textContent,/桌面连接/);
+});
+
+test('original transport exceptions report desktop connection and release the captured target',async t=>{
+  const p=await panel();t.after(p.close);
+  p.result(()=>{throw new Error('desktop disconnected');});
+  p.get('mail-save-button').click();await p.flush();
+  assert.match(p.get('mail-save-status').textContent,/检查桌面连接/);
+  assert.doesNotMatch(p.get('mail-save-status').textContent,/无法读取当前邮箱/);
+  assert.equal(p.calls.filter(c=>c.msg?.type==='WEBMAIL_DISCARD').length,1);
+  assert.equal(p.get('mail-save-button').disabled,false);
+});
+test('original validation failures report mailbox problems and attempt target cleanup without archiving',async t=>{
+  const p=await panel();t.after(p.close);
+  p.validation(()=>{throw new Error('page disconnected');});
+  p.get('mail-save-button').click();await p.flush();
+  assert.match(p.get('mail-save-status').textContent,/无法读取当前邮箱页面/);
+  assert.doesNotMatch(p.get('mail-save-status').textContent,/检查桌面连接/);
+  assert.equal(p.calls.filter(c=>c.destination==='desktop').length,0);
+  assert.equal(p.calls.filter(c=>c.msg?.type==='WEBMAIL_DISCARD').length,1);
+  assert.equal(p.get('mail-save-button').disabled,false);
+});
+test('expired original and excerpt confirmations ask for a fresh read rather than claim a mail switch',async t=>{
+  for(const value of [{status:'original',bytesBase64:'eA==',target:'expired'},excerpt]) {
+    const p=await panel(value);t.after(p.close);
+    p.validation({status:'changed',reason:'target_expired'});
+    p.get('mail-save-button').click();await p.flush();
+    if(value.status==='excerpt_offer') {p.get('mail-excerpt-accept').click();await p.flush();}
+    assert.match(p.get('mail-save-status').textContent,/确认已过期或失效.*重新读取/);
+    assert.doesNotMatch(p.get('mail-save-status').textContent,/邮件已切换|桌面连接/);
+    assert.equal(p.calls.filter(c=>c.destination==='desktop').length,0);
+    assert.equal(p.get('mail-excerpt-offer').hidden,true);
+    assert.equal(p.get('mail-save-button').disabled,false);
+  }
 });

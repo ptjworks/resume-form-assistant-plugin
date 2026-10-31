@@ -345,6 +345,7 @@ test('check, cancellation, expiry and a new capture release all temporary target
   assert.equal(h.intervals.size, 0); assert.equal(h.deadlines.size, 0);
   const third = await h.api.capture(d);
   for (const expiry of [...h.deadlines.values()]) expiry();
+  assert.equal(h.api.validateGmail(d, third.target).reason, 'target_expired');
   assert.equal(h.api.validateGmail(d, third.target).status, 'changed');
   assert.equal(h.intervals.size, 0); assert.equal(h.deadlines.size, 0);
   const fourth = await h.api.capture(d);

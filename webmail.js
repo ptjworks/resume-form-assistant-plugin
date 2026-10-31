@@ -320,7 +320,8 @@
     }
   }
   function checkTarget(doc, target, consume) {
-    if (!mailTarget || mailTarget.doc !== doc || mailTarget.target !== target) return { status: 'changed' };
+    if (!mailTarget) return { status: 'changed', reason: 'target_expired' };
+    if (mailTarget.doc !== doc || mailTarget.target !== target) return { status: 'changed' };
     const snapshot = mailTarget;
     if (consume) releaseTarget(); // Acceptance consumes the one-use binding.
     if (doc.location.href !== snapshot.url) { releaseTarget(); return { status: 'changed' }; }

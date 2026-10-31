@@ -211,3 +211,17 @@ test('actual QQ original capture rejects a same-URL mail switch at the final tra
   assert.equal(p.calls.filter(c=>c.msg.type==='DESKTOP_SAVE_MAIL').length,0);
   assert.match(p.get('mail-save-status').textContent,/邮件已切换/);
 });
+
+test('non-Gmail failed excerpt retries report expired bindings without another desktop write',async t=>{
+  const p=await panel({status:'excerpt_offer',excerpt:{subject:'Synthetic',body:'Body'}});t.after(p.close);
+  p.get('mail-save-button').click();await p.flush();
+  p.result({status:'unavailable'});
+  p.get('mail-excerpt-accept').click();await p.flush();
+  assert.equal(p.get('mail-excerpt-offer').hidden,false);
+  p.validation({status:'changed',reason:'target_expired'});
+  p.get('mail-excerpt-accept').click();await p.flush();
+  assert.equal(p.calls.filter(c=>c.msg.type==='DESKTOP_SAVE_MAIL').length,1);
+  assert.match(p.get('mail-save-status').textContent,/确认已过期或失效.*重新读取/);
+  assert.doesNotMatch(p.get('mail-save-status').textContent,/邮件已切换/);
+  assert.equal(p.get('mail-excerpt-offer').hidden,true);
+});

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
 const webmail = require('../webmail.js');
 const transport = require('../gmail-download.js');
@@ -61,6 +62,8 @@ function bridge(result, settings = {}) {
   const listeners=new Set(), calls=[]; let removed=0, appended=0;
   const frame={hidden:false,src:'',remove(){removed++;},contentWindow:{postMessage(data,origin){
     calls.push({data,origin});
+    if (!settings.noReady) for(const listener of [...listeners]) listener({source:frame.contentWindow,origin,data:{type:'GMAIL_DOWNLOAD_READY',id:data.id}});
+    if (settings.noResult) return;
     for(const listener of [...listeners]) {
       listener({source:{},origin,data:{type:'GMAIL_DOWNLOAD_RESULT',id:data.id,...result}});
       listener({source:frame.contentWindow,origin:'https://evil.test',data:{type:'GMAIL_DOWNLOAD_RESULT',id:data.id,...result}});
@@ -99,4 +102,52 @@ test('source resolution rechecks before and after download and only keeps a fall
   let checksBeforeConsume = 0;
   const changed = await transport.resolveSource({...source,fallback:'message_clipped'},async()=>({status:'unavailable'}),async()=>++checksBeforeConsume < 3);
   assert.equal(changed.status,'changed', 'a switch during final consumption must not show an earlier mail’s error');
+});
+
+function fakeTimers(mock) {
+  let next=0;const timers=new Map();
+  mock.env.setTimeout=(fn,ms)=>{const id=++next;timers.set(id,{fn,ms});return id;};
+  mock.env.clearTimeout=id=>timers.delete(id);
+  return timers;
+}
+test('a silent child fails in three seconds and source resolution stops trying equivalent bridges',async()=>{
+  const mock=bridge({status:'original',bytesBase64:RAW.toString('base64')},{noReady:true});
+  const timers=fakeTimers(mock);
+  const pending=transport.download(START,mock.env);await Promise.resolve();
+  for(const receive of [...mock.listeners]) {
+    receive({source:{},origin:'chrome-extension://own',data:{type:'GMAIL_DOWNLOAD_READY',id:'request-id'}});
+    receive({source:mock.frame.contentWindow,origin:'https://evil.test',data:{type:'GMAIL_DOWNLOAD_READY',id:'request-id'}});
+    receive({source:mock.frame.contentWindow,origin:'chrome-extension://own',data:{type:'GMAIL_DOWNLOAD_READY',id:'wrong'}});
+  }
+  assert.equal(timers.size,1);
+  const timer=[...timers.values()][0];assert.equal(timer.ms,3000);timer.fn();
+  const failure=await pending;
+  assert.equal(failure.reason,'bridge_unavailable');assert.equal(timers.size,0);
+  assert.equal(mock.removed(),1);assert.equal(mock.listeners.size,0);
+  let calls=0;
+  const result=await transport.resolveSource({originals:[START,START+'&d=1',START+'&ui=2'],fallback:'excerpt_offer',target:'target',excerpt:{subject:'Synthetic'}},async()=>{calls++;return failure;},async()=>true);
+  assert.equal(calls,1);assert.equal(result.status,'excerpt_offer');assert.equal(result.reason,'bridge_unavailable');
+});
+test('a ready child gets one download deadline which duplicate ready messages cannot extend',async()=>{
+  const mock=bridge({}, {noResult:true});const timers=fakeTimers(mock);
+  const pending=transport.download(START,mock.env);await Promise.resolve();
+  assert.equal(timers.size,1);const timer=[...timers.values()][0];assert.equal(timer.ms,25000);
+  for(const receive of [...mock.listeners]) receive({source:mock.frame.contentWindow,origin:'chrome-extension://own',data:{type:'GMAIL_DOWNLOAD_READY',id:'request-id'}});
+  assert.equal([...timers.values()][0],timer);timer.fn();
+  assert.equal((await pending).reason,'bridge_unavailable');
+  assert.equal(timers.size,0);assert.equal(mock.removed(),1);assert.equal(mock.listeners.size,0);
+});
+test('trusted child acknowledges initialization before fetching and emits a separate final result',async()=>{
+  const order=[],handlers=[];
+  const root={location:{protocol:'chrome-extension:',origin:'chrome-extension://own',pathname:'/gmail-download.html'},
+    parent:{postMessage(data){order.push(data.type);}},addEventListener(type,fn){if(type==='message')handlers.push(fn);},removeEventListener(){},
+    fetch:async()=>{order.push('fetch');return response();},ResumeProWebmail:webmail};
+  root.window=root;
+  const context={self:root,globalThis:root,URL,AbortController,setTimeout,clearTimeout};
+  vm.runInNewContext(fs.readFileSync('gmail-download.js','utf8'),context);
+  const data={type:'GMAIL_DOWNLOAD_START',id:'id',url:START};
+  await handlers[0]({source:{},origin:'chrome-extension://own',data});assert.equal(order.length,0);
+  await handlers[0]({source:root.parent,origin:'chrome-extension://own',data});
+  assert.deepEqual(order,['GMAIL_DOWNLOAD_READY','fetch','GMAIL_DOWNLOAD_RESULT']);
+  await handlers[0]({source:root.parent,origin:'chrome-extension://own',data});assert.equal(order.length,3);
 });

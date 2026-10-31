@@ -35,6 +35,7 @@
     original_unavailable: '未取得完整邮件原件，请使用 Gmail 的下载原始邮件后在桌面导入。',
     unrecognized_mail: '检测到邮件标题，但无法确认当前邮件的完整阅读区域。请等待加载完成后重试；仍失败时可下载 .eml 在桌面导入。',
     changed: '读取期间邮件已切换，请重新点击保存。',
+    target_expired: '保存确认已过期或失效，请重新读取邮件后再保存。',
     archive_changed: '桌面档案已恢复或切换，请重新选择申请后保存。',
     too_large: '邮件超过 25 MiB 或正文过长，本次未保存。可以下载原件后处理。',
     incompatible: '桌面版本尚不支持存邮件，请更新桌面程序后重试。',
@@ -134,6 +135,7 @@
   async function validateTarget(tab, capture, consume = true) {
     if (typeof capture.target !== 'string' || !capture.target) return false;
     const result = await chrome.tabs.sendMessage(tab.id, { type: consume ? 'WEBMAIL_VALIDATE' : 'WEBMAIL_CHECK', target: capture.target }, { frameId: 0 });
+    if (result?.reason === 'target_expired') throw Object.assign(new Error('target_expired'), { code: 'target_expired' });
     const [front] = await chrome.tabs.query({ active: true, currentWindow: true });
     return front?.id === tab.id && front?.url === tab.url && result?.status === 'current';
   }
@@ -161,19 +163,23 @@
     clearOffer();
     const selected = selectedApplication?.applicationId || null;
     setBusy(true); say('正在读取当前邮件并尝试取得原件…');
+    let sending = false, activeCapture = null, captureTab = null;
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id || tab.id !== current?.id || tab.url !== current?.url) { await refresh(); say(errors.changed); return; }
       let capture = await chrome.tabs.sendMessage(tab.id, { type: 'WEBMAIL_CAPTURE' }, { frameId: 0 });
+      activeCapture = capture; captureTab = tab;
       const [front] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (front?.id !== tab.id || front?.url !== tab.url) { say(errors.changed); return; }
       if (capture?.status === 'gmail_source') {
         const source = capture;
         capture = await self.ResumeProGmailDownload.resolveSource(source, consume => validateTarget(tab, source, consume));
+        activeCapture = capture;
       }
       if (capture?.status === 'original') {
         if (!await validateTarget(tab, capture)) { say(errors.changed, 'error'); return; }
         say('正在传给桌面并保存原件…');
+        sending = true;
         saved(await send('eml', { bytesBase64: capture.bytesBase64 }, selected), 'eml');
       } else if (capture?.status === 'excerpt_offer') {
         pending = { excerpt: capture.excerpt, target: capture.target, tab, oneUse: self.ResumeProWebmail.provider(tab.url) === 'gmail' };
@@ -183,8 +189,16 @@
         offer.scrollIntoView?.({ block: 'nearest' });
         say(capture.reason === 'too_large' ? '原件超过 25 MiB，可改存网页摘录。' : (self.ResumeProWebmail.provider(tab.url) === 'gmail' ? '当前页面未提供可用原件。可在 Gmail 单封邮件菜单打开“显示原始邮件”后重试，或确认保存网页摘录。' : '未能取得邮件原件，可改存网页摘录。'), 'error');
       } else say(errors[capture?.status] || errors.unavailable, 'error');
-    } catch { say('无法读取当前邮箱页面。请刷新邮箱后重试，或下载 .eml 在桌面导入。', 'error'); }
-    finally { setBusy(false); }
+    } catch (error) {
+      say(sending ? errors.unavailable : error?.code === 'target_expired' ? errors.target_expired
+        : '无法读取当前邮箱页面。请刷新邮箱后重试，或下载 .eml 在桌面导入。', 'error');
+    }
+    finally {
+      if (activeCapture?.target && pending?.target !== activeCapture.target && captureTab) {
+        void chrome.tabs.sendMessage(captureTab.id, { type: 'WEBMAIL_DISCARD', target: activeCapture.target }, { frameId: 0 }).catch(() => {});
+      }
+      setBusy(false);
+    }
   });
   accept.addEventListener('click', async () => {
     if (!pending || busy || !supported) return;
@@ -202,11 +216,12 @@
       if (result?.status === 'saved') saved(result, 'excerpt');
       else excerptFailed(result, chosen);
     }
-    catch {
+    catch (error) {
       if (sending) excerptFailed(undefined, chosen);
       else {
         clearOffer();
-        say('无法核验当前邮箱页面，页面可能已刷新或切换。请重新读取邮件后重试。', 'error');
+        say(error?.code === 'target_expired' ? errors.target_expired
+          : '无法核验当前邮箱页面，页面可能已刷新或切换。请重新读取邮件后重试。', 'error');
       }
     }
     finally { setBusy(false); }

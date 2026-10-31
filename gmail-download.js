@@ -77,6 +77,7 @@
       const result = await downloadOriginal(url);
       if (result.status === 'original') { original = result; break; }
       if (result.status === 'too_large') { reason = 'too_large'; break; }
+      if (result.reason === 'bridge_unavailable') { reason = 'bridge_unavailable'; break; }
     }
     if (!await validate(false)) return { status: 'changed' };
     if (original) return { ...original, target: source.target };
@@ -90,24 +91,34 @@
       frame.hidden = true;
       frame.src = env.chrome.runtime.getURL('gmail-download.html');
       const id = env.crypto.randomUUID(), origin = env.location.origin;
-      let settled = false;
+      let settled = false, ready = false;
+      const schedule = env.setTimeout?.bind(env) || setTimeout;
+      const cancel = env.clearTimeout?.bind(env) || clearTimeout;
       const finish = result => {
         if (settled) return;
-        settled = true; clearTimeout(timer); env.removeEventListener('message', receive); frame.remove(); resolve(result);
+        settled = true; cancel(timer); env.removeEventListener('message', receive); frame.remove(); resolve(result);
       };
       const receive = event => {
-        if (event.source !== frame.contentWindow || event.origin !== origin || event.data?.type !== 'GMAIL_DOWNLOAD_RESULT' || event.data.id !== id) return;
+        if (settled || event.source !== frame.contentWindow || event.origin !== origin || event.data?.id !== id) return;
+        if (event.data.type === 'GMAIL_DOWNLOAD_READY') {
+          if (!ready) {
+            ready = true; cancel(timer);
+            timer = schedule(() => finish({ status: 'unavailable', reason: 'bridge_unavailable' }), 25000);
+          }
+          return;
+        }
+        if (!ready || event.data.type !== 'GMAIL_DOWNLOAD_RESULT') return;
         const data = event.data;
         if (data.status === 'original' && typeof data.bytesBase64 === 'string' && data.bytesBase64.length > 0
             && data.bytesBase64.length <= Math.ceil(25 * 1024 * 1024 / 3) * 4) {
           finish({ status: 'original', kind: 'eml', bytesBase64: data.bytesBase64 });
         } else finish({ status: data.status === 'too_large' ? 'too_large' : 'unavailable' });
       };
-      const timer = setTimeout(() => finish({ status: 'unavailable' }), 25000);
+      let timer = schedule(() => finish({ status: 'unavailable', reason: 'bridge_unavailable' }), 3000);
       env.addEventListener('message', receive);
       frame.onload = () => frame.contentWindow?.postMessage({ type: 'GMAIL_DOWNLOAD_START', id, url: value }, origin);
-      frame.onerror = () => finish({ status: 'unavailable' });
-      try { env.document.body.appendChild(frame); } catch { finish({ status: 'unavailable' }); }
+      frame.onerror = () => finish({ status: 'unavailable', reason: 'bridge_unavailable' });
+      try { env.document.body.appendChild(frame); } catch { finish({ status: 'unavailable', reason: 'bridge_unavailable' }); }
     });
   }
   if (root.window === root && root.location?.protocol === 'chrome-extension:') {
@@ -118,6 +129,7 @@
             || typeof event.data.id !== 'string' || event.data.id.length > 100) return;
         used = true;
         const id = event.data.id;
+        root.parent.postMessage({ type: 'GMAIL_DOWNLOAD_READY', id }, root.location.origin);
         const result = await fetchOriginal(event.data.url);
         root.parent.postMessage({ type: 'GMAIL_DOWNLOAD_RESULT', id, ...result }, root.location.origin);
       });
