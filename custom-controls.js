@@ -155,7 +155,7 @@
     const combo = root?.matches?.('[role="combobox"]') ? root : root?.querySelector?.('[role="combobox"]') || el;
     const multiple = combo?.getAttribute?.('aria-multiselectable') === 'true'
       || root?.matches?.(antd(root, '.ant-select-multiple, .el-select--multiple, .arco-select-multiple'))
-      || Boolean(root?.querySelector?.(antd(root, '.ant-select-selection-overflow, .ant-select-selection--multiple, .el-select__tags, .arco-select-view-tag')));
+      || Boolean(root?.querySelector?.(antd(root, '.ant-select-selection-overflow, .ant-select-selection--multiple, .el-select__tags, .el-select__selection .el-tag, .arco-select-view-tag')));
     return { el, root, combo, library, cascade: Boolean(cascade), multiple: Boolean(multiple) };
   }
   // #269 联想输入框（智联学校名称、#299 51job 的 el-autocomplete）：本来就允许直接输入。
@@ -173,12 +173,37 @@
     return [info.root, el.parentElement, el.parentElement?.parentElement].some(node => String(node?.className || '').split(/\s+/)
       .some(token => AUTOCOMPLETE_TOKEN.test(token)));
   }
+  // #429 多选下拉的已选标签：文字和标签上的删除按钮。按 2026-10-31 在 Chromium 里跑的 antd 5.21.6、ant-design-vue 1.7.8、
+  // Element UI 2.15.14、Element Plus 2.8.8 看到的结构：antd 4/5 是 .ant-select-selection-item（在 overflow 的条目里），
+  // antd 3 和 ant-design-vue 1.x 是 .ant-select-selection__choice，Element 是 .el-tag（文字在 .el-select__tags-text 里）。
+  // 折起来的标签（antd 的 maxTagCount 留下「+ 2 ...」，Element 的 collapse-tags 留下「+ 2」）读不全，返回 null。
+  function multiTags(info) {
+    const { root, library } = info;
+    if (!root?.isConnected) return null;
+    if (library === 'antd') {
+      if (root.querySelector(antd(root, '.ant-select-selection-overflow-item-rest'))) return null;
+      return Array.from(root.querySelectorAll(antd(root, '.ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix) .ant-select-selection-item, .ant-select-selection__choice')), node => ({
+        node, text: trim((node.querySelector(antd(node, '.ant-select-selection-item-content, .ant-select-selection__choice__content')) || node).textContent),
+        remove: node.querySelector(antd(node, '.ant-select-selection-item-remove, .ant-select-selection__choice__remove')) })).filter(tag => tag.text);
+    }
+    if (library === 'element') {
+      const tags = Array.from(root.querySelectorAll('.el-tag'), node => ({ node, text: trim((node.querySelector('.el-select__tags-text') || node).textContent),
+        remove: node.querySelector('.el-tag__close') })).filter(tag => tag.text);
+      return tags.some(tag => /^\+\s*\d+$/.test(tag.text)) ? null : tags;
+    }
+    return null;
+  }
   // Element UI（Vue 2）可搜索的下拉：收起时输入框只读、显示已选文字；展开时输入框清空，已选文字挪到占位提示里。
   // 记下收起时的占位提示，展开时占位提示和它不同，就是已选文字（#269 智联）。
   const closedPlaceholder = new WeakMap();
   function selectedTexts(info) {
     const { root, el, library, cascade } = info;
     if (!root?.isConnected) return null;
+    // 多选（#429）：一个标签一项；读不全（「+ 2」这类折起来的）时返回 null。
+    if (info.multiple && !cascade && ['antd', 'element'].includes(library)) {
+      const tags = multiTags(info);
+      return tags ? tags.map(tag => tag.text) : null;
+    }
     if (library === 'element' && !cascade && el.tagName === 'INPUT' && !root.querySelector('.el-select__wrapper')) {
       if (el.readOnly) closedPlaceholder.set(el, el.placeholder);
       else if (!el.value && closedPlaceholder.has(el) && trim(el.placeholder) && el.placeholder !== closedPlaceholder.get(el)) return [trim(el.placeholder)];
@@ -817,7 +842,11 @@
     info.requireCommitSignal = info.library === 'aria' && ctx.startedEditable;
     info.requireCascadeSignal = info.library === 'element' && info.cascade && ctx.startedEditable;
     info.freeText = acceptsFreeText(ctx);
-    if (!info.root || info.multiple || ctx.hints.multiple === true) return { reason: 'unsupported_control' };
+    if (!info.root) return { reason: 'unsupported_control' };
+    // #429 多选：antd、Element 的多选下拉一项一项选（见 pickMultiple），别的多选照旧不支持。
+    if (info.multiple || ctx.hints.multiple === true) {
+      return info.multiple && !info.cascade && ['antd', 'element'].includes(info.library) ? await pickMultiple(ctx, raw, h, info, state) : { reason: 'unsupported_control' };
+    }
     // 通用路径不做级联：分不清每一列，宁可不填。
     if (info.library === 'generic' && info.cascade) return { reason: 'unsupported_control' };
     const desired = info.cascade ? (Array.isArray(raw) ? raw.map(trim) : trim(raw).split(/\s*(?:\/|>|→)\s*/)) : [trim(raw)];
@@ -944,6 +973,11 @@
       || Boolean(popup.querySelector('[aria-multiselectable="true"]'))
       || (info.library === 'element' && (popup.matches('.el-select-dropdown.is-multiple')
         || Boolean(popup.querySelector('.el-select-dropdown.is-multiple'))));
+    // Element Plus 的多选没选东西时组件上看不出是多选，点开才看得出（弹层带 is-multiple）：交给 pickMultiple，弹层已经开着。
+    if (multiplePopup() && !info.cascade && !typedFirst && ['antd', 'element'].includes(info.library)) {
+      info.multiple = true;
+      return await pickMultiple(ctx, raw, h, info, state, popup);
+    }
     if (multiplePopup()) return { reason: 'unsupported_control' };
     // 通用路径点开的是日历（北森 phoenix-date-picker）：格子分不清年月日，不当成选项列表去匹配。
     if (info.library === 'generic' && looksCalendar(ctx.popup, popup, h)) {
@@ -1153,6 +1187,137 @@
     if (committed.value === 'next') return { reason: 'cascade_unsupported' };
     // 联想框里插件打过字：之后才到的建议会再弹出来，由宿主发 Tab 收起（closeSuggestions）。
     return { accepted: () => accepted(false), closeSuggestions: Boolean(info.freeText && searchDone) };
+  }
+  // #429 antd（4/5、3 和 ant-design-vue 1.x）、Element（UI 2、Plus）的多选下拉。要选的几项按 splitMultipleValues 拆开，
+  // 标签和要选的项对不对得上和选项一样按 findSelectOptionIndex 认。已选标签里这次不要的，先点标签上的删除（没有删除按钮的不动，
+  // 报控件暂不支持）；再点开下拉一项一项找：列表不全或没有时在组件自己的搜索框里搜，没选上的点一下，等它成了标签再找下一项。
+  // 有一项找不到就停下报那一项的原因，已经点了的不撤回（和单选一样）。都选上以后收起下拉：antd 让输入框失焦；
+  // Element 失焦不收，不在对话框里时在框上按 Esc，在对话框里只在框旁边按下、松开（#409）。标签正好是这几项才算选上。
+  // openedPopup：点开以后才看出是多选的（Element Plus 没选东西时），弹层已经开着。
+  async function pickMultiple(ctx, raw, h, info, state, openedPopup = null) {
+    const doc = info.el.ownerDocument, helpers = h.helpers;
+    const wanted = helpers.splitMultipleValues ? helpers.splitMultipleValues(raw) : [trim(raw)].filter(Boolean);
+    if (!wanted.length || wanted.length > 10) return { reason: 'no_option_match' };
+    const norm = text => helpers.normalizeText(text);
+    const searchText = text => helpers.optionSearchText ? helpers.optionSearchText(text) : text;
+    const safeSearch = input => input?.tagName === 'INPUT' && !input.readOnly && !input.disabled && ['text', 'search'].includes(input.type);
+    state.safeSearch = safeSearch;
+    const tagOf = (tags, value) => {
+      const index = helpers.findSelectOptionIndex(tags.map(tag => ({ value: tag.text, text: tag.text })), value);
+      return index >= 0 ? tags[index] : null;
+    };
+    const tags = multiTags(info);
+    if (!tags) return { reason: 'unsupported_control' };
+    const kept = new Set(wanted.map(value => tagOf(tags, value)).filter(Boolean));
+    const extra = tags.filter(tag => !kept.has(tag));
+    if (extra.some(tag => !tag.remove)) return { reason: 'unsupported_control' };
+    for (const { text } of extra) {
+      const current = (multiTags(info) || []).find(tag => norm(tag.text) === norm(text));
+      if (!current?.remove) return { reason: 'unsupported_control' };
+      const reason = h.click(current.remove, ctx, true); if (reason) return { reason };
+      state.activated = true;
+      const removed = await h.waitUntil(ctx, doc.documentElement, () => multiTags(info), list => Boolean(list) && !list.some(tag => norm(tag.text) === norm(text)));
+      if (removed.reason) return { reason: removed.reason === 'verification_timeout' ? 'selection_not_committed' : removed.reason };
+    }
+    const chosen = Array.from(kept, tag => tag.text);
+    const pending = wanted.filter(value => !tagOf(Array.from(kept), value));
+    // 点开以后才交过来的（openedPopup）：用点开之前记下的。
+    const before = info.before || ctx.popupsBeforeFocus || shownLayers(doc, h.visible);
+    info.before = before;
+    const findPopup = () => {
+      const owned = ownedPopup(info, h.visible);
+      if (owned.ambiguous) return { reason: 'ambiguous_popup' };
+      if (owned.popup) return { popup: owned.popup };
+      const added = popups(doc, h.visible).filter(node => !before.has(node) && !staleLayer(node, info));
+      return added.length > 1 ? { reason: 'ambiguous_popup' } : added.length === 1 ? { popup: added[0] } : null;
+    };
+    let popup = openedPopup;
+    if (pending.length && !popup) {
+      const trigger = info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector')) || info.root
+        : info.root.querySelector('.el-select__wrapper, .el-input') || info.root;
+      const reason = h.click(trigger, ctx); if (reason) return { reason };
+      const opened = await h.waitUntil(ctx, doc.documentElement, findPopup, Boolean);
+      if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
+      if (opened.value.reason) return opened.value;
+      popup = opened.value.popup;
+    }
+    if (popup) {
+      ctx.popup = popup; info.popup = popup;
+      const role = popup.getAttribute('role');
+      ctx.observed = { library: info.library, popupRole: ['listbox', 'tree', 'menu'].includes(role) ? role : 'component' };
+    }
+    // 弹层重画、换了一块时按归属重新找。
+    const listOf = () => {
+      if (!popup?.isConnected || !h.visible(popup)) {
+        const again = findPopup();
+        if (again?.popup) { popup = again.popup; ctx.popup = popup; info.popup = popup; }
+      }
+      return popup?.isConnected && h.visible(popup) ? options(popup, info, 0, h) : [];
+    };
+    const signature = list => list.map(option => `${option.value}:${option.text}`).join('\n');
+    const marked = node => node.getAttribute('aria-selected') === 'true'
+      || String(node.getAttribute('class') || '').split(/\s+/).some(token => SELECTED_TOKEN.test(token));
+    for (const value of pending) {
+      const ready = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
+      if (ready.reason) return { reason: ready.reason === 'verification_timeout' ? 'options_not_rendered' : ready.reason };
+      let list = ready.value;
+      let found = match(list, value, helpers, partialList(list, popup, ctx.popup));
+      const input = !found.option && found.reason !== 'ambiguous_option'
+        ? [...info.root.querySelectorAll('input'), ...popup.querySelectorAll('input')].find(node => safeSearch(node) && h.visible(node)) : null;
+      if (input) {
+        const reason = h.stop(ctx, true); if (reason) return { reason };
+        const before = signature(list);
+        let last = before, since = Date.now();
+        state.searchInput = input; state.searchBefore = input.value; state.query = searchText(value);
+        h.write(input, state.query, ctx); h.input(input);
+        const updated = await h.waitUntil(ctx, doc.documentElement, () => {
+          const current = listOf(), next = signature(current);
+          if (next !== last) { last = next; since = Date.now(); }
+          return current;
+        }, current => last !== before && Date.now() - since >= 80);
+        if (updated.reason && updated.reason !== 'verification_timeout') return { reason: updated.reason };
+        list = listOf();
+        if (!list.length) return { reason: 'no_option_match' };
+        found = match(list, value, helpers, partialList(list, popup, ctx.popup));
+      }
+      if (found.reason) return found;
+      const option = found.option;
+      if (!marked(option.node)) {
+        const reason = h.click(option.node, ctx, true); if (reason) return { reason };
+        state.activated = true;
+      }
+      if (!chosen.some(label => norm(label) === norm(option.text))) chosen.push(option.text);
+      const shown = await h.waitUntil(ctx, doc.documentElement, () => multiTags(info), list => Boolean(list) && list.some(tag => norm(tag.text) === norm(option.text)));
+      if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'selection_not_committed' : shown.reason };
+      // 搜过的：选上以后搜索框里还留着插件打的字就清掉，下一项从整张列表找。
+      const searched = state.searchInput;
+      if (searched?.isConnected && searched.value && searched.value === state.query && safeSearch(searched)) { h.write(searched, '', ctx); h.input(searched); }
+      state.searchInput = null;
+    }
+    const accepted = () => {
+      const now = multiTags(info);
+      return Boolean(now) && now.length === chosen.length && chosen.every(label => now.some(tag => norm(tag.text) === norm(label)));
+    };
+    // 收起下拉。
+    const gone = () => !popup?.isConnected || !h.visible(popup);
+    if (popup && !gone() && !h.stop(ctx)) {
+      const dialog = dialogOf(info.root);
+      let left = { reason: 'verification_timeout' };
+      if (info.library === 'antd') {
+        const active = doc.activeElement;
+        if (info.root.contains(active)) h.blur(active);
+        left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
+      }
+      if (left.reason === 'verification_timeout' && !gone() && !h.stop(ctx)) {
+        if (dialog) { const spot = pressSpot(info.root, dialog); if (spot) press(spot); }
+        else info.el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true }));
+        left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
+        if (left.reason === 'verification_timeout' && !dialog && !gone() && !h.stop(ctx)) press(doc.body);
+      }
+    }
+    const done = await h.waitUntil(ctx, doc.documentElement, accepted, Boolean);
+    if (done.reason) return { reason: done.reason === 'verification_timeout' ? 'selection_not_committed' : done.reason };
+    return { accepted };
   }
   // #377 YUI 联想框（见 yuiBox）：聚焦、点击都不打开，只在 keyup 后按框里的字查询（SF 停 0.2 秒再查），最多列 10 条；
   // 点 li 才算选中，选中后框里换成这一项、建议框收起（SF 还把 aria-expanded 改回 false）。

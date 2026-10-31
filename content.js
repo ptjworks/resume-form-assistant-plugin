@@ -3765,8 +3765,17 @@
       }
 
       fieldMap.set(fieldId, { kind: "element", element, ...common });
+      // #429 多选（原生 select multiple、antd 和 Element 的多选下拉）告诉 AI 可以给几项；Element Plus 没选东西时看不出，不写。
+      let multiple = false;
+      try {
+        multiple = isSelectElement(element) ? element.multiple === true
+          : control.controlKind === "custom-select" && Boolean(self.ResumeProCustomControls?.describe?.({ element, root: control.root })?.multiple);
+      } catch {
+        // 认不出就当单选：只是少告诉 AI 一句，照常填写。
+      }
       fields.push({
         fieldId, ...base,
+        ...(multiple ? { multiple: true } : {}),
         dynamicOptions: ["custom-select", "cascader"].includes(control.controlKind),
         name: element.getAttribute("name") || "",
         idAttr: element.id || "",

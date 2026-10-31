@@ -44,7 +44,15 @@ function antd3(choices, { label = '学历', loadAfter = 0, multiple = false, sel
   };
   const choose = text => {
     picked.push(text);
-    if (multiple) return;
+    // 多选（#429）：已选的放成一个个 choice 标签，弹层开着。
+    if (multiple) {
+      root.querySelector('.ant-select-selection__placeholder').hidden = true;
+      const tag = doc.createElement('li'); tag.className = 'ant-select-selection__choice'; tag.title = text;
+      tag.innerHTML = `<div class="ant-select-selection__choice__content">${text}</div><span class="ant-select-selection__choice__remove"><i></i></span>`;
+      root.querySelector('.ant-select-search').before(tag);
+      dropdown.querySelectorAll('li').forEach(li => { if (li.textContent === text) li.classList.add('ant-select-dropdown-menu-item-selected'); });
+      return;
+    }
     root.querySelector('.ant-select-selection__placeholder').hidden = true;
     let value = root.querySelector('.ant-select-selection-selected-value');
     if (!value) { value = doc.createElement('div'); value.className = 'ant-select-selection-selected-value'; root.querySelector('.ant-select-selection__rendered').append(value); }
@@ -190,11 +198,12 @@ test('an AntD 3 popup holding only a disabled no-data entry is waited on without
   }
 });
 
-test('AntD 3 multiple select is refused before an option is clicked', async () => {
-  const h = antd3(['英语', '日语'], { label: '技能', multiple: true });
-  const result = await h.api.operate(h.target, '日语');
-  assert.equal(result.reason, 'unsupported_control');
-  assert.deepEqual(h.picked, []);
+// #429 多选不再一律拒绝：一项一项点，标签正好是这几项才算选上（更多用例见 multi-select.test.js）。
+test('AntD 3 multiple select picks each value as a tag', async () => {
+  const h = antd3(['英语', '日语', '韩语'], { label: '技能', multiple: true });
+  const result = await h.api.operate(h.target, '日语、英语');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.picked, ['日语', '英语']);
 });
 
 test('AntD 3 search select without a popup before typing is searched in its own input', async () => {
