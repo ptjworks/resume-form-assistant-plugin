@@ -538,7 +538,8 @@ test("savedAnswerMatches leaves ID, contact, political, salary, job- and company
     "银行卡号", "学号", "应聘岗位", "为什么选择我们", "是否有亲属在本公司工作", "是否有亲属在本行工作", "我司的哪项业务吸引你",
     "是否有亲属在本企业工作", "是否有亲属在公司工作", "是否有亲属在我们公司任职", "是否了解本部门的工作内容",
     "其他", "备注", "登录密码说明", "帐号", "银行帐户",
-    "学生ID", "ID号",
+    "学生ID", "ID号", "Student ID（本人）", "电子邮件", "座机", "考号", "报名号", "学籍号", "开户名",
+    "是否有家人在公司工作", "是否了解这家公司",
     // 没有汉字的英文题目一律交给 AI，不管问的是什么
     "Mobile", "Cell", "ID", "Student ID", "Social Security Number", "Passport No.", "Home Address", "Expected Salary",
     "Why do you want to join our company", "Referrer", "Willing to relocate"];
@@ -549,6 +550,11 @@ test("savedAnswerMatches leaves ID, contact, political, salary, job- and company
   const form = [...keys, ...controls].map((key, index) => ({ fieldId: `f${index}`, label: key, group: "" }));
   const expected = controls.map((key, index) => ({ fieldId: `f${keys.length + index}`, value: "否" }));
   assert.deepEqual(profileApi.savedAnswerMatches(form, resume), expected);
+  // 题目普通、回答像号码、邮箱、网址的也不填。
+  const looks = [{ key: "推送方式", value: "user@example.com" }, { key: "个人主页", value: "https://example.com/me" },
+    { key: "证书序列", value: "20231234567" }, { key: "可到岗日期", value: "2026年7月" }];
+  assert.deepEqual(profileApi.savedAnswerMatches(looks.map(({ key }, index) => ({ fieldId: `v${index}`, label: key })),
+    profileApi.profileToResumeFields({ custom: looks })), [{ fieldId: "v3", value: "2026年7月" }]);
   // 不经过 profileToResumeFields 的筛选（像密码的那一项它本来就不给）也一样不填。
   const raw = custom.map(({ key, value }) => ({ group: profileApi.CUSTOM_GROUP, key, value }));
   assert.deepEqual(profileApi.savedAnswerMatches(form, raw), expected);
