@@ -23,7 +23,8 @@ test("region data: a city alone gets its province, and joined or separated names
   for (const [value, path] of [
     ["深圳", "广东省 / 深圳市"], ["深圳市", "广东省 / 深圳市"], ["苏州", "江苏省 / 苏州市"],
     ["广东深圳", "广东省 / 深圳市"], ["广东省深圳市南山区", "广东省 / 深圳市 / 南山区"], ["广东/深圳", "广东省 / 深圳市"],
-    ["广东省 深圳市 南山区", "广东省 / 深圳市 / 南山区"], ["中国/广东省/深圳市", "广东省 / 深圳市"], ["广州天河", "广东省 / 广州市 / 天河区"],
+    ["广东省 深圳市 南山区", "广东省 / 深圳市 / 南山区"], ["中国/广东省/深圳市", "广东省 / 深圳市"], ["中国广东省深圳市", "广东省 / 深圳市"],
+    ["中华人民共和国北京市海淀区", "北京市 / 市辖区* / 海淀区"], ["广州天河", "广东省 / 广州市 / 天河区"],
     ["内蒙古呼和浩特", "内蒙古自治区 / 呼和浩特市"], ["广西南宁", "广西壮族自治区 / 南宁市"], ["新疆乌鲁木齐", "新疆维吾尔自治区 / 乌鲁木齐市"],
     ["恩施", "湖北省 / 恩施土家族苗族自治州"], ["湖北恩施州", "湖北省 / 恩施土家族苗族自治州"], ["延边", "吉林省 / 延边朝鲜族自治州"],
     ["昆山", "江苏省 / 苏州市 / 昆山市"], ["江苏昆山", "江苏省 / 苏州市 / 昆山市"], ["河南南阳南召", "河南省 / 南阳市 / 南召县"],
@@ -69,7 +70,7 @@ test("region data: option texts are compared by full name, short name, or the si
   assert.equal(R.placeholderLike("重庆城区", county), false);
 });
 
-test("region data: 34 provincial divisions, the statistics cities, and no towns or streets", () => {
+test("region data: 34 provincial divisions, the statistics cities, and no towns or streets anywhere", () => {
   const source = fs.readFileSync(require.resolve("../region-data.js"), "utf8");
   const data = JSON.parse(/^ {2}const DATA = (".*");$/m.exec(source)[1]);
   const provinces = data.split("|").map((chunk) => chunk.split(">"));
@@ -77,9 +78,12 @@ test("region data: 34 provincial divisions, the statistics cities, and no towns 
   assert.deepEqual(provinces.slice(-3).map(([name]) => name), ["香港特别行政区", "澳门特别行政区", "台湾省"]);
   const mainland = provinces.slice(0, 31).flatMap(([, cities]) => cities.split(";"));
   assert.equal(mainland.length, 342);
-  const counties = mainland.flatMap((city) => (city.split(":")[1] || "").split(",").filter(Boolean));
-  assert.ok(counties.length > 2800, String(counties.length));
-  assert.equal(counties.filter((name) => /(?:镇|街道|乡)$/.test(name)).length, 0);
+  const countiesOf = (cities) => cities.flatMap((city) => (city.split(":")[1] || "").split(",").filter(Boolean));
+  assert.ok(countiesOf(mainland).length > 2800, String(countiesOf(mainland).length));
+  // 审查 B7：港澳台和大陆一样，乡、镇、街道不收（台湾县下的乡镇原来漏收进来了），括号里的别名去掉。
+  const all = countiesOf(provinces.flatMap(([, cities]) => cities.split(";")));
+  assert.deepEqual(all.filter((name) => /(?:镇|街道|乡)$/.test(name) || /[（）()]/.test(name)), []);
+  assert.ok(all.includes("嘉模堂区") && all.includes("大安区"));
 });
 
 // ---- 组件库的级联（Element 的 el-cascader）----
