@@ -24,7 +24,7 @@ function load(label, control, { wrap = (html) => html } = {}) {
   return { w, doc: w.document, api, target };
 }
 
-function antd5(choices, { selected = [], search = true, noRemove = false } = {}) {
+function antd5(choices, { selected = [], search = true, noRemove = false, maxTags = Infinity } = {}) {
   const h = load("外语语种", `<div class="ant-select ant-select-multiple${search ? " ant-select-show-search" : ""}"><div class="ant-select-selector">
     <div class="ant-select-selection-overflow"><div class="ant-select-selection-overflow-item ant-select-selection-overflow-item-suffix">
     <div class="ant-select-selection-search"><input type="search" autocomplete="off" class="ant-select-selection-search-input" role="combobox"
@@ -37,13 +37,20 @@ function antd5(choices, { selected = [], search = true, noRemove = false } = {})
   const renderTags = () => {
     root.querySelectorAll(".ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix)").forEach((node) => node.remove());
     const suffix = root.querySelector(".ant-select-selection-overflow-item-suffix");
-    for (const text of state.values) {
+    // maxTagCount：多出来的折成一格「+ N ...」。
+    for (const text of state.values.slice(0, maxTags)) {
       const item = doc.createElement("div"); item.className = "ant-select-selection-overflow-item";
       item.innerHTML = `<span title="${text}" class="ant-select-selection-item"><span class="ant-select-selection-item-content">${text}</span>${noRemove ? "" : '<span class="ant-select-selection-item-remove"><i></i></span>'}</span>`;
       item.querySelector(".ant-select-selection-item-remove")?.addEventListener("click", () => { state.removed.push(text); state.values = state.values.filter((v) => v !== text); renderTags(); renderList(); });
       suffix.before(item);
     }
     root.querySelector(".ant-select-selection-placeholder").hidden = state.values.length > 0;
+    root.querySelector(".ant-select-selection-overflow-item-rest")?.remove();
+    if (state.values.length > maxTags) {
+      const rest = doc.createElement("div"); rest.className = "ant-select-selection-overflow-item ant-select-selection-overflow-item-rest";
+      rest.innerHTML = `<span class="ant-select-selection-item">+ ${state.values.length - maxTags} ...</span>`;
+      suffix.before(rest);
+    }
   };
   const renderList = () => {
     if (!dropdown) return;
@@ -296,6 +303,14 @@ test("Element UI 2 multiple select: a value that cannot be found leaves no searc
   assert.equal(result.reason, "no_option_match", JSON.stringify(result));
   assert.deepEqual(h.state.values, ["日语"]);
   assert.equal(search.value, "", "the query typed for 拉丁语 is cleared");
+  assert.equal(h.isOpen(), false);
+});
+
+test("antd 5 multiple select whose tags fold into + N while picking stops as unsupported, with the dropdown closed", async () => {
+  const h = antd5(LANGS, { maxTags: 2 });
+  const result = await h.api.operate(h.target, "英语、日语、韩语、法语");
+  assert.equal(result.reason, "unsupported_control", JSON.stringify(result));
+  assert.deepEqual(h.state.values, ["英语", "日语", "韩语"], "stops once the tags can no longer be read");
   assert.equal(h.isOpen(), false);
 });
 

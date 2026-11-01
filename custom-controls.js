@@ -1271,7 +1271,26 @@
       if (searched?.isConnected && searched.value && searched.value === state.query && safeSearch(searched) && !h.stop(ctx)) { h.write(searched, '', ctx); h.input(searched); }
       state.searchInput = null;
     };
-    const fail = outcome => { clearSearch(); return outcome; };
+    // 收起下拉：antd 让输入框失焦；Element 失焦不收，不在对话框里时在框上按 Esc，在对话框里只在框旁边按下、松开（#409）。
+    // 选完、没选成都在这里收（run 收尾时看到已经收了就不再动）。
+    const gone = () => !popup?.isConnected || !h.visible(popup);
+    const close = async () => {
+      if (!popup || gone() || h.stop(ctx)) return;
+      const dialog = dialogOf(info.root);
+      let left = { reason: 'verification_timeout' };
+      if (info.library === 'antd') {
+        const active = doc.activeElement;
+        if (info.root.contains(active)) h.blur(active);
+        left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
+      }
+      if (left.reason === 'verification_timeout' && !gone() && !h.stop(ctx)) {
+        if (dialog) { const spot = pressSpot(info.root, dialog); if (spot) press(spot); }
+        else info.el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true }));
+        left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
+        if (left.reason === 'verification_timeout' && !dialog && !gone() && !h.stop(ctx)) press(doc.body);
+      }
+    };
+    const fail = async outcome => { clearSearch(); await close(); return outcome; };
     for (const value of pending) {
       const ready = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
       if (ready.reason) return { reason: ready.reason === 'verification_timeout' ? 'options_not_rendered' : ready.reason };
@@ -1302,8 +1321,10 @@
         state.activated = true;
       }
       if (!chosen.some(label => norm(label) === norm(option.text))) chosen.push(option.text);
-      const shown = await h.waitUntil(ctx, doc.documentElement, () => multiTags(info), list => Boolean(list) && list.some(tag => norm(tag.text) === norm(option.text)));
+      // 选上以后标签折起来了（maxTagCount、collapse-tags）：读不全，没法核对，按控件暂不支持报。
+      const shown = await h.waitUntil(ctx, doc.documentElement, () => multiTags(info), list => list === null || list.some(tag => norm(tag.text) === norm(option.text)));
       if (shown.reason) return fail({ reason: shown.reason === 'verification_timeout' ? 'selection_not_committed' : shown.reason });
+      if (shown.value === null) return fail({ reason: 'unsupported_control' });
       // 搜过的：下一项从整张列表找。
       clearSearch();
     }
@@ -1311,33 +1332,17 @@
     for (;;) {
       const extra = (multiTags(info) || []).find(tag => !chosen.some(label => norm(label) === norm(tag.text)));
       if (!extra) break;
-      if (!extra.remove) return { reason: 'unsupported_control' };
-      const reason = h.click(extra.remove, ctx, true); if (reason) return { reason };
+      if (!extra.remove) return fail({ reason: 'unsupported_control' });
+      const reason = h.click(extra.remove, ctx, true); if (reason) return fail({ reason });
       state.activated = true;
       const removed = await h.waitUntil(ctx, doc.documentElement, () => multiTags(info), list => Boolean(list) && !list.some(tag => norm(tag.text) === norm(extra.text)));
-      if (removed.reason) return { reason: removed.reason === 'verification_timeout' ? 'selection_not_committed' : removed.reason };
+      if (removed.reason) return fail({ reason: removed.reason === 'verification_timeout' ? 'selection_not_committed' : removed.reason });
     }
     const accepted = () => {
       const now = multiTags(info);
       return Boolean(now) && now.length === chosen.length && chosen.every(label => now.some(tag => norm(tag.text) === norm(label)));
     };
-    // 收起下拉。
-    const gone = () => !popup?.isConnected || !h.visible(popup);
-    if (popup && !gone() && !h.stop(ctx)) {
-      const dialog = dialogOf(info.root);
-      let left = { reason: 'verification_timeout' };
-      if (info.library === 'antd') {
-        const active = doc.activeElement;
-        if (info.root.contains(active)) h.blur(active);
-        left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
-      }
-      if (left.reason === 'verification_timeout' && !gone() && !h.stop(ctx)) {
-        if (dialog) { const spot = pressSpot(info.root, dialog); if (spot) press(spot); }
-        else info.el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true }));
-        left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
-        if (left.reason === 'verification_timeout' && !dialog && !gone() && !h.stop(ctx)) press(doc.body);
-      }
-    }
+    await close();
     const done = await h.waitUntil(ctx, doc.documentElement, accepted, Boolean);
     if (done.reason) return { reason: done.reason === 'verification_timeout' ? 'selection_not_committed' : done.reason };
     return { accepted };
