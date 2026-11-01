@@ -191,7 +191,8 @@
         remove: node.querySelector(antd(node, '.ant-select-selection-item-remove, .ant-select-selection__choice__remove')) })).filter(tag => tag.text);
     }
     if (library === 'element') {
-      const tags = Array.from(root.querySelectorAll('.el-tag'), node => ({ node, text: trim((node.querySelector('.el-select__tags-text') || node).textContent),
+      // 只看选择框自己的标签区（Element UI 2 的 .el-select__tags、Element Plus 的 .el-select__selection）。
+      const tags = Array.from(root.querySelectorAll('.el-select__tags .el-tag, .el-select__selection .el-tag'), node => ({ node, text: trim((node.querySelector('.el-select__tags-text') || node).textContent),
         remove: node.querySelector('.el-tag__close') })).filter(tag => tag.text);
       return tags.some(tag => /^\+\s*\d+$/.test(tag.text)) ? null : tags;
     }
@@ -1257,14 +1258,6 @@
       return popup?.isConnected && h.visible(popup) ? options(popup, info, 0, h) : [];
     };
     const signature = list => list.map(option => `${option.value}:${option.text}`).join('\n');
-    // 整段正好是列表里的一项（选项文字里本来就带顿号）：当这一项，不拆。
-    if (popup && wanted.length > 1) {
-      const first = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
-      if (first.value && !plan(split(first.value.map(option => option.text)))) return { reason: 'unsupported_control' };
-    }
-    const marked = node => node.getAttribute('aria-selected') === 'true'
-      || String(node.getAttribute('class') || '').split(/\s+/).some(token => SELECTED_TOKEN.test(token));
-    const chosen = Array.from(kept, tag => tag.text);
     // 插件在搜索框里打的字：选上一项以后、或没选成要交还时清掉。点过别的项以后 run 收尾不再管搜索框（不撤销已经做出的选择）。
     const clearSearch = () => {
       const searched = state.searchInput;
@@ -1291,28 +1284,52 @@
       }
     };
     const fail = async outcome => { clearSearch(); await close(); return outcome; };
+    // 在组件自己的搜索框里打字，等列表换成这次的结果、停住 80ms。没有能打字的搜索框时返回 { none: true }。
+    const search = async (text, list) => {
+      const input = [...info.root.querySelectorAll('input'), ...(popup?.querySelectorAll('input') || [])].find(node => safeSearch(node) && h.visible(node));
+      if (!input) return { none: true };
+      const reason = h.stop(ctx, true); if (reason) return { reason };
+      const before = signature(list);
+      let last = before, since = Date.now();
+      state.searchInput = input; state.searchBefore = input.value; state.query = text;
+      h.write(input, text, ctx); h.input(input);
+      const updated = await h.waitUntil(ctx, doc.documentElement, () => {
+        const current = listOf(), next = signature(current);
+        if (next !== last) { last = next; since = Date.now(); }
+        return current;
+      }, current => last !== before && Date.now() - since >= 80);
+      if (updated.reason && updated.reason !== 'verification_timeout') return { reason: updated.reason };
+      return { list: listOf() };
+    };
+    // 整段正好是列表里的一项（选项文字里本来就带顿号）：当这一项，不拆。列表不全时整段可能在屏外，先在搜索框里搜一次整段。
+    if (popup && wanted.length > 1) {
+      const first = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
+      if (first.value) {
+        if (!plan(split(first.value.map(option => option.text)))) return fail({ reason: 'unsupported_control' });
+        if (wanted.length > 1 && partialList(first.value, popup, ctx.popup)) {
+          const whole = await search(trim(raw), first.value);
+          if (whole.reason) return fail(whole);
+          if (whole.list && !plan(split(whole.list.map(option => option.text)))) return fail({ reason: 'unsupported_control' });
+          clearSearch();
+        }
+      }
+    }
+    const marked = node => node.getAttribute('aria-selected') === 'true'
+      || String(node.getAttribute('class') || '').split(/\s+/).some(token => SELECTED_TOKEN.test(token));
+    const chosen = Array.from(kept, tag => tag.text);
     for (const value of pending) {
       const ready = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
-      if (ready.reason) return { reason: ready.reason === 'verification_timeout' ? 'options_not_rendered' : ready.reason };
+      if (ready.reason) return fail({ reason: ready.reason === 'verification_timeout' ? 'options_not_rendered' : ready.reason });
       let list = ready.value;
       let found = match(list, value, helpers, partialList(list, popup, ctx.popup));
-      const input = !found.option && found.reason !== 'ambiguous_option'
-        ? [...info.root.querySelectorAll('input'), ...popup.querySelectorAll('input')].find(node => safeSearch(node) && h.visible(node)) : null;
-      if (input) {
-        const reason = h.stop(ctx, true); if (reason) return { reason };
-        const before = signature(list);
-        let last = before, since = Date.now();
-        state.searchInput = input; state.searchBefore = input.value; state.query = searchText(value);
-        h.write(input, state.query, ctx); h.input(input);
-        const updated = await h.waitUntil(ctx, doc.documentElement, () => {
-          const current = listOf(), next = signature(current);
-          if (next !== last) { last = next; since = Date.now(); }
-          return current;
-        }, current => last !== before && Date.now() - since >= 80);
-        if (updated.reason && updated.reason !== 'verification_timeout') return fail({ reason: updated.reason });
-        list = listOf();
-        if (!list.length) return fail({ reason: 'no_option_match' });
-        found = match(list, value, helpers, partialList(list, popup, ctx.popup));
+      if (!found.option && found.reason !== 'ambiguous_option') {
+        const searched = await search(searchText(value), list);
+        if (searched.reason) return fail(searched);
+        if (searched.list) {
+          list = searched.list;
+          if (!list.length) return fail({ reason: 'no_option_match' });
+          found = match(list, value, helpers, partialList(list, popup, ctx.popup));
+        }
       }
       if (found.reason) return fail(found);
       const option = found.option;

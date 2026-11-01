@@ -56,7 +56,11 @@ function antd5(choices, { selected = [], search = true, noRemove = false, maxTag
     if (!dropdown) return;
     const inner = dropdown.querySelector(".rc-virtual-list-holder-inner");
     inner.innerHTML = "";
-    for (const text of choices.filter((t) => t.includes(input.value)).slice(0, 10)) {
+    const items = choices.filter((t) => t.includes(input.value));
+    // 超过一屏时在虚拟滚动，多出滚动条（见 virtual-list.test.js）。
+    dropdown.querySelector(".rc-virtual-list-scrollbar")?.remove();
+    if (items.length > 10) dropdown.querySelector(".rc-virtual-list").insertAdjacentHTML("beforeend", '<div class="rc-virtual-list-scrollbar rc-virtual-list-scrollbar-vertical"></div>');
+    for (const text of items.slice(0, 10)) {
       const on = state.values.includes(text);
       const item = doc.createElement("div");
       item.className = `ant-select-item ant-select-item-option${on ? " ant-select-item-option-selected" : ""}`; item.title = text; item.setAttribute("aria-selected", String(on));
@@ -312,6 +316,25 @@ test("antd 5 multiple select whose tags fold into + N while picking stops as uns
   assert.equal(result.reason, "unsupported_control", JSON.stringify(result));
   assert.deepEqual(h.state.values, ["英语", "日语", "韩语"], "stops once the tags can no longer be read");
   assert.equal(h.isOpen(), false);
+});
+
+test("antd 5 multiple select: a value holding a separator that is one option off the first screen is searched as a whole, not split", async () => {
+  const fillers = Array.from({ length: 30 }, (_, i) => `技能${String(i + 1).padStart(2, "0")}`);
+  const h = antd5([...fillers, "Java", "C++", "Java、C++"]);
+  const result = await h.api.operate(h.target, "Java、C++");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.state.values, ["Java、C++"]);
+  // 整段不是一项时照旧拆开选。
+  const split = antd5([...fillers, "Java", "C++"]);
+  const both = await split.api.operate(split.target, "Java、C++");
+  assert.equal(both.ok, true, JSON.stringify(both));
+  assert.deepEqual(split.state.values, ["Java", "C++"]);
+});
+
+test("Element tags outside the select's own tag area are not read as its selection", async () => {
+  const h = elementUi(LANGS, { selected: ["俄语"] });
+  h.root.querySelector(".el-input").insertAdjacentHTML("beforeend", '<span class="el-tag">说明</span>');
+  assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ["俄语"]);
 });
 
 test("antd multiple select with collapsed tags (+ N) is not guessed", async () => {
