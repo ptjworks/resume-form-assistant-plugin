@@ -470,11 +470,19 @@ test('button option changing its type during click commits without submitting',a
   assert.equal((await h.api.operate(h.target,'硕士')).ok,true);assert.equal(submitted,0);
 });
 
-test('Element Plus empty multiple select is refused from its owned dropdown class',async()=>{
+// #429 Element Plus 的多选没选东西时看不出是多选，点开后弹层带 is-multiple：按多选选，选上的成了标签才算。
+test('Element Plus empty multiple select found from its owned dropdown class is picked as a multiple select',async()=>{
+  const h=harness('<div class="el-select"><div class="el-select__selection"><input role="combobox" readonly aria-controls="choices"></div></div>');
+  h.target.root=h.el.closest('.el-select');let chosen=0;
+  h.target.root.onclick=()=>{if(h.w.document.getElementById('choices'))return;const popup=addOptions(h);popup.className='el-select__popper';popup.innerHTML='<div class="el-select-dropdown is-multiple"><div class="el-select-dropdown__item">硕士</div></div>';
+    popup.querySelector('.el-select-dropdown__item').onclick=()=>{chosen++;h.el.insertAdjacentHTML('beforebegin','<span class="el-tag"><span class="el-select__tags-text">硕士</span><i class="el-tag__close"></i></span>');};};
+  const result=await h.api.operate(h.target,'硕士');assert.equal(result.ok,true,result.reason);assert.equal(chosen,1);
+});
+test('Element Plus empty multiple select whose click shows no tag is not taken as selected',async()=>{
   const h=harness('<div class="el-select"><input role="combobox" readonly aria-controls="choices"></div>');
   h.target.root=h.el.parentElement;let chosen=0;
-  h.target.root.onclick=()=>{const popup=addOptions(h);popup.className='el-select__popper';popup.innerHTML='<div class="el-select-dropdown is-multiple"><div class="el-select-dropdown__item">硕士</div></div>';popup.querySelector('.el-select-dropdown__item').onclick=()=>chosen++;};
-  assert.equal((await h.api.operate(h.target,'硕士')).reason,'unsupported_control');assert.equal(chosen,0);
+  h.target.root.onclick=()=>{if(h.w.document.getElementById('choices'))return;const popup=addOptions(h);popup.className='el-select__popper';popup.innerHTML='<div class="el-select-dropdown is-multiple"><div class="el-select-dropdown__item">硕士</div></div>';popup.querySelector('.el-select-dropdown__item').onclick=()=>chosen++;};
+  assert.equal((await h.api.operate(h.target,'硕士')).reason,'selection_not_committed');assert.equal(chosen,1);
 });
 
 test('a link masquerading as an option is not activated',async()=>{

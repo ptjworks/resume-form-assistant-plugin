@@ -1400,9 +1400,10 @@ for (const mode of ['retry', 'rollback', 'user-edit']) {
 
 test('multi-select with only an empty placeholder does not ask for overwrite', async () => {
   const formElements = [];
+  const sent = [];
   const ctx = loadHighlightHelpers({ formElements, aiHelpers: require('../ai-helpers.js'),
     confirm: () => { throw new Error('placeholder is not a real selection'); },
-    sendMessage: async () => ({ success: true, matches: [{ fieldId: 'field-0', value: 'A' }] })
+    sendMessage: async (message) => { if (message?.formFields) sent.push(...message.formFields); return { success: true, matches: [{ fieldId: 'field-0', value: 'A' }] }; }
   });
   const select = new ctx.HTMLSelectElement();
   Object.assign(select, { tagName: 'SELECT', multiple: true, value: '', selectedIndex: 0, options: [
@@ -1411,8 +1412,10 @@ test('multi-select with only an empty placeholder does not ask for overwrite', a
   formElements.push(select);
   ctx.helpers.setCurrentStore({ templates: [{ id: 'one', groups: [{ name: '基本', fields: [{ key: '选项', value: 'A' }] }] }], activeTemplateId: 'one' });
   await ctx.helpers.handleAiFillClick({ currentTarget: { disabled: false } });
-  assert.equal(select.value, 'A');
-  assert.equal(select.selectedIndex, 1);
+  // #429 原生多选按每一项的 selected 选：只选上 A，占位项取消。交给 AI 的字段写明 multiple。
+  assert.deepEqual(select.options.map(option => option.selected), [false, true]);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].multiple, true);
 });
 
 for (const disconnected of [false, true]) {
