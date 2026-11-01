@@ -1138,9 +1138,11 @@
       const hit = one(text => regions.matches(text, parts[at]) || sameText(text, parts[at].name));
       if (hit) return hit.option ? { option: hit.option, next: at + 1 } : hit;
       // 网站的写法和全名、简称都不一样（「新疆维吾尔族自治区」）：和原来一样，正好一项包含它或被它包含才算。
+      // 哪一种写法对上了几项，就报几项都对得上，不再换一种写法去试。
       for (const name of [parts[at].name, ...parts[at].aliases]) {
         const loose = match(usable, name, h.helpers);
         if (loose.option) return { option: loose.option, next: at + 1 };
+        if (loose.reason === 'ambiguous_option') return loose;
       }
       const above = parts.slice(0, at).reverse().find(part => !part.placeholder);
       const pass = one(text => Boolean(above && regions.matches(text, above)) || (level === 0 && at === 0 && COUNTRY_NAMES.test(trim(text))));
@@ -1185,8 +1187,11 @@
       const named = region.path.map((part, at) => ({ part, at })).filter(item => !item.part.placeholder);
       // 最后一级搜不到时再搜一次整段（选项可能就写着整段「深圳市南山区」，在第一屏以外），这一项不按地区拆。
       const whole = wholeValue, leaf = named[named.length - 1];
-      const terms = [leaf, ...(named.some(item => item.part.name === whole) ? [] : [{ whole }]),
-        ...(named.length >= 3 && leaf.part.level === 2 ? [named[named.length - 2]] : [])];
+      // 退去搜市：上一级是市，或是直辖市本身（北京市 / 市辖区 / 海淀区：网站只到「北京市」）。省直辖县（济源）不退到省。
+      const upper = named[named.length - 2];
+      const municipality = region.path[1]?.placeholder && ['市辖区', '县'].includes(region.path[1].name);
+      const cityTerm = leaf.part.level === 2 && upper && (upper.part.level === 1 || municipality) ? [upper] : [];
+      const terms = [leaf, ...(named.some(item => item.part.name === whole) ? [] : [{ whole }]), ...cityTerm];
       for (const [index, term] of terms.entries()) {
         const { part, at } = term;
         const stopped = h.stop(ctx, true); if (stopped) return { reason: stopped };
@@ -1208,7 +1213,10 @@
         if (same.length === 1) return { option: same[0], next: region.path.length, final: true };
         if (same.length > 1) return { reason: 'ambiguous_option' };
         if (term.whole) continue;
-        let hits = list.filter(option => !option.disabled && [option.text, option.value].some(text => text != null && regions.matches(String(text), part)));
+        // 搜索结果可能一行写着整条路径（「广东省/深圳市/南山区」）：认出来是路径上到这一级为止的同一个地方也算。
+        const upTo = named.filter(item => item.at <= at).map(item => item.part.name).join('/');
+        const samePlace = text => { const found = regions.resolve(text); return Boolean(found) && found.path.filter(one => !one.placeholder).map(one => one.name).join('/') === upTo; };
+        let hits = list.filter(option => !option.disabled && [option.text, option.value].some(text => text != null && (regions.matches(String(text), part) || samePlace(String(text)))));
         if (hits.length > 1) {
           const above = named.filter(item => item.at < at).map(item => item.part);
           const row = option => {

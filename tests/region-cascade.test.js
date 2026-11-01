@@ -352,6 +352,27 @@ test("a district the site writes without 区 is found by searching its short nam
   assert.deepEqual(h.events, ["radio:广东省/深圳市/南山", "ok"]);
 });
 
+test("a municipality's district not found by search falls back to the municipality when the site only lists 北京市", async () => {
+  // 审查 A19：「北京市海淀区」搜「海淀」搜不到，网站只到「北京市」这一级时搜「北京」选上北京市。
+  const filler = Object.fromEntries(["河北省", "山西省", "辽宁省", "吉林省", "江苏省", "浙江省", "安徽省", "福建省", "江西省", "山东省"].map((name) => [name, { 示例市: null }]));
+  const h = beisenRegion({ tree: { ...filler, 北京市: null, 广东省: { 深圳市: SZ } }, rows: 9 });
+  const result = await h.api.operate(h.target, "北京市海淀区");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.searches, ["海淀", "北京市海淀区", "北京"]);
+  assert.deepEqual(h.events, ["radio:北京市", "ok"]);
+});
+
+test("search results that show the whole path in one line are matched as the same place", async () => {
+  // 98b091a 上 Lane C 未核实的一条：搜索结果一行写着「广东省/深圳市/南山区」。
+  const h = load(selectItem("f1", "工作地点", 100));
+  const choices = [...Array.from({ length: 12 }, (_, i) => `示例省/示例市${i + 1}`), "广东省/深圳市/南山区", "黑龙江省/鹤岗市/南山区"];
+  const pick = wireSelect(h.doc, "f1", { choices, rows: 9 });
+  const result = await h.api.operate(scanned(h.doc, "工作地点"), "深圳市南山区");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(pick.searches, ["南山"]);
+  assert.deepEqual(pick.events, ["radio:广东省/深圳市/南山区", "ok"]);
+});
+
 // 每行一个单选圈加名字，点名字进下一级（reuse：按位置复用原来的行，只换文字），点圈选中，点「确定」后显示。
 function rowsPicker(tree, { rowClass = "", reuse = false } = {}) {
   const h = load(selectItem("f1", "籍贯", 100));
