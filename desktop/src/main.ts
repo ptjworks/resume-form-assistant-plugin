@@ -1,4 +1,5 @@
 import "./attachments.css";
+import "./mailbox.css";
 import { installFrontendErrors } from "./feedback.ts";
 import { mountFeedbackSettings } from "./react/feedback-mount.tsx";
 import { mountUsageSettings } from "./react/usage-mount.tsx";
@@ -514,7 +515,20 @@ followInboxChanges(() => inbox.refresh(), events?.listen
 if (events?.listen) void events.listen("mailbox-changed", () => { void mailboxes.refresh(); });
 document.getElementById("view-inbox")?.addEventListener("click", (event) => {
   if ((event.target as HTMLElement).closest('[data-empty-act="connect"]')) {
-    void navigate("settings").then((moved) => { if (moved) settingsNavigation.select("mailbox"); });
+    mailboxes.openSetup(undefined, (event.target as HTMLElement).closest<HTMLElement>('[data-empty-act="connect"]')!);
+  }
+});
+document.getElementById("inbox-add-menu")?.addEventListener("click", event => {
+  if ((event.target as HTMLElement).closest("button")) (document.getElementById("inbox-add-menu") as HTMLDetailsElement).open = false;
+});
+document.addEventListener("click", event => {
+  const menu = document.getElementById("inbox-add-menu") as HTMLDetailsElement;
+  if (menu.open && !menu.contains(event.target as Node)) menu.open = false;
+});
+document.addEventListener("keydown", event => {
+  const menu = document.getElementById("inbox-add-menu") as HTMLDetailsElement;
+  if (event.key === "Escape" && menu.open) {
+    event.preventDefault(); menu.open = false; menu.querySelector("summary")?.focus();
   }
 });
 

@@ -417,7 +417,7 @@ export function mountInbox(
           </div>
           <div class="evidence-reader-actions">
             ${openable ? `<button type="button" data-act="open">${ICON.open}用系统程序打开</button>` : ""}
-            ${recycled ? '<button type="button" data-act="restore" class="primary">恢复通知</button>' : `<button type="button" data-act="toggle-organizer" title="整理与关联（含 AI 整理）" aria-expanded="false" aria-controls="inbox-organizer">${ICON.tag}<span>整理与关联</span></button>`}
+            ${recycled ? '<button type="button" data-act="restore" class="primary">恢复通知</button>' : `<button type="button" data-act="toggle-organizer" title="选择对应申请并确认关联" aria-expanded="false" aria-controls="inbox-organizer">${ICON.link}<span>${item.applicationId ? "更换关联" : "关联申请"}</span></button><button type="button" data-act="toggle-ai" title="查看 AI 整理入口，确认发送后才分析" aria-expanded="false" aria-controls="inbox-organizer">${ICON.tag}<span>AI 辅助整理</span></button>`}
             <button type="button" class="evidence-icon-button" data-act="toggle-reader" aria-pressed="${expanded}" aria-label="${readerLabel}" title="${readerLabel}">${expanded ? ICON.collapse : ICON.expand}</button>
             ${recycled ? '<button type="button" class="evidence-recycle-button" data-act="purge">永久删除</button>' : `<button type="button" class="evidence-icon-button evidence-recycle-button" data-act="recycle" aria-label="移到回收站" title="移到回收站">${ICON.trash}</button>`}
           </div>
@@ -437,13 +437,14 @@ export function mountInbox(
             </section>
           </div>
           <aside id="inbox-organizer" class="evidence-organizer" aria-labelledby="evidence-organize-heading" hidden>
-            <section class="evidence-section evidence-ai-section" aria-labelledby="evidence-ai-heading">
-              <h3 id="evidence-ai-heading">AI 整理<span class="section-tag">可选</span></h3>
+            <section id="inbox-ai-section" class="evidence-section evidence-ai-section" aria-labelledby="evidence-ai-heading" hidden>
+              <h3 id="evidence-ai-heading">AI 辅助整理<span class="section-tag">可选</span></h3>
+              <p class="evidence-section-hint">先确认发送内容，再核对 AI 的建议；确认之前不会改变申请阶段或创建待办。</p>
               <div id="inbox-ai"></div>
             </section>
-            <section class="evidence-section evidence-organize">
-              <h3 id="evidence-organize-heading">手动整理</h3>
-              <p class="evidence-section-hint">关联和分类由你确认，不会改变申请阶段。</p>
+            <section id="inbox-manual-section" class="evidence-section evidence-organize">
+              <h3 id="evidence-organize-heading">关联申请</h3>
+              <p class="evidence-section-hint">把这条通知放到对应申请下面，方便一起查看。关联不会改变申请阶段。</p>
               <div class="organize-grid">
                 <div class="organize-block">
                   <h4>${ICON.link}关联申请</h4>
@@ -460,11 +461,11 @@ export function mountInbox(
                   ${applications.length ? "" : '<p class="muted">还没有在办的申请。先到「申请」页新增一条，再回来关联。</p>'}
                   <div class="organize-actions">
                     ${item.applicationId ? '<button type="button" data-act="unassociate">取消关联</button>' : ""}
-                    <button type="button" data-act="associate" class="primary">关联</button>
+                    <button type="button" data-act="associate" class="primary">确认关联</button>
                   </div>
                 </div>
-                <div class="organize-block">
-                  <h4>${ICON.tag}分类</h4>
+                <details class="organize-block inbox-classification-fold">
+                  <summary>手动设置通知分类</summary>
                   <div class="organize-fields evidence-classification">
                     <label>通知类型
                       <select id="inbox-reply-class">
@@ -487,7 +488,7 @@ export function mountInbox(
                   <div class="organize-actions">
                     <button type="button" data-act="classify" class="primary">保存分类</button>
                   </div>
-                </div>
+                </details>
               </div>
             </section>
           </aside>
@@ -517,6 +518,7 @@ export function mountInbox(
         if (action) void act(action, item);
       });
     });
+    preview.querySelector<HTMLSelectElement>("#inbox-application")?.addEventListener("change", () => setActing(acting));
     // 保存期间切换通知或重画详情，新按钮也必须遵守同一个操作锁。
     setActing(acting);
   }
@@ -524,7 +526,7 @@ export function mountInbox(
   function setActing(busy: boolean) {
     acting = busy;
     preview.querySelectorAll<HTMLButtonElement>(".evidence-view header button[data-act], .evidence-organize button[data-act]").forEach((button) => {
-      button.disabled = busy;
+      button.disabled = busy || (button.dataset.act === "associate" && !selectEl("inbox-application").value);
     });
   }
 
@@ -573,16 +575,27 @@ export function mountInbox(
         await refresh();
         return;
       }
-      if (action === "toggle-organizer") {
+      if (action === "toggle-organizer" || action === "toggle-ai") {
         const organizer = maybe("inbox-organizer");
-        const button = preview.querySelector<HTMLButtonElement>('[data-act="toggle-organizer"]');
+        const button = preview.querySelector<HTMLButtonElement>(`[data-act="${action}"]`);
         if (!organizer || !button) return;
-        organizer.hidden = !organizer.hidden;
+        const mode = action === "toggle-ai" ? "ai" : "manual";
+        const closing = !organizer.hidden && organizer.dataset.mode === mode;
+        organizer.hidden = closing;
+        organizer.dataset.mode = mode;
+        organizer.setAttribute("aria-labelledby", mode === "ai" ? "evidence-ai-heading" : "evidence-organize-heading");
+        const ai = maybe("inbox-ai-section"), manual = maybe("inbox-manual-section");
+        if (ai) ai.hidden = mode !== "ai";
+        if (manual) manual.hidden = mode !== "manual";
         organizer.closest(".evidence-workspace")?.classList.toggle("is-organizer-open", !organizer.hidden);
-        button.setAttribute("aria-expanded", String(!organizer.hidden));
-        const label = organizer.hidden ? "整理与关联" : "收起整理";
-        button.innerHTML = `${ICON.tag}<span>${label}</span>`;
-        button.title = organizer.hidden ? "整理与关联（含 AI 整理）" : "收起整理";
+        for (const entry of ["toggle-organizer", "toggle-ai"]) {
+          const control = preview.querySelector<HTMLButtonElement>(`[data-act="${entry}"]`);
+          const active = !closing && entry === action;
+          control?.setAttribute("aria-expanded", String(active));
+          if (control) control.innerHTML = entry === "toggle-ai"
+            ? `${ICON.tag}<span>${active ? "收起 AI 整理" : "AI 辅助整理"}</span>`
+            : `${ICON.link}<span>${active ? "收起关联" : item.applicationId ? "更换关联" : "关联申请"}</span>`;
+        }
         return;
       }
       if (action === "toggle-reader") {

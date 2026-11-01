@@ -171,7 +171,7 @@ test("evidence preview escapes original text and requires an explicit associatio
   fireEvent.click(document.querySelector("[data-evidence]")!);
   await waitFor(() => expect(document.getElementById("inbox-application")).toBeTruthy());
   const toolbar = document.querySelector(".evidence-reader-actions")!;
-  expect([...toolbar.querySelectorAll("button")].map(button => button.dataset.act)).toEqual(["toggle-organizer", "toggle-reader", "recycle"]);
+  expect([...toolbar.querySelectorAll("button")].map(button => button.dataset.act)).toEqual(["toggle-organizer", "toggle-ai", "toggle-reader", "recycle"]);
   expect(within(toolbar as HTMLElement).getByRole("button", {name:"展开阅读"}).getAttribute("title")).toBe("展开阅读");
   expect(within(toolbar as HTMLElement).getByRole("button", {name:"移到回收站"}).querySelector('svg[aria-hidden="true"]')).toBeTruthy();
   expect(document.querySelector(".evidence-workspace")).toBeTruthy();
@@ -180,6 +180,13 @@ test("evidence preview escapes original text and requires an explicit associatio
   expect(document.getElementById("inbox-organizer")!.hidden).toBe(false);
   expect(document.querySelector('[data-act="toggle-organizer"]')!.getAttribute("aria-expanded")).toBe("true");
   expect(document.querySelector(".evidence-workspace")!.classList.contains("is-organizer-open")).toBe(true);
+  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(true);
+  fireEvent.click(document.querySelector('[data-act="toggle-ai"]')!);
+  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(false);
+  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(true);
+  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
+  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(true);
+  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(false);
   fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
   expect(document.querySelector(".evidence-workspace")!.classList.contains("is-organizer-open")).toBe(false);
   fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
@@ -217,6 +224,26 @@ test("pending mailbox preview replaces the stored reader and never invents a bod
   expect(save).toHaveBeenCalledOnce();
   fireEvent.click(within(preview).getByRole("button", { name: "忽略" }));
   expect(ignore).toHaveBeenCalledOnce();
+});
+
+test("a notification without applications retains its selector and safely disables association", async () => {
+  const item = { id: "no-apps", kind: "paste", importedAt: "2026-11-01", bodyExtract: "面试邀请", sameBytesAs: [], sizeBytes: 12 };
+  const invoke = vi.fn(async (name: string) => {
+    if (name === "list_inbox_cmd") return [item];
+    if (name === "get_evidence_preview_cmd") return item;
+    if (name === "list_applications_cmd") return { items: [] };
+    return {};
+  });
+  const inbox = mountInbox(invoke as Invoke); await inbox.refresh();
+  fireEvent.click(document.querySelector('[data-evidence="no-apps"]')!);
+  await waitFor(() => expect(document.getElementById("inbox-application")).toBeTruthy());
+  expect(document.querySelector<HTMLSelectElement>("#inbox-application")!.options).toHaveLength(1);
+  expect(document.querySelector<HTMLButtonElement>('[data-act="associate"]')!.disabled).toBe(true);
+  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
+  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(false);
+  fireEvent.click(document.querySelector('[data-act="toggle-ai"]')!);
+  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(false);
+  expect(invoke.mock.calls.some(([name]) => name === "associate_evidence_cmd")).toBe(false);
 });
 
 test.each(["storage", "too_large"])("paste failure report (%s) keeps the dialog and text for retry", async (code) => {
