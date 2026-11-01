@@ -74,14 +74,14 @@ test("server-controlled subjects and reasons render as text", async () => {
   expect(el("mailbox-candidates").querySelector("img,script")).toBeNull();
   expect(el("mailbox-candidates").textContent).toContain('<img src=x onerror="steal()">');
 });
-test("testing failure saves no account, never checks mail and clears the secret field", async () => {
+test("testing failure saves no account, never checks mail and retains input for retry", async () => {
   const { handlers, invoke } = setup(); handlers.mailbox_connect = async () => { throw { message: "请开启 IMAP 并生成授权码。" }; };
   fireEvent.input(el("mailbox-email"), { target: { value: "a@qq.com" } });
   fireEvent.click(el("mailbox-detect"));
   fireEvent.input(el("mailbox-secret"), { target: { value: "synthetic-secret" } });
   fireEvent.submit(el("mailbox-form"));
   await waitFor(() => expect(el("mailbox-settings-status").textContent).toContain("请开启 IMAP"));
-  expect(el<HTMLInputElement>("mailbox-secret").value).toBe("");
+  expect(el<HTMLInputElement>("mailbox-secret").value).toBe("synthetic-secret");
   expect(invoke.mock.calls.some(([name]) => name === "mailbox_check")).toBe(false);
   expect(document.body.textContent).not.toContain("synthetic-secret");
 });
@@ -93,7 +93,7 @@ test("successful connection is tested and saved by one host command before check
   fireEvent.submit(el("mailbox-form"));
   await waitFor(() => expect(el<HTMLInputElement>("mailbox-secret").value).toBe(""));
   expect(invoke.mock.calls[0]).toEqual(["mailbox_connect", { email: "a@126.com", secret: "synthetic-secret", config: { host: "imap.126.com", port: 993, encryption: "tls", username: "a@126.com", sendId: true } }]);
-  expect(invoke.mock.calls[1][0]).toBe("mailbox_check");
+  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "mailbox_check")).toBe(true));
 });
 test("background updates preserve drafts and selected candidates", async () => {
   const { ui, view } = setup(); await ui.refresh();
@@ -296,6 +296,7 @@ test("unknown school DNS failure leaves a usable manual connection form", async 
   expect(el<HTMLDetailsElement>("mailbox-configuration").open).toBe(true);
   fireEvent.input(el("mailbox-host"), { target: { value: "mail.school.example" } });
   fireEvent.input(el("mailbox-username"), { target: { value: "shortname" } });
+  fireEvent.click(el("mailbox-config-next"));
   fireEvent.input(el("mailbox-secret"), { target: { value: "synthetic-secret" } });
   fireEvent.submit(el("mailbox-form"));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("mailbox_connect", { email: "a@school.example", secret: "synthetic-secret", config: { host: "mail.school.example", port: 993, encryption: "tls", username: "shortname", sendId: false } }));
@@ -321,7 +322,7 @@ test("editing a saved school mailbox restores custom settings without exposing i
   const { ui, view, invoke } = setup();
   view.accounts[0] = { ...view.accounts[0], email: "a@school.example", connection: { host: "custom.school.example", port: 143, encryption: "starttls", username: "shortname", sendId: true } };
   await ui.refresh();
-  fireEvent.click(within(el("mailbox-accounts")).getByRole("button", { name: "修改连接 / 更新凭据" }));
+  fireEvent.click(within(el("mailbox-accounts")).getByRole("button", { name: "修改连接" }));
   expect(el<HTMLInputElement>("mailbox-host").value).toBe("custom.school.example");
   expect(el<HTMLInputElement>("mailbox-username").value).toBe("shortname");
   expect(el<HTMLSelectElement>("mailbox-encryption").value).toBe("starttls");
@@ -372,11 +373,13 @@ test("preset config success is distinct from a successful mailbox connection", a
   fireEvent.submit(el("mailbox-form"));
   expect(el("mailbox-detection").dataset.state).toBe("connecting");
   connected();
-  await waitFor(() => expect(el("mailbox-detection").dataset.state).toBe("checking"));
-  expect(el("mailbox-step-3").getAttribute("aria-current")).toBe("step");
+  await waitFor(() => expect(el("mailbox-detection").dataset.state).toBe("connected"));
+  expect(el<HTMLDialogElement>("mailbox-dialog").open).toBe(false);
+  await waitFor(() => expect(el("mailbox-settings-status").textContent).toContain("正在检查"));
+  await waitFor(() => expect(scanned).toBeTypeOf("function"));
   scanned();
   await waitFor(() => expect(el("mailbox-detection").dataset.state).toBe("connected"));
-  expect(el("mailbox-progress-title").textContent).toContain("来信检查已完成");
+  await waitFor(() => expect(el("mailbox-settings-status").textContent).toContain("已成功检查"));
 });
 test("failed login has a visible error state and cannot claim that configuration was saved", async () => {
   const { handlers } = setup();
@@ -408,10 +411,11 @@ test("same-domain corrections preserve manual connection settings and explain wh
   expect(el<HTMLInputElement>("mailbox-send-id").checked).toBe(true);
   expect(el<HTMLInputElement>("mailbox-username").value).toBe("shortname");
   expect(el<HTMLInputElement>("mailbox-secret").value).toBe("");
-  expect(el("mailbox-secret-hint").textContent).toContain("原凭据已清除，请重新填写");
+  expect(el("mailbox-secret-hint").textContent).toContain("密码已清除，请重新填写");
   expect(el("mailbox-progress-title").textContent).toContain("服务器配置已保留");
   fireEvent.blur(el("mailbox-email"));
   expect(invoke.mock.calls.some(([name]) => name === "mailbox_discover")).toBe(false);
+  fireEvent.click(el("mailbox-config-next"));
   fireEvent.input(el("mailbox-secret"), { target: { value: "new-synthetic-secret" } });
   expect(el("mailbox-secret-hint").textContent).not.toContain("原凭据已清除");
   fireEvent.submit(el("mailbox-form"));
@@ -602,7 +606,7 @@ test("legacy unfamiliar saved host remains editable but requires acceptance befo
   const { ui, view } = setup();
   view.accounts[0] = { ...view.accounts[0], email: "a@school.example", connection: externalConfig };
   await ui.refresh();
-  fireEvent.click(within(el("mailbox-accounts")).getByRole("button", { name: "修改连接 / 更新凭据" }));
+  fireEvent.click(within(el("mailbox-accounts")).getByRole("button", { name: "修改连接" }));
   expect(el<HTMLInputElement>("mailbox-host").value).toBe(externalConfig.host);
   expect(el("mailbox-endpoint-review").hidden).toBe(false);
 });
@@ -629,7 +633,7 @@ test("saved acceptance is restored only for the same destination", async () => {
   const { ui, view } = setup();
   view.accounts[0] = { ...view.accounts[0], email: "a@school.example", connection: { ...externalConfig, endpointConfirmation: { email: "a@school.example", ...externalConfig } } };
   await ui.refresh();
-  fireEvent.click(within(el("mailbox-accounts")).getByRole("button", { name: "修改连接 / 更新凭据" }));
+  fireEvent.click(within(el("mailbox-accounts")).getByRole("button", { name: "修改连接" }));
   expect(el("mailbox-endpoint-review").hidden).toBe(true);
   expect(el<HTMLInputElement>("mailbox-secret").disabled).toBe(false);
   fireEvent.input(el("mailbox-email"), { target: { value: " A@SCHOOL.EXAMPLE " } });
@@ -677,8 +681,8 @@ test("damaged account configuration shows repair guidance and keeps account cont
   await ui.refresh();
   const accounts = within(el("mailbox-accounts"));
   expect(el("mailbox-accounts").textContent).toContain("本机邮箱连接配置无法读取或已失效");
-  expect(accounts.getByRole("button", { name: "修改连接 / 更新凭据" })).toBeTruthy();
-  expect(accounts.getByRole("button", { name: "断开并移除" })).toBeTruthy();
+  expect(accounts.getByRole("button", { name: "修改连接" })).toBeTruthy();
+  expect(accounts.getByRole("button", { name: "断开邮箱" })).toBeTruthy();
   expect(el("mailbox-candidates").textContent).toContain("星河科技面试邀请");
 });
 
@@ -693,9 +697,10 @@ test("unknown sources show upgrade guidance and only allow disconnect instead of
   expect(el("mailbox-accounts").textContent).toContain("无法识别此邮箱来源");
   expect(el("mailbox-accounts").textContent).toContain("升级桌面版本");
   expect(accounts.queryByRole("button", { name: "恢复检查" })).toBeNull();
-  expect(accounts.queryByRole("button", { name: "修改连接 / 更新凭据" })).toBeNull();
+  expect(accounts.queryByRole("button", { name: "修改连接" })).toBeNull();
   handlers.mailbox_delete = async () => { view.accounts = []; };
-  fireEvent.click(accounts.getByRole("button", { name: "断开并移除" }));
+  fireEvent.click(accounts.getByRole("button", { name: "断开邮箱" }));
+  fireEvent.click(within(document.querySelector<HTMLDialogElement>("dialog[open]")!).getByRole("button", { name: "断开邮箱" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("mailbox_delete", { id: "account" }));
   expect(invoke.mock.calls.some(([name]) => name === "mailbox_connect" || name === "mailbox_check")).toBe(false);
 });
@@ -708,8 +713,8 @@ test("damaged IMAP settings require repair before pause controls are offered aga
   const accounts = within(el("mailbox-accounts"));
   expect(accounts.queryByRole("button", { name: "恢复检查" })).toBeNull();
   expect(el("mailbox-accounts").textContent).toContain("重新测试并保存成功后再检查");
-  fireEvent.click(accounts.getByRole("button", { name: "修改连接 / 更新凭据" }));
-  expect(el("mailbox-progress-title").textContent).toContain("原连接配置无法读取");
+  fireEvent.click(accounts.getByRole("button", { name: "修改连接" }));
+  expect(el("mailbox-progress-title").textContent).toContain("核对连接");
   expect(invoke.mock.calls.some(([name]) => name === "mailbox_pause" || name === "mailbox_check")).toBe(false);
   account.connection = { host: "imap.qq.com", port: 993, encryption: "tls", username: "a@qq.com", sendId: false };
   account.paused = false; account.lastError = null;

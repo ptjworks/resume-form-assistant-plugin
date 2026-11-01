@@ -58,6 +58,7 @@ test("every category starts with a card, so their first cards line up", () => {
   const { root } = setup();
   for (const panel of root.querySelectorAll<HTMLElement>("[data-settings-panel]")) {
     const first = panel.firstElementChild!;
+    if (panel.id === "settings-mailbox") { expect(first.classList.contains("mailbox-page-heading")).toBe(true); continue; }
     // AI 与隐私由 React 挂进容器，容器本身不占位（display: contents）。
     expect(first.classList.contains("settings-card") || ["ai-settings", "desktop-feedback", "desktop-usage"].includes(first.id)).toBe(true);
   }

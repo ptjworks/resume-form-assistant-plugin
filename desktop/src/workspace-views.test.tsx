@@ -171,7 +171,7 @@ test("evidence preview escapes original text and requires an explicit associatio
   fireEvent.click(document.querySelector("[data-evidence]")!);
   await waitFor(() => expect(document.getElementById("inbox-application")).toBeTruthy());
   const toolbar = document.querySelector(".evidence-reader-actions")!;
-  expect([...toolbar.querySelectorAll("button")].map(button => button.dataset.act)).toEqual(["toggle-organizer", "toggle-reader", "recycle"]);
+  expect([...toolbar.querySelectorAll("button")].map(button => button.dataset.act)).toEqual(["toggle-organizer", "toggle-ai", "toggle-reader", "recycle"]);
   expect(within(toolbar as HTMLElement).getByRole("button", {name:"展开阅读"}).getAttribute("title")).toBe("展开阅读");
   expect(within(toolbar as HTMLElement).getByRole("button", {name:"移到回收站"}).querySelector('svg[aria-hidden="true"]')).toBeTruthy();
   expect(document.querySelector(".evidence-workspace")).toBeTruthy();
@@ -180,6 +180,13 @@ test("evidence preview escapes original text and requires an explicit associatio
   expect(document.getElementById("inbox-organizer")!.hidden).toBe(false);
   expect(document.querySelector('[data-act="toggle-organizer"]')!.getAttribute("aria-expanded")).toBe("true");
   expect(document.querySelector(".evidence-workspace")!.classList.contains("is-organizer-open")).toBe(true);
+  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(true);
+  fireEvent.click(document.querySelector('[data-act="toggle-ai"]')!);
+  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(false);
+  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(true);
+  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
+  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(true);
+  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(false);
   fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
   expect(document.querySelector(".evidence-workspace")!.classList.contains("is-organizer-open")).toBe(false);
   fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);

@@ -206,11 +206,11 @@
           <header class="workspace-header">
             <div><h1>招聘通知</h1><p>集中保存招聘邮件、聊天截图和文件，关联到对应申请。</p></div>
             <div class="workspace-header-actions">
-              <button type="button" id="mailbox-inbox-check"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>立即检查</button>
-              <button type="button" id="inbox-paste-open"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9zM9 12h6M9 16h4"/></svg>粘贴文本导入</button>
-              <button type="button" id="inbox-pick" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>导入文件</button>
+              <button type="button" id="mailbox-inbox-check" hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>立即检查</button>
+              <details id="inbox-add-menu" class="inbox-add-menu"><summary class="primary">＋ 添加通知</summary><div class="inbox-add-options"><button id="inbox-add-mailbox" type="button"><strong>连接邮箱</strong><span>自动发现可能与求职有关的来信</span></button><button id="inbox-pick" type="button"><strong>导入文件</strong><span>已有邮件原件、图片、PDF 或文本</span></button><button id="inbox-paste-open" type="button"><strong>粘贴文本</strong><span>保存一段邮件或聊天内容</span></button></div></details>
             </div>
           </header>
+          <div class="mailbox-inbox-overview"><span id="mailbox-inbox-overview"></span><button id="mailbox-manage-link" type="button" hidden>管理邮箱</button></div>
           <p id="mailbox-inbox-status" class="workspace-status" role="status"></p>
           <p id="inbox-status" class="workspace-status" role="status"></p>
           <div id="inbox-shell" class="workspace-shell inbox-shell inbox-workbench">
@@ -430,61 +430,35 @@
                 </details>
               </section>
               <section id="settings-mailbox" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-mailbox" tabindex="0" data-settings-panel="mailbox" hidden>
-                <div class="settings-card">
-                  <header class="settings-card-head"><h2>连接邮箱</h2><p>自动发现招聘相关来信，由你确认后存进档案。支持常见邮箱；学校邮箱可自动识别或手动配置，可连接多个邮箱。</p></header>
-                  <form id="mailbox-form">
-                    <ol class="mailbox-steps" aria-label="连接邮箱步骤">
-                      <li id="mailbox-step-1" aria-current="step"><span>1</span>识别邮箱配置</li>
-                      <li id="mailbox-step-2"><span>2</span>测试连接</li>
-                      <li id="mailbox-step-3"><span>3</span>检查来信</li>
-                    </ol>
-                    <div class="settings-form-grid">
-                      <div class="settings-field"><label for="mailbox-email">邮箱地址</label><input id="mailbox-email" aria-describedby="mailbox-detection" type="email" autocomplete="username" placeholder="example@qq.com" required /><div class="settings-actions"><button id="mailbox-detect" type="button">确认并识别</button></div><p id="mailbox-server" class="field-hint">输入完成后按回车或点击“确认并识别”。</p></div>
-                      <div class="settings-field"><label id="mailbox-secret-label" for="mailbox-secret">邮箱授权码</label><input id="mailbox-secret" type="password" autocomplete="new-password" required aria-describedby="mailbox-secret-hint" /><p id="mailbox-secret-hint" class="field-hint">在邮箱网页端生成，不是登录密码。只存系统凭据库，保存后不回显。</p></div>
+                <header class="mailbox-page-heading"><div><h2>邮箱</h2><p>管理已连接的邮箱和自动检查。</p></div><button id="mailbox-add" type="button" class="primary" hidden>添加邮箱</button></header>
+                <p id="mailbox-settings-status" class="settings-inline-msg" role="status" aria-live="polite"></p><button type="button" id="mailbox-retry-read" hidden>重新读取邮箱状态</button>
+                <div id="mailbox-empty" class="settings-card mailbox-empty" hidden>
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7M16 17h6m-3-3v6"/></svg>
+                  <h3>还没有添加邮箱</h3><p>添加后，可能与求职有关的来信会出现在<br><strong>招聘通知 → 待确认</strong>，由你确认是否存进档案。</p>
+                  <button id="mailbox-empty-add" type="button" class="primary">添加邮箱</button><p class="settings-caption">支持添加多个邮箱，每个邮箱可单独管理。</p>
+                </div>
+                <div id="mailbox-account-card" class="settings-card" hidden><div class="mailbox-list-toolbar"><h3>已连接的邮箱</h3><button type="button" id="mailbox-settings-check">立即检查</button></div><div id="mailbox-accounts" class="mailbox-accounts" aria-live="polite"></div></div>
+                <p class="settings-caption">应用运行时约每 10 分钟检查一次；退出后停止。只读邮箱，不标已读、不删除、不移动邮件。</p>
+                <details class="settings-fold"><summary>查看工作方式</summary><p class="settings-caption">候选只保存信头，确认后才下载原文。连续失败 3 次会暂停检查。连接、候选和忽略记录留在本机，不随档案备份迁移；断开连接后，已经存进档案的邮件仍保留。</p></details>
+                <div id="mailbox-result-actions" hidden><button type="button" id="mailbox-view-pending">查看待确认来信</button></div>
+                <dialog id="mailbox-dialog" class="size-lg mailbox-dialog" aria-labelledby="mailbox-dialog-title" aria-describedby="mailbox-dialog-intro">
+                  <form id="mailbox-form" novalidate>
+                    <header class="settings-dialog-head"><div><h2 id="mailbox-dialog-title">添加邮箱</h2><p id="mailbox-dialog-intro">发现可能与求职有关的来信，由你确认后保存。</p></div><button id="mailbox-close" type="button" class="mailbox-close" aria-label="关闭添加邮箱">×</button></header>
+                    <div class="settings-dialog-body mailbox-dialog-body">
+                      <ol class="mailbox-steps" aria-label="连接邮箱步骤"><li id="mailbox-step-1" aria-current="step"><span>1</span>填写邮箱</li><li id="mailbox-step-2"><span>2</span><span id="mailbox-step-2-label">连接邮箱</span></li><li id="mailbox-step-3" hidden><span>3</span>连接邮箱</li></ol>
+                      <section id="mailbox-address-panel"><label for="mailbox-email">邮箱地址</label><input id="mailbox-email" type="email" autocomplete="username" placeholder="例如 name@qq.com" required aria-describedby="mailbox-progress-detail" /><p class="field-hint">常见邮箱可自动识别；学校或机构邮箱也可以尝试。</p><button type="button" id="mailbox-view-existing" hidden>查看已添加的邮箱</button></section>
+                      <div id="mailbox-detection" class="mailbox-progress" data-state="empty" role="status" aria-live="polite" aria-atomic="true"><span id="mailbox-progress-icon" class="mailbox-progress-icon" aria-hidden="true">1</span><div><strong id="mailbox-progress-title"></strong><p id="mailbox-progress-detail"></p><div id="mailbox-endpoint-review" hidden><p id="mailbox-endpoint-detail"></p><p>请先按学校信息中心或邮箱服务商的官方客户端设置，核对以下收信信息。</p></div></div></div>
+                      <section id="mailbox-credentials" hidden>
+                        <div class="mailbox-provider-summary"><div><strong id="mailbox-provider-name"></strong><span id="mailbox-address-summary"></span></div><button id="mailbox-change-email" type="button">更换邮箱</button></div>
+                        <label id="mailbox-secret-label" for="mailbox-secret">邮箱授权码</label><div class="mailbox-password-field"><input id="mailbox-secret" type="password" autocomplete="new-password" required aria-describedby="mailbox-secret-hint" /><button id="mailbox-toggle-secret" type="button" aria-label="显示密码" aria-pressed="false">显示</button></div><p id="mailbox-secret-hint" class="field-hint"></p>
+                        <div class="mailbox-context-help"><h3 id="mailbox-guide-title">授权码在哪里？</h3><ol id="mailbox-guide-steps"></ol><details id="mailbox-guide-details"><summary>查看图文教程</summary><label for="mailbox-guide-provider">邮箱教程</label><select id="mailbox-guide-provider"><option value="qq">QQ 邮箱</option><option value="163">163 邮箱</option><option value="126">126 邮箱</option><option value="gmail">Gmail</option><option value="icloud">iCloud</option><option value="sina">新浪邮箱</option><option value="sohu">搜狐邮箱</option><option value="aliyun">阿里邮箱</option><option value="139">139 邮箱</option><option value="school">学校 / 其他邮箱</option></select><figure class="mailbox-guide"><img id="mailbox-guide-image" src="/mailbox-guide-qq.svg" alt="QQ 邮箱授权码获取步骤示意" /><figcaption>操作步骤示意，具体按钮以邮箱当前界面为准。</figcaption></figure></details><p><a id="mailbox-guide-link" href="#">查看官方帮助</a></p></div>
+                      </section>
+                      <details id="mailbox-configuration" class="settings-fold" hidden><summary>手动设置邮箱连接（高级）</summary><p class="settings-caption">按学校或邮箱官方说明填写。网页登录地址不是收信服务器地址。</p><div class="settings-form-grid"><div class="settings-field"><label for="mailbox-host">收信服务器（IMAP）</label><input id="mailbox-host" type="text" placeholder="例如 imap.example.edu.cn" autocomplete="off" required /></div><div class="settings-field"><label for="mailbox-username">登录用户名</label><input id="mailbox-username" type="text" autocomplete="off" required /><p class="field-hint">通常为完整邮箱地址；学校要求短用户名时可修改。</p></div><div class="settings-field"><label for="mailbox-port">端口</label><input id="mailbox-port" type="number" value="993" min="1" max="65535" required /></div><div class="settings-field"><label for="mailbox-encryption">加密方式</label><select id="mailbox-encryption"><option value="tls">SSL / TLS</option><option value="starttls">STARTTLS</option></select></div></div><label class="mailbox-client-id"><input id="mailbox-send-id" type="checkbox" />发送客户端标识（部分企业邮箱需要）</label></details>
+                      <p id="mailbox-server" class="field-hint" hidden></p>
                     </div>
-                    <div id="mailbox-detection" class="mailbox-progress" data-state="empty" role="status" aria-live="polite" aria-atomic="true">
-                      <span id="mailbox-progress-icon" class="mailbox-progress-icon" aria-hidden="true">1</span>
-                      <div><strong id="mailbox-progress-title">先填写邮箱地址</strong><p id="mailbox-progress-detail">输入完成后按回车或点击“确认并识别”。</p>
-                        <div id="mailbox-endpoint-review" hidden>
-                          <p id="mailbox-endpoint-detail"></p>
-                          <p>请到学校信息中心或邮箱服务商的官方网站，核对“邮箱客户端设置”中的收信服务器、端口和加密方式。无法确认时，可改用导入邮件文件。</p>
-                          <button id="mailbox-confirm-endpoint" type="button">我已按官方教程核对，使用此配置</button>
-                        </div>
-                      </div>
-                    </div>
-                    <details id="mailbox-configuration" class="settings-fold">
-                      <summary>核对或修改服务器与登录账号</summary>
-                      <p class="settings-caption">按学校信息中心或邮箱官方的客户端设置填写。网页登录地址不能直接作为 IMAP 地址。</p>
-                      <div class="settings-form-grid">
-                        <div class="settings-field"><label for="mailbox-host">IMAP 服务器</label><input id="mailbox-host" type="text" placeholder="例如 imap.example.edu.cn" autocomplete="off" required /></div>
-                        <div class="settings-field"><label for="mailbox-port">端口</label><input id="mailbox-port" type="number" value="993" min="1" max="65535" required /></div>
-                        <div class="settings-field"><label for="mailbox-encryption">加密方式</label><select id="mailbox-encryption"><option value="tls">SSL / TLS（连接时加密）</option><option value="starttls">STARTTLS（登录前升级加密）</option></select></div>
-                        <div class="settings-field"><label for="mailbox-username">登录账号</label><input id="mailbox-username" type="text" autocomplete="off" required /><p class="field-hint">默认完整邮箱地址；如学校要求短用户名，可修改。</p></div>
-                      </div>
-                      <label><input id="mailbox-send-id" type="checkbox" /> 发送客户端标识（网易企业邮等服务可能要求）</label>
-                    </details>
-                    <div class="settings-actions"><button id="mailbox-manual-import" type="button">改用导入邮件文件</button></div>
-
-                    <p class="settings-caption">学校邮箱尽量支持：部分学校需要校园网或未开放 IMAP，毕业后可能回收邮箱。请保留重要邮件的本地副本。</p>
-                    <div class="settings-form-actions"><button id="mailbox-save" class="primary" type="submit">测试连接并保存</button><p id="mailbox-settings-status" class="settings-inline-msg" role="status"></p></div>
+                    <footer class="settings-dialog-actions"><button id="mailbox-cancel" type="button">取消</button><button id="mailbox-back" type="button" hidden>上一步</button><button id="mailbox-detect" type="button" class="primary">下一步</button><button id="mailbox-config-next" type="button" class="primary" hidden>继续</button><button id="mailbox-confirm-endpoint" type="button" class="primary" hidden>已按官方核对，继续</button><button id="mailbox-save" class="primary" type="submit" hidden>连接并添加</button></footer>
                   </form>
-                  <details class="settings-fold">
-                    <summary>怎么开启 IMAP、获取授权码？</summary>
-                    <label for="mailbox-guide-provider">选择邮箱教程</label>
-                    <select id="mailbox-guide-provider"><option value="qq">QQ 邮箱</option><option value="163">163 邮箱</option><option value="126">126 邮箱</option><option value="gmail">Gmail</option><option value="icloud">iCloud</option><option value="sina">新浪邮箱</option><option value="sohu">搜狐邮箱</option><option value="aliyun">阿里邮箱</option><option value="139">139 邮箱</option><option value="school">学校 / 其他邮箱</option></select>
-                    <figure class="mailbox-guide"><img id="mailbox-guide-image" src="/mailbox-guide-qq.svg" alt="QQ 邮箱：进入设置，开启 IMAP，完成验证后生成授权码" /><figcaption>操作步骤示意，具体按钮以邮箱当前界面为准。</figcaption></figure>
-                    <ol id="mailbox-guide-steps"></ol>
-                    <p><a id="mailbox-guide-link" href="#">查看官方帮助</a></p>
-                    <p class="settings-caption">凭据只存系统凭据库，不回显。失效后可从下方“修改连接 / 更新凭据”重新测试；修改服务器或登录账号会清空该连接的候选与扫描记录，已入档邮件保留。</p>
-                  </details>
-                </div>
-                <div class="settings-card">
-                  <header class="settings-card-head"><h2>已连接的邮箱</h2><p>启动时检查，此后约每 10 分钟检查一次；只在应用运行时执行，隐藏到托盘仍会检查。</p></header>
-                  <div class="settings-actions"><button type="button" id="mailbox-settings-check">立即检查</button></div>
-                  <div id="mailbox-accounts" class="mailbox-accounts" aria-live="polite"></div>
-                  <p class="settings-caption">只读收件箱和服务器开放的垃圾邮件文件夹，不标已读、不删除、不移动。连续失败 3 次自动暂停；处理后点击恢复检查。</p>
-                  <p class="settings-caption">未命中的信不保留内容；候选只保存信头，确认才下载原文。连接、候选和忽略记录留在本机，不随档案备份迁移。断开会清除该邮箱的这些记录，已入档邮件保留。</p>
-                </div>
+                </dialog>
               </section>
               <section id="settings-ai" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-ai" tabindex="0" data-settings-panel="ai" hidden>
                 <div id="ai-settings"></div>

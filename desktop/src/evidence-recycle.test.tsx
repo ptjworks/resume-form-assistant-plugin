@@ -41,7 +41,7 @@ test("move and restore are direct, lock duplicate clicks, retain body and have a
   const item = await within(el("inbox-recycled-list")).findByRole("button", {name:/功能验证通知/}); fireEvent.click(item);
   const restore = await h.preview.findByRole("button", {name:"恢复通知"});
   expect(h.preview.getByText("原正文始终保留")).toBeTruthy();
-  expect(h.preview.queryByRole("button", {name:"整理与关联"})).toBeNull();
+  expect(h.preview.queryByRole("button", {name:"关联申请"})).toBeNull();
   const aiCalls = h.mountAi.mock.calls.length;
   fireEvent.click(restore); fireEvent.click(restore);
   await waitFor(() => expect(h.row.recycled).toBe(false));
@@ -153,7 +153,7 @@ test("external refresh updates the badge without replacing a pending-mail previe
 test("unchanged foreground reads preserve the focused list row and organizer draft", async () => {
   const h = setup(); await h.inbox.refresh();
   fireEvent.click(within(el("inbox-list")).getByRole("button", {name:/功能验证通知 one/}));
-  fireEvent.click(await h.preview.findByRole("button", {name:"整理与关联"}));
+  fireEvent.click(await h.preview.findByRole("button", {name:"关联申请"}));
   const input = el("inbox-reply-class") as HTMLSelectElement;
   input.value = "interview_invite";
   const row = within(el("inbox-list")).getByRole("button", {name:/功能验证通知 one/});
