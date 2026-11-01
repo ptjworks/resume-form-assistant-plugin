@@ -419,6 +419,14 @@ test("a list that redraws the next level into the same rows is still followed", 
   assert.deepEqual(h.events, ["drill:河南省", "radio:河南省/南阳市", "ok"]);
 });
 
+test("a list that redraws into the same rows where the next level repeats the name (北京市 → 北京市) is still followed", async () => {
+  // ee0f8d8 上 Lane C 的 C5（回归锁）：同名的下一级只剩一项时，条目往上取到了另一层，算新冒出来的，照样往下走。
+  const h = rowsPicker({ 北京市: { 北京市: { 东城区: null, 海淀区: null } }, 天津市: { 天津市: { 和平区: null } } }, { reuse: true });
+  const result = await h.api.operate(h.target, "北京市海淀区");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.events, ["drill:北京市", "drill:北京市", "radio:北京市/北京市/海淀区", "ok"]);
+});
+
 test("a class name that merely contains arrow (is-narrow) is not taken as a sign of a next level", async () => {
   // 审查 B11：只列省、每行带 is-narrow 的列表收到「河南省南阳市」，照样当网站只到省，选上河南省。
   const h = rowsPicker({ 北京市: null, 河南省: null, 湖北省: null }, { rowClass: "is-narrow" });
