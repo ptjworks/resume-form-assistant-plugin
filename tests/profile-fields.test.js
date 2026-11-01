@@ -538,11 +538,12 @@ test("savedAnswerMatches leaves ID, contact, political, salary, job- and company
     "银行卡号", "学号", "应聘岗位", "为什么选择我们", "是否有亲属在本公司工作", "是否有亲属在本行工作", "我司的哪项业务吸引你",
     "是否有亲属在本企业工作", "是否有亲属在公司工作", "是否有亲属在我们公司任职", "是否了解本部门的工作内容",
     "其他", "备注", "登录密码说明", "帐号", "银行帐户",
-    // 外企网申的英文题目
-    "Mobile", "Phone Number", "Tel", "Passport No.", "ID Number", "Visa Status", "Home Address", "Postal Code", "WeChat",
-    "Emergency Contact", "Political Status", "Expected Salary", "Bank Account"];
-  // 「是否接受外派」「Willing to relocate」「现公司名称」是对照：同一份资料、同样的写法，它们照样填。
-  const controls = ["是否接受外派", "Willing to relocate", "现公司名称"];
+    "学生ID", "ID号",
+    // 没有汉字的英文题目一律交给 AI，不管问的是什么
+    "Mobile", "Cell", "ID", "Student ID", "Social Security Number", "Passport No.", "Home Address", "Expected Salary",
+    "Why do you want to join our company", "Referrer", "Willing to relocate"];
+  // 「是否接受外派」「现公司名称」「CET-6成绩」是对照：同一份资料、同样的写法，它们照样填。
+  const controls = ["是否接受外派", "现公司名称", "CET-6成绩"];
   const custom = [...keys, ...controls].map((key) => ({ key, value: "否" }));
   const resume = profileApi.profileToResumeFields({ custom });
   const form = [...keys, ...controls].map((key, index) => ({ fieldId: `f${index}`, label: key, group: "" }));

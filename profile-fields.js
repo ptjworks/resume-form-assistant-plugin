@@ -135,9 +135,10 @@
   const JOB_SPECIFIC_VALUE_CHARS = 300;
   // #429 第五项：补充字段里有些题目原样对上也不在本地直接填，照旧交给 AI 按上下文判断。
   // 证件和各种号码、联系方式、政治面貌、薪资（#429 列的四类），再加银行账户。
-  const SAVED_ANSWER_EXCLUDED = /证件|身份证|护照|通行证|签证|驾驶证|驾照|准考证|学号|工号|编号|号码|社保|公积金|银行|卡号|[账帐]号|[账帐]户|手机|电话|邮箱|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary/i;
-  // 外企网申的英文题目，同样四类加银行账户。比的是归一后的题目（小写、去掉空格）。
-  const SAVED_ANSWER_EXCLUDED_EN = /passport|identity|idcard|idnumber|^idno|nationalid|visa|licen[cs]e|phone|mobile|^tel(?:no)?$|address|postcode|postal|zipcode|wechat|contact|politic|party|salary|wage|compensation|income|^pay|bank|account/i;
+  // 中英混写的（「学生ID」「E-mail地址」「QQ号」）也认。比的是归一后的题目（小写、去掉空格）。
+  const SAVED_ANSWER_EXCLUDED = /证件|身份证|护照|通行证|签证|驾驶证|驾照|准考证|学号|工号|编号|号码|社保|公积金|银行|卡号|[账帐]号|[账帐]户|手机|电话|邮箱|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary|(?:^|[^a-z])id(?![a-z])/i;
+  // 题目里没有汉字的（外企网申的英文题目）不在本地复用：英文的证件、联系方式、岗位相关写法列不全，照旧交给 AI。
+  const HAS_HAN = /[\u3400-\u9fff]/;
   // 题目说的是对方公司（「本公司」「我们企业」「是否有亲属在公司工作」）：换一家公司答案可能不同，
   // 等按站点存（#429 第五项第 2 点）了再在同一个站点复用。「现公司」「原单位」问的是申请人自己的经历，照常复用。
   const COMPANY_REFERENCE = /(?:[本该贵我]|我们|你们)(?:公司|企业|单位|部门|机构|集团|银行|行|司|院|校)|亲属.*(?:工作|任职|就职)/;
@@ -359,7 +360,7 @@
   // #429 第五项：补充字段是用户在别的网页上答过、自己勾选存下的。网页题目按 normalizeKey 归一后和其中一项的名字完全相同，
   // 就在本地直接填这一项，不用等 AI。formFields 是要填的网页字段（fieldId、label、group），taken 是别的规则已经填上的字段，
   // pageFields 是整张表的字段，用来数同名的题（后来冒出来的字段只填新的几个，同名要和页面上原有的一起数）。
-  // 不这样复用的（照旧交给 AI）：SAVED_ANSWER_EXCLUDED 那几类；只适用于当前岗位、公司的题（存的时候默认不勾选的那类，
+  // 不这样复用的（照旧交给 AI）：没有汉字的英文题目；SAVED_ANSWER_EXCLUDED 那几类；只适用于当前岗位、公司的题（存的时候默认不勾选的那类，
   // 再加题目里说「本行」「我司」的）和整段作答；
   // 笼统的短题目；同一张表上同名的题不止一个；题在可以加多条的区块里（group 末尾带序号）、家庭成员和紧急联系人区块里，
   // 以及经历区块里除排名、外语这类概括信息以外的题（和存的时候 entryFieldLabel 的口径一样）。
@@ -401,7 +402,7 @@
 
   // id 是归一后的题目。
   function reusableTitle(id) {
-    return !(SAVED_ANSWER_EXCLUDED.test(id) || SAVED_ANSWER_EXCLUDED_EN.test(id) || JOB_SPECIFIC_LABEL.test(id) || COMPANY_REFERENCE.test(id) || SECRET_LABEL.test(id)
+    return HAS_HAN.test(id) && !(SAVED_ANSWER_EXCLUDED.test(id) || JOB_SPECIFIC_LABEL.test(id) || COMPANY_REFERENCE.test(id) || SECRET_LABEL.test(id)
       || CONTEXTLESS_TITLE.test(id) || GENERIC_TITLE.test(id) || NOT_A_LABEL.test(id));
   }
 
