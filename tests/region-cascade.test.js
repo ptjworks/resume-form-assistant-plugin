@@ -314,6 +314,16 @@ test("a flat Beisen list of provinces only takes the province for a value writte
   assert.equal(pick.shown(), "河南省");
 });
 
+test("a flat list with both provinces and cities takes the city, not its province", async () => {
+  // 审查 C4：平铺列表里「广东省」「深圳市」都有，要填「深圳」时选深圳市。原来先找到省，点了名字等不到下一级，就把省选上了。
+  const h = load(selectItem("f1", "期望工作城市", 100));
+  const pick = wireSelect(h.doc, "f1", { choices: ["北京市", "广东省", "广州市", "深圳市"] });
+  const result = await h.api.operate(scanned(h.doc, "期望工作城市"), "深圳");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(pick.events, ["radio:深圳市", "ok"]);
+  assert.equal(pick.shown(), "深圳市");
+});
+
 // ---- 通用路径：点了冒出新的一列的自制下拉（Moka 这类）----
 function columnsPicker(tree) {
   const h = load(`<div class="item"><label class="title">现居住城市</label>

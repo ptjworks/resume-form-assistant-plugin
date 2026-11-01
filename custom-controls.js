@@ -1143,17 +1143,17 @@
       if (pass) return pass.option ? { option: pass.option, next: k, pass: true } : pass;
       return { reason: 'no_option_match' };
     };
-    // 第一列：先找路径最上面的一级；没有就往下找（平铺的城市列表里直接是「深圳市」）。
+    // 第一列：从路径最下面一级往上找，先对上的那一级就从它开始（平铺的列表里省、市都有时选「深圳市」，不选「广东省」；
+    // 省份列表里只对得上省）。同一项对得上两级的不算。都没有再按最上面一级找（含网站多出来的「中国」、写法不一样的省名）。
     const regionStart = list => {
-      const top = regionStep(list, 0, 0);
-      if (top.option || top.reason === 'ambiguous_option') return top;
-      for (let at = 1; at < region.path.length; at++) {
-        if (region.path[at].placeholder) continue;
-        const hits = list.filter(option => !option.disabled && !h.helpers.isPlaceholderOption(option)
-          && [option.text, option.value].some(text => text != null && regions.matches(String(text), region.path[at])));
+      const usable = list.filter(option => !option.disabled && !h.helpers.isPlaceholderOption(option));
+      const named = region.path.map((part, at) => ({ part, at })).filter(item => !item.part.placeholder);
+      const fits = (option, part) => [option.text, option.value].some(text => text != null && regions.matches(String(text), part));
+      for (const { part, at } of named.slice().reverse()) {
+        const hits = usable.filter(option => fits(option, part) && !named.some(other => other.part !== part && fits(option, other.part)));
         if (hits.length) return hits.length === 1 ? { option: hits[0], next: at + 1 } : { reason: 'ambiguous_option' };
       }
-      return top;
+      return regionStep(list, 0, 0);
     };
     // 通用路径的地区级联（北森分类选择器：点名字进下一级，点圆圈才选中，最后点「确定」；Moka 这类：点了冒出新的一列）。
     // 不是最后一级的点名字，等新冒出来的选项（下一级）；等不到就是网站只到这一级，把这一项当最后一级选。
