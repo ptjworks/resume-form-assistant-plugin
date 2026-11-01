@@ -75,8 +75,9 @@ function aiWorker(clock, resume = RESUME) {
 const item = (id, label, control) => `<div class="form-item" id="${id}-item"><label for="${id}">${label}</label>${control}</div>`;
 const input = (id, label, { type = "text", value = "" } = {}) => item(id, label, `<input id="${id}" name="${id}" type="${type}" value="${value}">`);
 
-// body 是表单内容；confirm 返回 true/false；onGender：选了性别后页面要做的事（新出现字段之类）；resume 是简历资料。
-function page(t, body, { confirm = () => true, onGender = null, resume = RESUME } = {}) {
+// body 是表单内容；confirm 返回 true/false；onGender：选了性别后页面要做的事（新出现字段之类）；resume 是简历资料；
+// custom 是「我的信息」里的补充字段。
+function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [] } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
   const w = dom.window;
@@ -94,7 +95,7 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME 
     fields: resume.filter(([group]) => group === name).map(([, key, value]) => ({ key, value })) }));
   const template = { id: "t", name: "虚构模板", groups };
   const data = { templates: [{ id: "t", name: "虚构模板", fieldCount: resume.length }], activeTemplate: template,
-    profile: { values: {}, family: [], custom: [] }, profileRevision: 0 };
+    profile: { values: {}, family: [], custom }, profileRevision: 0 };
   const sent = [];
   w.chrome = {
     runtime: { id: "test-extension", getURL: (file) => `chrome-extension://test-extension/${file}`, getManifest: () => ({ version: "0.4.4" }),
@@ -621,4 +622,53 @@ test("an early select whose list is there but has no matching option is not trie
   assert.equal(p.value("gender"), "");
   assert.equal(result.unfilledCount, 1);
   assert.match(p.ui.diag.value, /- 性别：.*没有匹配的选项$/m);
+});
+
+// #429 第五项：补充字段里存过的回答（别的网页上答过、用户勾选存下的），题目原样对得上的不等 AI，和本地规则一起先填。
+// 期望薪资这类不这样复用，照旧交给 AI。
+const radios = (id, label, options) => `<fieldset class="form-item" id="${id}-item"><legend>${label}</legend>${options.map((option) =>
+  `<label><input type="radio" name="${id}" value="${option}">${option}</label>`).join("")}</fieldset>`;
+const SAVED = [{ key: "是否服从调剂", value: "是" }, { key: "每周可实习天数", value: "5天" }, { key: "期望薪资", value: "面议" }];
+
+test("a saved answer to the same question is filled with the local matches; a salary question still goes to the AI", async (t) => {
+  const p = page(t, input("name", "姓名") + radios("adjust", "是否服从调剂", ["是", "否"]) + input("days", "每周可实习天数")
+    + input("salary", "期望薪资") + input("school", "毕业院校"), { custom: SAVED });
+  const checked = () => p.w.document.querySelector("input[name=adjust]:checked")?.value || "";
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("name") && checked() && p.value("days") && p.worker.calls.length === 1),
+    `saved answers wait for the AI: ${JSON.stringify([p.value("name"), checked(), p.value("days")])}`);
+  assert.deepEqual([checked(), p.value("days"), p.value("salary")], ["是", "5天", ""]);
+  assert.deepEqual(p.worker.calls[0].labels, ["期望薪资", "毕业院校"]);
+  p.worker.calls[0].reply({ 期望薪资: "面议", 毕业院校: "示例大学" });
+  const result = await running;
+  assert.deepEqual([p.value("salary"), p.value("school")], ["面议", "示例大学"]);
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+  assert.equal(result.filledCount, 5);
+  const report = (await p.report()).diagnosticsReport;
+  assert.equal(lineOf(report, "local_matches"), "3");
+  assert.equal(lineOf(report, "ai_matches"), "2");
+});
+
+test("a field revealed later takes a saved answer to the same question locally, but a salary question goes to the AI", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const p = page(t, input("name", "姓名") + GENDER + input("school", "毕业院校"), {
+    custom: SAVED,
+    onGender: (doc) => {
+      if (doc.getElementById("days")) return;
+      const holder = doc.createElement("div");
+      holder.innerHTML = input("days", "每周可实习天数") + input("salary", "期望薪资");
+      doc.getElementById("apply").append(...holder.children);
+    }
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
+  p.worker.calls[0].reply();
+  assert.ok(await p.until(() => p.worker.calls.length === 2), "the salary question goes to the AI after the first answer");
+  assert.deepEqual(p.worker.calls[1].labels, ["期望薪资"]);
+  assert.equal(p.value("days"), "5天", "the saved answer is filled without the AI");
+  p.worker.calls[1].reply({ 期望薪资: "面议" });
+  const result = await running;
+  assert.equal(p.value("salary"), "面议");
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+  assert.equal(result.filledCount, 5);
 });

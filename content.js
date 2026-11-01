@@ -2716,14 +2716,16 @@
         grown.found += added.length;
         grownFields.push(...added);
         const helpers = self.ResumeProAIHelpers;
-        const local = helpers?.buildRuleBasedMatches
-          ? helpers.filterValidMatches(added, helpers.buildRuleBasedMatches(added, resumeFields)) : [];
-        // 题目名和资料里唯一一项的名称完全相同（「专业」对「专业」），也当场对上；
-        // 资料里同名的不止一项（多段教育经历），交给 AI 按上下文分。
+        const local = helpers?.localRuleMatches && self.ResumeProProfile
+          ? helpers.localRuleMatches(added, resumeFields, self.ResumeProProfile) : [];
+        // 题目名和模板里唯一一项的名称完全相同（「专业」对「专业」），也当场对上；
+        // 资料里同名的不止一项（多段教育经历），交给 AI 按上下文分。补充字段上面已经按题目比过，有几类不复用（#429），这里不再看。
         const normalize = value => helpers?.normalizeText ? helpers.normalizeText(value) : String(value ?? "").trim();
+        const customGroup = self.ResumeProProfile?.CUSTOM_GROUP;
         for (const field of added) {
           if (local.some(match => match.fieldId === field.fieldId)) continue;
           const same = resumeFields.filter(item => item?.value && normalize(item.key) === normalize(field.label));
+          if (customGroup && same.some(item => item.group === customGroup)) continue;
           if (same.length === 1) local.push(...(helpers?.filterValidMatches ? helpers.filterValidMatches([field], [{ fieldId: field.fieldId, value: same[0].value }]) : []));
         }
         const localIds = new Set(local.map(match => match.fieldId));

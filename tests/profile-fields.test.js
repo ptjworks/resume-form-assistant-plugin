@@ -510,3 +510,77 @@ test("describeProfileSave counts filled and pending items separately and never c
   assert.deepEqual(partial.details, ["「补充信息」的内容像密码或验证码，不会保存。"]);
   assert.deepEqual([profileApi.describeProfileSave({ skipped: [{ text: "x" }] }).kind, profileApi.describeProfileSave({}).text], ["info", "没有选中要保存的内容。"]);
 });
+
+// #429 第五项：补充字段里存过的回答，网页题目归一后和它的名字完全相同、只有一项对得上，本地直接填。
+test("savedAnswerMatches reuses a saved answer whose question is the same after normalizing", () => {
+  const resume = profileApi.mergeResumeFields([{ group: "基本信息", key: "姓名", value: "测试用户" }],
+    profileApi.profileToResumeFields({ custom: [{ key: "是否服从调剂", value: "是" }, { key: "每周可实习天数", value: "5天" },
+      { key: "专业排名", value: "前10%" }, { key: "空着的题", value: "" }] }));
+  const form = [
+    { fieldId: "adjust", label: "* 是否服从调剂：", group: "其他信息", inputType: "radio", options: ["是", "否"] },
+    { fieldId: "days", label: "每周可实习天数", group: "" },
+    { fieldId: "rank", label: "专业排名", group: "教育经历" },
+    { fieldId: "empty", label: "空着的题", group: "" },
+    { fieldId: "name", label: "姓名", group: "基本信息" }
+  ];
+  assert.deepEqual(profileApi.savedAnswerMatches(form, resume),
+    [{ fieldId: "adjust", value: "是" }, { fieldId: "days", value: "5天" }, { fieldId: "rank", value: "前10%" }]);
+  assert.deepEqual(profileApi.savedAnswerMatches(form, resume, new Set(["days"])).map((match) => match.fieldId), ["adjust", "rank"],
+    "a field another rule already filled is left alone");
+  // 只看补充字段：模板里同名的资料不在这里填。
+  assert.deepEqual(profileApi.savedAnswerMatches([{ fieldId: "x", label: "是否服从调剂" }], [{ group: "其他", key: "是否服从调剂", value: "是" }]), []);
+  // 题目只是包含存过的名字、或者存过的名字只是包含题目，都不算。
+  assert.deepEqual(profileApi.savedAnswerMatches([{ fieldId: "a", label: "是否服从专业调剂" }, { fieldId: "b", label: "调剂" }], resume), []);
+});
+
+test("savedAnswerMatches leaves ID, contact, political, salary, job- and company-specific questions to the AI", () => {
+  const keys = ["护照号码", "身份证号", "紧急联系人电话", "QQ", "E-mail", "现住址", "政治面貌（备注）", "是否党员", "期望薪资", "家庭年收入",
+    "银行卡号", "学号", "应聘岗位", "为什么选择我们", "是否有亲属在本公司工作", "是否有亲属在本行工作", "我司的哪项业务吸引你",
+    "其他", "备注", "登录密码说明"];
+  // 「是否接受外派」是对照：同一份资料、同样的写法，它照样填。
+  const custom = [...keys, "是否接受外派"].map((key) => ({ key, value: "否" }));
+  const resume = profileApi.profileToResumeFields({ custom });
+  const form = [...keys, "是否接受外派"].map((key, index) => ({ fieldId: `f${index}`, label: key, group: "" }));
+  assert.deepEqual(profileApi.savedAnswerMatches(form, resume), [{ fieldId: `f${keys.length}`, value: "否" }]);
+  // 不经过 profileToResumeFields 的筛选（像密码的那一项它本来就不给）也一样不填。
+  const raw = custom.map(({ key, value }) => ({ group: profileApi.CUSTOM_GROUP, key, value }));
+  assert.deepEqual(profileApi.savedAnswerMatches(form, raw), [{ fieldId: `f${keys.length}`, value: "否" }]);
+});
+
+test("savedAnswerMatches skips long answers, repeated questions, family and emergency-contact blocks and entry fields", () => {
+  const resume = profileApi.profileToResumeFields({ custom: [{ key: "是否服从调剂", value: "是" }, { key: "实习收获", value: "学到很多" },
+    { key: "个人陈述", value: "很".repeat(301) }, { key: "是否接受外派", value: "是" }] });
+  const cases = [
+    [{ fieldId: "long", label: "个人陈述" }],
+    [{ fieldId: "a", label: "是否服从调剂", group: "志愿一" }, { fieldId: "b", label: "是否服从调剂", group: "志愿二" }],
+    [{ fieldId: "repeat", label: "是否服从调剂", group: "志愿 2" }],
+    [{ fieldId: "family", label: "是否接受外派", group: "家庭成员" }],
+    [{ fieldId: "contact", label: "是否接受外派", group: "紧急联系人" }],
+    [{ fieldId: "entry", label: "实习收获", group: "实习经历" }]
+  ];
+  for (const form of cases) assert.deepEqual(profileApi.savedAnswerMatches(form, resume), [], JSON.stringify(form));
+  // 对照：同样的题目单独出现、不在这些区块里，照样填。
+  assert.deepEqual(profileApi.savedAnswerMatches([{ fieldId: "a", label: "是否服从调剂", group: "志愿一" },
+    { fieldId: "b", label: "是否接受外派", group: "其他信息" }, { fieldId: "c", label: "实习收获", group: "" }], resume),
+  [{ fieldId: "a", value: "是" }, { fieldId: "b", value: "是" }, { fieldId: "c", value: "学到很多" }]);
+  // 补充字段里归一后同名的有两项（模板占了名字的另说）：不知道用哪一项，不填。
+  const twice = [{ group: profileApi.CUSTOM_GROUP, key: "是否接受外派", value: "是" }, { group: profileApi.CUSTOM_GROUP, key: "是否接受外派：", value: "否" }];
+  assert.deepEqual(profileApi.savedAnswerMatches([{ fieldId: "x", label: "是否接受外派" }], twice), []);
+});
+
+// localRuleMatches 先用语义规则，规则没对上的再看补充字段；值得是这个字段收得下的。
+test("localRuleMatches adds saved answers after the semantic rules, only with a value the field accepts", () => {
+  const resume = profileApi.mergeResumeFields([{ group: "基本信息", key: "姓名", value: "测试用户" }],
+    profileApi.profileToResumeFields({ custom: [{ key: "姓名", value: "别的名字" }, { key: "是否服从调剂", value: "是" },
+      { key: "是否接受外派", value: "看情况" }, { key: "期望薪资", value: "面议" }] }));
+  const form = [{ fieldId: "name", label: "姓名" },
+    { fieldId: "adjust", label: "是否服从调剂", tagName: "input", inputType: "radio", options: ["是", "否"] },
+    { fieldId: "abroad", label: "是否接受外派", tagName: "input", inputType: "radio", options: ["是", "否"] },
+    { fieldId: "salary", label: "期望薪资" }];
+  assert.deepEqual(helpers.localRuleMatches(form, resume, profileApi),
+    [{ fieldId: "name", value: "测试用户" }, { fieldId: "adjust", value: "是" }]);
+  // 没有 savedAnswerMatches 的旧 profile 照旧只有语义规则。
+  const { savedAnswerMatches, ...older } = profileApi;
+  assert.equal(typeof savedAnswerMatches, "function");
+  assert.deepEqual(helpers.localRuleMatches(form, resume, older), [{ fieldId: "name", value: "测试用户" }]);
+});

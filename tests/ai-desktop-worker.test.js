@@ -244,6 +244,24 @@ test('the local matches a page fills first are the worker\'s rule matches', asyn
   assert.equal(result.diagnostics.secretFormFields, 1);
 });
 
+// #429 第五项：补充字段里题目原样对得上的回答，worker 和网页先填一样算本地匹配，不发给 AI；期望薪资照旧发给 AI。
+test('the worker fills a saved answer to the same question itself and still sends a salary question to the AI', async () => {
+  const profile = require('../profile-fields.js');
+  const formFields = [{ fieldId: 'name', label: '姓名' }, { fieldId: 'adjust', label: '是否服从调剂', tagName: 'input', inputType: 'radio', options: ['是', '否'] },
+    { fieldId: 'salary', label: '期望薪资' }, { fieldId: 'school', label: '学校' }];
+  const resumeFields = profile.mergeResumeFields([{ group: '基本信息', key: '姓名', value: '测试用户' }, { group: '教育背景', key: '学校', value: '大学乙' }],
+    profile.profileToResumeFields({ custom: [{ key: '是否服从调剂', value: '是' }, { key: '期望薪资', value: '面议' }] }));
+  const expected = [{ fieldId: 'name', value: '测试用户' }, { fieldId: 'adjust', value: '是' }];
+  const env = worker(() => ({ ok: true, text: '[]' }));
+  const result = await env.run({ formFields, resumeFields });
+  assert.deepEqual(helpers.localRuleMatches(formFields, resumeFields, profile), expected);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), expected);
+  assert.equal(result.diagnostics.ruleMatches, 2);
+  const user = env.sent.find(item => item.kind === 'desktop-complete').user;
+  const asked = JSON.parse(user.split('\n')[1]).map(field => field.label);
+  assert.deepEqual(asked, ['期望薪资', '学校']);
+});
+
 // 手机排在身份证号前、或者反过来，网页先填和 worker 都不能把一个号码填进另一个框。
 test('the page\'s local matches and the worker keep a mobile and an ID number apart', async () => {
   const profile = require('../profile-fields.js');

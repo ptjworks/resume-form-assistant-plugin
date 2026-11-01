@@ -321,9 +321,8 @@ async function handleAiFill(message, controller = new AbortController()) {
   if (!resumeFields.length) return { success: false, error: "当前模板没有可用字段。",
     diagnostics: { errorCode: "no_resume_fields", secretFormFields } };
 
-  const ruleMatches = ResumeProAIHelpers.filterValidMatches(
-    formFields, ResumeProAIHelpers.buildRuleBasedMatches(formFields, resumeFields)
-  );
+  // 和网页先填的字段同一份口径（#402），包括补充字段里题目原样对得上的回答（#429）。
+  const ruleMatches = ResumeProAIHelpers.localRuleMatches(formFields, resumeFields, ResumeProProfile);
   const matchedFieldIds = new Set(ruleMatches.map(match => match.fieldId));
   const remainingFormFields = formFields.filter(field => !matchedFieldIds.has(field.fieldId));
   const selectedCandidates = remainingFormFields.length

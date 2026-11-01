@@ -133,6 +133,14 @@
   // 明显只适用于当前岗位/公司的作答：可以列出来，但不默认勾选。
   const JOB_SPECIFIC_LABEL = /为什么|原因|理由|动机|谈谈|请(?:简述|简要|描述|介绍|说明|阐述)|自我评价|自我介绍|应聘|报考|投递|[本该贵](?:岗位|职位|公司|单位)|岗位|职位|招聘(?:信息|渠道)|得知|推荐人|内推/;
   const JOB_SPECIFIC_VALUE_CHARS = 300;
+  // #429 第五项：补充字段里有些题目原样对上也不在本地直接填，照旧交给 AI 按上下文判断。
+  // 证件和各种号码、联系方式、政治面貌、薪资（#429 列的四类），再加银行账户。
+  const SAVED_ANSWER_EXCLUDED = /证件|身份证|护照|通行证|签证|驾驶证|驾照|准考证|学号|工号|编号|号码|社保|公积金|银行|卡号|账号|账户|手机|电话|邮箱|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary/i;
+  // 题目里说的是「本公司」「本行」这类：换一家公司答案可能不同，等按站点存（#429 第五项第 2 点）了再在同一个站点复用。
+  const COMPANY_REFERENCE = /[本该贵我](?:公司|单位|行|司|集团|院|校)/;
+  // 离开所在区块就看不懂的笼统题目。
+  const GENERIC_TITLE = /^(?:其[他它](?:信息|说明|情况)?|补充(?:说明|信息|内容)?|附加(?:说明|信息)?|附言|留言)$/;
+  const CONTACT_SECTION = /紧急联系|联系人|监护人/;
 
   function text(value) {
     return String(value ?? "").trim();
@@ -343,6 +351,49 @@
     if (SKIPPED_INPUT_TYPES.has(candidate?.inputType) || SECRET_LABEL.test(label)) return "";
     if (SENSITIVE_AUTOCOMPLETE.test(text(candidate?.autocomplete))) return "";
     return label;
+  }
+
+  // #429 第五项：补充字段是用户在别的网页上答过、自己勾选存下的。网页题目按 normalizeKey 归一后和其中一项的名字完全相同，
+  // 就在本地直接填这一项，不用等 AI。formFields 是要填的网页字段（fieldId、label、group），taken 是别的规则已经填上的字段。
+  // 不这样复用的（照旧交给 AI）：SAVED_ANSWER_EXCLUDED 那几类；只适用于当前岗位、公司的题（存的时候默认不勾选的那类，
+  // 再加题目里说「本行」「我司」的）和整段作答；
+  // 笼统的短题目；同一张表上同名的题不止一个；题在可以加多条的区块里（group 末尾带序号）、家庭成员和紧急联系人区块里，
+  // 以及经历区块里除排名、外语这类概括信息以外的题（和存的时候 entryFieldLabel 的口径一样）。
+  function savedAnswerMatches(formFields, resumeFields, taken = new Set()) {
+    const saved = new Map();
+    (Array.isArray(resumeFields) ? resumeFields : []).forEach((field) => {
+      if (field?.group !== CUSTOM_GROUP) return;
+      const id = normalizeKey(field.key);
+      const value = text(field.value);
+      if (id && value) saved.set(id, saved.has(id) ? null : value);
+    });
+    if (!saved.size) return [];
+
+    const forms = Array.isArray(formFields) ? formFields : [];
+    const sameLabel = new Map();
+    forms.forEach((field) => {
+      const id = normalizeKey(field?.label);
+      if (id) sameLabel.set(id, (sameLabel.get(id) || 0) + 1);
+    });
+    const matches = [];
+    forms.forEach((field) => {
+      if (!field?.fieldId || taken.has(field.fieldId)) return;
+      const label = text(field.label);
+      const id = normalizeKey(label);
+      const value = saved.get(id);
+      if (!value || id.length < 2 || sameLabel.get(id) > 1 || !reusableTitle(id)) return;
+      if (value.length > JOB_SPECIFIC_VALUE_CHARS) return;
+      const group = text(field.group);
+      if (/\s\d+$/.test(group) || CONTACT_SECTION.test(group) || entryFieldLabel({ section: group, title: label }) === null) return;
+      matches.push({ fieldId: field.fieldId, value });
+    });
+    return matches;
+  }
+
+  // id 是归一后的题目。
+  function reusableTitle(id) {
+    return !(SAVED_ANSWER_EXCLUDED.test(id) || JOB_SPECIFIC_LABEL.test(id) || COMPANY_REFERENCE.test(id) || SECRET_LABEL.test(id)
+      || CONTEXTLESS_TITLE.test(id) || GENERIC_TITLE.test(id) || NOT_A_LABEL.test(id));
   }
 
   // 一次填写之后，网页上既没匹配上、也还空着的字段。密码验证码、文件、勾选框、经历类区块里的字段不算。
@@ -699,6 +750,7 @@
     profileFromEntries,
     profileOfferSummary,
     profileToResumeFields,
+    savedAnswerMatches,
     stripProfileSecrets
   };
 
