@@ -484,7 +484,7 @@
     }
     // Every helper this script calls must have loaded. A page element or frame named "module"
     // once kept one from loading (#275), and the page then must not show as connected.
-    const helpers = ["ResumeProFeedback", "ResumeProAIClient", "ResumeProAIHelpers", "ResumeProAntdPrefix", "ResumeProCustomControls",
+    const helpers = ["ResumeProFeedback", "ResumeProAIClient", "ResumeProAIHelpers", "ResumeProAntdPrefix", "ResumeProRegions", "ResumeProCustomControls",
       "ResumeProControls", "ResumeProProfile", "ResumeProResumeData", "ResumeProFormAgent", "ResumeProFillProbe",
       "ResumeProFieldScan", "ResumeProPageOutline", "ResumeProDeepAnalysis", "ResumeProPageActions",
       "ResumeProPageRecipe", "ResumeProSidebarState"];
@@ -3776,6 +3776,8 @@
       fields.push({
         fieldId, ...base,
         ...(multiple ? { multiple: true } : {}),
+        // #429 级联（省 → 市 → 区县这类逐级选的）：要的是从上到下的整条路径，本地匹配会把省、市、县拼起来，AI 提示词第 12 条。
+        ...(control.controlKind === "cascader" ? { cascade: true } : {}),
         dynamicOptions: ["custom-select", "cascader"].includes(control.controlKind),
         name: element.getAttribute("name") || "",
         idAttr: element.id || "",

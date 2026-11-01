@@ -148,4 +148,90 @@ function wireSelect(doc, id, { choices = ["汉族", "回族", "满族"], rows = 
   return { searches, events, shown: () => shown.textContent };
 }
 
-module.exports = { ETHNIC, textItem, wireForm, selectItem, wireSelect };
+// #429 分类选择器当地区选（期望工作城市、籍贯这类）：和常量选择器同一个弹层。左侧是一级的列表，每项前面一个单选圈，
+// 有下级的后面带箭头；点名字进下一级（面包屑「全部 / 广东省」），点圈才选中，点「确定」后组件里显示所选（公开记录：
+// 「点文字是逐级下钻，点图标才是选中，最后点『确定』」）。搜索时列出名字里带这个词的各级地区，名字下面一行写上级（「广东省/深圳市」）。
+// tree：{ 名字: 下级 }，没有下级的写 null。display：leaf 只显示所选的名字，path 显示整条路径（「广东省/深圳市/南山区」）。
+// rows：一屏画出几项（虚拟滚动）。drillMs：点名字以后过这么久才画出下一级（向后台要，期间不显示加载图标）。
+function wireRegion(doc, id, { tree, display = "leaf", rows = 50, drillMs = 0 } = {}) {
+  const item = doc.getElementById(id);
+  const root = item.querySelector(".phoenix-select");
+  const shown = root.querySelector(".phoenix-select__selected");
+  const top = Number(item.querySelector(".form-item").getAttribute("data-rect").split(",")[0]);
+  const searches = [], events = [];
+  const all = [];
+  const flatten = (branch, path) => {
+    for (const [name, below] of Object.entries(branch)) {
+      all.push({ name, path: [...path, name], below });
+      if (below) flatten(below, [...path, name]);
+    }
+  };
+  flatten(tree, []);
+  root.addEventListener("click", () => {
+    if (doc.querySelector(".constant-main-selector-container")) return;
+    let word = "", stack = [], picked = null;
+    const layer = doc.createElement("div");
+    layer.setAttribute("data-rect", `${top + 60},20,560,320`);
+    layer.innerHTML = `<div class="common-unmodeled-layer common-unmodeled-layer-placement-bottomLeft"><div class="common-unmodeled-layer__layerContent">
+      <div class="constant-main-selector-container"><div class="constant-main-layer-container">
+        <div class="content-search"><div class="phoenix-input"><input class="phoenix-input__input" type="text"></div></div>
+        <div class="content-container"><div class="left-container" data-rect="${top + 100},20,280,240"></div>
+          <div class="right-container" data-rect="${top + 100},300,260,240"><div><span class="select-data-num">已选<span class="select-data-num-text">0/</span><span class="select-data-num-limit">1</span></span><span class="clear-select-data">清空已选</span></div>
+          <div class="select-data-container"></div></div></div>
+        <div class="selector-footer-button"><button type="button" class="phoenix-button cancel">取消</button><button type="button" class="phoenix-button ok">确定</button></div>
+      </div></div></div></div>`;
+    const left = layer.querySelector(".left-container"), right = layer.querySelector(".select-data-container");
+    const search = layer.querySelector(".content-search input");
+    const chunks = (name) => !word ? `<span>${name}</span>`
+      : name.split(word).map((part) => (part ? `<span>${part}</span>` : "")).join(`<mark class="item-label-highLightCls">${word}</mark>`);
+    const key = (path) => path.join("/");
+    const row = (node) => `<div><div class="list-item-container" data-path="${key(node.path)}">`
+      + `<span class="icon-container"><svg class="${picked && key(picked) === key(node.path) ? "RadioChecked" : "RadioUnchecked"}" data-path="${key(node.path)}"></svg></span>`
+      + `<span class="item-text-label"><span>${chunks(node.name)}</span></span>`
+      + `${word && node.path.length > 1 ? `<div class="item-text-fullname">${key(node.path.slice(0, -1))}</div>` : ""}`
+      + `${!word && node.below ? `<svg class="arrow-icon"></svg>` : ""}</div></div>`;
+    const renderLeft = () => {
+      const branch = stack.reduce((at, name) => at[name], tree);
+      const list = word ? all.filter((node) => node.name.includes(word))
+        : Object.entries(branch).map(([name, below]) => ({ name, path: [...stack, name], below }));
+      const head = word ? `<div class="left-search-result">搜索结果${list.length}个</div>`
+        : `<div class="breadcrumb"><span>全部</span>${stack.map((name) => `<span class="breadcrumb-item">${name}</span>`).join("")}</div>`;
+      left.innerHTML = `${head}<div class="list-data-container">${list.length ? list.slice(0, rows).map(row).join("")
+        : `<div class="no-data">这里什么都没有...</div>`}</div>`;
+    };
+    const renderRight = () => {
+      layer.querySelector(".select-data-num-text").textContent = picked ? "1/" : "0/";
+      right.innerHTML = picked ? `<div class="select-data-item"><span class="select-data-item__name">${picked[picked.length - 1]}</span></div>`
+        : `<div class="select-data-empty">请在左侧选择内容</div>`;
+    };
+    left.addEventListener("click", (event) => {
+      const radio = event.target.closest?.("svg[data-path]");
+      if (radio) {
+        picked = radio.getAttribute("data-path").split("/"); events.push(`radio:${key(picked)}`);
+        renderLeft(); renderRight();
+        return;
+      }
+      const label = event.target.closest?.(".item-text-label");
+      const node = label && all.find((one) => key(one.path) === label.closest(".list-item-container").getAttribute("data-path"));
+      if (!node?.below || word) return;
+      events.push(`drill:${node.name}`);
+      const go = () => { stack = node.path; if (layer.isConnected) renderLeft(); };
+      if (drillMs) doc.defaultView.setTimeout(go, drillMs); else go();
+    });
+    layer.querySelector(".ok").addEventListener("click", () => {
+      events.push("ok");
+      shown.textContent = picked ? (display === "path" ? key(picked) : picked[picked.length - 1]) : "";
+      close();
+    });
+    layer.querySelector(".cancel").addEventListener("click", () => { events.push("cancel"); close(); });
+    search.addEventListener("input", () => { searches.push(search.value); word = search.value; renderLeft(); });
+    const outside = (event) => { if (!layer.contains(event.target) && !root.contains(event.target)) close(); };
+    const close = () => { layer.remove(); doc.removeEventListener("mousedown", outside, true); };
+    doc.addEventListener("mousedown", outside, true);
+    renderLeft(); renderRight();
+    doc.body.append(layer);
+  });
+  return { searches, events, shown: () => shown.textContent };
+}
+
+module.exports = { ETHNIC, textItem, wireForm, selectItem, wireSelect, wireRegion };

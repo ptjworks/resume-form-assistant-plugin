@@ -11,7 +11,7 @@ const { ETHNIC, selectItem, wireSelect } = require("./helpers/beisen-form.js");
 function load(html) {
   const dom = new JSDOM(`<form>${html}</form>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "region-data.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: (el) => !el.closest("[hidden]") });
   return { w, doc: w.document, api };
 }
@@ -244,10 +244,15 @@ test("dates are not picked from a generic popup: calendar cells cannot be told a
 });
 
 test("cascaders stay unsupported on the generic path: no guessing which column is which", async () => {
+  // 地区以外的级联照旧不做。地区（#429，见 region-cascade.test.js）按区划一级一级找，这里第一列里没有广东省，什么都不点。
   const h = moka();
-  const result = await h.api.operate({ ...h.target, controlKind: "cascader" }, "广东省 / 深圳市");
+  const result = await h.api.operate({ ...h.target, controlKind: "cascader" }, "技术 / 后端开发");
   assert.equal(result.reason, "unsupported_control");
   assert.deepEqual(h.clicks, []);
+  const other = moka();
+  const region = await other.api.operate({ ...other.target, controlKind: "cascader" }, "广东省 / 深圳市");
+  assert.equal(region.reason, "no_option_match");
+  assert.deepEqual(other.clicks, []);
 });
 
 test("an ARIA combobox keeps the ARIA rules: an unmarked popup it does not point to is never used", async () => {
@@ -369,12 +374,21 @@ function cityPicker({ columns = true } = {}) {
   return { ...h, clicks, target: scanned(doc, "所在城市") };
 }
 
-test("a province click that opens a city column stops there: cascade_unsupported, and the layer is closed", async () => {
+test("a province click that opens a city column stops there when the value is not a known place: cascade_unsupported, and the layer is closed", async () => {
+  // 认得出的地区（「广东省深圳市」）按区划逐级点（#429，见 region-cascade.test.js）；认不出的照旧点一下就停。
   const h = cityPicker();
-  const result = await h.api.operate(h.target, "广东省深圳市");
+  const result = await h.api.operate(h.target, "广东省示例市");
   assert.equal(result.reason, "cascade_unsupported");
   assert.deepEqual(h.clicks, ["广东省"], "no city is clicked");
   assert.equal(h.doc.querySelector(".city-layer"), null, "the layer the plugin opened is closed");
+});
+
+test("a province click that opens a city column goes on to the city when the value is a known place (#429)", async () => {
+  const h = cityPicker();
+  const result = await h.api.operate(h.target, "广东省深圳市");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ["广东省", "深圳市"]);
+  assert.equal(h.doc.querySelector(".phoenix-select__selected").textContent, "广东省/深圳市");
 });
 
 // 北森：搜出「蒙古族」点选后，弹层的搜索框清空、列表回到第一屏（或一次画出整张列表），稍后才收起并显示所选。

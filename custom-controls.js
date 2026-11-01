@@ -123,6 +123,14 @@
   }
   // 点选后冒出的下一级选项要一直在、组件也一直没显示所选，满这么久才算两级选择。
   const NEXT_LEVEL_MS = 300;
+  // #429 地区路径：显示文字里的分隔符（核对时去掉），最前面可以有的国家一级。
+  const PATH_SEPARATORS = /[\s\u3000/／>＞→\-－—·•,，、|｜]+/g;
+  const COUNTRY_NAMES = /^(?:中国|中国大陆|中华人民共和国)$/;
+  // 通用路径点了名字以后，新冒出来的下一级要这么久不变才算画好了（一项一项往上加的列表不能只读到前几项）。
+  const DRILL_STEADY_MS = 120;
+  // arrow、caret 只认在词头的（arrow-icon、el-icon-arrow-right、iconArrow），「narrow」这类不算。
+  const EXPAND_CLASS = /(?:^|[-_\s])(?:arrow|caret)|(?:^|[-_\s])(?:expand|expandable|has-?children|submenu|postfix)(?:$|[-_\s])/i;
+  const EXPAND_CAMEL = /[a-z](?:Arrow|Caret|Expand)/;
   // 联想框（#404 51job）聚焦后多半不弹建议，要打了字才有：只等这么久，没有就先打字。
   const FREE_TEXT_OPEN_MS = 600;
   // 打字后的建议里没有同名的一项：列表这么久没变、离打字也过了 FREE_TEXT_SETTLE_MS，才认定没有，
@@ -857,8 +865,15 @@
     if (info.multiple || ctx.hints.multiple === true) {
       return info.multiple && !info.cascade && ['antd', 'element'].includes(info.library) ? await pickMultiple(ctx, raw, h, info, state) : { reason: 'unsupported_control' };
     }
-    // 通用路径不做级联：分不清每一列，宁可不填。
-    if (info.library === 'generic' && info.cascade) return { reason: 'unsupported_control' };
+    // #429 地区（region-data.js）：「深圳」「广东省深圳市南山区」「北京/海淀区」认成从省开始的一条路径（含直辖市的「市辖区」这类占位的一级），
+    // 级联按它一级一级选（见 regionStep）。通用路径（北森分类选择器、Moka）只在至少到市时这样选，只有省的照原来整段选。认不出就照原来的写法拆。
+    const regions = scope.ResumeProRegions;
+    // 整段要填的值（级联按「/」拆开以前的）：地区路径从它认，通用路径的整段比对、整段搜索也用它。
+    const wholeValue = Array.isArray(raw) ? raw.map(trim).join('/') : trim(raw);
+    let region = (info.cascade || info.library === 'generic') && regions?.resolve ? regions.resolve(wholeValue) : null;
+    if (region && !info.cascade && region.path.filter(part => !part.placeholder).length < 2) region = null;
+    // 通用路径的别的级联不做：分不清每一列，宁可不填。
+    if (info.library === 'generic' && info.cascade && !region) return { reason: 'unsupported_control' };
     const desired = info.cascade ? (Array.isArray(raw) ? raw.map(trim) : trim(raw).split(/\s*(?:\/|>|→)\s*/)) : [trim(raw)];
     // 搜索框里打的字：有别的写法时打各种写法共有的一段（「土家族」打「土家」），见 ai-helpers.js 的 optionSearchText。
     const searchText = text => h.helpers.optionSearchText ? h.helpers.optionSearchText(text) : text;
@@ -879,7 +894,11 @@
       const sameAsWanted = text => {
         const full = trim(text), [first, ...rest] = full.split(/\s*\/\s*/);
         const primary = rest.length && /^[\x20-\x7e]+$/.test(rest.join('/')) ? first : full;
-        return [full, primary].some(value => sameText(value, desired[0]));
+        // 地区：显示的认得出是同一个地方（「广东省/深圳市」对「深圳」）也算。
+        const shownRegion = region && regions.resolve(full);
+        const names = path => path.filter(part => !part.placeholder).map(part => part.name).join('/');
+        // 比的是整段要填的值（标成级联时 desired 按「/」拆开了，desired[0] 只是省）。
+        return [full, primary].some(value => sameText(value, wholeValue)) || Boolean(shownRegion && names(shownRegion.path) === names(region.path));
       };
       const shownNow = selectedTexts(info);
       if (shownNow?.length === 1 && sameAsWanted(shownNow[0])) return { accepted: () => (selectedTexts(info) || []).length === 1 && sameAsWanted(selectedTexts(info)[0]) };
@@ -1066,7 +1085,207 @@
     const noSuggestions = list => info.freeText && !list.length && collapsed() && (!popup.isConnected || !h.visible(popup))
       && Date.now() - typedAt >= FREE_TEXT_SETTLE_MS;
     const chosenLabels = [], chosenValues = [];
-    for (let level = 0; level < desired.length; level++) {
+    // 联想框（#299、#404 51job）不标出选中状态：点了建议（只会是同名的一项，见 pick）、框里换成这一项、建议框也收起了就算选上。
+    // 之后的核对只看框里的字：插件打字引起的建议晚到时建议框会再弹出来。失焦后留不留得住由宿主核对，页面没收下的失焦时会还原。
+    const accepted = (picking = true) => {
+      const values = selectedTexts(info);
+      if (values === null && info.freeText && info.library === 'aria') {
+        return chosenLabels.length === 1 && (!picking || collapsed()) && h.helpers.normalizeText(info.el.value) === h.helpers.normalizeText(chosenLabels[0]);
+      }
+      // #429 通用路径的地区：组件上可能只显示最后一级，也可能显示整条路径（分隔符各家不同）。去掉分隔符后对得上点过的几级、
+      // 或路径走到的这几级（带不带「市辖区」这类占位的一级），或最后一级的别的写法，都算。
+      if (region && info.library === 'generic') {
+        if (!values?.length || !chosenLabels.length) return false;
+        const flat = text => h.helpers.normalizeText(String(text ?? '').replace(PATH_SEPARATORS, ''));
+        const shown = flat(values.join(''));
+        const reached = region.path.slice(0, regionAt), named = reached.filter(part => !part.placeholder);
+        // 选项写成「深圳市 / Shenzhen」这类双语时，组件上可能显示整段：点过的选项的整段文字也算。
+        const forms = [chosenLabels[chosenLabels.length - 1], chosenLabels.join(''), chosenValues[chosenValues.length - 1], chosenValues.join(''),
+          named.map(part => part.name).join(''), reached.map(part => part.name).join('')];
+        if (!forms.some(form => flat(form) === shown) && !(named.length && regions.matches(values.join(''), named[named.length - 1]))) return false;
+        return !(state.searchInput && info.root.contains(state.searchInput) && popup.isConnected && h.visible(popup));
+      }
+      if (!values || values.length !== chosenLabels.length) return false;
+      const hidden = info.library === 'aria' && info.el.tagName === 'INPUT' && (!info.el.readOnly || info.requireCommitSignal)
+        ? info.root.querySelectorAll('input[type="hidden"]') : [];
+      const explicitLabel = trim(info.combo.getAttribute('aria-valuetext'));
+      const expected = hidden.length === 1 && !explicitLabel ? chosenValues : chosenLabels;
+      // 通用路径：组件里可能显示整段（「男/Male」）也可能只显示中文部分，两种都认，别的都不算。
+      const same = (value, index) => [expected[index], ...(info.library === 'generic' ? [chosenValues[index]] : [])]
+        .some(text => h.helpers.normalizeText(value) === h.helpers.normalizeText(text));
+      if (!values.every(same)) return false;
+      // 在下拉自己的输入框里打过字：框里的字可能只是搜索词。弹层收起来了才算真选上。
+      if (info.library === 'generic' && state.searchInput && info.root.contains(state.searchInput)
+        && popup.isConnected && h.visible(popup)) return false;
+      return true;
+    };
+    // #429 地区路径（region.path 的下标 k）上的这一级在这一列里是哪一项。占位的一级（直辖市的「市辖区」、重庆的「县」）：
+    // 网站的选项里有对应写法（「北京城区」「重庆郊县」）就点它，没有就当网站没有这一级。网站多出来的一级（和上一级同名的
+    // 「北京市 / 北京市」，最前面的「中国」）点过去接着找。几项都对得上不猜。next：选了这一项以后路径走到哪一级。
+    let regionAt = 0;
+    const regionStep = (list, k, level) => {
+      const usable = list.filter(option => !option.disabled && !h.helpers.isPlaceholderOption(option));
+      const one = test => {
+        const hits = usable.filter(option => [option.text, option.value].some(text => text != null && test(String(text))));
+        return hits.length === 1 ? { option: hits[0] } : hits.length ? { reason: 'ambiguous_option' } : null;
+      };
+      const parts = region.path;
+      let at = k;
+      for (; at < parts.length && parts[at].placeholder; at++) {
+        const hit = one(text => regions.placeholderLike(text, parts[at]) || regions.matches(text, parts[at]));
+        if (hit) return hit.option ? { option: hit.option, next: at + 1 } : hit;
+      }
+      if (at >= parts.length) return { reason: 'no_option_match' };
+      const hit = one(text => regions.matches(text, parts[at]) || sameText(text, parts[at].name));
+      if (hit) return hit.option ? { option: hit.option, next: at + 1 } : hit;
+      // 网站的写法和全名、简称都不一样（「新疆维吾尔族自治区」）：和原来一样，正好一项包含它或被它包含才算。
+      // 哪一种写法对上了几项，就报几项都对得上，不再换一种写法去试。
+      for (const name of [parts[at].name, ...parts[at].aliases]) {
+        const loose = match(usable, name, h.helpers);
+        if (loose.option) return { option: loose.option, next: at + 1 };
+        if (loose.reason === 'ambiguous_option') return loose;
+      }
+      const above = parts.slice(0, at).reverse().find(part => !part.placeholder);
+      const pass = one(text => Boolean(above && regions.matches(text, above)) || (level === 0 && at === 0 && COUNTRY_NAMES.test(trim(text))));
+      if (pass) return pass.option ? { option: pass.option, next: k, pass: true } : pass;
+      return { reason: 'no_option_match' };
+    };
+    // 第一列：从路径最下面一级往上找，先对上的那一级就从它开始（平铺的列表里省、市都有时选「深圳市」，不选「广东省」；
+    // 省份列表里只对得上省）。同一项对得上两级的不算。都没有再按最上面一级找（含网站多出来的「中国」、写法不一样的省名）。
+    const regionStart = list => {
+      const usable = list.filter(option => !option.disabled && !h.helpers.isPlaceholderOption(option));
+      const named = region.path.map((part, at) => ({ part, at })).filter(item => !item.part.placeholder);
+      const fits = (option, part) => [option.text, option.value].some(text => text != null && regions.matches(String(text), part));
+      for (const { part, at } of named.slice().reverse()) {
+        const hits = usable.filter(option => fits(option, part) && !named.some(other => other.part !== part && fits(option, other.part)));
+        if (hits.length) return hits.length === 1 ? { option: hits[0], next: at + 1 } : { reason: 'ambiguous_option' };
+      }
+      return regionStep(list, 0, 0);
+    };
+    // 通用路径的地区级联（北森分类选择器：点名字进下一级，点圆圈才选中，最后点「确定」；Moka 这类：点了冒出新的一列）。
+    // 不是最后一级的点名字，等新冒出来的选项（下一级）；等不到就是网站只到这一级，把这一项当最后一级选。
+    // 最后一级点圆圈（没有圆圈的点名字）。第一列里找不到（列表不全）时在弹层的搜索框里搜，见 searchRegion。
+    const layerList = () => ctx.popup?.isConnected && h.visible(ctx.popup) ? options(ctx.popup, info, 0, h) : [];
+    const nameTarget = option => {
+      let target = option.node;
+      for (;;) {
+        const texty = Array.from(target.children).filter(child => trim(child.textContent));
+        if (texty.length !== 1 || Array.from(target.childNodes).some(child => child.nodeType === 3 && trim(child.data))) return target;
+        target = texty[0];
+      }
+    };
+    // 条目带着有下级的样子：展开箭头（北森 arrow-icon、antd 的 -expand、Element 的 postfix 这类类名）或 aria-expanded、aria-haspopup。
+    const expandable = option => [option.node, ...option.node.querySelectorAll('[class], [aria-expanded], [aria-haspopup]')].some(el =>
+      el.hasAttribute('aria-expanded') || (el.hasAttribute('aria-haspopup') && el.getAttribute('aria-haspopup') !== 'false')
+      || EXPAND_CLASS.test(String(el.getAttribute('class') || '')) || EXPAND_CAMEL.test(String(el.getAttribute('class') || '')));
+    // 圆圈已经是选中的（点名字时就选上了）不再点，免得又点掉。
+    const markChecked = mark => mark.getAttribute('aria-checked') === 'true' || mark.checked === true
+      || String(mark.getAttribute('class') || '').split(/\s+/).some(token => /checked$/i.test(token) && !/un-?checked$/i.test(token));
+    // 搜最后一级；最后一级是区县、搜不到时再搜市（网站可能只到市，搜到的市当最后一级选）。
+    // 搜出来几项同名（「南山区」深圳、鹤岗都有）时，看哪一行里写着上面几级的名字，正好一行才选。
+    const searchRegion = async () => {
+      if (!safeSearch(searchInput) || !searchInput.isConnected) return { reason: 'no_option_match' };
+      const named = region.path.map((part, at) => ({ part, at })).filter(item => !item.part.placeholder);
+      // 最后一级搜不到时再搜一次整段（选项可能就写着整段「深圳市南山区」，在第一屏以外），这一项不按地区拆。
+      const whole = wholeValue, leaf = named[named.length - 1];
+      // 退去搜市：上一级是市，或是直辖市本身（北京市 / 市辖区 / 海淀区：网站只到「北京市」）。省直辖县（济源）不退到省。
+      const upper = named[named.length - 2];
+      const municipality = region.path[1]?.placeholder && ['市辖区', '县'].includes(region.path[1].name);
+      const cityTerm = leaf.part.level === 2 && upper && (upper.part.level === 1 || municipality) ? [upper] : [];
+      const terms = [leaf, ...(named.some(item => item.part.name === whole) ? [] : [{ whole }]), ...cityTerm];
+      for (const [index, term] of terms.entries()) {
+        const { part, at } = term;
+        const stopped = h.stop(ctx, true); if (stopped) return { reason: stopped };
+        const signature = layerList().map(option => option.full).join('\n');
+        // 搜简称（「南山」）：网站写成「南山」「南山区」都搜得到，搜出来的再按全名、简称比。
+        state.searchInput = searchInput; state.searchBefore = searchInput.value;
+        state.query = term.whole ?? (regions.shortName(part.name).length >= 2 ? regions.shortName(part.name) : part.name);
+        h.write(searchInput, state.query, ctx); h.input(searchInput);
+        searchDone = true;
+        let lastSignature = signature, stableSince = Date.now();
+        const updated = await h.waitUntil(ctx, doc.documentElement, () => {
+          const list = layerList(), next = list.map(option => option.full).join('\n');
+          if (next !== lastSignature) { lastSignature = next; stableSince = Date.now(); }
+          return list;
+        }, list => !loading() && lastSignature !== signature && list.length > 0 && Date.now() - stableSince >= 80);
+        if (updated.reason && updated.reason !== 'verification_timeout') return { reason: updated.reason };
+        const list = updated.value || layerList();
+        const same = list.filter(option => !option.disabled && [option.text, option.value].some(text => text != null && sameText(String(text), whole)));
+        if (same.length === 1) return { option: same[0], next: region.path.length, final: true };
+        if (same.length > 1) return { reason: 'ambiguous_option' };
+        if (term.whole) continue;
+        // 搜索结果可能一行写着整条路径（「广东省/深圳市/南山区」）：认出来是路径上到这一级为止的同一个地方也算。
+        const upTo = named.filter(item => item.at <= at).map(item => item.part.name).join('/');
+        const samePlace = text => { const found = regions.resolve(text); return Boolean(found) && found.path.filter(one => !one.placeholder).map(one => one.name).join('/') === upTo; };
+        let hits = list.filter(option => !option.disabled && [option.text, option.value].some(text => text != null && (regions.matches(String(text), part) || samePlace(String(text)))));
+        if (hits.length > 1) {
+          const above = named.filter(item => item.at < at).map(item => item.part);
+          const row = option => {
+            let node = option.node;
+            while (node.parentElement && node.parentElement !== ctx.popup && !hits.some(other => other !== option && node.parentElement.contains(other.node))) node = node.parentElement;
+            return String(node.textContent || '').replace(/\s+/g, '');
+          };
+          hits = hits.filter(option => above.every(upper => upper.aliases.some(alias => row(option).includes(alias))));
+          // 网站有这一级、只是分不清是哪一个：报几项都对得上，不退去选上一级。
+          if (!hits.length) return { reason: 'ambiguous_option' };
+        }
+        if (hits.length === 1) return { option: hits[0], next: at + 1, final: index > 0 };
+        if (hits.length > 1) return { reason: 'ambiguous_option' };
+      }
+      return { reason: 'no_option_match' };
+    };
+    const drillGeneric = async first => {
+      // 列表里正好有一项就是要填的整段（选项写着「广东省深圳市南山区」）：直接选它，不按地区拆。
+      const whole = first.filter(option => !option.disabled && [option.text, option.value].some(text => text != null && sameText(String(text), wholeValue)));
+      let step = whole.length === 1 ? { option: whole[0], next: region.path.length, final: true } : whole.length ? { reason: 'ambiguous_option' } : regionStart(first);
+      if (!step.option && step.reason !== 'ambiguous_option' && searchable && !searchDone) step = await searchRegion();
+      if (!step.option) return { reason: step.reason || 'no_option_match' };
+      for (let clicks = 0; !step.final && step.next < region.path.length; clicks++) {
+        if (clicks >= 8) return { reason: 'cascade_unsupported' };
+        // 点之前每个条目的文字：换成新节点的、或同一个节点换了文字的（按位置复用节点重画的列表）都算新冒出来的。
+        const option = step.option, before = new Map(layerList().map(item => [item.node, item.full]));
+        state.activated = true; info.lastChoice = option.node;
+        const reason = h.click(nameTarget(option), ctx, true);
+        if (reason) return { reason };
+        chosenLabels.push(option.text); chosenValues.push(String(option.value));
+        regionAt = step.next;
+        let lastKey = null, steadySince = 0;
+        const fresh = () => {
+          if (!ctx.popup?.isConnected || !h.visible(ctx.popup)) return null;
+          const list = layerList().filter(item => before.get(item.node) !== item.full), key = list.map(item => item.full).join('\n');
+          if (key !== lastKey) { lastKey = key; steadySince = Date.now(); }
+          return list;
+        };
+        const next = await h.waitUntil(ctx, doc.documentElement, fresh, list => list === null || (!loading() && list.length > 0 && Date.now() - steadySince >= DRILL_STEADY_MS),
+          Math.max(h.timeoutMs ?? 2000, DRILL_STEADY_MS * 3));
+        if (next.reason && next.reason !== 'verification_timeout') return { reason: next.reason };
+        if (next.reason || next.value === null) {
+          // 没有下一级：网站只到这一级（还在加载的不算）。有圆圈的还要点圆圈；没有圆圈的点名字就选上了。
+          // 弹层一直开着、只是等不到新选项时，可能是下一级加载得慢：这一项带着有下级的样子（展开箭头这类）就照等待下一级选项超时报，
+          // 不把它当成要填的选上；不带的（只列省的平铺列表）当网站只到这一级。点了名字弹层就收起的，是网站自己收下了，照下面核对。
+          if (loading() || (next.reason && expandable(option))) return { reason: 'cascade_timeout' };
+          if (step.pass) return { reason: 'no_option_match' };
+          const mark = option.target && option.target !== nameTarget(option) && option.target.isConnected ? option.target : null;
+          if (mark && !markChecked(mark)) {
+            shownBefore = new Set(layerList().map(optionKey));
+            const clicked = h.click(mark, ctx, true);
+            if (clicked) return { reason: clicked };
+          }
+          return {};
+        }
+        step = regionStep(next.value, regionAt, 1);
+        if (!step.option) return { reason: step.reason };
+      }
+      const option = step.option;
+      shownBefore = new Set(layerList().map(optionKey));
+      state.activated = true; info.lastChoice = option.node;
+      const reason = h.click(option.target || option.node, ctx, true);
+      if (reason) return { reason };
+      chosenLabels.push(option.text); chosenValues.push(String(option.value));
+      regionAt = step.next;
+      return {};
+    };
+    for (let level = 0; region ? regionAt < region.path.length && level < 8 : level < desired.length; level++) {
       // 通用路线：第一次点开时选项常常还在从网站后台加载（金发民族：左侧只有加载图标，右侧「已选」栏已经画出来），
       // 等加载图标消失、列表连续 300ms 不变再判断有没有要的选项；一直在变或一直为空，等满后再改用搜索框。
       const generic = info.library === 'generic';
@@ -1109,7 +1328,13 @@
       // （江苏 13 个市、宁夏 5 个）；下面没有市的省（港澳台）列表是空的，这一位照报。
       // 也只看第一层：插件输入过要找的值（含点开前先输入的）、或级联点了上一列之后，列表由简历的值决定。
       if (level === 0 && !searchDone) ctx.observed.hasOptions = list.length > 0;
-      let found = pick(list);
+      if (generic && region) {
+        const drilled = await drillGeneric(list);
+        if (drilled.reason) return drilled;
+        break;
+      }
+      const regionPick = items => level === 0 ? regionStart(items) : regionStep(items, regionAt, level);
+      let found = region ? regionPick(list) : pick(list);
       if (searchable && !found.option && found.reason !== 'ambiguous_option' && !searchDone) {
         const reason = h.stop(ctx, true); if (reason) return { reason };
         if (!safeSearch(searchInput)) return { reason: 'unsupported_control' };
@@ -1134,7 +1359,7 @@
       }
       if (found.reason) return found;
       // Re-read immediately before activation: async renders can replace an option.
-      const latest = pick(readOptions(level));
+      const latest = region ? regionPick(readOptions(level)) : pick(readOptions(level));
       if (multiplePopup()) return { reason: 'unsupported_control' };
       if (latest.reason) return latest;
       if (!info.pathNodes) info.pathNodes = [];
@@ -1154,33 +1379,16 @@
       if (reason) return { reason };
       chosenLabels.push(latest.option.text);
       chosenValues.push(String(latest.option.value));
-      if (info.cascade && level < desired.length - 1) {
-        const next = await h.waitUntil(ctx, doc.documentElement, () => readOptions(level + 1), children => !loading() && children.length > 0 && (parentActive
-          || children.length !== previousChildren.length || children.some((child, index) => child.node !== previousChildren[index]?.node || child.value !== previousChildren[index]?.value || child.text !== previousChildren[index]?.text)));
+      if (region) regionAt = latest.next;
+      if (info.cascade && (region ? regionAt < region.path.length : level < desired.length - 1)) {
+        // 地区：网站只到这一级（只有省、市两级，要填的写到了区县）时，点的这一项就是最后一级：弹层收起、组件上显示的正是点过的几级，就算选上。
+        const leafCommitted = () => Boolean(region) && (!popup.isConnected || !h.visible(popup)) && accepted();
+        const next = await h.waitUntil(ctx, doc.documentElement, () => leafCommitted() ? null : readOptions(level + 1), children => children === null || (!loading() && children.length > 0 && (parentActive
+          || children.length !== previousChildren.length || children.some((child, index) => child.node !== previousChildren[index]?.node || child.value !== previousChildren[index]?.value || child.text !== previousChildren[index]?.text))));
         if (next.reason) return { reason: next.reason === 'verification_timeout' ? 'cascade_timeout' : next.reason };
+        if (next.value === null) break;
       }
     }
-    // 联想框（#299、#404 51job）不标出选中状态：点了建议（只会是同名的一项，见 pick）、框里换成这一项、建议框也收起了就算选上。
-    // 之后的核对只看框里的字：插件打字引起的建议晚到时建议框会再弹出来。失焦后留不留得住由宿主核对，页面没收下的失焦时会还原。
-    const accepted = (picking = true) => {
-      const values = selectedTexts(info);
-      if (values === null && info.freeText && info.library === 'aria') {
-        return chosenLabels.length === 1 && (!picking || collapsed()) && h.helpers.normalizeText(info.el.value) === h.helpers.normalizeText(chosenLabels[0]);
-      }
-      if (!values || values.length !== chosenLabels.length) return false;
-      const hidden = info.library === 'aria' && info.el.tagName === 'INPUT' && (!info.el.readOnly || info.requireCommitSignal)
-        ? info.root.querySelectorAll('input[type="hidden"]') : [];
-      const explicitLabel = trim(info.combo.getAttribute('aria-valuetext'));
-      const expected = hidden.length === 1 && !explicitLabel ? chosenValues : chosenLabels;
-      // 通用路径：组件里可能显示整段（「男/Male」）也可能只显示中文部分，两种都认，别的都不算。
-      const same = (value, index) => [expected[index], ...(info.library === 'generic' ? [chosenValues[index]] : [])]
-        .some(text => h.helpers.normalizeText(value) === h.helpers.normalizeText(text));
-      if (!values.every(same)) return false;
-      // 在下拉自己的输入框里打过字：框里的字可能只是搜索词。弹层收起来了才算真选上。
-      if (info.library === 'generic' && state.searchInput && info.root.contains(state.searchInput)
-        && popup.isConnected && h.visible(popup)) return false;
-      return true;
-    };
     const settled = () => accepted() ? 'accepted' : nextLevel() ? 'next' : '';
     // 「勾选 + 确定」式选择框：点了选项、组件上还没显示出来，就点弹层里唯一的「确定」。
     if (info.library === 'generic') {

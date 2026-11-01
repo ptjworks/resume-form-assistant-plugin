@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const { ETHNIC, textItem, wireForm, selectItem, wireSelect } = require("./helpers/beisen-form.js");
+const { ETHNIC, textItem, wireForm, selectItem, wireSelect, wireRegion } = require("./helpers/beisen-form.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
@@ -34,7 +34,8 @@ function layout(w) {
 }
 
 // resume：[[题目, 值]]，模板里的项和 AI 替身的回答都按它来。测试结束时关掉窗口，停下页面上的定时器。
-function page(t, body, resume) {
+// sent：交给 AI 替身的字段都放进这里。
+function page(t, body, resume, sent = []) {
   const dom = new JSDOM(`<!doctype html><html><body>${body}</body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://demo.zhiye.example/form" });
   const w = dom.window;
@@ -51,6 +52,7 @@ function page(t, body, resume) {
   const data = { templates: [{ id: "t", name: "虚构模板", fieldCount: resume.length }], activeTemplate: template,
     profile: { values: {}, family: [], custom: [] }, profileRevision: 0 };
   const fill = (message) => {
+    sent.push(...message.formFields);
     const matches = message.formFields.filter((field) => answers[field.label] !== undefined)
       .map((field) => ({ fieldId: field.fieldId, value: answers[field.label] }));
     return { success: true, matches, diagnostics: { ruleMatches: 0, aiFields: message.formFields.length, aiMatches: matches.length, errorCode: "none" } };
@@ -129,6 +131,28 @@ test("Beisen constant selector still loading, with the current choice listed in 
   assert.equal(run.shown(), "回族", run.diag);
   assert.deepEqual(run.events, ["radio:回族", "ok"]);
   assert.equal(run.result.filledCount, 1);
+});
+
+// #429 分类选择器当地区选：整条一键填写（manifest 里的脚本都加载，含 region-data.js）。
+test("Beisen region picker in a whole fill: the value is followed level by level, then 确定", async (t) => {
+  const p = page(t, selectItem("f1", "期望工作城市", 100), [["期望工作城市", "广东省深圳市南山区"]]);
+  const region = wireRegion(p.doc, "f1", { tree: { 北京市: { 海淀区: null }, 广东省: { 广州市: { 天河区: null }, 深圳市: { 福田区: null, 南山区: null } } }, display: "path" });
+  const result = await p.run();
+  assert.equal(region.shown(), "广东省/深圳市/南山区", p.ui.diag.value);
+  assert.deepEqual(region.events, ["drill:广东省", "drill:深圳市", "radio:广东省/深圳市/南山区", "ok"]);
+  assert.equal(result.filledCount, 1);
+});
+
+test("a cascader is marked cascade in the fields sent to the AI, other fields are not", async (t) => {
+  const sent = [];
+  const p = page(t, textItem("name", "姓名", 100) + `<div class="fields-col"><div class="form-item" data-rect="200,20,600,60"><label for="native">籍贯</label>
+    <div class="el-cascader" data-rect="224,20,400,32"><div class="el-input"><input id="native" class="el-input__inner" readonly placeholder="请选择"></div></div></div></div>`,
+  [["姓名", "张三"]], sent);
+  await p.run();
+  const byLabel = new Map(sent.map((field) => [field.label, field]));
+  assert.equal(byLabel.get("籍贯")?.cascade, true, JSON.stringify(sent.map((field) => field.label)));
+  assert.equal(byLabel.has("姓名"), true);
+  assert.equal("cascade" in byLabel.get("姓名"), false);
 });
 
 test("Beisen school name searched on the server, opened before its dictionary has loaded: the school is picked", async (t) => {
