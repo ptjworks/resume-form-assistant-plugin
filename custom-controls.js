@@ -897,7 +897,8 @@
         // 地区：显示的认得出是同一个地方（「广东省/深圳市」对「深圳」）也算。
         const shownRegion = region && regions.resolve(full);
         const names = path => path.filter(part => !part.placeholder).map(part => part.name).join('/');
-        return [full, primary].some(value => sameText(value, desired[0])) || Boolean(shownRegion && names(shownRegion.path) === names(region.path));
+        // 比的是整段要填的值（标成级联时 desired 按「/」拆开了，desired[0] 只是省）。
+        return [full, primary].some(value => sameText(value, wholeValue)) || Boolean(shownRegion && names(shownRegion.path) === names(region.path));
       };
       const shownNow = selectedTexts(info);
       if (shownNow?.length === 1 && sameAsWanted(shownNow[0])) return { accepted: () => (selectedTexts(info) || []).length === 1 && sameAsWanted(selectedTexts(info)[0]) };
@@ -1225,6 +1226,8 @@
             return String(node.textContent || '').replace(/\s+/g, '');
           };
           hits = hits.filter(option => above.every(upper => upper.aliases.some(alias => row(option).includes(alias))));
+          // 网站有这一级、只是分不清是哪一个：报几项都对得上，不退去选上一级。
+          if (!hits.length) return { reason: 'ambiguous_option' };
         }
         if (hits.length === 1) return { option: hits[0], next: at + 1, final: index > 0 };
         if (hits.length > 1) return { reason: 'ambiguous_option' };

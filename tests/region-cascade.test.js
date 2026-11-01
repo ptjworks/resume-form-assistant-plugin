@@ -373,6 +373,16 @@ test("search results that show the whole path in one line are matched as the sam
   assert.deepEqual(pick.events, ["radio:广东省/深圳市/南山区", "ok"]);
 });
 
+test("same-name districts whose rows do not name the city are reported as ambiguous, not replaced by the city", async () => {
+  // 审查 B14：搜出两个「南山区」，行里只写着省，分不清哪个是深圳的。原来退去搜「深圳」，把深圳市选上了。
+  const filler = Object.fromEntries(["河北省", "山西省", "辽宁省", "吉林省", "江苏省", "浙江省", "安徽省", "福建省", "江西省", "山东省"].map((name) => [name, ["示例学院"]]));
+  const h = load(selectItem("f1", "意向城市", 100));
+  const pick = wireSelect(h.doc, "f1", { tree: { ...filler, 广东省: ["南山区", "深圳市"], 黑龙江省: ["南山区"] }, rows: 9 });
+  const result = await h.api.operate(scanned(h.doc, "意向城市"), "广东省深圳市南山区");
+  assert.equal(result.reason, "ambiguous_option", JSON.stringify(result));
+  assert.deepEqual(pick.events, [], "nothing is picked");
+});
+
 // 每行一个单选圈加名字，点名字进下一级（reuse：按位置复用原来的行，只换文字），点圈选中，点「确定」后显示。
 function rowsPicker(tree, { rowClass = "", reuse = false } = {}) {
   const h = load(selectItem("f1", "籍贯", 100));
@@ -488,6 +498,16 @@ test("a generic control marked as a cascader follows a slash-separated region pa
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(h.clicks, ["广东省", "深圳市", "南山区"]);
   assert.equal(h.input.value, "广东省/深圳市/南山区");
+});
+
+test("a generic cascader that already shows only the province still goes on down the path", async () => {
+  // 审查 B15：框里已经是「江苏省」，要填「江苏省/苏州市/昆山市」。原来只拿「/」前的第一段比，当成已经填好了。
+  const h = columnsPicker(GD);
+  h.input.value = "江苏省";
+  const result = await h.api.operate({ ...h.target, controlKind: "cascader" }, "江苏省/苏州市/昆山市");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ["江苏省", "苏州市", "昆山市"]);
+  assert.equal(h.input.value, "江苏省/苏州市/昆山市");
 });
 
 test("a column dropdown whose last wanted level still opens another column stops: cascade_unsupported, and the layer is closed", async () => {
