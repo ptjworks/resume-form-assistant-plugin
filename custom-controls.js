@@ -181,8 +181,12 @@
     const { root, library } = info;
     if (!root?.isConnected) return null;
     if (library === 'antd') {
-      if (root.querySelector(antd(root, '.ant-select-selection-overflow-item-rest'))) return null;
-      return Array.from(root.querySelectorAll(antd(root, '.ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix) .ant-select-selection-item, .ant-select-selection__choice')), node => ({
+      // 不折起来的时候 antd 也可能留着这一格，只是看不见（rc-overflow 给 opacity: 0）：看得见、写着「+ N」才算折起来。
+      const rest = root.querySelector(antd(root, '.ant-select-selection-overflow-item-rest'));
+      const css = rest?.ownerDocument?.defaultView?.getComputedStyle?.(rest);
+      if (rest && !rest.hidden && css?.display !== 'none' && css?.visibility !== 'hidden' && parseFloat(css?.opacity ?? '1') !== 0
+        && /^\+\s*\d/.test(trim(rest.textContent))) return null;
+      return Array.from(root.querySelectorAll(antd(root, '.ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix):not(.ant-select-selection-overflow-item-rest) .ant-select-selection-item, .ant-select-selection__choice')), node => ({
         node, text: trim((node.querySelector(antd(node, '.ant-select-selection-item-content, .ant-select-selection__choice__content')) || node).textContent),
         remove: node.querySelector(antd(node, '.ant-select-selection-item-remove, .ant-select-selection__choice__remove')) })).filter(tag => tag.text);
     }
@@ -1261,6 +1265,13 @@
     const marked = node => node.getAttribute('aria-selected') === 'true'
       || String(node.getAttribute('class') || '').split(/\s+/).some(token => SELECTED_TOKEN.test(token));
     const chosen = Array.from(kept, tag => tag.text);
+    // 插件在搜索框里打的字：选上一项以后、或没选成要交还时清掉。点过别的项以后 run 收尾不再管搜索框（不撤销已经做出的选择）。
+    const clearSearch = () => {
+      const searched = state.searchInput;
+      if (searched?.isConnected && searched.value && searched.value === state.query && safeSearch(searched) && !h.stop(ctx)) { h.write(searched, '', ctx); h.input(searched); }
+      state.searchInput = null;
+    };
+    const fail = outcome => { clearSearch(); return outcome; };
     for (const value of pending) {
       const ready = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
       if (ready.reason) return { reason: ready.reason === 'verification_timeout' ? 'options_not_rendered' : ready.reason };
@@ -1279,24 +1290,22 @@
           if (next !== last) { last = next; since = Date.now(); }
           return current;
         }, current => last !== before && Date.now() - since >= 80);
-        if (updated.reason && updated.reason !== 'verification_timeout') return { reason: updated.reason };
+        if (updated.reason && updated.reason !== 'verification_timeout') return fail({ reason: updated.reason });
         list = listOf();
-        if (!list.length) return { reason: 'no_option_match' };
+        if (!list.length) return fail({ reason: 'no_option_match' });
         found = match(list, value, helpers, partialList(list, popup, ctx.popup));
       }
-      if (found.reason) return found;
+      if (found.reason) return fail(found);
       const option = found.option;
       if (!marked(option.node)) {
-        const reason = h.click(option.node, ctx, true); if (reason) return { reason };
+        const reason = h.click(option.node, ctx, true); if (reason) return fail({ reason });
         state.activated = true;
       }
       if (!chosen.some(label => norm(label) === norm(option.text))) chosen.push(option.text);
       const shown = await h.waitUntil(ctx, doc.documentElement, () => multiTags(info), list => Boolean(list) && list.some(tag => norm(tag.text) === norm(option.text)));
-      if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'selection_not_committed' : shown.reason };
-      // 搜过的：选上以后搜索框里还留着插件打的字就清掉，下一项从整张列表找。
-      const searched = state.searchInput;
-      if (searched?.isConnected && searched.value && searched.value === state.query && safeSearch(searched)) { h.write(searched, '', ctx); h.input(searched); }
-      state.searchInput = null;
+      if (shown.reason) return fail({ reason: shown.reason === 'verification_timeout' ? 'selection_not_committed' : shown.reason });
+      // 搜过的：下一项从整张列表找。
+      clearSearch();
     }
     // 要选的都选上了：再删这次不要的标签。
     for (;;) {

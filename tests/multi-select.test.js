@@ -279,6 +279,26 @@ test("antd 5 multiple select: an option whose text holds a list separator is one
   assert.deepEqual(many.state.values, wanted);
 });
 
+test("antd 5 multiple select: a hidden + N slot left by rc-overflow is not taken for collapsed tags", async () => {
+  const h = antd5(LANGS, { selected: ["英语"] });
+  const rest = h.doc.createElement("div"); rest.className = "ant-select-selection-overflow-item ant-select-selection-overflow-item-rest"; rest.style.opacity = "0";
+  rest.innerHTML = '<span class="ant-select-selection-item">+ 0 ...</span>';
+  h.root.querySelector(".ant-select-selection-overflow-item-suffix").before(rest);
+  const result = await h.api.operate(h.target, "英语、日语");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.state.values, ["英语", "日语"]);
+});
+
+test("Element UI 2 multiple select: a value that cannot be found leaves no search text behind and the dropdown closed", async () => {
+  const h = elementUi(LANGS);
+  const search = h.root.querySelector(".el-select__input");
+  const result = await h.api.operate(h.target, "日语、拉丁语");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.state.values, ["日语"]);
+  assert.equal(search.value, "", "the query typed for 拉丁语 is cleared");
+  assert.equal(h.isOpen(), false);
+});
+
 test("antd multiple select with collapsed tags (+ N) is not guessed", async () => {
   const h = antd5(LANGS, { selected: ["英语"] });
   const rest = h.doc.createElement("div"); rest.className = "ant-select-selection-overflow-item ant-select-selection-overflow-item-rest";
