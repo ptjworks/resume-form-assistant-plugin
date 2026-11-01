@@ -1207,57 +1207,7 @@
     const searchText = text => helpers.optionSearchText ? helpers.optionSearchText(text) : text;
     const safeSearch = input => input?.tagName === 'INPUT' && !input.readOnly && !input.disabled && ['text', 'search'].includes(input.type);
     state.safeSearch = safeSearch;
-    const tagOf = (tags, value) => {
-      const index = helpers.findSelectOptionIndex(tags.map(tag => ({ value: tag.text, text: tag.text })), value);
-      return index >= 0 ? tags[index] : null;
-    };
-    const tags = multiTags(info);
-    if (!tags) return { reason: 'unsupported_control' };
-    // 已选标签里哪些留着（kept）、哪些项还要点（pending）。这次不要的标签最后才删：要选的有一项找不到时，原来选的都还在。
-    // 最后要删的标签都得有删除按钮，没有就什么都不做。
-    let wanted, kept, pending;
-    const plan = values => {
-      wanted = values;
-      kept = new Set(wanted.map(value => tagOf(tags, value)).filter(Boolean));
-      pending = wanted.filter(value => !tagOf(Array.from(kept), value));
-      return !tags.some(tag => !kept.has(tag) && !tag.remove);
-    };
-    if (!plan(split(tags.map(tag => tag.text)))) return { reason: 'unsupported_control' };
-    if (!wanted.length) return { reason: 'no_option_match' };
-    // 点开以后才交过来的（openedPopup）：用点开之前记下的。
-    const before = info.before || ctx.popupsBeforeFocus || shownLayers(doc, h.visible);
-    info.before = before;
-    const findPopup = () => {
-      const owned = ownedPopup(info, h.visible);
-      if (owned.ambiguous) return { reason: 'ambiguous_popup' };
-      if (owned.popup) return { popup: owned.popup };
-      const added = popups(doc, h.visible).filter(node => !before.has(node) && !staleLayer(node, info));
-      return added.length > 1 ? { reason: 'ambiguous_popup' } : added.length === 1 ? { popup: added[0] } : null;
-    };
     let popup = openedPopup;
-    if (pending.length && !popup) {
-      const trigger = info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector')) || info.root
-        : info.root.querySelector('.el-select__wrapper, .el-input') || info.root;
-      const reason = h.click(trigger, ctx); if (reason) return { reason };
-      const opened = await h.waitUntil(ctx, doc.documentElement, findPopup, Boolean);
-      if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
-      if (opened.value.reason) return opened.value;
-      popup = opened.value.popup;
-    }
-    if (popup) {
-      ctx.popup = popup; info.popup = popup;
-      const role = popup.getAttribute('role');
-      ctx.observed = { library: info.library, popupRole: ['listbox', 'tree', 'menu'].includes(role) ? role : 'component' };
-    }
-    // 弹层重画、换了一块时按归属重新找。
-    const listOf = () => {
-      if (!popup?.isConnected || !h.visible(popup)) {
-        const again = findPopup();
-        if (again?.popup) { popup = again.popup; ctx.popup = popup; info.popup = popup; }
-      }
-      return popup?.isConnected && h.visible(popup) ? options(popup, info, 0, h) : [];
-    };
-    const signature = list => list.map(option => `${option.value}:${option.text}`).join('\n');
     // 插件在搜索框里打的字：选上一项以后、或没选成要交还时清掉。点过别的项以后 run 收尾不再管搜索框（不撤销已经做出的选择）。
     const clearSearch = () => {
       const searched = state.searchInput;
@@ -1284,6 +1234,56 @@
       }
     };
     const fail = async outcome => { clearSearch(); await close(); return outcome; };
+    const tagOf = (tags, value) => {
+      const index = helpers.findSelectOptionIndex(tags.map(tag => ({ value: tag.text, text: tag.text })), value);
+      return index >= 0 ? tags[index] : null;
+    };
+    const tags = multiTags(info);
+    if (!tags) return fail({ reason: 'unsupported_control' });
+    // 已选标签里哪些留着（kept）、哪些项还要点（pending）。这次不要的标签最后才删：要选的有一项找不到时，原来选的都还在。
+    // 最后要删的标签都得有删除按钮，没有就什么都不做。
+    let wanted, kept, pending;
+    const plan = values => {
+      wanted = values;
+      kept = new Set(wanted.map(value => tagOf(tags, value)).filter(Boolean));
+      pending = wanted.filter(value => !tagOf(Array.from(kept), value));
+      return !tags.some(tag => !kept.has(tag) && !tag.remove);
+    };
+    if (!plan(split(tags.map(tag => tag.text)))) return fail({ reason: 'unsupported_control' });
+    if (!wanted.length) return fail({ reason: 'no_option_match' });
+    // 点开以后才交过来的（openedPopup）：用点开之前记下的。
+    const before = info.before || ctx.popupsBeforeFocus || shownLayers(doc, h.visible);
+    info.before = before;
+    const findPopup = () => {
+      const owned = ownedPopup(info, h.visible);
+      if (owned.ambiguous) return { reason: 'ambiguous_popup' };
+      if (owned.popup) return { popup: owned.popup };
+      const added = popups(doc, h.visible).filter(node => !before.has(node) && !staleLayer(node, info));
+      return added.length > 1 ? { reason: 'ambiguous_popup' } : added.length === 1 ? { popup: added[0] } : null;
+    };
+    if (pending.length && !popup) {
+      const trigger = info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector')) || info.root
+        : info.root.querySelector('.el-select__wrapper, .el-input') || info.root;
+      const reason = h.click(trigger, ctx); if (reason) return { reason };
+      const opened = await h.waitUntil(ctx, doc.documentElement, findPopup, Boolean);
+      if (opened.reason) return fail({ reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason });
+      if (opened.value.reason) return fail(opened.value);
+      popup = opened.value.popup;
+    }
+    if (popup) {
+      ctx.popup = popup; info.popup = popup;
+      const role = popup.getAttribute('role');
+      ctx.observed = { library: info.library, popupRole: ['listbox', 'tree', 'menu'].includes(role) ? role : 'component' };
+    }
+    // 弹层重画、换了一块时按归属重新找。
+    const listOf = () => {
+      if (!popup?.isConnected || !h.visible(popup)) {
+        const again = findPopup();
+        if (again?.popup) { popup = again.popup; ctx.popup = popup; info.popup = popup; }
+      }
+      return popup?.isConnected && h.visible(popup) ? options(popup, info, 0, h) : [];
+    };
+    const signature = list => list.map(option => `${option.value}:${option.text}`).join('\n');
     // 在组件自己的搜索框里打字，等列表换成这次的结果、停住 80ms。没有能打字的搜索框时返回 { none: true }。
     const search = async (text, list) => {
       const input = [...info.root.querySelectorAll('input'), ...(popup?.querySelectorAll('input') || [])].find(node => safeSearch(node) && h.visible(node));
@@ -1362,8 +1362,9 @@
       return Boolean(now) && now.length === chosen.length && chosen.every(label => now.some(tag => norm(tag.text) === norm(label)));
     };
     await close();
+    // 收起以后标签折起来读不全：和选的时候一样报控件暂不支持。
     const done = await h.waitUntil(ctx, doc.documentElement, accepted, Boolean);
-    if (done.reason) return { reason: done.reason === 'verification_timeout' ? 'selection_not_committed' : done.reason };
+    if (done.reason) return { reason: done.reason !== 'verification_timeout' ? done.reason : multiTags(info) === null ? 'unsupported_control' : 'selection_not_committed' };
     return { accepted };
   }
   // #377 YUI 联想框（见 yuiBox）：聚焦、点击都不打开，只在 keyup 后按框里的字查询（SF 停 0.2 秒再查），最多列 10 条；
