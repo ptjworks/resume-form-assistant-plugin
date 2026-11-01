@@ -133,6 +133,23 @@
   // 明显只适用于当前岗位/公司的作答：可以列出来，但不默认勾选。
   const JOB_SPECIFIC_LABEL = /为什么|原因|理由|动机|谈谈|请(?:简述|简要|描述|介绍|说明|阐述)|自我评价|自我介绍|应聘|报考|投递|[本该贵](?:岗位|职位|公司|单位)|岗位|职位|招聘(?:信息|渠道)|得知|推荐人|内推/;
   const JOB_SPECIFIC_VALUE_CHARS = 300;
+  // #429 第五项：补充字段里有些题目原样对上也不在本地直接填，照旧交给 AI 按上下文判断。
+  // 证件和各种号码、联系方式、政治面貌、薪资（#429 列的四类），再加银行账户。
+  // 中英混写的（「学生ID」「E-mail地址」「QQ号」）也认。比的是归一后的题目（小写、去掉空格）。
+  const SAVED_ANSWER_EXCLUDED = /证件|身份|护照|通行证|签证|驾驶证|驾照|准考证|考号|报名号|学籍|学号|工号|编号|证号|识别号|号码|社保|公积金|银行|开户|卡号|[账帐]号|[账帐]户|手机|电话|座机|传真|邮箱|邮件|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary|id(?![a-z])/i;
+  // 题目写法列不全，再看回答本身：一长串数字、邮箱、网址多半是号码、联系方式，也不在本地复用。
+  // 数字之间的空格、短横、括号、加号不算断开（「138-0013-8000」「+86 138 0013 8000」）；日期（「2026-07-01」）先去掉，不算号码。
+  const IDENTIFIER_VALUE = /\d{5,}|@|https?:\/\/|www\./i;
+  const DATE_IN_VALUE = /(?:19|20)\d{2}\s*[-/.年]\s*\d{1,2}(?:\s*[-/.月]\s*\d{1,2}\s*日?)?/g;
+  const NUMBER_SEPARATORS = /[\s\-—–()（）.·+]/g;
+  // 题目里没有汉字的（外企网申的英文题目）不在本地复用：英文的证件、联系方式、岗位相关写法列不全，照旧交给 AI。
+  const HAS_HAN = /[\u3400-\u9fff]/;
+  // 题目说的是对方公司（「本公司」「我们企业」「是否有亲属在公司工作」）：换一家公司答案可能不同，
+  // 等按站点存（#429 第五项第 2 点）了再在同一个站点复用。「现公司」「原单位」问的是申请人自己的经历，照常复用。
+  const COMPANY_REFERENCE = /(?:[本该贵我此]|我们|你们|这家|对方)(?:公司|企业|单位|部门|机构|集团|银行|行|司|院|校)|(?:亲属|亲戚|亲友|家人|家属|配偶|直系).*(?:工作|任职|就职)/;
+  // 离开所在区块就看不懂的笼统题目。
+  const GENERIC_TITLE = /^(?:其[他它](?:信息|说明|情况)?|补充(?:说明|信息|内容)?|附加(?:说明|信息)?|附言|留言)$/;
+  const CONTACT_SECTION = /紧急联系|联系人|监护人/;
 
   function text(value) {
     return String(value ?? "").trim();
@@ -343,6 +360,59 @@
     if (SKIPPED_INPUT_TYPES.has(candidate?.inputType) || SECRET_LABEL.test(label)) return "";
     if (SENSITIVE_AUTOCOMPLETE.test(text(candidate?.autocomplete))) return "";
     return label;
+  }
+
+  // #429 第五项：补充字段是用户在别的网页上答过、自己勾选存下的。网页题目按 normalizeKey 归一后和其中一项的名字完全相同，
+  // 就在本地直接填这一项，不用等 AI。formFields 是要填的网页字段（fieldId、label、group），taken 是别的规则已经填上的字段，
+  // pageFields 是整张表的字段，用来数同名的题（后来冒出来的字段只填新的几个，同名要和页面上原有的一起数）。
+  // 不这样复用的（照旧交给 AI）：没有汉字的英文题目；SAVED_ANSWER_EXCLUDED 那几类，回答像号码、邮箱、网址的；只适用于当前岗位、公司的题（存的时候默认不勾选的那类，
+  // 再加题目里说「本行」「我司」的）和整段作答；
+  // 笼统的短题目；同一张表上同名的题不止一个；题在可以加多条的区块里（group 末尾带序号）、家庭成员和紧急联系人区块里，
+  // 以及经历区块里除排名、外语这类概括信息以外的题（和存的时候 entryFieldLabel 的口径一样）。
+  function savedAnswerMatches(formFields, resumeFields, taken = new Set(), pageFields = formFields) {
+    // 资料来自 profileToResumeFields：只给有值的补充字段，归一后同名的只给一次（没填回答的只是待补的名字，不算第二个答案）。
+    // 这里再数一次同名，是给不经过它的调用兜底。
+    const saved = new Map();
+    (Array.isArray(resumeFields) ? resumeFields : []).forEach((field) => {
+      if (field?.group !== CUSTOM_GROUP) return;
+      const id = normalizeKey(field.key);
+      const value = text(field.value);
+      if (id && value) saved.set(id, saved.has(id) ? null : value);
+    });
+    if (!saved.size) return [];
+
+    const forms = Array.isArray(formFields) ? formFields : [];
+    const sameLabel = new Map();
+    (Array.isArray(pageFields) && pageFields.length ? pageFields : forms).forEach((field) => {
+      const id = normalizeKey(field?.label);
+      if (id) sameLabel.set(id, (sameLabel.get(id) || 0) + 1);
+    });
+    const matches = [];
+    forms.forEach((field) => {
+      if (!field?.fieldId || taken.has(field.fieldId)) return;
+      const label = text(field.label);
+      const id = normalizeKey(label);
+      const value = saved.get(id);
+      if (!value || id.length < 2 || sameLabel.get(id) > 1 || !reusableTitle(id)) return;
+      if (value.length > JOB_SPECIFIC_VALUE_CHARS || looksLikeIdentifier(value)) return;
+      // 「区块 2」是 field-scan 给同一区块里同名的题排的序号（`${section} ${repeatIndex}`，一定带空格）。
+      // 网页自己的区块名带数字（「教育经历2」「志愿一」）不靠这一条：经历类区块由 entryFieldLabel 拦下，
+      // 别的区块里同一道题出现不止一次时由上面的同名计数拦下。
+      const group = text(field.group);
+      if (/\s\d+$/.test(group) || CONTACT_SECTION.test(group) || entryFieldLabel({ section: group, title: label }) === null) return;
+      matches.push({ fieldId: field.fieldId, value });
+    });
+    return matches;
+  }
+
+  function looksLikeIdentifier(value) {
+    return IDENTIFIER_VALUE.test(value) || IDENTIFIER_VALUE.test(value.replace(DATE_IN_VALUE, " ").replace(NUMBER_SEPARATORS, ""));
+  }
+
+  // id 是归一后的题目。
+  function reusableTitle(id) {
+    return HAS_HAN.test(id) && !(SAVED_ANSWER_EXCLUDED.test(id) || JOB_SPECIFIC_LABEL.test(id) || COMPANY_REFERENCE.test(id) || SECRET_LABEL.test(id)
+      || CONTEXTLESS_TITLE.test(id) || GENERIC_TITLE.test(id) || NOT_A_LABEL.test(id));
   }
 
   // 一次填写之后，网页上既没匹配上、也还空着的字段。密码验证码、文件、勾选框、经历类区块里的字段不算。
@@ -699,6 +769,7 @@
     profileFromEntries,
     profileOfferSummary,
     profileToResumeFields,
+    savedAnswerMatches,
     stripProfileSecrets
   };
 
