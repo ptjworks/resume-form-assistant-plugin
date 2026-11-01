@@ -455,9 +455,9 @@
           if (Boolean(ctx.el.checked) !== checked) { const reason = click(ctx.el, ctx, true); if (reason) return result(false, reason, ctx); }
           accepted = () => Boolean(ctx.el.checked) === checked;
         } else if (ctx.kind === 'native-select' && ctx.el.multiple) {
-          // #429 原生多选：要选的几项（splitMultipleValues）各对一项，有一项对不上就都不动；选中的正好是这几项。
+          // #429 原生多选：要选的几项（splitMultipleValues，整段正好是一个选项时不拆）各对一项，有一项对不上就都不动；选中的正好是这几项。
           const options = Array.from(ctx.el.options).map(option => ({ value: option.value, text: option.text, disabled: option.disabled }));
-          const parts = helpers?.splitMultipleValues?.(desiredValue) ?? [String(desiredValue ?? '').trim()].filter(Boolean);
+          const parts = helpers?.splitMultipleValues?.(desiredValue, options) ?? [String(desiredValue ?? '').trim()].filter(Boolean);
           const indexes = parts.map(part => helpers?.findSelectOptionIndex?.(options, part) ?? -1);
           if (!parts.length || indexes.some(index => index < 0)) return result(false, 'no_option_match', ctx);
           const wanted = new Set(indexes);

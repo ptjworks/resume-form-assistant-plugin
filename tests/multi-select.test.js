@@ -258,6 +258,27 @@ test("antd 5 multiple select: a value with no option stops there, a tag without 
   assert.deepEqual(fixed.state.values, ["韩语"]);
 });
 
+test("antd 5 multiple select: when a wanted value is missing, the tags picked before are kept", async () => {
+  const h = antd5(LANGS, { selected: ["韩语"] });
+  const result = await h.api.operate(h.target, "英语、拉丁语");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.state.removed, [], "韩语 is only removed once everything wanted is picked");
+  assert.deepEqual(h.state.values, ["韩语", "英语"]);
+});
+
+test("antd 5 multiple select: an option whose text holds a list separator is one value, and more than ten values are picked", async () => {
+  const h = antd5(["Java、C++", "Go", "Rust"]);
+  const result = await h.api.operate(h.target, "Java、C++");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.state.values, ["Java、C++"]);
+  const cities = Array.from({ length: 40 }, (_, i) => `城市${String(i + 1).padStart(2, "0")}`);
+  const many = antd5(cities);
+  const wanted = cities.slice(0, 12);
+  const all = await many.api.operate(many.target, wanted.join("、"));
+  assert.equal(all.ok, true, JSON.stringify(all));
+  assert.deepEqual(many.state.values, wanted);
+});
+
 test("antd multiple select with collapsed tags (+ N) is not guessed", async () => {
   const h = antd5(LANGS, { selected: ["英语"] });
   const rest = h.doc.createElement("div"); rest.className = "ant-select-selection-overflow-item ant-select-selection-overflow-item-rest";
@@ -321,4 +342,11 @@ test("native multiple select: every part chooses one option, any unmatched part 
   const replaced = await api.operate(target, "法语");
   assert.equal(replaced.ok, true, JSON.stringify(replaced));
   assert.deepEqual(chosen(), ["法语"]);
+  // 选项文字里本来就带顿号：整段是一项。
+  select.insertAdjacentHTML("beforeend", '<option value="x">Java、C++</option>');
+  const whole = await api.operate(target, "Java、C++");
+  assert.equal(whole.ok, true, JSON.stringify(whole));
+  assert.deepEqual(chosen(), ["Java、C++"]);
+  assert.deepEqual(helpers.filterValidMatches([{ fieldId: "skill", label: "技能", inputType: "select", multiple: true, options: ["Java、C++", "Go"] }],
+    [{ fieldId: "skill", value: "Java、C++" }]), [{ fieldId: "skill", value: "Java、C++" }]);
 });

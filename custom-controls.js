@@ -1188,17 +1188,17 @@
     // 联想框里插件打过字：之后才到的建议会再弹出来，由宿主发 Tab 收起（closeSuggestions）。
     return { accepted: () => accepted(false), closeSuggestions: Boolean(info.freeText && searchDone) };
   }
-  // #429 antd（4/5、3 和 ant-design-vue 1.x）、Element（UI 2、Plus）的多选下拉。要选的几项按 splitMultipleValues 拆开，
-  // 标签和要选的项对不对得上和选项一样按 findSelectOptionIndex 认。已选标签里这次不要的，先点标签上的删除（没有删除按钮的不动，
-  // 报控件暂不支持）；再点开下拉一项一项找：列表不全或没有时在组件自己的搜索框里搜，没选上的点一下，等它成了标签再找下一项。
-  // 有一项找不到就停下报那一项的原因，已经点了的不撤回（和单选一样）。都选上以后收起下拉：antd 让输入框失焦；
+  // #429 antd（4/5、3 和 ant-design-vue 1.x）、Element（UI 2、Plus）的多选下拉。要选的几项按 splitMultipleValues 拆开
+  // （整段正好是一个标签或选项时不拆），标签和要选的项对不对得上和选项一样按 findSelectOptionIndex 认。
+  // 点开下拉一项一项找：列表不全或没有时在组件自己的搜索框里搜，没选上的点一下，等它成了标签再找下一项。
+  // 有一项找不到就停下报那一项的原因，已经点了的不撤回（和单选一样），原来的标签不动。都选上了再点删除去掉这次不要的标签
+  // （要删的标签没有删除按钮时一开始就什么都不做，报控件暂不支持）。最后收起下拉：antd 让输入框失焦；
   // Element 失焦不收，不在对话框里时在框上按 Esc，在对话框里只在框旁边按下、松开（#409）。标签正好是这几项才算选上。
   // openedPopup：点开以后才看出是多选的（Element Plus 没选东西时），弹层已经开着。
   async function pickMultiple(ctx, raw, h, info, state, openedPopup = null) {
     const doc = info.el.ownerDocument, helpers = h.helpers;
-    const wanted = helpers.splitMultipleValues ? helpers.splitMultipleValues(raw) : [trim(raw)].filter(Boolean);
-    if (!wanted.length || wanted.length > 10) return { reason: 'no_option_match' };
     const norm = text => helpers.normalizeText(text);
+    const split = options => helpers.splitMultipleValues ? helpers.splitMultipleValues(raw, options) : [trim(raw)].filter(Boolean);
     const searchText = text => helpers.optionSearchText ? helpers.optionSearchText(text) : text;
     const safeSearch = input => input?.tagName === 'INPUT' && !input.readOnly && !input.disabled && ['text', 'search'].includes(input.type);
     state.safeSearch = safeSearch;
@@ -1208,19 +1208,17 @@
     };
     const tags = multiTags(info);
     if (!tags) return { reason: 'unsupported_control' };
-    const kept = new Set(wanted.map(value => tagOf(tags, value)).filter(Boolean));
-    const extra = tags.filter(tag => !kept.has(tag));
-    if (extra.some(tag => !tag.remove)) return { reason: 'unsupported_control' };
-    for (const { text } of extra) {
-      const current = (multiTags(info) || []).find(tag => norm(tag.text) === norm(text));
-      if (!current?.remove) return { reason: 'unsupported_control' };
-      const reason = h.click(current.remove, ctx, true); if (reason) return { reason };
-      state.activated = true;
-      const removed = await h.waitUntil(ctx, doc.documentElement, () => multiTags(info), list => Boolean(list) && !list.some(tag => norm(tag.text) === norm(text)));
-      if (removed.reason) return { reason: removed.reason === 'verification_timeout' ? 'selection_not_committed' : removed.reason };
-    }
-    const chosen = Array.from(kept, tag => tag.text);
-    const pending = wanted.filter(value => !tagOf(Array.from(kept), value));
+    // 已选标签里哪些留着（kept）、哪些项还要点（pending）。这次不要的标签最后才删：要选的有一项找不到时，原来选的都还在。
+    // 最后要删的标签都得有删除按钮，没有就什么都不做。
+    let wanted, kept, pending;
+    const plan = values => {
+      wanted = values;
+      kept = new Set(wanted.map(value => tagOf(tags, value)).filter(Boolean));
+      pending = wanted.filter(value => !tagOf(Array.from(kept), value));
+      return !tags.some(tag => !kept.has(tag) && !tag.remove);
+    };
+    if (!plan(split(tags.map(tag => tag.text)))) return { reason: 'unsupported_control' };
+    if (!wanted.length) return { reason: 'no_option_match' };
     // 点开以后才交过来的（openedPopup）：用点开之前记下的。
     const before = info.before || ctx.popupsBeforeFocus || shownLayers(doc, h.visible);
     info.before = before;
@@ -1255,8 +1253,14 @@
       return popup?.isConnected && h.visible(popup) ? options(popup, info, 0, h) : [];
     };
     const signature = list => list.map(option => `${option.value}:${option.text}`).join('\n');
+    // 整段正好是列表里的一项（选项文字里本来就带顿号）：当这一项，不拆。
+    if (popup && wanted.length > 1) {
+      const first = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
+      if (first.value && !plan(split(first.value.map(option => option.text)))) return { reason: 'unsupported_control' };
+    }
     const marked = node => node.getAttribute('aria-selected') === 'true'
       || String(node.getAttribute('class') || '').split(/\s+/).some(token => SELECTED_TOKEN.test(token));
+    const chosen = Array.from(kept, tag => tag.text);
     for (const value of pending) {
       const ready = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
       if (ready.reason) return { reason: ready.reason === 'verification_timeout' ? 'options_not_rendered' : ready.reason };
@@ -1293,6 +1297,16 @@
       const searched = state.searchInput;
       if (searched?.isConnected && searched.value && searched.value === state.query && safeSearch(searched)) { h.write(searched, '', ctx); h.input(searched); }
       state.searchInput = null;
+    }
+    // 要选的都选上了：再删这次不要的标签。
+    for (;;) {
+      const extra = (multiTags(info) || []).find(tag => !chosen.some(label => norm(label) === norm(tag.text)));
+      if (!extra) break;
+      if (!extra.remove) return { reason: 'unsupported_control' };
+      const reason = h.click(extra.remove, ctx, true); if (reason) return { reason };
+      state.activated = true;
+      const removed = await h.waitUntil(ctx, doc.documentElement, () => multiTags(info), list => Boolean(list) && !list.some(tag => norm(tag.text) === norm(extra.text)));
+      if (removed.reason) return { reason: removed.reason === 'verification_timeout' ? 'selection_not_committed' : removed.reason };
     }
     const accepted = () => {
       const now = multiTags(info);

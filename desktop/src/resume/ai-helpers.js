@@ -447,9 +447,15 @@
 
   // #429 多选（原生 select multiple、antd 和 Element 的多选下拉）要选的几项：按顿号、逗号、分号、竖线和换行拆开，
   // 去掉空项和重复的。不按斜杠、空格拆：「C/C++」「Java EE」是一项。
-  function splitMultipleValues(value) {
+  // 给了选项（options）时，整段正好是其中一项（选项文字里本来就带顿号，「Java、C++」）就当这一项，不拆。
+  function splitMultipleValues(value, options) {
+    const whole = String(value ?? "").trim();
+    const key = normalizeText(whole);
+    const texts = (option) => (typeof option === "object" && option !== null ? [option.text, option.value] : [option]);
+    if (key && Array.isArray(options) && options.some((option) => !isPlaceholderOption(option)
+      && texts(option).some((text) => normalizeText(text) === key))) return [whole];
     const seen = new Set();
-    return String(value ?? "").split(/[、，,；;｜|\n]+/).map((part) => part.trim()).filter((part) => {
+    return whole.split(/[、，,；;｜|\n]+/).map((part) => part.trim()).filter((part) => {
       const key = normalizeText(part);
       if (!key || seen.has(key)) return false;
       seen.add(key);
@@ -662,7 +668,7 @@
 
     if ((field?.inputType === "select" || field?.inputType === "radio") && hasRealOptions && field?.cascadeGroup === undefined) {
       // 和网页上实际选值用同一套规则，否则页面能选上的值会先在这里被丢掉。多选（#429）每一项都要对得上。
-      const parts = field?.multiple === true ? splitMultipleValues(text) : [text];
+      const parts = field?.multiple === true ? splitMultipleValues(text, field.options) : [text];
       if (!parts.length || parts.some((part) => findSelectOptionIndex(field.options, part) < 0)) {
         return false;
       }
