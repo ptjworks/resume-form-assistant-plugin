@@ -270,12 +270,12 @@ test("Beisen region picker whose next level is slow to load: the province is not
 });
 
 test("Beisen region picker with the province below the first screen: the district is searched, and the row naming 广东省/深圳市 is taken", async () => {
-  // 一屏只画 9 个省，广东省在后面。搜「南山区」出来深圳、鹤岗两个，按名字下面的上级选深圳的。
+  // 一屏只画 9 个省，广东省在后面。搜「南山」出来深圳、鹤岗两个南山区，按名字下面的上级选深圳的。
   const filler = Object.fromEntries(["河北省", "山西省", "辽宁省", "吉林省", "江苏省", "浙江省", "安徽省", "福建省", "江西省", "山东省"].map((name) => [name, { 示例市: null }]));
   const h = beisenRegion({ tree: { ...filler, ...BEISEN }, rows: 9 });
   const result = await h.api.operate(h.target, "广东省深圳市南山区");
   assert.equal(result.ok, true, JSON.stringify(result));
-  assert.deepEqual(h.searches, ["南山区"]);
+  assert.deepEqual(h.searches, ["南山"], "the district is searched by its short name");
   assert.deepEqual(h.events, ["radio:广东省/深圳市/南山区", "ok"]);
   assert.equal(h.shown(), "南山区");
 });
@@ -300,7 +300,7 @@ test("a generic list whose option is the whole value keeps picking it whole, on 
   const searched = wireSelect(later.doc, "f1", { choices, rows: 9 });
   const found = await later.api.operate(scanned(later.doc, "工作地点"), "深圳市南山区");
   assert.equal(found.ok, true, JSON.stringify(found));
-  assert.deepEqual(searched.searches, ["南山区"], "the district search already lists the whole option");
+  assert.deepEqual(searched.searches, ["南山"], "the district search already lists the whole option");
   assert.deepEqual(searched.events, ["radio:深圳市南山区", "ok"]);
 });
 
@@ -322,6 +322,88 @@ test("a flat list with both provinces and cities takes the city, not its provinc
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(pick.events, ["radio:深圳市", "ok"]);
   assert.equal(pick.shown(), "深圳市");
+});
+
+test("a generic control marked as a cascader still picks an option that is the whole value", async () => {
+  // 审查 A16：标成级联时整段相同的一项（选项就写着「广东省/深圳市/南山区」）也直接选，不按「/」拆开去找。
+  const h = load(selectItem("f1", "工作地点", 100));
+  const pick = wireSelect(h.doc, "f1", { choices: ["北京市/海淀区", "广东省/深圳市/南山区"] });
+  const result = await h.api.operate({ ...scanned(h.doc, "工作地点"), controlKind: "cascader" }, "广东省/深圳市/南山区");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(pick.events, ["radio:广东省/深圳市/南山区", "ok"]);
+});
+
+test("bilingual options are matched by their Chinese part and accepted when the component shows the whole text", async () => {
+  // 审查 B10：选项写成「深圳市 / Shenzhen」，组件上显示整段。
+  const h = load(selectItem("f1", "期望工作城市", 100));
+  const pick = wireSelect(h.doc, "f1", { choices: ["广州市 / Guangzhou", "深圳市 / Shenzhen"] });
+  const result = await h.api.operate(scanned(h.doc, "期望工作城市"), "深圳");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(pick.events, ["radio:深圳市 / Shenzhen", "ok"]);
+});
+
+test("a district the site writes without 区 is found by searching its short name, not replaced by its city", async () => {
+  // 审查 B9：网站写「南山」。原来搜「南山区」搜不到，退去搜「深圳市」，把市选上了。
+  const filler = Object.fromEntries(["河北省", "山西省", "辽宁省", "吉林省", "江苏省", "浙江省", "安徽省", "福建省", "江西省", "山东省"].map((name) => [name, { 示例市: null }]));
+  const h = beisenRegion({ tree: { ...filler, 广东省: { 深圳市: { 南山: null, 福田: null } } }, rows: 9 });
+  const result = await h.api.operate(h.target, "广东省深圳市南山区");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.searches, ["南山"]);
+  assert.deepEqual(h.events, ["radio:广东省/深圳市/南山", "ok"]);
+});
+
+// 每行一个单选圈加名字，点名字进下一级（reuse：按位置复用原来的行，只换文字），点圈选中，点「确定」后显示。
+function rowsPicker(tree, { rowClass = "", reuse = false } = {}) {
+  const h = load(selectItem("f1", "籍贯", 100));
+  const { doc } = h;
+  const root = doc.querySelector(".phoenix-select"), shown = root.querySelector(".phoenix-select__selected");
+  const events = [];
+  root.addEventListener("click", () => {
+    if (doc.querySelector(".rows-layer")) return;
+    const layer = doc.createElement("div"); layer.className = "rows-layer";
+    layer.innerHTML = `<div class="rows"></div><div class="footer"><button type="button" class="ok">确定</button></div>`;
+    const rows = layer.querySelector(".rows");
+    let path = [], picked = null;
+    const render = () => {
+      const branch = path.reduce((at, name) => at[name], tree), names = Object.keys(branch);
+      if (!reuse) rows.innerHTML = "";
+      while (rows.children.length > names.length) rows.lastElementChild.remove();
+      names.forEach((name, index) => {
+        let row = rows.children[index];
+        if (!row) { row = doc.createElement("div"); row.innerHTML = `<svg class="RadioUnchecked"></svg><span class="name"></span>`; rows.append(row); }
+        row.className = `row ${rowClass}`.trim();
+        row.querySelector(".name").textContent = name;
+      });
+    };
+    rows.addEventListener("click", (event) => {
+      const row = event.target.closest(".row"), name = row?.querySelector(".name").textContent;
+      if (!row) return;
+      if (event.target.closest("svg")) { picked = [...path, name]; events.push(`radio:${picked.join("/")}`); return; }
+      const below = path.reduce((at, part) => at[part], tree)[name];
+      if (below) { path = [...path, name]; events.push(`drill:${name}`); render(); }
+    });
+    layer.querySelector(".ok").addEventListener("click", () => { events.push("ok"); shown.textContent = picked ? picked.join("/") : ""; layer.remove(); });
+    render();
+    doc.body.append(layer);
+    doc.addEventListener("mousedown", (event) => { if (!layer.contains(event.target) && !root.contains(event.target)) layer.remove(); }, true);
+  });
+  return { ...h, events, shown: () => shown.textContent, target: scanned(doc, "籍贯") };
+}
+
+test("a list that redraws the next level into the same rows is still followed", async () => {
+  // fc35daf 上 Lane C 未核实的一条：按位置复用节点重画的列表，节点没换、文字换了，也是新冒出来的下一级。
+  const h = rowsPicker({ 河南省: { 郑州市: null, 南阳市: null }, 湖北省: { 武汉市: null } }, { reuse: true });
+  const result = await h.api.operate(h.target, "河南省南阳市");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.events, ["drill:河南省", "radio:河南省/南阳市", "ok"]);
+});
+
+test("a class name that merely contains arrow (is-narrow) is not taken as a sign of a next level", async () => {
+  // 审查 B11：只列省、每行带 is-narrow 的列表收到「河南省南阳市」，照样当网站只到省，选上河南省。
+  const h = rowsPicker({ 北京市: null, 河南省: null, 湖北省: null }, { rowClass: "is-narrow" });
+  const result = await h.api.operate(h.target, "河南省南阳市");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.events, ["radio:河南省", "ok"]);
 });
 
 // ---- 通用路径：点了冒出新的一列的自制下拉（Moka 这类）----
