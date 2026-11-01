@@ -381,6 +381,39 @@ test("region: exam origin is never filled from native place", () => {
   assert.ok(!matches.some((m) => m.value === "南阳市"));
 });
 
+// #429 一个级联框从省选到区县（content.js 给这类字段写 cascade）：简历里分开存的省、市、县拼成一条路径。
+test("region: a cascader for 籍贯 gets province/city/county joined, from its own question only", () => {
+  const resume = [
+    { group: "户籍与地区", key: "籍贯省", value: "河南省" },
+    { group: "户籍与地区", key: "籍贯市", value: "南阳市" },
+    { group: "户籍与地区", key: "籍贯县", value: "南召县" },
+    { group: "户籍与地区", key: "户口所在地省", value: "广东省" },
+    { group: "户籍与地区", key: "户口所在地市", value: "深圳市" },
+    { group: "户籍与地区", key: "高考生源地省", value: "湖北省" }
+  ];
+  const matches = helpers.buildRuleBasedMatches([
+    { fieldId: "native", label: "籍贯", inputType: "select", options: [], cascade: true },
+    { fieldId: "hukou", label: "户口所在地", inputType: "select", options: [], cascade: true },
+    { fieldId: "origin", label: "高考生源地", inputType: "select", options: [], cascade: true }
+  ], resume);
+  const byId = new Map(matches.map((m) => [m.fieldId, m.value]));
+  assert.equal(byId.get("native"), "河南省/南阳市/南召县");
+  assert.equal(byId.get("hukou"), "广东省/深圳市");
+  // 只有省：不拼，照原来填省。
+  assert.equal(byId.get("origin"), "湖北省");
+});
+
+test("region: a cascader that names its own level, or a plain select, still takes one level", () => {
+  const resume = [
+    { group: "户籍与地区", key: "籍贯省", value: "河南省" },
+    { group: "户籍与地区", key: "籍贯市", value: "南阳市" }
+  ];
+  assert.deepEqual(helpers.buildRuleBasedMatches(
+    [{ fieldId: "a", label: "籍贯（省）", inputType: "select", options: [], cascade: true }], resume), [{ fieldId: "a", value: "河南省" }]);
+  assert.deepEqual(helpers.buildRuleBasedMatches(
+    [{ fieldId: "a", label: "籍贯", inputType: "select", options: ["河南省"] }], resume), [{ fieldId: "a", value: "河南省" }]);
+});
+
 test("region: a 户籍 group name does not turn 籍贯 into hukou", () => {
   const matches = helpers.buildRuleBasedMatches(
     [{ fieldId: "a", label: "籍贯", inputType: "select", options: ["河南省"] }],

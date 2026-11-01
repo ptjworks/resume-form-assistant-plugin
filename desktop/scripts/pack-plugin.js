@@ -25,6 +25,7 @@ export const PLUGIN_ARCHIVE_OPERANDS = [
   "control-adapters.js",
   "antd-prefix.js",
   "custom-controls.js",
+  "region-data.js",
   "ai-helpers.js",
   "form-agent.js",
   "fill-probe.js",

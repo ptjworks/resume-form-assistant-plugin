@@ -269,6 +269,14 @@
       }
 
       const formScope = personScope(fieldContextText(field));
+      // #429 级联的地区题（一个「籍贯」框从省选到区县）：同一个问题下简历里分开存的省、市、县拼成一条路径（「河南省/南阳市/南召县」）。
+      const composed = semantic === "hometown" && field?.cascade === true
+        ? composeRegionPath(field, resumeFields, usedResumeIndexes, formScope) : null;
+      if (composed && isValueValidForField(field, composed.value)) {
+        matches.push({ fieldId: field.fieldId, value: composed.value });
+        composed.indexes.forEach((index) => usedResumeIndexes.add(index));
+        return;
+      }
       const matchIndex = resumeFields.findIndex((resumeField, index) => {
         if (usedResumeIndexes.has(index)) {
           return false;
@@ -292,6 +300,24 @@
     });
 
     return matches;
+  }
+
+  // 级联地区题要的整条路径：题目自己没写层级（写了「籍贯（省）」的照常只要省），简历里同一个问题至少有省和下面一级，按省、市、县拼起来。
+  // 每一级只取第一项；拼上的几项都算用掉了。
+  function composeRegionPath(field, resumeFields, usedResumeIndexes, formScope) {
+    const ownText = normalizeText([field?.label, field?.placeholder, field?.name, field?.idAttr, field?.ariaLabel].filter(Boolean).join(" "));
+    if (regionLevel(ownText)) return null;
+    const byLevel = new Map();
+    resumeFields.forEach((resumeField, index) => {
+      if (usedResumeIndexes.has(index) || !String(resumeField?.value ?? "").trim()) return;
+      if (!isSamePersonScope(resumeField, formScope) || !isSameRegionTopic(resumeField, field)) return;
+      const level = regionLevel(normalizeText(resumeField.key));
+      if (level && !byLevel.has(level)) byLevel.set(level, index);
+    });
+    const levels = ["province", "city", "county"].filter((level) => byLevel.has(level));
+    if (levels.length < 2 || levels[0] !== "province") return null;
+    const indexes = levels.map((level) => byLevel.get(level));
+    return { value: indexes.map((index) => String(resumeFields[index].value).trim()).join("/"), indexes };
   }
 
   // 像密码的网页字段和简历资料不参与匹配，也不发给 AI。profile 是 profile-fields.js（ResumeProProfile）。

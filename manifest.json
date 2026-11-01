@@ -75,6 +75,7 @@
         "ai-client.js",
         "ai-helpers.js",
         "antd-prefix.js",
+        "region-data.js",
         "custom-controls.js",
         "control-adapters.js",
         "profile-fields.js",
