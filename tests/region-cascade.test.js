@@ -10,7 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
 const scanner = require("../field-scan.js");
-const { selectItem, wireRegion } = require("./helpers/beisen-form.js");
+const { selectItem, wireSelect, wireRegion } = require("./helpers/beisen-form.js");
 
 require("../region-data.js");
 const R = globalThis.ResumeProRegions;
@@ -257,7 +257,7 @@ test("Beisen region picker that only goes down to the city: the city's radio is 
 });
 
 test("Beisen region picker whose next level is slow to load: the province is not taken as the answer", async () => {
-  // 点了省以后城市过了等待时间才画出来，期间没有加载图标：不能当成网站只到省，把省选上。
+  // 点了省以后城市过了等待时间才画出来，期间没有加载图标：省带着下级箭头，不能当成网站只到省，把省选上。
   const h = beisenRegion({ tree: BEISEN, drillMs: 600 });
   const result = await h.api.operate(h.target, "广东省深圳市");
   assert.equal(result.reason, "cascade_timeout");
@@ -282,6 +282,32 @@ test("Beisen region picker: a district shared by two cities with no upper level 
   const result = await h.api.operate(h.target, "南山区");
   assert.equal(result.ok, false);
   assert.deepEqual(h.events, [], "no radio is clicked");
+});
+
+test("a generic list whose option is the whole value keeps picking it whole, on the first screen or by searching", async () => {
+  // 审查 B1：选项本身写着「广东省深圳市南山区」时照原来整段选，不按地区拆。
+  const first = load(selectItem("f1", "工作地点", 100));
+  const pick = wireSelect(first.doc, "f1", { choices: ["北京市海淀区", "广东省深圳市南山区"] });
+  const result = await first.api.operate(scanned(first.doc, "工作地点"), "广东省深圳市南山区");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(pick.events, ["radio:广东省深圳市南山区", "ok"]);
+  const later = load(selectItem("f1", "工作地点", 100));
+  const choices = [...Array.from({ length: 12 }, (_, i) => `示例地点${i + 1}`), "深圳市南山区"];
+  const searched = wireSelect(later.doc, "f1", { choices, rows: 9 });
+  const found = await later.api.operate(scanned(later.doc, "工作地点"), "深圳市南山区");
+  assert.equal(found.ok, true, JSON.stringify(found));
+  assert.deepEqual(searched.searches, ["南山区"], "the district search already lists the whole option");
+  assert.deepEqual(searched.events, ["radio:深圳市南山区", "ok"]);
+});
+
+test("a flat Beisen list of provinces only takes the province for a value written to the city", async () => {
+  // 只列省、没有下级箭头：点了名字等不到下一级，就是网站只到省，选上省（和改前一样）。
+  const h = load(selectItem("f1", "籍贯", 100));
+  const pick = wireSelect(h.doc, "f1", { choices: ["北京市", "河北省", "河南省", "湖北省"] });
+  const result = await h.api.operate(scanned(h.doc, "籍贯"), "河南省南阳市");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(pick.events, ["radio:河南省", "ok"]);
+  assert.equal(pick.shown(), "河南省");
 });
 
 // ---- 通用路径：点了冒出新的一列的自制下拉（Moka 这类）----

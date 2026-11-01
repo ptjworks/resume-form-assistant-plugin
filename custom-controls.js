@@ -128,6 +128,7 @@
   const COUNTRY_NAMES = /^(?:中国|中国大陆|中华人民共和国)$/;
   // 通用路径点了名字以后，新冒出来的下一级要这么久不变才算画好了（一项一项往上加的列表不能只读到前几项）。
   const DRILL_STEADY_MS = 120;
+  const EXPAND_CLASS = /arrow|caret|(?:^|[-_\s])(?:expand|expandable|has-?children|submenu|postfix)(?:$|[-_\s])/i;
   // 联想框（#404 51job）聚焦后多半不弹建议，要打了字才有：只等这么久，没有就先打字。
   const FREE_TEXT_OPEN_MS = 600;
   // 打字后的建议里没有同名的一项：列表这么久没变、离打字也过了 FREE_TEXT_SETTLE_MS，才认定没有，
@@ -1165,6 +1166,10 @@
         target = texty[0];
       }
     };
+    // 条目带着有下级的样子：展开箭头（北森 arrow-icon、antd 的 -expand、Element 的 postfix 这类类名）或 aria-expanded、aria-haspopup。
+    const expandable = option => [option.node, ...option.node.querySelectorAll('[class], [aria-expanded], [aria-haspopup]')].some(el =>
+      el.hasAttribute('aria-expanded') || (el.hasAttribute('aria-haspopup') && el.getAttribute('aria-haspopup') !== 'false')
+      || EXPAND_CLASS.test(String(el.getAttribute('class') || '')));
     // 圆圈已经是选中的（点名字时就选上了）不再点，免得又点掉。
     const markChecked = mark => mark.getAttribute('aria-checked') === 'true' || mark.checked === true
       || String(mark.getAttribute('class') || '').split(/\s+/).some(token => /checked$/i.test(token) && !/un-?checked$/i.test(token));
@@ -1173,12 +1178,16 @@
     const searchRegion = async () => {
       if (!safeSearch(searchInput) || !searchInput.isConnected) return { reason: 'no_option_match' };
       const named = region.path.map((part, at) => ({ part, at })).filter(item => !item.part.placeholder);
-      const terms = [named[named.length - 1], ...(named.length >= 3 && named[named.length - 1].part.level === 2 ? [named[named.length - 2]] : [])];
-      for (const [index, { part, at }] of terms.entries()) {
+      // 最后一级搜不到时再搜一次整段（选项可能就写着整段「深圳市南山区」，在第一屏以外），这一项不按地区拆。
+      const whole = trim(desired[0]), leaf = named[named.length - 1];
+      const terms = [leaf, ...(named.some(item => item.part.name === whole) ? [] : [{ whole }]),
+        ...(named.length >= 3 && leaf.part.level === 2 ? [named[named.length - 2]] : [])];
+      for (const [index, term] of terms.entries()) {
+        const { part, at } = term;
         const stopped = h.stop(ctx, true); if (stopped) return { reason: stopped };
         const signature = layerList().map(option => option.full).join('\n');
-        state.searchInput = searchInput; state.searchBefore = searchInput.value; state.query = part.name;
-        h.write(searchInput, part.name, ctx); h.input(searchInput);
+        state.searchInput = searchInput; state.searchBefore = searchInput.value; state.query = term.whole ?? part.name;
+        h.write(searchInput, state.query, ctx); h.input(searchInput);
         searchDone = true;
         let lastSignature = signature, stableSince = Date.now();
         const updated = await h.waitUntil(ctx, doc.documentElement, () => {
@@ -1188,6 +1197,10 @@
         }, list => !loading() && lastSignature !== signature && list.length > 0 && Date.now() - stableSince >= 80);
         if (updated.reason && updated.reason !== 'verification_timeout') return { reason: updated.reason };
         const list = updated.value || layerList();
+        const same = list.filter(option => !option.disabled && [option.text, option.value].some(text => text != null && sameText(String(text), whole)));
+        if (same.length === 1) return { option: same[0], next: region.path.length, final: true };
+        if (same.length > 1) return { reason: 'ambiguous_option' };
+        if (term.whole) continue;
         let hits = list.filter(option => !option.disabled && [option.text, option.value].some(text => text != null && regions.matches(String(text), part)));
         if (hits.length > 1) {
           const above = named.filter(item => item.at < at).map(item => item.part);
@@ -1227,9 +1240,9 @@
         if (next.reason && next.reason !== 'verification_timeout') return { reason: next.reason };
         if (next.reason || next.value === null) {
           // 没有下一级：网站只到这一级（还在加载的不算）。有圆圈的还要点圆圈；没有圆圈的点名字就选上了。
-          // 弹层一直开着、只是等不到新选项时，可能是下一级加载得慢：只在点到市、剩下的只有区县时当网站只到市，
-          // 别的照等待下一级选项超时报，不把省当成要填的选上。点了名字弹层就收起的，是网站自己收下了，照下面核对。
-          if (loading() || (next.reason && !region.path.slice(regionAt).every(part => part.placeholder || part.level === 2))) return { reason: 'cascade_timeout' };
+          // 弹层一直开着、只是等不到新选项时，可能是下一级加载得慢：这一项带着有下级的样子（展开箭头这类）就照等待下一级选项超时报，
+          // 不把它当成要填的选上；不带的（只列省的平铺列表）当网站只到这一级。点了名字弹层就收起的，是网站自己收下了，照下面核对。
+          if (loading() || (next.reason && expandable(option))) return { reason: 'cascade_timeout' };
           if (step.pass) return { reason: 'no_option_match' };
           const mark = option.target && option.target !== nameTarget(option) && option.target.isConnected ? option.target : null;
           if (mark && !markChecked(mark)) {
@@ -1294,6 +1307,8 @@
       // （江苏 13 个市、宁夏 5 个）；下面没有市的省（港澳台）列表是空的，这一位照报。
       // 也只看第一层：插件输入过要找的值（含点开前先输入的）、或级联点了上一列之后，列表由简历的值决定。
       if (level === 0 && !searchDone) ctx.observed.hasOptions = list.length > 0;
+      // 列表里正好有一项就是要填的整段（选项写着「广东省深圳市南山区」）：照原来整段选，不按地区拆。
+      if (generic && region && list.some(option => !option.disabled && [option.text, option.value].some(text => text != null && sameText(String(text), desired[0])))) region = null;
       if (generic && region) {
         const drilled = await drillGeneric(list);
         if (drilled.reason) return drilled;
