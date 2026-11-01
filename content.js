@@ -2878,6 +2878,8 @@
         requestId,
         formFields: fields,
         resumeFields,
+        // 辅助填写只发选中区域的字段：同名的题要和整张表一起数（#429）。
+        ...(assisted ? { pageLabels: scanned.fields.map(field => String(field.label ?? "")) } : {}),
         ...(deep?.tier ? { tier: deep.tier, maxCalls: deep.maxCalls } : {})
       });
       aiPending = true;

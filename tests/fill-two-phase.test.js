@@ -695,3 +695,16 @@ test("a field revealed later with the same question as one already on the page g
   assert.deepEqual([p.value("days"), p.value("days2")], ["5天", "3天"]);
   assert.equal(result.outcome, "success", p.ui.diag.value);
 });
+
+// 辅助填写只把选中区域的字段发给 worker：区域外还有同名的题时，和整张表一起数，不用存过的回答。
+test("an assisted fill counts same questions across the whole page, not just the chosen block", async (t) => {
+  const p = page(t, `<div id="first">${input("days1", "每周可实习天数")}</div><div id="second">${input("days2", "每周可实习天数")}${input("school", "毕业院校")}</div>`,
+    { custom: SAVED });
+  const running = within(p.w.ResumeProHighlightTest.handleAiFillClick({ currentTarget: p.ui.fill },
+    { scopes: [p.w.document.getElementById("second")] }), 15000);
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  assert.deepEqual(p.worker.calls[0].labels, ["每周可实习天数", "毕业院校"]);
+  p.worker.calls[0].reply({ 每周可实习天数: "3天", 毕业院校: "示例大学" });
+  await running;
+  assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "3天", "示例大学"]);
+});
