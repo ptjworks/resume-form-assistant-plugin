@@ -1208,7 +1208,8 @@
   async function pickMultiple(ctx, raw, h, info, state, openedPopup = null) {
     const doc = info.el.ownerDocument, helpers = h.helpers;
     const norm = text => helpers.normalizeText(text);
-    const split = options => helpers.splitMultipleValues ? helpers.splitMultipleValues(raw, options) : [trim(raw)].filter(Boolean);
+    // 要选的几项：拆的是要填的值 raw。传进来的文字（已选标签、列表里的选项）只用来判断整段是不是正好是其中一项，是的话不拆。
+    const wantedFrom = knownTexts => helpers.splitMultipleValues ? helpers.splitMultipleValues(raw, knownTexts) : [trim(raw)].filter(Boolean);
     const searchText = text => helpers.optionSearchText ? helpers.optionSearchText(text) : text;
     const safeSearch = input => input?.tagName === 'INPUT' && !input.readOnly && !input.disabled && ['text', 'search'].includes(input.type);
     state.safeSearch = safeSearch;
@@ -1254,7 +1255,7 @@
       pending = wanted.filter(value => !tagOf(Array.from(kept), value));
       return !tags.some(tag => !kept.has(tag) && !tag.remove);
     };
-    if (!plan(split(tags.map(tag => tag.text)))) return fail({ reason: 'unsupported_control' });
+    if (!plan(wantedFrom(tags.map(tag => tag.text)))) return fail({ reason: 'unsupported_control' });
     if (!wanted.length) return fail({ reason: 'no_option_match' });
     // 点开以后才交过来的（openedPopup）：用点开之前记下的。
     const before = info.before || ctx.popupsBeforeFocus || shownLayers(doc, h.visible);
@@ -1310,11 +1311,11 @@
     if (popup && wanted.length > 1) {
       const first = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
       if (first.value) {
-        if (!plan(split(first.value.map(option => option.text)))) return fail({ reason: 'unsupported_control' });
+        if (!plan(wantedFrom(first.value.map(option => option.text)))) return fail({ reason: 'unsupported_control' });
         if (wanted.length > 1 && partialList(first.value, popup, ctx.popup)) {
           const whole = await search(trim(raw), first.value);
           if (whole.reason) return fail(whole);
-          if (whole.list && !plan(split(whole.list.map(option => option.text)))) return fail({ reason: 'unsupported_control' });
+          if (whole.list && !plan(wantedFrom(whole.list.map(option => option.text)))) return fail({ reason: 'unsupported_control' });
           clearSearch();
         }
       }
