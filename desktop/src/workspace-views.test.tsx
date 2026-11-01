@@ -226,6 +226,26 @@ test("pending mailbox preview replaces the stored reader and never invents a bod
   expect(ignore).toHaveBeenCalledOnce();
 });
 
+test("a notification without applications retains its selector and safely disables association", async () => {
+  const item = { id: "no-apps", kind: "paste", importedAt: "2026-11-01", bodyExtract: "面试邀请", sameBytesAs: [], sizeBytes: 12 };
+  const invoke = vi.fn(async (name: string) => {
+    if (name === "list_inbox_cmd") return [item];
+    if (name === "get_evidence_preview_cmd") return item;
+    if (name === "list_applications_cmd") return { items: [] };
+    return {};
+  });
+  const inbox = mountInbox(invoke as Invoke); await inbox.refresh();
+  fireEvent.click(document.querySelector('[data-evidence="no-apps"]')!);
+  await waitFor(() => expect(document.getElementById("inbox-application")).toBeTruthy());
+  expect(document.querySelector<HTMLSelectElement>("#inbox-application")!.options).toHaveLength(1);
+  expect(document.querySelector<HTMLButtonElement>('[data-act="associate"]')!.disabled).toBe(true);
+  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
+  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(false);
+  fireEvent.click(document.querySelector('[data-act="toggle-ai"]')!);
+  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(false);
+  expect(invoke.mock.calls.some(([name]) => name === "associate_evidence_cmd")).toBe(false);
+});
+
 test.each(["storage", "too_large"])("paste failure report (%s) keeps the dialog and text for retry", async (code) => {
   let fail = true;
   const invoke: Invoke = async <T,>(name: string): Promise<T> => {

@@ -368,6 +368,9 @@ test("preset config success is distinct from a successful mailbox connection", a
   fireEvent.click(el("mailbox-detect"));
   expect(el("mailbox-detection").dataset.state).toBe("found");
   expect(el("mailbox-progress-detail").textContent).toContain("尚未连接");
+  expect(el("mailbox-config-status").textContent).toContain("已识别邮箱配置，尚未连接");
+  expect(el("mailbox-config-status").getAttribute("role")).toBe("status");
+  expect(el("mailbox-credentials").hidden).toBe(false);
   expect(el("mailbox-step-2").getAttribute("aria-current")).toBe("step");
   fireEvent.input(el("mailbox-secret"), { target: { value: "synthetic-secret" } });
   fireEvent.submit(el("mailbox-form"));

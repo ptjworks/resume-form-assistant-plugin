@@ -20,10 +20,10 @@ function setup() {
     if (name === "mailbox_view") return structuredClone(view);
     throw new Error(`Unexpected command: ${name}`);
   });
-  const openSettings = vi.fn();
-  const ui = mountMailboxes(invoke as Invoke, async () => {}, openSettings);
+  const openSettings = vi.fn(), openInbox = vi.fn();
+  const ui = mountMailboxes(invoke as Invoke, async () => {}, openSettings, undefined, openInbox);
   dispose = ui.dispose;
-  return { ui, invoke, view, handlers, openSettings };
+  return { ui, invoke, view, handlers, openSettings, openInbox };
 }
 function fillKnownMailbox(address = "new@qq.com") {
   fireEvent.input(el("mailbox-email"), { target: { value: address } });
@@ -128,6 +128,58 @@ test("manual school settings and unrelated server acceptance precede credentials
   expect(el<HTMLInputElement>("mailbox-secret").value).toBe("");
   expect(el("mailbox-credentials").hidden).toBe(true);
   expect(invoke.mock.calls.some(([name]) => name === "mailbox_connect")).toBe(false);
+});
+
+test("repairing an unreadable saved configuration requires reset confirmation before connecting", async () => {
+  const { ui, view, handlers, invoke } = setup();
+  view.accounts = [{ id: "broken", email: "student@school.example", paused: true, failures: 0, lastError: "Configuration", lastChecked: null, headerIssues: 0, connection: null }];
+  handlers.mailbox_connect = async () => {};
+  handlers.mailbox_check = async () => ({ checkedAccounts: 1, succeededAccounts: 1, failedAccounts: [], skippedPaused: 0 });
+  await ui.refresh();
+  fireEvent.click(within(el("mailbox-accounts")).getByRole("button", { name: "修改连接" }));
+  fireEvent.input(el("mailbox-host"), { target: { value: "mail.school.example" } });
+  fireEvent.click(el("mailbox-config-next"));
+  fireEvent.input(el("mailbox-secret"), { target: { value: "school-code" } });
+  const confirmation = () => [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].find(d => d.id !== "mailbox-dialog")!;
+  fireEvent.submit(el("mailbox-form"));
+  expect(confirmation().textContent).toContain("原连接配置无法读取");
+  expect(confirmation().textContent).toContain("待确认来信与扫描记录");
+  expect(invoke.mock.calls.some(([name]) => name === "mailbox_connect")).toBe(false);
+  fireEvent.click(within(confirmation()).getByRole("button", { name: "取消" }));
+  expect(invoke.mock.calls.some(([name]) => name === "mailbox_connect")).toBe(false);
+  fireEvent.submit(el("mailbox-form"));
+  fireEvent.click(within(confirmation()).getByRole("button", { name: "确认更新" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "mailbox_connect")).toHaveLength(1));
+  await waitFor(() => expect(el<HTMLDialogElement>("mailbox-dialog").open).toBe(false));
+});
+
+test("unsaved cross-domain acceptance is not reused after cancelling and reopening setup", async () => {
+  const { ui, handlers } = setup();
+  handlers.mailbox_discover = async () => ({ config: { host: "mail.other-provider.example", port: 993, encryption: "tls", username: "student@school.example", sendId: false }, note: "需要核对", helpUrl: null });
+  const discover = async () => {
+    ui.openSetup();
+    fireEvent.input(el("mailbox-email"), { target: { value: "student@school.example" } });
+    fireEvent.click(el("mailbox-detect"));
+    await waitFor(() => expect(el("mailbox-confirm-endpoint").hidden).toBe(false));
+  };
+  await discover();
+  fireEvent.click(el("mailbox-confirm-endpoint"));
+  expect(el("mailbox-credentials").hidden).toBe(false);
+  fireEvent.click(el("mailbox-cancel"));
+  await discover();
+  expect(el("mailbox-credentials").hidden).toBe(true);
+  expect(el<HTMLInputElement>("mailbox-secret").disabled).toBe(true);
+});
+
+test("viewing pending mail navigates to the inbox without requesting any import", async () => {
+  const { ui, view, invoke, openInbox } = setup();
+  view.pendingCount = 1;
+  await ui.refresh();
+  fireEvent.click(el("mailbox-view-pending"));
+  expect(openInbox).toHaveBeenCalledOnce();
+  expect(el("mailbox-tab-pending").getAttribute("aria-selected")).toBe("true");
+  expect(el("mailbox-discovery").hidden).toBe(false);
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual(["mailbox_view"]);
 });
 
 test("disconnect failure keeps its confirmation and preserves the account", async () => {

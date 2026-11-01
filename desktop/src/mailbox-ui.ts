@@ -51,7 +51,7 @@ export function mountMailboxes(
   onImported: () => Promise<unknown>,
   openSettings: () => void,
   inboxBridge?: MailboxInboxBridge,
-  onManualImport?: () => void,
+  openInbox?: () => void,
 ) {
   const get = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id)! as T;
   const form = get<HTMLFormElement>("mailbox-form");
@@ -102,6 +102,10 @@ export function mountMailboxes(
     }
     get("mailbox-address-summary").textContent = email.value.trim();
     get("mailbox-provider-name").textContent = MAIL_GUIDES[mailboxProvider(email.value) ?? "school"].label;
+    if (step === "credentials") {
+      const help = MAIL_GUIDES[mailboxProvider(email.value) ?? "school"];
+      get("mailbox-config-status").textContent = `${editingAccount ? "已载入保存的收信设置" : configurationStep ? "收信设置已核对" : "已识别邮箱配置"}，尚未连接。请填写${help.secret}。`;
+    }
     get("mailbox-change-email").hidden = !!editingAccount;
   }
   function closeSetup(force = false) {
@@ -609,8 +613,8 @@ export function mountMailboxes(
     if (!email.validity.valid || !email.value.trim()) { setSetupStep("email"); email.focus(); return; }
     if (!validConnection()) return;
     if (!secret.value.trim()) { secret.setAttribute("aria-invalid", "true"); showProgress("error", "请填写密码或授权码", "按当前邮箱的教程获取后，填写到下方输入框。", 2); secret.focus(); return; }
-    const destinationChanged = editingAccount?.connection &&
-      JSON.stringify(endpointConfirmation(email.value, editingAccount.connection)) !== JSON.stringify(endpointConfirmation(email.value, config));
+    const destinationChanged = editingAccount && (!editingAccount.connection ||
+      JSON.stringify(endpointConfirmation(email.value, editingAccount.connection)) !== JSON.stringify(endpointConfirmation(email.value, config)));
     const connect = async () => {
       let saved = false;
       ++discoveryToken;
@@ -632,7 +636,10 @@ export function mountMailboxes(
       if (saved && !disposed) void runCheck("settings", "邮箱连接已保存。", true);
     };
     if (destinationChanged) {
-      void openSettingsDialog({ title: "更新收信设置？", body: paragraph("修改收信服务器或登录账号会清除该连接的待确认来信与扫描记录，已存进档案的邮件保留。"), confirmLabel: "确认更新", action: connect });
+      const impact = editingAccount?.connection
+        ? "修改收信服务器或登录账号会清除该连接的待确认来信与扫描记录，已存进档案的邮件保留。"
+        : "原连接配置无法读取，无法比较收信设置。重新设置会清除该连接的待确认来信与扫描记录，已存进档案的邮件保留。";
+      void openSettingsDialog({ title: "更新收信设置？", body: paragraph(impact), confirmLabel: "确认更新", action: connect });
     } else void connect();
   });
   email.addEventListener("input", () => {
@@ -670,7 +677,7 @@ export function mountMailboxes(
     get("mailbox-toggle-secret").setAttribute("aria-label", visible ? "隐藏密码" : "显示密码");
     get("mailbox-toggle-secret").setAttribute("aria-pressed", String(visible));
   });
-  get("mailbox-view-pending").addEventListener("click", () => { onManualImport?.(); selectInboxState("pending"); });
+  get("mailbox-view-pending").addEventListener("click", () => { openInbox?.(); selectInboxState("pending"); });
   get("mailbox-tab-pending").addEventListener("click", () => selectInboxState("pending"));
   get("mailbox-tab-stored").addEventListener("click", () => selectInboxState("stored"));
   document.getElementById("mailbox-tab-recycled")?.addEventListener("click", () => selectInboxState("recycled"));
