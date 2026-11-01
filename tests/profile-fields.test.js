@@ -551,10 +551,13 @@ test("savedAnswerMatches leaves ID, contact, political, salary, job- and company
   const expected = controls.map((key, index) => ({ fieldId: `f${keys.length + index}`, value: "否" }));
   assert.deepEqual(profileApi.savedAnswerMatches(form, resume), expected);
   // 题目普通、回答像号码、邮箱、网址的也不填。
+  // 数字之间有空格、短横、括号的也算一串；日期不算号码。
   const looks = [{ key: "推送方式", value: "user@example.com" }, { key: "个人主页", value: "https://example.com/me" },
-    { key: "证书序列", value: "20231234567" }, { key: "可到岗日期", value: "2026年7月" }];
+    { key: "证书序列", value: "20231234567" }, { key: "备用方式", value: "138-0013-8000" }, { key: "其他方式", value: "+86 138 0013 8000" },
+    { key: "可到岗日期", value: "2026年7月" }, { key: "实习起止", value: "2026-07-01 至 2026-09-30" }, { key: "每周可实习天数", value: "5天" }];
   assert.deepEqual(profileApi.savedAnswerMatches(looks.map(({ key }, index) => ({ fieldId: `v${index}`, label: key })),
-    profileApi.profileToResumeFields({ custom: looks })), [{ fieldId: "v3", value: "2026年7月" }]);
+    profileApi.profileToResumeFields({ custom: looks })),
+  [{ fieldId: "v5", value: "2026年7月" }, { fieldId: "v6", value: "2026-07-01 至 2026-09-30" }, { fieldId: "v7", value: "5天" }]);
   // 不经过 profileToResumeFields 的筛选（像密码的那一项它本来就不给）也一样不填。
   const raw = custom.map(({ key, value }) => ({ group: profileApi.CUSTOM_GROUP, key, value }));
   assert.deepEqual(profileApi.savedAnswerMatches(form, raw), expected);

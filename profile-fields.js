@@ -138,7 +138,10 @@
   // 中英混写的（「学生ID」「E-mail地址」「QQ号」）也认。比的是归一后的题目（小写、去掉空格）。
   const SAVED_ANSWER_EXCLUDED = /证件|身份|护照|通行证|签证|驾驶证|驾照|准考证|考号|报名号|学籍|学号|工号|编号|证号|识别号|号码|社保|公积金|银行|开户|卡号|[账帐]号|[账帐]户|手机|电话|座机|传真|邮箱|邮件|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary|id(?![a-z])/i;
   // 题目写法列不全，再看回答本身：一长串数字、邮箱、网址多半是号码、联系方式，也不在本地复用。
+  // 数字之间的空格、短横、括号、加号不算断开（「138-0013-8000」「+86 138 0013 8000」）；日期（「2026-07-01」）先去掉，不算号码。
   const IDENTIFIER_VALUE = /\d{5,}|@|https?:\/\/|www\./i;
+  const DATE_IN_VALUE = /(?:19|20)\d{2}\s*[-/.年]\s*\d{1,2}(?:\s*[-/.月]\s*\d{1,2}\s*日?)?/g;
+  const NUMBER_SEPARATORS = /[\s\-—–()（）.·+]/g;
   // 题目里没有汉字的（外企网申的英文题目）不在本地复用：英文的证件、联系方式、岗位相关写法列不全，照旧交给 AI。
   const HAS_HAN = /[\u3400-\u9fff]/;
   // 题目说的是对方公司（「本公司」「我们企业」「是否有亲属在公司工作」）：换一家公司答案可能不同，
@@ -391,7 +394,7 @@
       const id = normalizeKey(label);
       const value = saved.get(id);
       if (!value || id.length < 2 || sameLabel.get(id) > 1 || !reusableTitle(id)) return;
-      if (value.length > JOB_SPECIFIC_VALUE_CHARS || IDENTIFIER_VALUE.test(value)) return;
+      if (value.length > JOB_SPECIFIC_VALUE_CHARS || looksLikeIdentifier(value)) return;
       // 「区块 2」是 field-scan 给同一区块里同名的题排的序号（`${section} ${repeatIndex}`，一定带空格）。
       // 网页自己的区块名带数字（「教育经历2」「志愿一」）不靠这一条：经历类区块由 entryFieldLabel 拦下，
       // 别的区块里同一道题出现不止一次时由上面的同名计数拦下。
@@ -400,6 +403,10 @@
       matches.push({ fieldId: field.fieldId, value });
     });
     return matches;
+  }
+
+  function looksLikeIdentifier(value) {
+    return IDENTIFIER_VALUE.test(value) || IDENTIFIER_VALUE.test(value.replace(DATE_IN_VALUE, " ").replace(NUMBER_SEPARATORS, ""));
   }
 
   // id 是归一后的题目。
