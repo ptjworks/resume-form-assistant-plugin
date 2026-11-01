@@ -100,9 +100,11 @@
     const tokens = String(value ?? "").split(SEPARATOR).map(compact).filter(Boolean);
     while (tokens.length > 1 && COUNTRY.test(tokens[0])) tokens.shift();
     if (!tokens.length || tokens.length > 4 || tokens.join("").length > 40) return null;
+    // 认法太多（超过 16 种）时不在其中挑，当认不出。
     const found = [];
+    let overflow = false;
     const walk = (index, rest, chain, skips) => {
-      if (found.length > 16) return;
+      if (found.length > 16) { overflow = true; return; }
       if (!rest) {
         if (index + 1 === tokens.length) found.push({ chain, skips });
         else walk(index + 1, tokens[index + 1], chain, skips);
@@ -116,7 +118,7 @@
       }
     };
     walk(0, tokens[0], [], 0);
-    if (!found.length) return null;
+    if (!found.length || overflow) return null;
     const fewest = Math.min(...found.map(item => item.skips));
     const ends = new Set(found.filter(item => item.skips === fewest).map(item => item.chain[item.chain.length - 1]));
     if (ends.size !== 1) return null;

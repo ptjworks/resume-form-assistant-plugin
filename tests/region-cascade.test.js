@@ -356,6 +356,15 @@ test("a dropdown that opens a new column per level is clicked down the path, als
   }
 });
 
+test("a generic control marked as a cascader follows a slash-separated region path, not just its first part", async () => {
+  // 审查 A11：整段比对用的是整个值，不是按「/」拆开后的第一段「广东省」。
+  const h = columnsPicker(GD);
+  const result = await h.api.operate({ ...h.target, controlKind: "cascader" }, "广东省/深圳市/南山区");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ["广东省", "深圳市", "南山区"]);
+  assert.equal(h.input.value, "广东省/深圳市/南山区");
+});
+
 test("a column dropdown whose last wanted level still opens another column stops: cascade_unsupported, and the layer is closed", async () => {
   const h = columnsPicker(GD);
   const result = await h.api.operate(h.target, "广东省深圳市");

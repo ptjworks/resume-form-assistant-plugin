@@ -866,8 +866,9 @@
     // #429 地区（region-data.js）：「深圳」「广东省深圳市南山区」「北京/海淀区」认成从省开始的一条路径（含直辖市的「市辖区」这类占位的一级），
     // 级联按它一级一级选（见 regionStep）。通用路径（北森分类选择器、Moka）只在至少到市时这样选，只有省的照原来整段选。认不出就照原来的写法拆。
     const regions = scope.ResumeProRegions;
-    let region = (info.cascade || info.library === 'generic') && regions?.resolve
-      ? regions.resolve(Array.isArray(raw) ? raw.map(trim).join('/') : trim(raw)) : null;
+    // 整段要填的值（级联按「/」拆开以前的）：地区路径从它认，通用路径的整段比对、整段搜索也用它。
+    const wholeValue = Array.isArray(raw) ? raw.map(trim).join('/') : trim(raw);
+    let region = (info.cascade || info.library === 'generic') && regions?.resolve ? regions.resolve(wholeValue) : null;
     if (region && !info.cascade && region.path.filter(part => !part.placeholder).length < 2) region = null;
     // 通用路径的别的级联不做：分不清每一列，宁可不填。
     if (info.library === 'generic' && info.cascade && !region) return { reason: 'unsupported_control' };
@@ -1179,7 +1180,7 @@
       if (!safeSearch(searchInput) || !searchInput.isConnected) return { reason: 'no_option_match' };
       const named = region.path.map((part, at) => ({ part, at })).filter(item => !item.part.placeholder);
       // 最后一级搜不到时再搜一次整段（选项可能就写着整段「深圳市南山区」，在第一屏以外），这一项不按地区拆。
-      const whole = trim(desired[0]), leaf = named[named.length - 1];
+      const whole = wholeValue, leaf = named[named.length - 1];
       const terms = [leaf, ...(named.some(item => item.part.name === whole) ? [] : [{ whole }]),
         ...(named.length >= 3 && leaf.part.level === 2 ? [named[named.length - 2]] : [])];
       for (const [index, term] of terms.entries()) {
@@ -1308,7 +1309,7 @@
       // 也只看第一层：插件输入过要找的值（含点开前先输入的）、或级联点了上一列之后，列表由简历的值决定。
       if (level === 0 && !searchDone) ctx.observed.hasOptions = list.length > 0;
       // 列表里正好有一项就是要填的整段（选项写着「广东省深圳市南山区」）：照原来整段选，不按地区拆。
-      if (generic && region && list.some(option => !option.disabled && [option.text, option.value].some(text => text != null && sameText(String(text), desired[0])))) region = null;
+      if (generic && region && list.some(option => !option.disabled && [option.text, option.value].some(text => text != null && sameText(String(text), wholeValue)))) region = null;
       if (generic && region) {
         const drilled = await drillGeneric(list);
         if (drilled.reason) return drilled;
