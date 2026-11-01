@@ -331,6 +331,18 @@ test("antd 5 multiple select: a value holding a separator that is one option off
   assert.deepEqual(split.state.values, ["Java", "C++"]);
 });
 
+test("a real option called +86 is a tag like any other, while a + 2 tag without a close button is a folded one", async () => {
+  const h = elementUi(["+86", "+852", "+1"], { selected: ["+86"] });
+  assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ["+86"]);
+  const result = await h.api.operate(h.target, "+86、+852");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.state.values, ["+86", "+852"]);
+  // Element 的 collapse-tags：「+ 1」这一格没有删除按钮。
+  const folded = elementUi(LANGS, { selected: ["英语"] });
+  folded.root.querySelector(".el-select__tags > span").insertAdjacentHTML("beforeend", '<span class="el-tag el-tag--info"><span class="el-select__tags-text">+ 1</span></span>');
+  assert.equal(folded.w.ResumeProCustomControls.readSelection(folded.target), null);
+});
+
 test("Element tags outside the select's own tag area are not read as its selection", async () => {
   const h = elementUi(LANGS, { selected: ["俄语"] });
   h.root.querySelector(".el-input").insertAdjacentHTML("beforeend", '<span class="el-tag">说明</span>');

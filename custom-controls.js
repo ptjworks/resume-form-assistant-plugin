@@ -177,8 +177,9 @@
   // Element UI 2.15.14、Element Plus 2.8.8 看到的结构：antd 4/5 是 .ant-select-selection-item（在 overflow 的条目里），
   // antd 3 和 ant-design-vue 1.x 是 .ant-select-selection__choice，Element 是 .el-tag（文字在 .el-select__tags-text 里）。
   // 折起来的标签（antd 的 maxTagCount 留下「+ 2 ...」，Element 的 collapse-tags 留下「+ 2」）读不全，返回 null。
-  // 折起来的那一格：「+ 2」「+ 2 ...」「+2…」。
+  // 折起来的那一格：写着「+ 2」「+ 2 ...」「+2…」，没有删除按钮（真组件上都是这样）。选项本身叫「+86」的标签带删除按钮，不算。
   const COLLAPSED_TAG = /^\+\s*\d+\s*(?:\.\.\.|…)?$/;
+  const collapsedTag = tag => !tag.remove && COLLAPSED_TAG.test(tag.text);
   function multiTags(info) {
     const { root, library } = info;
     if (!root?.isConnected) return null;
@@ -192,13 +193,13 @@
       const tags = Array.from(root.querySelectorAll(antd(root, '.ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix):not(.ant-select-selection-overflow-item-rest) .ant-select-selection-item, .ant-select-selection__choice')), node => ({
         node, text: trim((node.querySelector(antd(node, '.ant-select-selection-item-content, .ant-select-selection__choice__content')) || node).textContent),
         remove: node.querySelector(antd(node, '.ant-select-selection-item-remove, .ant-select-selection__choice__remove')) })).filter(tag => tag.text);
-      return tags.some(tag => COLLAPSED_TAG.test(tag.text)) ? null : tags;
+      return tags.some(collapsedTag) ? null : tags;
     }
     if (library === 'element') {
       // 只看选择框自己的标签区（Element UI 2 的 .el-select__tags、Element Plus 的 .el-select__selection）。
       const tags = Array.from(root.querySelectorAll('.el-select__tags .el-tag, .el-select__selection .el-tag'), node => ({ node, text: trim((node.querySelector('.el-select__tags-text') || node).textContent),
         remove: node.querySelector('.el-tag__close') })).filter(tag => tag.text);
-      return tags.some(tag => COLLAPSED_TAG.test(tag.text)) ? null : tags;
+      return tags.some(collapsedTag) ? null : tags;
     }
     return null;
   }
