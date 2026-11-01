@@ -137,9 +137,10 @@
   // 证件和各种号码、联系方式、政治面貌、薪资（#429 列的四类），再加银行账户。
   const SAVED_ANSWER_EXCLUDED = /证件|身份证|护照|通行证|签证|驾驶证|驾照|准考证|学号|工号|编号|号码|社保|公积金|银行|卡号|[账帐]号|[账帐]户|手机|电话|邮箱|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary/i;
   // 外企网申的英文题目，同样四类加银行账户。比的是归一后的题目（小写、去掉空格）。
-  const SAVED_ANSWER_EXCLUDED_EN = /passport|identity|idcard|idnumber|^idno|nationalid|visa|licen[cs]e|phone|mobile|^tel(?:no)?$|address|postcode|postal|zipcode|wechat|contact|politic|party|salary|wage|compensation|income|^pay|bank|account/;
-  // 题目里说的是「本公司」「本行」这类：换一家公司答案可能不同，等按站点存（#429 第五项第 2 点）了再在同一个站点复用。
-  const COMPANY_REFERENCE = /[本该贵我](?:公司|单位|行|司|集团|院|校)/;
+  const SAVED_ANSWER_EXCLUDED_EN = /passport|identity|idcard|idnumber|^idno|nationalid|visa|licen[cs]e|phone|mobile|^tel(?:no)?$|address|postcode|postal|zipcode|wechat|contact|politic|party|salary|wage|compensation|income|^pay|bank|account/i;
+  // 题目说的是对方公司（「本公司」「我们企业」「是否有亲属在公司工作」）：换一家公司答案可能不同，
+  // 等按站点存（#429 第五项第 2 点）了再在同一个站点复用。「现公司」「原单位」问的是申请人自己的经历，照常复用。
+  const COMPANY_REFERENCE = /(?:[本该贵我]|我们|你们)(?:公司|企业|单位|部门|机构|集团|银行|行|司|院|校)|亲属.*(?:工作|任职|就职)/;
   // 离开所在区块就看不懂的笼统题目。
   const GENERIC_TITLE = /^(?:其[他它](?:信息|说明|情况)?|补充(?:说明|信息|内容)?|附加(?:说明|信息)?|附言|留言)$/;
   const CONTACT_SECTION = /紧急联系|联系人|监护人/;
@@ -363,6 +364,8 @@
   // 笼统的短题目；同一张表上同名的题不止一个；题在可以加多条的区块里（group 末尾带序号）、家庭成员和紧急联系人区块里，
   // 以及经历区块里除排名、外语这类概括信息以外的题（和存的时候 entryFieldLabel 的口径一样）。
   function savedAnswerMatches(formFields, resumeFields, taken = new Set(), pageFields = formFields) {
+    // 资料来自 profileToResumeFields：只给有值的补充字段，归一后同名的只给一次（没填回答的只是待补的名字，不算第二个答案）。
+    // 这里再数一次同名，是给不经过它的调用兜底。
     const saved = new Map();
     (Array.isArray(resumeFields) ? resumeFields : []).forEach((field) => {
       if (field?.group !== CUSTOM_GROUP) return;
@@ -374,7 +377,7 @@
 
     const forms = Array.isArray(formFields) ? formFields : [];
     const sameLabel = new Map();
-    (Array.isArray(pageFields) ? pageFields : forms).forEach((field) => {
+    (Array.isArray(pageFields) && pageFields.length ? pageFields : forms).forEach((field) => {
       const id = normalizeKey(field?.label);
       if (id) sameLabel.set(id, (sameLabel.get(id) || 0) + 1);
     });
@@ -386,6 +389,9 @@
       const value = saved.get(id);
       if (!value || id.length < 2 || sameLabel.get(id) > 1 || !reusableTitle(id)) return;
       if (value.length > JOB_SPECIFIC_VALUE_CHARS) return;
+      // 「区块 2」是 field-scan 给同一区块里同名的题排的序号（`${section} ${repeatIndex}`，一定带空格）。
+      // 网页自己的区块名带数字（「教育经历2」「志愿一」）不靠这一条：经历类区块由 entryFieldLabel 拦下，
+      // 别的区块里同一道题出现不止一次时由上面的同名计数拦下。
       const group = text(field.group);
       if (/\s\d+$/.test(group) || CONTACT_SECTION.test(group) || entryFieldLabel({ section: group, title: label }) === null) return;
       matches.push({ fieldId: field.fieldId, value });

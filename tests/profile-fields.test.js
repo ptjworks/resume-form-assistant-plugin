@@ -536,12 +536,13 @@ test("savedAnswerMatches reuses a saved answer whose question is the same after 
 test("savedAnswerMatches leaves ID, contact, political, salary, job- and company-specific questions to the AI", () => {
   const keys = ["护照号码", "身份证号", "紧急联系人电话", "QQ", "E-mail", "现住址", "政治面貌（备注）", "是否党员", "期望薪资", "家庭年收入",
     "银行卡号", "学号", "应聘岗位", "为什么选择我们", "是否有亲属在本公司工作", "是否有亲属在本行工作", "我司的哪项业务吸引你",
+    "是否有亲属在本企业工作", "是否有亲属在公司工作", "是否有亲属在我们公司任职", "是否了解本部门的工作内容",
     "其他", "备注", "登录密码说明", "帐号", "银行帐户",
     // 外企网申的英文题目
     "Mobile", "Phone Number", "Tel", "Passport No.", "ID Number", "Visa Status", "Home Address", "Postal Code", "WeChat",
     "Emergency Contact", "Political Status", "Expected Salary", "Bank Account"];
-  // 「是否接受外派」「Willing to relocate」是对照：同一份资料、同样的写法，它们照样填。
-  const controls = ["是否接受外派", "Willing to relocate"];
+  // 「是否接受外派」「Willing to relocate」「现公司名称」是对照：同一份资料、同样的写法，它们照样填。
+  const controls = ["是否接受外派", "Willing to relocate", "现公司名称"];
   const custom = [...keys, ...controls].map((key) => ({ key, value: "否" }));
   const resume = profileApi.profileToResumeFields({ custom });
   const form = [...keys, ...controls].map((key, index) => ({ fieldId: `f${index}`, label: key, group: "" }));
@@ -573,6 +574,9 @@ test("savedAnswerMatches skips long answers, repeated questions, family and emer
   assert.deepEqual(profileApi.savedAnswerMatches(added, resume), [{ fieldId: "new", value: "是" }]);
   assert.deepEqual(profileApi.savedAnswerMatches(added, resume, new Set(), [{ fieldId: "old", label: "是否接受外派：", group: "基本信息" }, ...added]), []);
   assert.deepEqual(helpers.localRuleMatches(added, resume, profileApi, [{ fieldId: "old", label: "是否接受外派" }, ...added]), []);
+  // 整张表是空的（调用方没给全）：退回按要填的字段数，同名的照样拦下。
+  const pair = [{ fieldId: "p1", label: "是否接受外派" }, { fieldId: "p2", label: "是否接受外派" }];
+  assert.deepEqual(profileApi.savedAnswerMatches(pair, resume, new Set(), []), []);
   // 补充字段里归一后同名的有两项（模板占了名字的另说）：不知道用哪一项，不填。
   const twice = [{ group: profileApi.CUSTOM_GROUP, key: "是否接受外派", value: "是" }, { group: profileApi.CUSTOM_GROUP, key: "是否接受外派：", value: "否" }];
   assert.deepEqual(profileApi.savedAnswerMatches([{ fieldId: "x", label: "是否接受外派" }], twice), []);
