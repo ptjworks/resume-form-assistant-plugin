@@ -256,6 +256,15 @@ test("Beisen region picker that only goes down to the city: the city's radio is 
   assert.equal(h.shown(), "广东省/深圳市");
 });
 
+test("Beisen region picker whose next level is slow to load: the province is not taken as the answer", async () => {
+  // 点了省以后城市过了等待时间才画出来，期间没有加载图标：不能当成网站只到省，把省选上。
+  const h = beisenRegion({ tree: BEISEN, drillMs: 600 });
+  const result = await h.api.operate(h.target, "广东省深圳市");
+  assert.equal(result.reason, "cascade_timeout");
+  assert.deepEqual(h.events, ["drill:广东省"], "no radio is clicked");
+  assert.equal(h.shown(), "");
+});
+
 test("Beisen region picker with the province below the first screen: the district is searched, and the row naming 广东省/深圳市 is taken", async () => {
   // 一屏只画 9 个省，广东省在后面。搜「南山区」出来深圳、鹤岗两个，按名字下面的上级选深圳的。
   const filler = Object.fromEntries(["河北省", "山西省", "辽宁省", "吉林省", "江苏省", "浙江省", "安徽省", "福建省", "江西省", "山东省"].map((name) => [name, { 示例市: null }]));

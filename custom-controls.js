@@ -1227,7 +1227,9 @@
         if (next.reason && next.reason !== 'verification_timeout') return { reason: next.reason };
         if (next.reason || next.value === null) {
           // 没有下一级：网站只到这一级（还在加载的不算）。有圆圈的还要点圆圈；没有圆圈的点名字就选上了。
-          if (loading()) return { reason: 'cascade_timeout' };
+          // 弹层一直开着、只是等不到新选项时，可能是下一级加载得慢：只在点到市、剩下的只有区县时当网站只到市，
+          // 别的照等待下一级选项超时报，不把省当成要填的选上。点了名字弹层就收起的，是网站自己收下了，照下面核对。
+          if (loading() || (next.reason && !region.path.slice(regionAt).every(part => part.placeholder || part.level === 2))) return { reason: 'cascade_timeout' };
           if (step.pass) return { reason: 'no_option_match' };
           const mark = option.target && option.target !== nameTarget(option) && option.target.isConnected ? option.target : null;
           if (mark && !markChecked(mark)) {

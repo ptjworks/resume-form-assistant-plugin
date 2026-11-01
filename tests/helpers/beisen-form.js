@@ -152,8 +152,8 @@ function wireSelect(doc, id, { choices = ["汉族", "回族", "满族"], rows = 
 // 有下级的后面带箭头；点名字进下一级（面包屑「全部 / 广东省」），点圈才选中，点「确定」后组件里显示所选（公开记录：
 // 「点文字是逐级下钻，点图标才是选中，最后点『确定』」）。搜索时列出名字里带这个词的各级地区，名字下面一行写上级（「广东省/深圳市」）。
 // tree：{ 名字: 下级 }，没有下级的写 null。display：leaf 只显示所选的名字，path 显示整条路径（「广东省/深圳市/南山区」）。
-// rows：一屏画出几项（虚拟滚动）。
-function wireRegion(doc, id, { tree, display = "leaf", rows = 50 } = {}) {
+// rows：一屏画出几项（虚拟滚动）。drillMs：点名字以后过这么久才画出下一级（向后台要，期间不显示加载图标）。
+function wireRegion(doc, id, { tree, display = "leaf", rows = 50, drillMs = 0 } = {}) {
   const item = doc.getElementById(id);
   const root = item.querySelector(".phoenix-select");
   const shown = root.querySelector(".phoenix-select__selected");
@@ -214,8 +214,9 @@ function wireRegion(doc, id, { tree, display = "leaf", rows = 50 } = {}) {
       const label = event.target.closest?.(".item-text-label");
       const node = label && all.find((one) => key(one.path) === label.closest(".list-item-container").getAttribute("data-path"));
       if (!node?.below || word) return;
-      stack = node.path; events.push(`drill:${node.name}`);
-      renderLeft();
+      events.push(`drill:${node.name}`);
+      const go = () => { stack = node.path; if (layer.isConnected) renderLeft(); };
+      if (drillMs) doc.defaultView.setTimeout(go, drillMs); else go();
     });
     layer.querySelector(".ok").addEventListener("click", () => {
       events.push("ok");
