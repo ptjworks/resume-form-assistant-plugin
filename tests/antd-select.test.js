@@ -198,6 +198,17 @@ test('an AntD 3 popup holding only a disabled no-data entry is waited on without
   }
 });
 
+// #429 ant-design-vue 1.x 的 maxTagCount 把多出来的折成一个「+ 2 ...」choice（没有删除按钮）：读不全，不猜。
+test('AntD 3 multiple select with a folded + N choice is not taken as fully read', async () => {
+  const h = antd3(['英语', '日语', '韩语'], { label: '技能', multiple: true });
+  h.root.querySelector('.ant-select-search').insertAdjacentHTML('beforebegin', '<li class="ant-select-selection__choice" title="英语"><div class="ant-select-selection__choice__content">英语</div><span class="ant-select-selection__choice__remove"><i></i></span></li>'
+    + '<li class="ant-select-selection__choice ant-select-selection__choice__disabled" title="+ 2 ..."><div class="ant-select-selection__choice__content">+ 2 ...</div></li>');
+  assert.equal(h.w.ResumeProCustomControls.readSelection(h.target), null);
+  const result = await h.api.operate(h.target, '英语、日语');
+  assert.equal(result.reason, 'unsupported_control');
+  assert.deepEqual(h.picked, []);
+});
+
 // #429 多选不再一律拒绝：一项一项点，标签正好是这几项才算选上（更多用例见 multi-select.test.js）。
 test('AntD 3 multiple select picks each value as a tag', async () => {
   const h = antd3(['英语', '日语', '韩语'], { label: '技能', multiple: true });
