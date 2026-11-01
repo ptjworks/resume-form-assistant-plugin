@@ -672,3 +672,26 @@ test("a field revealed later takes a saved answer to the same question locally, 
   assert.equal(result.outcome, "success", p.ui.diag.value);
   assert.equal(result.filledCount, 5);
 });
+
+// 后来冒出来的题和页面上原有的同名：和首轮一样算同名题不止一个，不用存过的回答，交给 AI。
+test("a field revealed later with the same question as one already on the page goes to the AI, not to the saved answer", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const p = page(t, input("name", "姓名") + GENDER + input("days", "每周可实习天数") + input("school", "毕业院校"), {
+    custom: SAVED,
+    onGender: (doc) => {
+      if (doc.getElementById("days2")) return;
+      const holder = doc.createElement("div");
+      holder.innerHTML = input("days2", "每周可实习天数");
+      doc.getElementById("apply").append(holder.firstChild);
+    }
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("days") === "5天" && p.worker.calls.length === 1), "the only such question at first takes the saved answer");
+  p.worker.calls[0].reply();
+  assert.ok(await p.until(() => p.worker.calls.length === 2), "the second one goes to the AI");
+  assert.deepEqual(p.worker.calls[1].labels, ["每周可实习天数"]);
+  p.worker.calls[1].reply({ 每周可实习天数: "3天" });
+  const result = await running;
+  assert.deepEqual([p.value("days"), p.value("days2")], ["5天", "3天"]);
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+});

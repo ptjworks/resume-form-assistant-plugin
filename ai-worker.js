@@ -322,7 +322,10 @@ async function handleAiFill(message, controller = new AbortController()) {
     diagnostics: { errorCode: "no_resume_fields", secretFormFields } };
 
   // 和网页先填的字段同一份口径（#402），包括补充字段里题目原样对得上的回答（#429）。
-  const ruleMatches = ResumeProAIHelpers.localRuleMatches(formFields, resumeFields, ResumeProProfile);
+  // 补填新出现的字段时网页带上整张表的题目（pageLabels），同名的题和页面上原有的一起数。
+  const pageFields = Array.isArray(message.pageLabels)
+    ? message.pageLabels.filter(label => typeof label === "string").map(label => ({ label })) : formFields;
+  const ruleMatches = ResumeProAIHelpers.localRuleMatches(formFields, resumeFields, ResumeProProfile, pageFields);
   const matchedFieldIds = new Set(ruleMatches.map(match => match.fieldId));
   const remainingFormFields = formFields.filter(field => !matchedFieldIds.has(field.fieldId));
   const selectedCandidates = remainingFormFields.length

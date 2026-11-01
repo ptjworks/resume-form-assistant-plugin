@@ -354,12 +354,13 @@
   }
 
   // #429 第五项：补充字段是用户在别的网页上答过、自己勾选存下的。网页题目按 normalizeKey 归一后和其中一项的名字完全相同，
-  // 就在本地直接填这一项，不用等 AI。formFields 是要填的网页字段（fieldId、label、group），taken 是别的规则已经填上的字段。
+  // 就在本地直接填这一项，不用等 AI。formFields 是要填的网页字段（fieldId、label、group），taken 是别的规则已经填上的字段，
+  // pageFields 是整张表的字段，用来数同名的题（后来冒出来的字段只填新的几个，同名要和页面上原有的一起数）。
   // 不这样复用的（照旧交给 AI）：SAVED_ANSWER_EXCLUDED 那几类；只适用于当前岗位、公司的题（存的时候默认不勾选的那类，
   // 再加题目里说「本行」「我司」的）和整段作答；
   // 笼统的短题目；同一张表上同名的题不止一个；题在可以加多条的区块里（group 末尾带序号）、家庭成员和紧急联系人区块里，
   // 以及经历区块里除排名、外语这类概括信息以外的题（和存的时候 entryFieldLabel 的口径一样）。
-  function savedAnswerMatches(formFields, resumeFields, taken = new Set()) {
+  function savedAnswerMatches(formFields, resumeFields, taken = new Set(), pageFields = formFields) {
     const saved = new Map();
     (Array.isArray(resumeFields) ? resumeFields : []).forEach((field) => {
       if (field?.group !== CUSTOM_GROUP) return;
@@ -371,7 +372,7 @@
 
     const forms = Array.isArray(formFields) ? formFields : [];
     const sameLabel = new Map();
-    forms.forEach((field) => {
+    (Array.isArray(pageFields) ? pageFields : forms).forEach((field) => {
       const id = normalizeKey(field?.label);
       if (id) sameLabel.set(id, (sameLabel.get(id) || 0) + 1);
     });

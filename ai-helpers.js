@@ -333,13 +333,14 @@
 
   // 本地规则的匹配结果（#402）：worker 的 ruleMatches、网页先填的字段和后来冒出来的字段用同一份口径。
   // #429 第五项：规则认不出的字段，再看补充字段里有没有题目原样对得上的回答（profile.savedAnswerMatches）。
-  function localRuleMatches(formFields, resumeFields, profile) {
+  // pageFields 是整张表的字段（后来冒出来的字段只传新的几个时用），不传就是 formFields。
+  function localRuleMatches(formFields, resumeFields, profile, pageFields = formFields) {
     const forms = formFields.filter((field) => !isSecretFormField(field, profile));
     const resume = resumeFields.filter((field) => isSafeResumeField(field, profile));
     const rules = filterValidMatches(forms, buildRuleBasedMatches(forms, resume));
     if (typeof profile.savedAnswerMatches !== "function") return rules;
     const taken = new Set(rules.map((match) => match.fieldId));
-    return [...rules, ...filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken))];
+    return [...rules, ...filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields))];
   }
 
   function filterValidMatches(formFields, matches) {

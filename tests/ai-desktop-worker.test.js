@@ -262,6 +262,21 @@ test('the worker fills a saved answer to the same question itself and still send
   assert.deepEqual(asked, ['期望薪资', '学校']);
 });
 
+// 补填新出现的字段时网页带上整张表的题目：和页面上原有的同名，就不用存过的回答，交给 AI。
+test('a catch-up request with the page\'s labels does not use a saved answer for a question the page already has', async () => {
+  const profile = require('../profile-fields.js');
+  const formFields = [{ fieldId: 'days2', label: '每周可实习天数' }];
+  const resumeFields = profile.mergeResumeFields([{ group: '基本信息', key: '姓名', value: '测试用户' }],
+    profile.profileToResumeFields({ custom: [{ key: '每周可实习天数', value: '5天' }] }));
+  const alone = await worker(() => ({ ok: true, text: '[]' })).run({ formFields, resumeFields, pageLabels: ['姓名', '每周可实习天数'] });
+  assert.deepEqual(JSON.parse(JSON.stringify(alone.matches)), [{ fieldId: 'days2', value: '5天' }]);
+  const env = worker(() => ({ ok: true, text: '[]' }));
+  const twice = await env.run({ formFields, resumeFields, pageLabels: ['姓名', '每周可实习天数：', '每周可实习天数'] });
+  assert.deepEqual(JSON.parse(JSON.stringify(twice.matches)), []);
+  assert.equal(twice.diagnostics.ruleMatches, 0);
+  assert.match(env.sent.find(item => item.kind === 'desktop-complete').user, /每周可实习天数/);
+});
+
 // 手机排在身份证号前、或者反过来，网页先填和 worker 都不能把一个号码填进另一个框。
 test('the page\'s local matches and the worker keep a mobile and an ID number apart', async () => {
   const profile = require('../profile-fields.js');

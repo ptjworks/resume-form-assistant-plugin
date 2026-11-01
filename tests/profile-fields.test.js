@@ -563,6 +563,11 @@ test("savedAnswerMatches skips long answers, repeated questions, family and emer
   assert.deepEqual(profileApi.savedAnswerMatches([{ fieldId: "a", label: "是否服从调剂", group: "志愿一" },
     { fieldId: "b", label: "是否接受外派", group: "其他信息" }, { fieldId: "c", label: "实习收获", group: "" }], resume),
   [{ fieldId: "a", value: "是" }, { fieldId: "b", value: "是" }, { fieldId: "c", value: "学到很多" }]);
+  // 只填新冒出来的几个字段时，同名要和整张表一起数。
+  const added = [{ fieldId: "new", label: "是否接受外派", group: "其他信息" }];
+  assert.deepEqual(profileApi.savedAnswerMatches(added, resume), [{ fieldId: "new", value: "是" }]);
+  assert.deepEqual(profileApi.savedAnswerMatches(added, resume, new Set(), [{ fieldId: "old", label: "是否接受外派：", group: "基本信息" }, ...added]), []);
+  assert.deepEqual(helpers.localRuleMatches(added, resume, profileApi, [{ fieldId: "old", label: "是否接受外派" }, ...added]), []);
   // 补充字段里归一后同名的有两项（模板占了名字的另说）：不知道用哪一项，不填。
   const twice = [{ group: profileApi.CUSTOM_GROUP, key: "是否接受外派", value: "是" }, { group: profileApi.CUSTOM_GROUP, key: "是否接受外派：", value: "否" }];
   assert.deepEqual(profileApi.savedAnswerMatches([{ fieldId: "x", label: "是否接受外派" }], twice), []);
