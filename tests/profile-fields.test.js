@@ -536,15 +536,20 @@ test("savedAnswerMatches reuses a saved answer whose question is the same after 
 test("savedAnswerMatches leaves ID, contact, political, salary, job- and company-specific questions to the AI", () => {
   const keys = ["护照号码", "身份证号", "紧急联系人电话", "QQ", "E-mail", "现住址", "政治面貌（备注）", "是否党员", "期望薪资", "家庭年收入",
     "银行卡号", "学号", "应聘岗位", "为什么选择我们", "是否有亲属在本公司工作", "是否有亲属在本行工作", "我司的哪项业务吸引你",
-    "其他", "备注", "登录密码说明"];
-  // 「是否接受外派」是对照：同一份资料、同样的写法，它照样填。
-  const custom = [...keys, "是否接受外派"].map((key) => ({ key, value: "否" }));
+    "其他", "备注", "登录密码说明", "帐号", "银行帐户",
+    // 外企网申的英文题目
+    "Mobile", "Phone Number", "Tel", "Passport No.", "ID Number", "Visa Status", "Home Address", "Postal Code", "WeChat",
+    "Emergency Contact", "Political Status", "Expected Salary", "Bank Account"];
+  // 「是否接受外派」「Willing to relocate」是对照：同一份资料、同样的写法，它们照样填。
+  const controls = ["是否接受外派", "Willing to relocate"];
+  const custom = [...keys, ...controls].map((key) => ({ key, value: "否" }));
   const resume = profileApi.profileToResumeFields({ custom });
-  const form = [...keys, "是否接受外派"].map((key, index) => ({ fieldId: `f${index}`, label: key, group: "" }));
-  assert.deepEqual(profileApi.savedAnswerMatches(form, resume), [{ fieldId: `f${keys.length}`, value: "否" }]);
+  const form = [...keys, ...controls].map((key, index) => ({ fieldId: `f${index}`, label: key, group: "" }));
+  const expected = controls.map((key, index) => ({ fieldId: `f${keys.length + index}`, value: "否" }));
+  assert.deepEqual(profileApi.savedAnswerMatches(form, resume), expected);
   // 不经过 profileToResumeFields 的筛选（像密码的那一项它本来就不给）也一样不填。
   const raw = custom.map(({ key, value }) => ({ group: profileApi.CUSTOM_GROUP, key, value }));
-  assert.deepEqual(profileApi.savedAnswerMatches(form, raw), [{ fieldId: `f${keys.length}`, value: "否" }]);
+  assert.deepEqual(profileApi.savedAnswerMatches(form, raw), expected);
 });
 
 test("savedAnswerMatches skips long answers, repeated questions, family and emergency-contact blocks and entry fields", () => {

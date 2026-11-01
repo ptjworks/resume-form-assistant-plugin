@@ -135,7 +135,9 @@
   const JOB_SPECIFIC_VALUE_CHARS = 300;
   // #429 第五项：补充字段里有些题目原样对上也不在本地直接填，照旧交给 AI 按上下文判断。
   // 证件和各种号码、联系方式、政治面貌、薪资（#429 列的四类），再加银行账户。
-  const SAVED_ANSWER_EXCLUDED = /证件|身份证|护照|通行证|签证|驾驶证|驾照|准考证|学号|工号|编号|号码|社保|公积金|银行|卡号|账号|账户|手机|电话|邮箱|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary/i;
+  const SAVED_ANSWER_EXCLUDED = /证件|身份证|护照|通行证|签证|驾驶证|驾照|准考证|学号|工号|编号|号码|社保|公积金|银行|卡号|[账帐]号|[账帐]户|手机|电话|邮箱|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary/i;
+  // 外企网申的英文题目，同样四类加银行账户。比的是归一后的题目（小写、去掉空格）。
+  const SAVED_ANSWER_EXCLUDED_EN = /passport|identity|idcard|idnumber|^idno|nationalid|visa|licen[cs]e|phone|mobile|^tel(?:no)?$|address|postcode|postal|zipcode|wechat|contact|politic|party|salary|wage|compensation|income|^pay|bank|account/;
   // 题目里说的是「本公司」「本行」这类：换一家公司答案可能不同，等按站点存（#429 第五项第 2 点）了再在同一个站点复用。
   const COMPANY_REFERENCE = /[本该贵我](?:公司|单位|行|司|集团|院|校)/;
   // 离开所在区块就看不懂的笼统题目。
@@ -393,7 +395,7 @@
 
   // id 是归一后的题目。
   function reusableTitle(id) {
-    return !(SAVED_ANSWER_EXCLUDED.test(id) || JOB_SPECIFIC_LABEL.test(id) || COMPANY_REFERENCE.test(id) || SECRET_LABEL.test(id)
+    return !(SAVED_ANSWER_EXCLUDED.test(id) || SAVED_ANSWER_EXCLUDED_EN.test(id) || JOB_SPECIFIC_LABEL.test(id) || COMPANY_REFERENCE.test(id) || SECRET_LABEL.test(id)
       || CONTEXTLESS_TITLE.test(id) || GENERIC_TITLE.test(id) || NOT_A_LABEL.test(id));
   }
 
