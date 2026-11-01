@@ -1347,7 +1347,9 @@
     }
     // 要选的都选上了：再删这次不要的标签。
     for (;;) {
-      const extra = (multiTags(info) || []).find(tag => !chosen.some(label => norm(label) === norm(tag.text)));
+      const now = multiTags(info);
+      if (!now) return fail({ reason: 'unsupported_control' });
+      const extra = now.find(tag => !chosen.some(label => norm(label) === norm(tag.text)));
       if (!extra) break;
       if (!extra.remove) return fail({ reason: 'unsupported_control' });
       const reason = h.click(extra.remove, ctx, true); if (reason) return fail({ reason });
