@@ -29,6 +29,8 @@
 .mailbox-dialog .mailbox-steps li > span:not(:first-child) { width:auto; height:auto; background:none; border-radius:0; font-weight:inherit; color:inherit; display:inline; }
 #mailbox-address-panel { order:1; }
 #mailbox-address-panel > input { display:block; width:100%; margin-top:8px; min-height:40px; }
+/* 为聚焦轮廓留出空间，邮箱地址、密码和后续配置步骤的说明都保持清晰。 */
+.mailbox-dialog :is(input, select, textarea, .mailbox-password-field) + .field-hint { margin-top:8px; }
 .mailbox-dialog .mailbox-progress { order:2; margin:0; padding:10px 12px; border-left-width:1px; font-size:13px; }
 .mailbox-dialog .mailbox-progress strong { font-size:14px; }
 .mailbox-dialog .mailbox-progress-icon { display:none; }

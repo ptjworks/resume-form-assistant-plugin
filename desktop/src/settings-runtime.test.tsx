@@ -13,7 +13,7 @@ vi.mock("./react/usage-mount.tsx", () => ({ mountUsageSettings: vi.fn() }));
 vi.mock("./usage-metrics.ts", () => ({ installUsageSignals: vi.fn() }));
 vi.mock("./react/runtime-status-mount.tsx", () => ({ mountRuntimeStatus: () => runtime }));
 vi.mock("./ai/mount.tsx", () => ({ mountAiSettings: vi.fn(), mountAiReview: vi.fn() }));
-vi.mock("./applications-ui.ts", () => ({ mountApplications: () => ({ refreshList: async () => {} }) }));
+vi.mock("./applications-ui.ts", () => ({ mountApplications: () => ({ refreshList: async () => {}, refreshView: async () => {} }) }));
 vi.mock("./inbox-ui.ts", () => ({ mountInbox: () => ({ refresh: async () => {} }) }));
 vi.mock("./todos-ui.ts", () => ({ mountTodos: () => async () => {} }));
 vi.mock("./backup-ui.ts", () => ({ mountBackup: () => async () => {} }));

@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 const views = vi.hoisted(() => ({
   reloadArchive: vi.fn(async () => {}),
   refreshList: vi.fn(async () => {}),
+  refreshView: vi.fn(async () => {}),
   inboxRefresh: vi.fn(async () => true),
   resumeRefresh: vi.fn(),
   localBackup: vi.fn(async () => {}),
@@ -21,7 +22,7 @@ vi.mock("./usage-metrics.ts", () => ({ installUsageSignals: vi.fn() }));
 vi.mock("./react/runtime-status-mount.tsx", () => ({ mountRuntimeStatus: () => ({ update: vi.fn(), fail: vi.fn() }) }));
 vi.mock("./ai/mount.tsx", () => ({ mountAiSettings: vi.fn(), mountAiReview: vi.fn() }));
 vi.mock("./applications-ui.ts", () => ({
-  mountApplications: () => ({ refreshList: views.refreshList, reloadArchive: views.reloadArchive }),
+  mountApplications: () => ({ refreshList: views.refreshList, refreshView: views.refreshView, reloadArchive: views.reloadArchive }),
 }));
 vi.mock("./inbox-ui.ts", () => ({ mountInbox: () => ({ refresh: views.inboxRefresh }) }));
 vi.mock("./todos-ui.ts", () => ({ mountTodos: () => async () => {} }));
@@ -57,6 +58,18 @@ function expectEveryViewReloaded() {
   expect(views.inboxRefresh).toHaveBeenCalledTimes(1);
   expect(views.resumeRefresh).toHaveBeenCalledTimes(1);
 }
+
+test("returning from notifications reloads the applications list and selected detail without clearing archive notices", async () => {
+  document.querySelector<HTMLButtonElement>('.nav button[data-route="inbox"]')!.click();
+  await Promise.resolve();
+  document.querySelector<HTMLButtonElement>('.nav button[data-route="applications"]')!.click();
+  await Promise.resolve();
+  expect(views.refreshView).toHaveBeenCalledTimes(1);
+  expect(views.reloadArchive).not.toHaveBeenCalled();
+  document.querySelector<HTMLButtonElement>('.nav button[data-route="applications"]')!.click();
+  await Promise.resolve();
+  expect(views.refreshView).toHaveBeenCalledTimes(1);
+});
 
 test("a local restore or rollback reloads applications, inbox and resume, then the cloud backup panel", async () => {
   views.onLocalRestored!();

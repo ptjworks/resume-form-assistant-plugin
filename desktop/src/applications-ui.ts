@@ -376,7 +376,7 @@ export function mountApplications(
     if (coalesceTimer) clearTimeout(coalesceTimer);
     coalesceTimer = setTimeout(() => {
       coalesceTimer = null;
-      void refreshList();
+      void refreshView();
     }, coalesceMs);
   }
 
@@ -387,6 +387,11 @@ export function mountApplications(
   async function reloadArchive() {
     committedNotices = [];
     must("apps-fresh").hidden = true;
+    await refreshView();
+  }
+
+  /** 通知关联、AI 确认等操作可能发生在其他页面；列表和选中详情一起重读。 */
+  async function refreshView() {
     await refreshList();
     if (ctl.selectedId) await loadDetail(ctl.selectedId);
   }
@@ -407,7 +412,9 @@ export function mountApplications(
       if (token !== detailToken || ctl.selectedId !== id) return;
       const app = view.application.summary || view.application;
       const notes = view.application.notes;
-      const events = view.events || [];
+      // 分类是通知的元数据，AI 确认时与关联一并保存；不将它再画成一步进度。
+      // 原始事件仍留在档案中，用于审计和幂等确认。
+      const events = (view.events || []).filter((event) => event.event_type !== "evidence_classified");
       const snapshotStates = view.snapshotStates || {};
       const snapshots = view.snapshots || [];
       const evidence = view.evidence || [];
@@ -947,5 +954,5 @@ export function mountApplications(
     }
   });
 
-  return { refreshList, reloadArchive, ctl };
+  return { refreshList, refreshView, reloadArchive, ctl };
 }

@@ -101,9 +101,11 @@ async function navigate(route: string | undefined): Promise<boolean> {
     }
   }
   const enteringResume = route === "resume" && !onResume;
+  const enteringApplications = route === "applications" && views.applications.classList.contains("hidden");
   showRoute(route);
   if (route !== "settings") leaveBackup();
   if (enteringResume) resumeView.refresh();
+  if (enteringApplications) void applications.refreshView();
   return true;
 }
 

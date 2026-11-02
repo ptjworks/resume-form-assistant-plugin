@@ -55,6 +55,58 @@ test("same application refresh preserves selected tab; another application reset
   expect(app.getByRole("button", { name: "公司B 工程师" }).getAttribute("aria-current")).toBe("true");
 });
 
+test("returning after AI confirmation updates the notification count and shows one association, preserving the active tab", async () => {
+  const application = { id: "A", company: "星河科技", title: "工程师", current_stage: "saved" };
+  let confirmed = false;
+  const invoke: Invoke = async <T,>(name: string): Promise<T> => {
+    if (name === "list_applications_cmd") return { total: 1, items: [application] } as T;
+    if (name === "get_application_cmd") return {
+      application, snapshots: [], todos: [],
+      evidence: confirmed ? [{ id: "mail-1", subject: "笔试通知", replyClass: "assessment_invite" }] : [],
+      events: confirmed ? [
+        { id: "assoc", event_type: "evidence_associated", event_sequence: 1, payload: { evidence_id: "mail-1" } },
+        { id: "class", event_type: "evidence_classified", event_sequence: 2, payload: { evidence_id: "mail-1" } },
+        { id: "stage", event_type: "assessment_recorded", event_sequence: 3, payload: {} },
+      ] : [],
+    } as T;
+    throw new Error(`unexpected command ${name}`);
+  };
+  const ui = mountApplications(invoke);
+  await ui.refreshList();
+  fireEvent.click(document.querySelector<HTMLButtonElement>(".app-select")!);
+  const app = within(document.getElementById("view-applications")!);
+  fireEvent.click(await app.findByRole("tab", { name: "招聘通知 0" }));
+  confirmed = true;
+  await ui.refreshView();
+  expect(ui.ctl.selectedId).toBe("A");
+  expect(app.getByRole("tab", { name: "招聘通知 1" }).getAttribute("aria-selected")).toBe("true");
+  expect(app.getByRole("tab", { name: "时间线 2" })).toBeTruthy();
+  fireEvent.click(app.getByRole("tab", { name: "时间线 2" }));
+  const timeline = within(document.getElementById("detail-panel-timeline")!);
+  expect(timeline.getAllByText("已关联一封招聘通知")).toHaveLength(1);
+  expect(timeline.queryByText("整理了招聘通知")).toBeNull();
+  expect(timeline.getByText("记录测评")).toBeTruthy();
+  expect(document.querySelectorAll(".timeline-item")).toHaveLength(2);
+});
+
+test("a committed application change refreshes its selected detail as well as the list", async () => {
+  let changed: ((event: { payload?: unknown }) => void) | undefined;
+  let notes = "旧备注";
+  const application = { id: "A", company: "公司A", title: "工程师", current_stage: "saved" };
+  const invoke: Invoke = async <T,>(name: string): Promise<T> => {
+    if (name === "list_applications_cmd") return { total: 1, items: [application] } as T;
+    if (name === "get_application_cmd") return { application: { ...application, notes }, events: [] } as T;
+    throw new Error(`unexpected command ${name}`);
+  };
+  const ui = mountApplications(invoke, { coalesceMs: 0, listen: (_event, handler) => { changed = handler; } });
+  await ui.refreshList();
+  fireEvent.click(document.querySelector<HTMLButtonElement>(".app-select")!);
+  await waitFor(() => expect(document.querySelector(".detail-facts")!.textContent).toContain("旧备注"));
+  notes = "新备注";
+  changed!({ payload: { reason: "committed" } });
+  await waitFor(() => expect(document.querySelector(".detail-facts")!.textContent).toContain("新备注"));
+});
+
 test("all original actions remain available, and Escape closes the disclosure with focus restored", async () => {
   const { ui, calls } = setup(); await ui.refreshList();
   const app = within(document.getElementById("view-applications")!);
