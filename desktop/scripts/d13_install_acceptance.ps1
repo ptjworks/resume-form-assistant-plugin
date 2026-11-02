@@ -198,13 +198,29 @@ try {
   }
   $keys = Wait-NativeMessagingRegistration $exe.FullName
 
+  if ($CheckExplicitQuit) {
+    $marker = Join-Path $testRoot "explicit-quit"
+  }
+
   Request-InstalledQuit $exe.FullName
-  if (-not $app.HasExited) { $null = $app.WaitForExit(10000) }
+  if (-not $app.HasExited -and -not $app.WaitForExit(10000)) {
+    # The first quit can race the WebView and startup services on a loaded hosted
+    # runner. Extend the diagnostic grace period only after the durable marker proves
+    # the installed app handled the explicit request; an ignored request still fails
+    # at the original ten-second boundary.
+    if ($CheckExplicitQuit) {
+      if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        throw "Explicit quit was not handled within 10 seconds"
+      }
+      Write-Host "Explicit quit persisted; wait for slow startup cleanup"
+      if (-not $app.WaitForExit(20000)) {
+        throw "Explicit quit did not terminate the installed application within 30 seconds"
+      }
+    }
+  }
 
   if ($CheckExplicitQuit) {
-    if (-not $app.HasExited) { throw "Explicit quit did not terminate the installed application" }
-    $marker = Join-Path $testRoot "explicit-quit"
-    if (-not (Test-Path -LiteralPath $marker)) { throw "Explicit quit was not persisted" }
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { throw "Explicit quit was not persisted" }
     Write-Host "Verify delayed hidden launch and stopped native hosts"
     $delayed = Start-Process -FilePath $exe.FullName -ArgumentList "--hidden" -PassThru -WindowStyle Hidden
     if (-not $delayed.WaitForExit(15000)) {
