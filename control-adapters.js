@@ -645,8 +645,9 @@
     // 另一头没有能填的日期（没有值、写的是至今）：它的框里原来有日期的，连同那个日期一起选。框也是空的：
     // - antd 4/5 只选这一头，收起弹层看组件留没留下（网站允许只填一头，allowEmpty；antd 4 选完就收下，antd 5 收起时收下）；
     //   没留下就是要两头都有，报起止日期缺一头，组件里的值不变。
-    // - 认不出是哪家组件、框能打字的，和侧栏、字段卡片里手动填 Element 能打字的区间：照原来只填这一个框（single）。
-    //   手动可以先填开始再填结束：填结束时开始框里已经有字，两头一起提交。
+    // - 侧栏、字段卡片里手动填 Element 能打字的区间：写进这一个框，弹层开着等另一头，组件还没收下，报起止日期缺一头；
+    //   再手动填另一头时开始框里已经有字，两头一起提交，那一题报填上。一键填写里另一头不会再来，Element 不收单独一头，不写。
+    // - 认不出是哪家组件、框能打字的：可能一个框自己就收下，照原来只填这一个框（single），按框里的字核对。
     // - 别的不动，报起止日期缺一头。
     // 这一头写的是至今：区间日历里没有这一项，和单个日期一样报没有匹配的选项。
     function rangeBoxes(ctx) {
@@ -688,7 +689,11 @@
         || dateParts(helpers?.rangeDateParts?.(raw)?.[other]) || dateParts(boxes[other].value);
       if (!want[other]) {
         const typing = !boxes.some(box => box.readOnly);
-        if (typing && (ctx.entry.pickerType === 'generic' || (ctx.entry.pickerType === 'element' && !ctx.options.prepare))) return { single: true };
+        if (typing && ctx.entry.pickerType === 'generic') return { single: true };
+        if (typing && ctx.entry.pickerType === 'element' && !ctx.options.prepare) {
+          const typed = await typedRange(ctx, want, boxes, own);
+          return { reason: typed.reason || 'range_incomplete' };
+        }
         if (ctx.entry.pickerType !== 'antd') return { reason: 'range_incomplete' };
       }
       const order = date => (date.y * 12 + date.m) * 32 + (date.d || 1);
@@ -708,14 +713,15 @@
       // 按组件的格式打字没收下（网站改了显示格式）：收起弹层，改点日历格子。
       if (done.retype && custom?.pickRange && !stop(ctx, true)) done = await custom.pickRange(ctx, want, boxes, host);
       if (done.reason) return { reason: done.reason };
-      // 两头分别核对：组件收下的是不是要填的那两天。只有一头的，收起后没留下就是网站要两头都有。
-      if (!want[other]) return settled(0) && settled(1) && !calendarOpen() ? finished() : { reason: 'range_incomplete' };
+      // 两头分别核对：组件收下的是不是要填的那两天。只有一头的（antd）：这次打开的弹层收起了、组件留下了它才算；
+      // 没留下就是网站要两头都有。页面上别的日期弹层开着不相干。
+      if (!want[other]) return settled(0) && settled(1) && !done.open ? finished() : { reason: 'range_incomplete' };
       if (!showsDate(boxes[0], want[0]) || !showsDate(boxes[1], want[1])) return { reason: 'selection_not_committed' };
       return finished();
     }
     // antd 4/5 的 RangePicker：弹层里并排两个面板。点开始框打开，按单个日期的做法（antDatePick）点年、月、日选开始；
     // 选完 rc-picker 把焦点交给结束框、弹层不收，再同样点出结束日，两头都有了才一起提交、收起。
-    // 只有一头（want 里另一头是空的）：选完让框失焦收起弹层，留没留下由 operateRange 核对。
+    // 只有一头（want 里另一头是空的）：选完让框失焦收起弹层，留没留下由 operateRange 核对；交回这次打开的弹层还开着没有（open）。
     async function antRange(ctx, want, boxes) {
       const doc = ctx.el.ownerDocument;
       const dropdowns = () => Array.from(doc.querySelectorAll(antd(doc, '.ant-picker-dropdown'))).filter(visible);
@@ -770,11 +776,12 @@
         }
         await waitUntil(ctx, doc.documentElement, gone, Boolean, 600);
       }
-      return picked.leave ? {} : picked;
+      return picked.reason ? picked : { open: Boolean(popup?.isConnected && visible(popup)) };
     }
     // 能打字的区间（Element UI、Element Plus 的 daterange、monthrange）：两个框按组件默认的格式（YYYY-MM-DD、YYYY-MM）各写各的，
     // 再在结束框上回车。两头都收下时组件提交并收起弹层；不收（网站改了显示格式）弹层还开着，交回去改点格子（retype）。
-    async function typedRange(ctx, want, boxes) {
+    // only：手动只填一头时只写这一个框，不回车，弹层开着等另一头（见 operateRange）。
+    async function typedRange(ctx, want, boxes, only = -1) {
       const mode = ctx.entry.pickerInputType === 'month' ? 'month' : 'date';
       const text = date => mode === 'month' ? `${date.y}-${pad2(date.m)}` : `${date.y}-${pad2(date.m)}-${pad2(date.d || 1)}`;
       const doc = ctx.el.ownerDocument, View = doc.defaultView;
@@ -782,23 +789,26 @@
       const layers = () => Array.from(doc.querySelectorAll(antd(doc, CALENDAR_LAYERS))).filter(visible);
       const before = new Set(layers());
       const calendarOpen = () => layers().some(layer => !before.has(layer));
-      for (const index of [0, 1]) {
+      for (const index of only < 0 ? [0, 1] : [only]) {
         focus(boxes[index]);
         const reason = click(boxes[index], ctx); if (reason) return { reason };
         // 和单个日期一样，先给页面留出画弹层的时间。
-        if (index === 0) await delay(150);
+        if (index === 0 || only >= 0) await delay(150);
+        // 点开以后没有新冒出来的日历：这个区间的日历可能早就开着（手动先填了一头，日历一直开着等另一头），开着的都要看。
+        if (index === 0 && !layers().some(layer => !before.has(layer))) before.clear();
         const stopped = stop(ctx, true); if (stopped) return { reason: stopped };
         write(boxes[index], text(want[index]), ctx); input(boxes[index]);
         // 让一拍：Element UI 要等 Vue 处理完这次改动，紧跟着回车不收起弹层。
         await delay(0);
       }
+      if (only >= 0) return {};
       const stopped = stop(ctx, true); if (stopped) return { reason: stopped };
       if (View?.KeyboardEvent) boxes[1].dispatchEvent(new View.KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
       const taken = await waitUntil(ctx, doc.documentElement, () => showsDate(boxes[0], want[0]) && showsDate(boxes[1], want[1]) && !calendarOpen(), Boolean);
       if (!taken.reason) return {};
       if (taken.reason !== 'verification_timeout') return { reason: taken.reason };
       // 没收下：收起日历，框里打的字随之撤掉（对话框里不按 Esc，见 custom-controls.js 的 leaveCalendar）。
-      const open = await scope.ResumeProCustomControls?.leaveRange?.(ctx, boxes, host);
+      const open = await scope.ResumeProCustomControls?.leaveRange?.(ctx, boxes, host, before);
       return open || calendarOpen() ? { reason: 'selection_not_committed' } : { retype: true };
     }
 

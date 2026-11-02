@@ -70,8 +70,9 @@ const RANGE = `<div class="form-item"><label class="form-label">在校时间</la
 const NAME = `<div class="form-item"><label for="name">姓名</label><input id="name" name="name"></div>`;
 
 // endShown：结束框里原来就显示着的日期（只设框里的字，组件还没有值）。
-function page(t, { custom = [], endShown = "" } = {}) {
-  const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${NAME}${RANGE}</form></body></html>`,
+// rebuild：开始框第一次收下字时，页面把整个区间换成新节点（智联那类重画），新的区间是空的。extra：表单里再加的题。
+function page(t, { custom = [], endShown = "", rebuild = false, extra = "" } = {}) {
+  const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${NAME}${RANGE}${extra}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
   const w = dom.window;
   t.after(() => w.close());
@@ -102,8 +103,8 @@ function page(t, { custom = [], endShown = "" } = {}) {
 
   // Element 式的区间：一聚焦、一点就打开日历；框里的字 change 时收下，两头都收下了才提交；回车收起（要等 Vue 处理完改动）。
   const doc = w.document;
-  const boxes = Array.from(doc.querySelectorAll(".el-range-input"));
-  const log = { opened: 0, writes: 0 };
+  let boxes = [];
+  const log = { opened: 0, writes: 0, rebuilt: 0 };
   let model = null, pending = [null, null], panel = null, dirty = false;
   const show = () => boxes.forEach((box, index) => { box.value = model ? model[index] : ""; });
   const close = () => { panel?.remove(); panel = null; pending = [null, null]; show(); };
@@ -115,12 +116,24 @@ function page(t, { custom = [], endShown = "" } = {}) {
     panel.innerHTML = `<div class="el-picker-panel__body"><table class="el-date-table"><tbody><tr><td class="available"><div><span>1</span></div></td></tr></tbody></table></div>`;
     doc.body.append(panel);
   };
+  const mount = () => {
   doc.querySelector(".el-range-editor").addEventListener("click", open);
+  boxes = Array.from(doc.querySelectorAll(".el-range-input"));
   boxes.forEach((box, index) => {
     box.addEventListener("focus", open);
     box.addEventListener("input", () => { log.writes += 1; });
     box.addEventListener("change", () => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(box.value)) return;
+      if (rebuild && !log.rebuilt) {
+        log.rebuilt += 1;
+        panel?.remove(); panel = null; pending = [null, null];
+        const item = doc.querySelector(".el-range-editor").closest(".form-item");
+        const fresh = item.cloneNode(true);
+        fresh.querySelectorAll("input").forEach((input) => { input.value = ""; });
+        item.replaceWith(fresh);
+        mount();
+        return;
+      }
       pending[index] = box.value;
       const pair = [pending[0] || model?.[0], pending[1] || model?.[1]];
       dirty = true;
@@ -132,6 +145,8 @@ function page(t, { custom = [], endShown = "" } = {}) {
       if (event.key === "Enter" && !dirty && model && !pending[0] && !pending[1]) close();
     });
   });
+  };
+  mount();
   doc.addEventListener("mousedown", (event) => {
     if (panel && !panel.contains(event.target) && !doc.querySelector(".el-range-editor").contains(event.target)) close();
   });
@@ -146,7 +161,7 @@ function page(t, { custom = [], endShown = "" } = {}) {
   const highlight = w.ResumeProHighlightTest;
   highlight.setShadowRoot({ querySelectorAll: () => [], querySelector: (selector) => parts[selector] || null });
   return {
-    w, ui, worker, log, boxes, model: () => model, open: () => Boolean(panel),
+    w, ui, worker, log, model: () => model, open: () => Boolean(panel),
     run: () => within(highlight.handleAiFillClick({ currentTarget: ui.fill })),
     async until(check, ms = 3000) {
       const end = Date.now() + ms;
@@ -205,6 +220,35 @@ test("a range start the local rules know is filled before the AI answers when th
   const result = await running;
   assert.equal(result.filledCount, 2);
   assert.deepEqual(p.model(), ["2019-09-01", "2023-06-30"]);
+});
+
+test("a range whose two ends the local rules both know is filled together before the AI answers", async (t) => {
+  const p = page(t, { custom: [{ key: "在校时间（开始）", value: "2019-09-01" }, { key: "在校时间（结束）", value: "2023-06-30" }],
+    extra: `<div class="form-item"><label for="major">专业</label><input id="major" name="major"></div>` });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1 && /AI 匹配中/.test(p.ui.fill.textContent)));
+  assert.deepEqual(p.worker.calls[0].labels, ["专业"]);
+  assert.ok(await p.until(() => p.model() !== null), "both ends go early, in one opening");
+  assert.deepEqual(p.model(), ["2019-09-01", "2023-06-30"]);
+  assert.equal(p.log.opened, 1);
+  assert.equal(p.log.writes, 2);
+  p.worker.calls[0].reply({ "专业": "示例专业" });
+  const result = await running;
+  assert.equal(result.filledCount, 4);
+  assert.equal(result.unfilledCount, 0);
+  assert.equal(p.log.opened, 1, "the end field only checks after the AI answers");
+});
+
+test("when the page rebuilds the range during the first write, the retry finds both new boxes and fills them", async (t) => {
+  const p = page(t, { rebuild: true });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  p.worker.calls[0].reply({ "在校时间（开始）": "2019.09", "在校时间（结束）": "2023.06" });
+  const result = await running;
+  assert.equal(p.log.rebuilt, 1);
+  assert.equal(result.filledCount, 3, p.ui.diag.value);
+  assert.equal(result.unfilledCount, 0);
+  assert.deepEqual(p.model(), ["2019-09-01", "2023-06-01"]);
 });
 
 test("a range the AI answers only one end of is left alone and reported as missing an end", async (t) => {

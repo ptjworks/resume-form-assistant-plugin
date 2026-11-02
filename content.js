@@ -3153,15 +3153,29 @@
         const partnerBefore = partner ? fillValueSnapshot(partner) : null;
         // #429 区间日期：另一头这次也要填的，把它的值一起交给控件层，一次点开填完两头（见 control-adapters.js 的 operateRange）。
         const rangeId = rangePartnerId(fieldMap, element);
-        const range = rangeId ? { entry: fieldMap.get(rangeId), value: queue.find(next => next.fieldId === rangeId)?.value ?? null } : null;
-        const rangeBefore = range ? fillValueSnapshot(range.entry) : null;
-        let filled = await setElementValue(element, match.value, beforeWrite, controlCurrent, onWrite, { fill: true, range });
+        const writeField = async () => {
+          let other = rangeId ? fieldMap.get(rangeId) : null;
+          // 页面重画过（下面找回新字段重试时）：另一头也按新页面找回，和这一头一样，内容和批准时一样才换成新的。
+          if (other && !isFieldBindingCurrent(other)) {
+            const fresh = rebindFieldEntry(other);
+            if (fresh && fillValueSnapshot(fresh) === approvedValues.get(other)) {
+              approvedValues.set(fresh, approvedValues.get(other));
+              fieldMap.set(rangeId, fresh);
+              other = fresh;
+            }
+          }
+          const range = other ? { entry: other, value: queue.find(next => next.fieldId === rangeId)?.value ?? null } : null;
+          const before = range ? fillValueSnapshot(range.entry) : null;
+          const done = await setElementValue(element, match.value, beforeWrite, controlCurrent, onWrite, { fill: true, range });
+          // 另一头的框是这次一起填上的：按填上的值重新批准，轮到它时不当成用户改的。
+          if (range && approvedValues.get(range.entry) === before) {
+            const now = fillValueSnapshot(range.entry);
+            if (now !== null && now !== before) approvedValues.set(range.entry, now);
+          }
+          return done;
+        };
+        let filled = await writeField();
         stopInterruptedControl();
-        // 另一头的框是这次一起填上的：按填上的值重新批准，轮到它时不当成用户改的。
-        if (range && approvedValues.get(range.entry) === rangeBefore) {
-          const rangeNow = fillValueSnapshot(range.entry);
-          if (rangeNow !== null && rangeNow !== rangeBefore) approvedValues.set(range.entry, rangeNow);
-        }
         // 选完页面立刻重画（智联学位）：旧字段已经不在了，看找回的新字段——
         // 内容和填写前一样（重建冲掉了这次写入）就在新字段上重做一次；显示的正是刚选的值就算填上；
         // 别的内容（可能是用户刚改的，或页面带出的）不碰，按未确认处理。
@@ -3173,7 +3187,7 @@
             approvedValues.set(fresh, approved);
             fieldMap.set(match.fieldId, fresh);
             element = fresh;
-            filled = await setElementValue(element, match.value, beforeWrite, controlCurrent, onWrite, { fill: true, range });
+            filled = await writeField();
             stopInterruptedControl();
           } else if (fresh && showsFilledValue(fresh, match.value)) {
             approvedValues.set(fresh, now);

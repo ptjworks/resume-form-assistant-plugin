@@ -43,8 +43,9 @@ function parts(doc, title) {
 
 // Element 式的区间（element-ui、element-plus）。editable：框能打字；slash：只收 2019/09/01 这样的写法；
 // month：monthrange；unlinked：已有值时两个面板各停在开始月、结束月（antd 3 的区间日历就是这样）。
-// dialog：区间放在 Element 对话框里（Esc 会关掉对话框）。
-function elementRange({ editable = true, slash = false, month = false, unlinked = false, title = "在校时间", value = null, dialog = false } = {}) {
+// dialog：区间放在 Element 对话框里（Esc 会关掉对话框）。stale：上一个日期框的日历还开着（另一块 el-picker-panel）。
+// leftYearless：各翻各的时左边面板只有翻月按钮。
+function elementRange({ editable = true, slash = false, month = false, unlinked = false, title = "在校时间", value = null, dialog = false, stale = false, leftYearless = false } = {}) {
   const h = load(`${dialog ? '<div class="el-dialog">' : ""}<div class="row"><label class="row-label">${title}</label>
     <div class="el-date-editor el-range-editor el-date-editor--${month ? "monthrange" : "daterange"}">
       <input class="el-range-input" placeholder="${month ? "开始月份" : "开始日期"}" ${editable ? "" : "readonly"}><span>至</span>
@@ -66,7 +67,8 @@ function elementRange({ editable = true, slash = false, month = false, unlinked 
       const at = months[index];
       const buttons = (dir) => (dir < 0 ? `<button type="button" class="el-picker-panel__icon-btn d-arrow-left"></button><button type="button" class="el-picker-panel__icon-btn arrow-left"></button>`
         : `<button type="button" class="el-picker-panel__icon-btn arrow-right"></button><button type="button" class="el-picker-panel__icon-btn d-arrow-right"></button>`);
-      const own = index === 0 ? buttons(-1) + (unlinked ? buttons(1) : "") : (unlinked ? buttons(-1) : "") + buttons(1);
+      const leftNext = leftYearless ? `<button type="button" class="el-picker-panel__icon-btn arrow-right"></button>` : buttons(1);
+      const own = index === 0 ? buttons(-1) + (unlinked ? leftNext : "") : (unlinked ? buttons(-1) : "") + buttons(1);
       const cells = month
         ? ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"]
           .map((name, i) => `<td data-y="${at.y}" data-m="${i + 1}" data-d="1"><div><a class="cell">${name}</a></div></td>`).join("")
@@ -132,7 +134,14 @@ function elementRange({ editable = true, slash = false, month = false, unlinked 
   // 在外面按下：收起，没提交的不算。
   doc.addEventListener("mousedown", (event) => { if (panel && !panel.contains(event.target) && !editor.contains(event.target)) close(); });
   show();
-  return { ...h, boxes, log, model: () => model && model.map(text), open: () => Boolean(panel), ...parts(doc, title) };
+  let old = null;
+  if (stale) {
+    old = doc.createElement("div");
+    old.className = "el-picker-panel el-date-picker el-popper";
+    old.innerHTML = `<div class="el-picker-panel__body"><table class="el-date-table"><tbody><tr><td class="available"><div><span>1</span></div></td></tr></tbody></table></div>`;
+    doc.body.append(old);
+  }
+  return { ...h, boxes, log, model: () => model && model.map(text), open: () => Boolean(panel), staleOpen: () => Boolean(old?.isConnected), ...parts(doc, title) };
 }
 
 // rc-picker（antd 4/5）式的区间。antd4：选了年份直接回到日期面板（antd 5 先到月份面板）。
@@ -298,6 +307,18 @@ test("an antd RangePicker keeps the end it already has when only the start comes
   assert.deepEqual(empty.boxes.map((box) => box.value), ["", ""]);
 });
 
+test("a lone start an antd RangePicker keeps counts as filled even while another date's calendar is open on the page", async () => {
+  const h = antdRange({ allowEmpty: true });
+  const other = h.doc.createElement("div");
+  other.className = "ant-picker-dropdown";
+  other.innerHTML = `<div class="ant-picker-panel"><table><tbody><tr><td title="2026-11-02">2</td></tr></tbody></table></div>`;
+  h.doc.body.append(other);
+  const result = await h.api.operate(h.start, "2023.09", { range: { entry: h.end, value: "至今" } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.model(), ["2023-09-01", null]);
+  assert.equal(other.isConnected && !other.classList.contains("ant-picker-dropdown-hidden"), true, "the other calendar is left alone");
+});
+
 test("an antd 4 RangePicker that hands focus over late is closed from the box that has it, and a lone start it drops is not called filled", async () => {
   // 选完开始，rc-picker 2.x 过一会儿才把焦点交给结束框：先失焦的若是开始框，弹层跟着焦点又开着，框里显示的开始并没有提交。
   const h = antdRange({ antd4: true, lateFocus: true });
@@ -369,13 +390,17 @@ test("an editable Element range types both boxes, waits a beat, then presses Ent
   assert.equal(h.log.writes, 2);
 });
 
-test("an editable Element range filled by hand one box at a time works as before: the start box alone, then both on the end", async () => {
-  // 侧栏、字段卡片手动填（不是一键填写）：另一头没有值时照原来只写这一个框；填结束时开始框里已经有字，两头一起提交。
+test("an editable Element range filled by hand one box at a time keeps the start typed but does not call it filled; the end commits both", async () => {
+  // 侧栏、字段卡片手动填（不是一键填写）：另一头没有值时只写这一个框，弹层开着等另一头，组件还没收下，报起止日期缺一头；
+  // 填结束时开始框里已经有字，两头一起提交。
   const h = elementRange();
   const start = await h.api.operate(h.start, "2019-09-01");
-  assert.equal(start.ok, true, JSON.stringify(start));
+  assert.equal(start.ok, false, JSON.stringify(start));
+  assert.equal(start.reason, "range_incomplete");
   assert.equal(h.boxes[0].value, "2019-09-01");
   assert.equal(h.model(), null, "the picker holds the start until the end comes");
+  assert.equal(h.open(), true, "the calendar stays open for the other end");
+  assert.deepEqual(h.log.keys, [], "no Enter on a lone start");
   const end = await h.api.operate(h.end, "2023-06-30");
   assert.equal(end.ok, true, JSON.stringify(end));
   assert.deepEqual(h.model(), ["2019-09-01", "2023-06-30"]);
@@ -387,6 +412,19 @@ test("an editable Element range filled by hand one box at a time works as before
   assert.equal(lone.reason, "range_incomplete");
   assert.equal(fill.log.writes, 0);
   assert.equal(fill.log.opened, 0);
+});
+
+test("a hand-filled Element range whose typed dates it does not take is not called filled on the second box; its calendar is picked instead", async () => {
+  // 网站改了显示格式：第一次手动只写了开始（组件没收下，日历开着），第二次两头都写了也不收。
+  // 开着的日历是第一次留下的，也要看：收起后改点格子，组件收下了才算填上。
+  const h = elementRange({ slash: true });
+  const start = await h.api.operate(h.start, "2019-09-01");
+  assert.equal(start.reason, "range_incomplete");
+  assert.equal(h.open(), true);
+  const end = await h.api.operate(h.end, "2023-06-30");
+  assert.equal(end.ok, true, JSON.stringify(end));
+  assert.deepEqual(h.model(), ["2019-09-01", "2023-06-30"]);
+  assert.equal(h.open(), false);
 });
 
 test("an editable Element month range types months", async () => {
@@ -413,6 +451,22 @@ test("inside a dialog the calendar of an untaken typed range is closed with a pr
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(h.model(), ["2019-09-01", "2023-06-30"]);
   assert.deepEqual(h.log.keys, ["Enter"], "no Esc that would close the dialog");
+});
+
+test("an untaken typed range closes its own calendar, not the one the field before left open", async () => {
+  const h = elementRange({ slash: true, stale: true });
+  const result = await h.api.operate(h.start, "2019-09-01", { range: { entry: h.end, value: "2023-06-30" } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.model(), ["2019-09-01", "2023-06-30"]);
+  assert.equal(h.staleOpen(), true, "the other calendar is not touched");
+  assert.equal(h.open(), false);
+});
+
+test("panels that turn on their own move with their own buttons, month by month when a panel has no year button", async () => {
+  const h = elementRange({ editable: false, unlinked: true, leftYearless: true, value: [{ y: 2019, m: 9, d: 1 }, { y: 2023, m: 6, d: 1 }] });
+  const result = await h.api.operate(h.start, "2021.01", { range: { entry: h.end, value: null } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.model(), ["2021-01-01", "2023-06-01"]);
 });
 
 test("a read-only Element range is picked on its two-panel calendar, day and month alike", async () => {

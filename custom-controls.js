@@ -912,14 +912,15 @@
         if (target) break;
         if (step >= 60) return { reason: 'no_option_match' };
         // 往前翻用左边面板的按钮，往后翻用右边面板的；两个面板各翻各的（antd 3 已有值时左边停在开始月、右边停在结束月），
-        // 要的月份夹在中间的翻左边。面板上没有这个按钮时用日历里别处的。差一年以上翻年，不到一年翻月。
+        // 要的月份夹在中间的翻左边。差一年以上翻年，不到一年翻月；先用这个面板自己的按钮（有翻月没翻年的就一直翻月），
+        // 面板上一个都没有才用日历里别处的，免得各翻各的时翻了另一个面板。
         const [left, right] = seen;
         const dir = goal < at(left.view) ? -1 : 1;
         const moving = dir < 0 || goal < at(right.view) ? left : right;
         const diff = Math.abs(goal - at(moving.view));
-        const from = [moving.view, calendarView(layer, h)];
-        const pick = level => from.map(view => view.button(level, dir)).find(Boolean);
-        const button = mode === 'month' ? pick('year') : (diff >= 12 && pick('year')) || pick('month');
+        const levels = mode === 'month' ? ['year'] : diff >= 12 ? ['year', 'month'] : ['month'];
+        const pick = view => levels.map(level => view.button(level, dir)).find(Boolean);
+        const button = pick(moving.view) || pick(calendarView(layer, h));
         if (!button) return { reason: 'no_option_match' };
         const before = signature();
         const reason = h.click(button, ctx); if (reason) return { reason };
@@ -934,8 +935,9 @@
     return closed.reason ? { reason: closed.reason === 'verification_timeout' ? 'selection_not_committed' : closed.reason } : {};
   }
   // 打字没收下时收起这个区间的日历（见 control-adapters.js 的 typedRange），收法同 leaveCalendar。交回日历还开着没有。
-  async function leaveRange(ctx, boxes, h) {
-    const layer = calendarNear({ el: boxes[0], root: ctx.entry.root, before: new Set() }, h);
+  // before：打字之前就开着的弹层（上一个日期框的日历可能还在退场），不当成这次打开的。
+  async function leaveRange(ctx, boxes, h, before = new Set()) {
+    const layer = calendarNear({ el: boxes[0], root: ctx.entry.root, before }, h);
     if (layer && !h.stop(ctx)) await leaveCalendar(ctx, boxes[1], ctx.entry.root, layer, h);
     return Boolean(layer?.isConnected && h.visible(layer));
   }
