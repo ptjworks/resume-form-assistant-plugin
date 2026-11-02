@@ -1,9 +1,32 @@
 // #429 招聘平台的已知行为和文本框的字数上限。
 // - 上传简历后会重新解析、覆盖已填内容的平台：侧栏提示先上传简历再填写。
 // - 字数按字节算的站点（汉字算 2）：填之前按字节量。
-// 平台和它们的行为取自 Form2Offer 的 src/platform-knowledge.js（MIT，github.com/gaaiyun/Form2Offer，
-// 提交 e7be145，2026-10-09；许可原文见 scripts/licenses/form2offer-e7be145.txt）：只取 parse.overwrites 记为 high 的几家
-// 和记了「按字节计」的两家，以及它们的 host、路径。跑在公司自己域名上的 Moka、飞书、北森按 #429 调研记的页面特征认。
+// 平台和它们的行为取自 Form2Offer 的 src/platform-knowledge.js（github.com/gaaiyun/Form2Offer，提交 e7be145，2026-10-09）：
+// 只取 parse.overwrites 记为 high 的几家和记了「按字节计」的两家，以及它们的 host、路径。跑在公司自己域名上的 Moka、飞书、北森
+// 按 #429 调研记的页面特征认。Form2Offer 的许可随这个文件一起分发，原文如下（仓库里另有一份 scripts/licenses/form2offer-e7be145.txt）：
+//
+// MIT License
+//
+// Copyright (c) 2026 Br1an67
+// Copyright (c) 2026 Gaaiyun and Form2Offer contributors
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 (function attachSiteKnowledge(scope) {
   const has = (doc, selector) => Boolean(doc?.querySelector?.(selector));
   // Moka 把页面配置放在内联脚本的 window._MOKA_ENV_ 里；内容脚本读不到页面的全局变量，只看脚本文字。
@@ -55,6 +78,17 @@
   function countsBytes(href) {
     return Boolean(byUrl(href)?.bytes);
   }
+  // 文档所在网站的网址。about:blank、srcdoc 这类框架没有自己的网址，往外一层层看框架所在的文档，到顶还没有就用 fallback。
+  function addressOf(doc, fallback) {
+    for (let current = doc; current;) {
+      const url = String(current.URL || "");
+      if (/^https?:/i.test(url)) return url;
+      let frame = null;
+      try { frame = current.defaultView?.frameElement || null; } catch { frame = null; }
+      current = frame?.ownerDocument || null;
+    }
+    return String(fallback || "");
+  }
   // 侧栏里的一句提示：只给上传后会覆盖已填内容的平台。
   function uploadHint(platform) {
     if (!platform?.overwrites) return "";
@@ -77,26 +111,27 @@
   const classes = node => String(node.getAttribute?.("class") || "").split(/\s+/).filter(Boolean);
   // 框的字数上限：框自己的 maxlength；没有时看组件自己显示的字数统计（antd 4 带 showCount 的多行文本把 maxlength 拿掉了，
   // 只在外层的 data-count 里；antd 5 只设 count.max 的输入框只有「0 / 10」）。只在只装着这一个框的外层里找，最多往上三层。
+  // 没有上限返回 null；maxlength="0" 和浏览器一样是 0 字。
   function limitOf(el) {
-    if (!el || !["INPUT", "TEXTAREA"].includes(el.tagName)) return 0;
-    if (el.tagName === "INPUT" && !MAXLENGTH_TYPES.has(String(el.type || "text").toLowerCase())) return 0;
+    if (!el || !["INPUT", "TEXTAREA"].includes(el.tagName)) return null;
+    if (el.tagName === "INPUT" && !MAXLENGTH_TYPES.has(String(el.type || "text").toLowerCase())) return null;
     const native = Number(el.maxLength);
-    if (Number.isInteger(native) && native > 0) return native;
+    if (Number.isInteger(native) && native >= 0) return native;
     let node = el.parentElement;
     for (let depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
       if (node.querySelectorAll("input:not([type='hidden']), textarea").length > 1) break;
       const wrapped = classes(node).some(name => COUNTER_WRAPPER.test(name)) ? COUNT.exec(node.getAttribute("data-count") || "") : null;
-      if (wrapped && Number(wrapped[1]) > 0) return Number(wrapped[1]);
+      if (wrapped) return Number(wrapped[1]);
       for (const holder of node.querySelectorAll("[class]")) {
         if (!classes(holder).some(name => COUNTER.test(name))) continue;
         const hit = COUNT.exec(holder.textContent || "");
-        if (hit && Number(hit[1]) > 0) return Number(hit[1]);
+        if (hit) return Number(hit[1]);
       }
     }
-    return 0;
+    return null;
   }
 
-  const api = { detect, countsBytes, uploadHint, measure, limitOf, platforms: PLATFORMS.map(({ id, name, overwrites = false, bytes = false }) => ({ id, name, overwrites, bytes })) };
+  const api = { detect, countsBytes, addressOf, uploadHint, measure, limitOf, platforms: PLATFORMS.map(({ id, name, overwrites = false, bytes = false }) => ({ id, name, overwrites, bytes })) };
   scope.ResumeProSiteKnowledge = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);

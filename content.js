@@ -5135,11 +5135,10 @@
   // #429 文本框的字数上限：框的 maxlength 或组件自己的字数统计（见 site-knowledge.js）；字数按字节算的站点按字节量。
   function textLimit(element) {
     const knowledge = self.ResumeProSiteKnowledge;
-    const max = knowledge?.limitOf(element) || 0;
-    if (!max) return null;
-    // 看框所在文档的网址（同源框架里的表单看框架自己的）；about:blank 这类认不出网站的框架看整页的。
-    const url = String(element.ownerDocument?.URL || "");
-    return { max, bytes: knowledge.countsBytes(/^https?:/i.test(url) ? url : location.href) };
+    const max = knowledge?.limitOf(element);
+    if (!Number.isInteger(max)) return null;
+    // 看框所在文档的网址（同源框架里的表单看框架自己的）；about:blank 这类框架往外层框架找，都没有看整页的。
+    return { max, bytes: knowledge.countsBytes(knowledge.addressOf(element.ownerDocument, location.href)) };
   }
   function lengthHint(element) {
     const limit = textLimit(element);

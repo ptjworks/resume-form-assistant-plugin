@@ -146,6 +146,15 @@ test("on a site that counts bytes a Chinese character counts 2; the same value f
   assert.deepEqual(chars.worker.calls[0].fields.map((field) => field.lengthUnit), [undefined, undefined]);
 });
 
+test("a box with maxlength 0 takes no characters: it is left out and reported, as a person could not type in it either", async (t) => {
+  const p = page(t, row("en", "英文名", `<input id="en" maxlength="0">`) + row("major", "专业", `<input id="major">`),
+    { answers: { "英文名": "Alex Li", "专业": "示例专业" } });
+  await p.run();
+  assert.deepEqual(["en", "major"].map(p.value), ["", "示例专业"]);
+  assert.match(p.ui.status.textContent, /英文名（超过 0 字上限）/);
+  assert.deepEqual(p.worker.calls[0].fields.map((field) => field.maxLength), [0, undefined]);
+});
+
 test("the side panel status carries an upload hint on platforms whose resume upload overwrites the form", async (t) => {
   const form = row("name", "姓名", `<input id="name">`);
   assert.equal((await page(t, form, { url: "https://app.mokahr.com/campus_apply/example/1" }).status()).siteHint,

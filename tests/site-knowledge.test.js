@@ -82,10 +82,10 @@ test("a box's limit is its maxlength, or the component's own counter when it has
   assert.equal(limit("antd4"), 20);
   assert.equal(limit("antd5"), 10);
   assert.equal(limit("element"), 20);
-  assert.equal(limit("plain"), 0);
-  assert.equal(limit("first"), 0, "a counter shared by two boxes is not this box's");
-  assert.equal(limit("account"), 0, "only a counter written as n / max counts");
-  assert.equal(knowledge.limitOf(doc.createElement("select")), 0);
+  assert.equal(limit("plain"), null);
+  assert.equal(limit("first"), null, "a counter shared by two boxes is not this box's");
+  assert.equal(limit("account"), null, "only a counter written as n / max counts");
+  assert.equal(knowledge.limitOf(doc.createElement("select")), null);
 });
 
 test("only text-like boxes take maxlength, and only a component's own counter counts", () => {
@@ -100,15 +100,50 @@ test("only text-like boxes take maxlength, and only a component's own counter co
     <div class="ivu-input-wrapper"><input id="iview"><span class="ivu-input-word-count">0/50</span></div>`);
   const limit = (name) => knowledge.limitOf(doc.getElementById(name));
   // 数字、日期框按规范不认 maxlength。
-  assert.equal(limit("number"), 0);
-  assert.equal(limit("date"), 0);
+  assert.equal(limit("number"), null);
+  assert.equal(limit("date"), null);
   assert.equal(limit("email"), 30);
   assert.equal(limit("tel"), 11);
   // 分页、步骤这类「n / m」不是字数统计；data-count 只认字数统计外层（带 X-show-count）上的。
-  assert.equal(limit("paged"), 0);
-  assert.equal(limit("stepped"), 0);
-  assert.equal(limit("data"), 0);
+  assert.equal(limit("paged"), null);
+  assert.equal(limit("stepped"), null);
+  assert.equal(limit("data"), null);
   assert.equal(limit("arco"), 30);
   assert.equal(limit("vant"), 200);
   assert.equal(limit("iview"), 50);
+});
+
+test("a maxlength of 0 is a limit of 0 characters, as in the browser", () => {
+  const doc = page(`
+    <input id="zero" maxlength="0"><input id="negative" maxlength="-1">
+    <div class="ant-input-textarea ant-input-textarea-show-count" data-count="0 / 0"><textarea id="counted"></textarea></div>`);
+  const limit = (name) => knowledge.limitOf(doc.getElementById(name));
+  assert.equal(limit("zero"), 0);
+  assert.equal(limit("negative"), null);
+  assert.equal(limit("counted"), 0);
+});
+
+test("a frame without an address of its own takes the address of the frame around it", () => {
+  const { window } = new JSDOM(`<body><iframe id="outer"></iframe></body>`, { url: "https://xyz.51job.com/consumer/apply" });
+  const outer = window.document.getElementById("outer").contentDocument;
+  Object.defineProperty(outer, "URL", { value: "https://xyz.51job.com/External/Apply.aspx" });
+  const inner = outer.body.appendChild(outer.createElement("iframe")).contentDocument;
+  assert.equal(inner.URL, "about:blank");
+  assert.equal(knowledge.addressOf(inner, "https://top.example.test/"), "https://xyz.51job.com/External/Apply.aspx");
+  assert.equal(knowledge.addressOf(window.document, "https://top.example.test/"), "https://xyz.51job.com/consumer/apply");
+  const lone = new JSDOM("<body></body>").window.document;
+  assert.equal(knowledge.addressOf(lone, "https://top.example.test/"), "https://top.example.test/");
+  window.close();
+});
+
+test("the Form2Offer license ships inside site-knowledge.js", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const root = path.join(__dirname, "..");
+  const license = fs.readFileSync(path.join(root, "scripts/licenses/form2offer-e7be145.txt"), "utf8");
+  const notice = license.slice(license.indexOf("MIT License")).trim().split("\n").map((line) => line.trimEnd()).join("\n");
+  const header = fs.readFileSync(path.join(root, "site-knowledge.js"), "utf8").split("\n")
+    .filter((line) => line.startsWith("//")).map((line) => line.replace(/^\/\/ ?/, "").trimEnd()).join("\n");
+  assert.ok(header.includes(notice), "the copyright and permission notice are in the file header");
+  assert.match(fs.readFileSync(path.join(root, "desktop/scripts/pack-plugin.js"), "utf8"), /^\s*"site-knowledge\.js",$/m);
 });
