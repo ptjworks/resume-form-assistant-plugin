@@ -642,7 +642,12 @@
     // #429 区间日期（RangePicker、daterange）：扫描时拆成开始、结束两个框，各是一题。组件要两头都选了才收下：
     // antd 3/4/5、Element 只选一头，弹层一收就丢了（真组件上看过）。宿主把另一头这次要填的值（options.range）一起交来，
     // 一次点开把两头填完，再分别核对两个框。轮到另一头时它的框已经是要填的值、弹层也收了，只核对。
-    // 另一头没有能填的日期（没有值、写的是至今）：它的框里原来有日期的，连同那个日期一起选；框也是空的不动，报起止日期缺一头。
+    // 另一头没有能填的日期（没有值、写的是至今）：它的框里原来有日期的，连同那个日期一起选。框也是空的：
+    // - antd 4/5 只选这一头，收起弹层看组件留没留下（网站允许只填一头，allowEmpty；antd 4 选完就收下，antd 5 收起时收下）；
+    //   没留下就是要两头都有，报起止日期缺一头，组件里的值不变。
+    // - 认不出是哪家组件、框能打字的，和侧栏、字段卡片里手动填 Element 能打字的区间：照原来只填这一个框（single）。
+    //   手动可以先填开始再填结束：填结束时开始框里已经有字，两头一起提交。
+    // - 别的不动，报起止日期缺一头。
     // 这一头写的是至今：区间日历里没有这一项，和单个日期一样报没有匹配的选项。
     function rangeBoxes(ctx) {
       const root = ctx.entry?.root;
@@ -681,17 +686,21 @@
       const partner = ctx.options.range?.entry?.element === boxes[other] ? ctx.options.range : null;
       want[other] = dateParts(partner?.value != null ? end(partner.value, partner.entry, boxes[other]) : '')
         || dateParts(helpers?.rangeDateParts?.(raw)?.[other]) || dateParts(boxes[other].value);
-      // 认不出是哪家组件、框又能打字的：可能一个框自己就收下，照原来只填这一个框（single，见 operateDate）。
-      if (!want[other] && ctx.entry.pickerType === 'generic' && !boxes.some(box => box.readOnly)) return { single: true };
-      if (!want[other]) return { reason: 'range_incomplete' };
+      if (!want[other]) {
+        const typing = !boxes.some(box => box.readOnly);
+        if (typing && (ctx.entry.pickerType === 'generic' || (ctx.entry.pickerType === 'element' && !ctx.options.prepare))) return { single: true };
+        if (ctx.entry.pickerType !== 'antd') return { reason: 'range_incomplete' };
+      }
       const order = date => (date.y * 12 + date.m) * 32 + (date.d || 1);
-      if (order(want[0]) > order(want[1])) return { reason: 'invalid_date' };
+      if (want[other] && order(want[0]) > order(want[1])) return { reason: 'invalid_date' };
       const accepted = () => showsDate(ctx.el, want[own]);
       // 资料只到月、框里显示到日：选的是 1 号，结果里写明。
       const finished = () => ({ accepted, dayDefaulted: !want[own].d && Boolean(dateParts(ctx.el.value)?.d) });
       const doc = ctx.el.ownerDocument;
       const calendarOpen = () => Array.from(doc.querySelectorAll(antd(doc, CALENDAR_LAYERS))).some(visible);
-      if (showsDate(boxes[0], want[0]) && showsDate(boxes[1], want[1]) && !calendarOpen()) return finished();
+      // 只有一头的（antd）：另一个框空着才算已经填好。
+      const settled = index => (want[index] ? showsDate(boxes[index], want[index]) : !String(boxes[index].value ?? '').trim());
+      if (settled(0) && settled(1) && !calendarOpen()) return finished();
       const custom = scope.ResumeProCustomControls;
       let done = ctx.entry.pickerType === 'antd' ? await antRange(ctx, want, boxes)
         : boxes.some(box => box.readOnly) ? (custom?.pickRange ? await custom.pickRange(ctx, want, boxes, host) : { reason: 'unsupported_control' })
@@ -699,12 +708,14 @@
       // 按组件的格式打字没收下（网站改了显示格式）：收起弹层，改点日历格子。
       if (done.retype && custom?.pickRange && !stop(ctx, true)) done = await custom.pickRange(ctx, want, boxes, host);
       if (done.reason) return { reason: done.reason };
-      // 两头分别核对：组件收下的是不是要填的那两天。
+      // 两头分别核对：组件收下的是不是要填的那两天。只有一头的，收起后没留下就是网站要两头都有。
+      if (!want[other]) return settled(0) && settled(1) && !calendarOpen() ? finished() : { reason: 'range_incomplete' };
       if (!showsDate(boxes[0], want[0]) || !showsDate(boxes[1], want[1])) return { reason: 'selection_not_committed' };
       return finished();
     }
     // antd 4/5 的 RangePicker：弹层里并排两个面板。点开始框打开，按单个日期的做法（antDatePick）点年、月、日选开始；
     // 选完 rc-picker 把焦点交给结束框、弹层不收，再同样点出结束日，两头都有了才一起提交、收起。
+    // 只有一头（want 里另一头是空的）：选完让框失焦收起弹层，留没留下由 operateRange 核对。
     async function antRange(ctx, want, boxes) {
       const doc = ctx.el.ownerDocument;
       const dropdowns = () => Array.from(doc.querySelectorAll(antd(doc, '.ant-picker-dropdown'))).filter(visible);
@@ -713,6 +724,7 @@
       let popup = null;
       const picked = await (async () => {
         for (const index of [0, 1]) {
+          if (!want[index]) continue;
           // 结束框原来就是要的日子，选完开始就一起提交、收起了：不再点开。
           if (index && popup && !visible(popup) && showsDate(boxes[index], want[index])) continue;
           // 弹层开着、轮到的正是这个框（选完开始，焦点交给了结束框）就接着选；不然点这个框。
@@ -732,24 +744,33 @@
           if (popup.querySelector(antd(popup, '.ant-picker-time-panel'))) return { reason: 'unsupported_control' };
           const one = await antDatePick(ctx, `${want[index].y}-${pad2(want[index].m)}-${pad2(want[index].d || 1)}`, popup, true);
           if (one.reason) return one;
-          if (index === 0) {
+          if (index === 0 && want[1]) {
             const turned = await waitUntil(ctx, doc.documentElement, () => !visible(popup) || active(boxes[1]), Boolean);
             if (turned.reason) return { reason: turned.reason === 'verification_timeout' ? 'selection_not_committed' : turned.reason };
           }
         }
+        if (!(want[0] && want[1]) && visible(popup)) {
+          // 等 rc-picker 把焦点交给另一个框（antd 4 过一会儿才交）再失焦，不然失焦的是开始框，弹层跟着焦点又开着。
+          await waitUntil(ctx, doc.documentElement, () => !visible(popup) || boxes.some(box => box !== ctx.el && active(box)), Boolean, 300);
+          return { leave: true };
+        }
         const closed = await waitUntil(ctx, doc.documentElement, () => !popup.isConnected || !visible(popup), Boolean);
         return closed.reason ? { reason: closed.reason === 'verification_timeout' ? 'selection_not_committed' : closed.reason } : {};
       })().catch(() => ({ reason: 'operation_failed' }));
-      // 选不成时收起自己点开的弹层，同 antDate：已经选的那一头不算，组件里的值不变。
-      if (picked.reason && popup && !before.has(popup) && !stop(ctx) && popup.isConnected && visible(popup)) {
-        const focused = boxes.find(box => doc.activeElement === box) || ctx.el;
+      // 选不成时收起自己点开的弹层，同 antDate：已经选的那一头不算，组件里的值不变。只选一头的也这样收起（leave）。
+      if ((picked.reason || picked.leave) && popup && !before.has(popup) && !stop(ctx) && popup.isConnected && visible(popup)) {
+        // 失焦有焦点的那个框；没收起时再失焦一次，这时焦点已经不在框里，还是对着它（焦点又回到哪个框就对着那个）。
+        let focused = boxes.find(box => doc.activeElement === box) || ctx.el;
         const gone = () => !popup.isConnected || !visible(popup);
         leavePicker(focused);
         const leaving = await waitUntil(ctx, doc.documentElement, () => gone() || Array.from(popup.classList).some(token => /-leave$/.test(token)), Boolean, 100);
-        if (leaving.reason === 'verification_timeout' && !stop(ctx)) leavePicker(focused);
+        if (leaving.reason === 'verification_timeout' && !stop(ctx)) {
+          focused = boxes.find(box => doc.activeElement === box) || focused;
+          leavePicker(focused);
+        }
         await waitUntil(ctx, doc.documentElement, gone, Boolean, 600);
       }
-      return picked;
+      return picked.leave ? {} : picked;
     }
     // 能打字的区间（Element UI、Element Plus 的 daterange、monthrange）：两个框按组件默认的格式（YYYY-MM-DD、YYYY-MM）各写各的，
     // 再在结束框上回车。两头都收下时组件提交并收起弹层；不收（网站改了显示格式）弹层还开着，交回去改点格子（retype）。

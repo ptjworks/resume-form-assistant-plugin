@@ -136,8 +136,9 @@ function elementRange({ editable = true, slash = false, month = false, unlinked 
 }
 
 // rc-picker（antd 4/5）式的区间。antd4：选了年份直接回到日期面板（antd 5 先到月份面板）。
-// disabledAfter：这一天以后的日子不能选（disabledDate）。
-function antdRange({ antd4 = false, value = null, title = "在校时间", disabledAfter = null } = {}) {
+// disabledAfter：这一天以后的日子不能选（disabledDate）。allowEmpty：结束可以空着，只选了开始、弹层收起时收下（antd 5 的样子）。
+// lateFocus：选完一头过一会儿才把焦点交给另一个框（antd 4.24 的 rc-picker 2.x）。在日历里按下鼠标后，紧接着的一次失焦不收起（rc-picker 到下一帧才复位）。
+function antdRange({ antd4 = false, value = null, title = "在校时间", disabledAfter = null, allowEmpty = false, lateFocus = false } = {}) {
   const h = load(`<div class="ant-form-item"><div class="ant-form-item-label"><label>${title}</label></div>
     <div class="ant-form-item-control"><div class="ant-picker ant-picker-range">
       <div class="ant-picker-input"><input readonly placeholder="开始日期"></div><div class="ant-picker-range-separator">→</div>
@@ -145,14 +146,17 @@ function antdRange({ antd4 = false, value = null, title = "在校时间", disabl
   const { doc } = h;
   const boxes = Array.from(doc.querySelectorAll(".ant-picker-input input"));
   const log = { opened: 0 };
-  let model = value, pending = [null, null], active = 0, view = "date", left = { y: 2026, m: 11 }, decade = 2020, dropdown = null;
-  const show = () => boxes.forEach((box, index) => { box.value = pending[index] ? iso(pending[index]) : model ? iso(model[index]) : ""; });
+  let model = value, pending = [null, null], active = 0, view = "date", left = { y: 2026, m: 11 }, decade = 2020, dropdown = null, preventBlur = false;
+  const show = () => boxes.forEach((box, index) => { box.value = pending[index] ? iso(pending[index]) : model?.[index] ? iso(model[index]) : ""; });
   const setActive = (index) => {
     active = index;
     boxes.forEach((box, i) => box.parentElement.classList.toggle("ant-picker-input-active", i === index));
     boxes[index].focus();
   };
-  const close = () => { dropdown?.classList.add("ant-picker-dropdown-hidden"); pending = [null, null]; show(); };
+  const close = () => {
+    if (allowEmpty && pending[0] && !pending[1]) model = [pending[0], null];
+    dropdown?.classList.add("ant-picker-dropdown-hidden"); pending = [null, null]; show();
+  };
   const cell = (title, text, inView = true) => {
     const off = disabledAfter && /^\d{4}-\d{2}-\d{2}$/.test(title) && key(parse(title)) > key(disabledAfter);
     return `<td title="${title}" class="ant-picker-cell${inView ? " ant-picker-cell-in-view" : ""}${off ? " ant-picker-cell-disabled" : ""}"><div class="ant-picker-cell-inner">${text}</div></td>`;
@@ -185,7 +189,11 @@ function antdRange({ antd4 = false, value = null, title = "在校时间", disabl
       dropdown = doc.createElement("div");
       dropdown.className = "ant-picker-dropdown ant-picker-dropdown-range ant-picker-dropdown-hidden";
       dropdown.innerHTML = `<div class="ant-picker-panel-container"><div class="ant-picker-panels"></div></div>`;
-      dropdown.addEventListener("mousedown", (event) => event.preventDefault());
+      dropdown.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        preventBlur = true;
+        setTimeout(() => { preventBlur = false; }, 16);
+      });
       dropdown.addEventListener("click", (event) => {
         const target = event.target;
         if (target.closest(".ant-picker-year-btn")) { view = "year"; decade = Math.floor(left.y / 10) * 10; draw(); return; }
@@ -206,7 +214,8 @@ function antdRange({ antd4 = false, value = null, title = "在校时间", disabl
           if (key(pair[0]) <= key(pair[1])) { model = pair; close(); return; }
         }
         show();
-        setActive(1 - active);
+        const next = 1 - active;
+        if (lateFocus) setTimeout(() => setActive(next), 40); else setActive(next);
       });
       doc.body.append(dropdown);
     }
@@ -222,12 +231,13 @@ function antdRange({ antd4 = false, value = null, title = "在校时间", disabl
   boxes.forEach((box, index) => {
     box.addEventListener("mousedown", () => open(index));
     // 焦点离开组件（不进日历、不进另一个框）就收起，没提交的不算。
-    box.addEventListener("blur", () => setTimeout(() => {
+    // React 的 onBlur 认的是 focusout。
+    box.addEventListener("focusout", () => preventBlur ? (preventBlur = false) : setTimeout(() => {
       if (!boxes.includes(doc.activeElement) && !dropdown?.contains(doc.activeElement)) close();
     }, 0));
   });
   show();
-  return { ...h, boxes, log, model: () => model && model.map(iso), open: () => Boolean(dropdown) && !dropdown.classList.contains("ant-picker-dropdown-hidden"),
+  return { ...h, boxes, log, model: () => model && model.map((date) => date && iso(date)), open: () => Boolean(dropdown) && !dropdown.classList.contains("ant-picker-dropdown-hidden"),
     ...parts(doc, title) };
 }
 
@@ -270,19 +280,46 @@ for (const antd4 of [false, true]) {
   });
 }
 
-test("an antd RangePicker keeps the end it already has when only the start comes, and a lone start with an empty end is left alone", async () => {
+test("an antd RangePicker keeps the end it already has when only the start comes; a lone start the picker drops on closing is reported", async () => {
   const filled = antdRange({ value: [{ y: 2019, m: 9, d: 1 }, { y: 2023, m: 6, d: 30 }] });
   const result = await filled.api.operate(filled.start, "2020-09-01", { range: { entry: filled.end, value: null } });
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(filled.model(), ["2020-09-01", "2023-06-30"]);
   assert.equal(filled.log.opened, 1, "picking the start commits with the kept end; the end is not opened again");
 
+  // 只来了开始、结束框空着：选上开始再收起弹层，组件不留就是要两头都有，值不变。
   const empty = antdRange();
   const lone = await empty.api.operate(empty.start, "2019-09-01", { range: { entry: empty.end, value: null } });
   assert.equal(lone.ok, false);
   assert.equal(lone.reason, "range_incomplete");
-  assert.equal(empty.log.opened, 0, "nothing was opened");
+  assert.equal(empty.log.opened, 1);
+  assert.equal(empty.open(), false);
+  assert.equal(empty.model(), null);
   assert.deepEqual(empty.boxes.map((box) => box.value), ["", ""]);
+});
+
+test("an antd 4 RangePicker that hands focus over late is closed from the box that has it, and a lone start it drops is not called filled", async () => {
+  // 选完开始，rc-picker 2.x 过一会儿才把焦点交给结束框：先失焦的若是开始框，弹层跟着焦点又开着，框里显示的开始并没有提交。
+  const h = antdRange({ antd4: true, lateFocus: true });
+  const result = await h.api.operate(h.start, "2019-09-01", { range: { entry: h.end, value: null } });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.reason, "range_incomplete");
+  assert.equal(h.open(), false);
+  assert.equal(h.model(), null);
+  assert.deepEqual(h.boxes.map((box) => box.value), ["", ""]);
+});
+
+test("an antd RangePicker that allows an empty end keeps a lone start", async () => {
+  // 网站允许只填开始（allowEmpty）：选上开始、收起弹层时组件收下，算填上；另一头那一题只核对。
+  const h = antdRange({ allowEmpty: true });
+  const start = await h.api.operate(h.start, "2023.09", { range: { entry: h.end, value: "至今" } });
+  assert.equal(start.ok, true, JSON.stringify(start));
+  assert.deepEqual(h.model(), ["2023-09-01", null]);
+  assert.equal(start.observed.dayDefaulted, true);
+  assert.equal(h.open(), false);
+  const again = await h.api.operate(h.start, "2023.09", { range: { entry: h.end, value: "至今" } });
+  assert.equal(again.ok, true, JSON.stringify(again));
+  assert.equal(h.log.opened, 1, "a start already kept is only checked");
 });
 
 test("a start field given a whole span fills both ends; an open end leaves the range alone", async () => {
@@ -296,7 +333,8 @@ test("a start field given a whole span fills both ends; an open end leaves the r
   const start = await present.api.operate(present.start, "2023.09-至今", { range: { entry: present.end, value: "2023.09-至今" } });
   const end = await present.api.operate(present.end, "2023.09-至今", { range: { entry: present.start, value: "2023.09-至今" } });
   assert.deepEqual([start.reason, end.reason], ["range_incomplete", "no_option_match"]);
-  assert.equal(present.log.opened, 0);
+  assert.equal(present.model(), null);
+  assert.equal(present.open(), false);
 });
 
 test("a range whose start comes after its end, or with a date that does not exist, is not touched", async () => {
@@ -329,6 +367,26 @@ test("an editable Element range types both boxes, waits a beat, then presses Ent
   assert.equal(end.ok, true, JSON.stringify(end));
   assert.equal(h.log.opened, 1, "the end field does not open the calendar again");
   assert.equal(h.log.writes, 2);
+});
+
+test("an editable Element range filled by hand one box at a time works as before: the start box alone, then both on the end", async () => {
+  // 侧栏、字段卡片手动填（不是一键填写）：另一头没有值时照原来只写这一个框；填结束时开始框里已经有字，两头一起提交。
+  const h = elementRange();
+  const start = await h.api.operate(h.start, "2019-09-01");
+  assert.equal(start.ok, true, JSON.stringify(start));
+  assert.equal(h.boxes[0].value, "2019-09-01");
+  assert.equal(h.model(), null, "the picker holds the start until the end comes");
+  const end = await h.api.operate(h.end, "2023-06-30");
+  assert.equal(end.ok, true, JSON.stringify(end));
+  assert.deepEqual(h.model(), ["2019-09-01", "2023-06-30"]);
+  assert.equal(h.open(), false);
+
+  // 一键填写（prepare）里只有一头：Element 的区间不收单独一头，不写，报起止日期缺一头。
+  const fill = elementRange();
+  const lone = await fill.api.operate(fill.start, "2019-09-01", { prepare: true, range: { entry: fill.end, value: null } });
+  assert.equal(lone.reason, "range_incomplete");
+  assert.equal(fill.log.writes, 0);
+  assert.equal(fill.log.opened, 0);
 });
 
 test("an editable Element month range types months", async () => {

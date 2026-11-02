@@ -69,7 +69,8 @@ const RANGE = `<div class="form-item"><label class="form-label">在校时间</la
     <input class="el-range-input" placeholder="开始日期"><span>至</span><input class="el-range-input" placeholder="结束日期"></div></div>`;
 const NAME = `<div class="form-item"><label for="name">姓名</label><input id="name" name="name"></div>`;
 
-function page(t, { custom = [] } = {}) {
+// endShown：结束框里原来就显示着的日期（只设框里的字，组件还没有值）。
+function page(t, { custom = [], endShown = "" } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${NAME}${RANGE}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
   const w = dom.window;
@@ -134,6 +135,7 @@ function page(t, { custom = [] } = {}) {
   doc.addEventListener("mousedown", (event) => {
     if (panel && !panel.contains(event.target) && !doc.querySelector(".el-range-editor").contains(event.target)) close();
   });
+  boxes[1].value = endShown;
 
   const ui = { status: { textContent: "", className: "" }, diag: { value: "" }, cancel: { hidden: true, disabled: false, onclick: null },
     hint: { hidden: true, textContent: "" }, fill: { disabled: false, textContent: "" } };
@@ -190,6 +192,19 @@ test("a range end the local rules know waits for the AI's other end, then both a
   assert.equal(result.unfilledCount, 0);
   assert.deepEqual(p.model(), ["2019-09-01", "2023-06-30"]);
   assert.equal(p.log.opened, 1);
+});
+
+test("a range start the local rules know is filled before the AI answers when the end box already shows a date", async (t) => {
+  const p = page(t, { custom: [{ key: "在校时间（开始）", value: "2019-09-01" }], endShown: "2023-06-30" });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1 && /AI 匹配中/.test(p.ui.fill.textContent)));
+  assert.ok(await p.until(() => p.model() !== null), "the start goes early, together with the date already in the end box");
+  assert.deepEqual(p.model(), ["2019-09-01", "2023-06-30"]);
+  assert.equal(p.log.opened, 1);
+  p.worker.calls[0].reply({});
+  const result = await running;
+  assert.equal(result.filledCount, 2);
+  assert.deepEqual(p.model(), ["2019-09-01", "2023-06-30"]);
 });
 
 test("a range the AI answers only one end of is left alone and reported as missing an end", async (t) => {

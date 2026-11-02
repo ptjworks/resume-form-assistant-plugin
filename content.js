@@ -2799,10 +2799,11 @@
             const stop = members.findIndex(field => !ready.has(field.fieldId));
             if (stop >= 0) members.slice(stop).forEach(field => ready.delete(field.fieldId));
           }
-          // #429 区间日期两头一起填（见下面写入时的 range）：另一头要等 AI 的，这一头也等 AI 回来再填。
+          // #429 区间日期两头一起填（见下面写入时的 range）：另一头要等 AI、框里又空着的，这一头也等 AI 回来再填。
+          // 另一头框里原来就有日期的照常先填，连同那个日期一起选。
           for (const fieldId of Array.from(ready)) {
             const partnerId = rangePartnerId(fieldMap, fieldMap.get(fieldId));
-            if (partnerId && !ready.has(partnerId)) ready.delete(fieldId);
+            if (partnerId && !ready.has(partnerId) && !hasExistingValue(fieldMap.get(partnerId))) ready.delete(fieldId);
           }
           early = local.filter(match => ready.has(match.fieldId)).sort(byOrder);
         } catch {
