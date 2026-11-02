@@ -823,3 +823,29 @@ test("a company question left to the AI may see this site's remembered answer, n
     await running;
   }
 });
+
+// 后来冒出公司题时才读到的网站回答，和一开始就有的资料一样：诊断里带着它的字段名要藏起来。
+test("a remembered answer read for a question revealed later is hidden in field names of the diagnostics too", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const p = page(t, input("name", "姓名") + GENDER + input("school", "毕业院校"), {
+    site: [{ key: "是否有亲属在本公司工作", value: "父亲在本公司财务部任职" }],
+    onGender: (doc) => {
+      if (doc.getElementById("relative")) return;
+      const holder = doc.createElement("div");
+      holder.innerHTML = input("relative", "是否有亲属在本公司工作") + input("echo", "父亲在本公司财务部任职情况说明");
+      doc.getElementById("apply").append(...holder.children);
+      const echo = doc.getElementById("echo");
+      for (const type of ["input", "change", "blur"]) echo.addEventListener(type, () => { echo.value = ""; });
+    }
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
+  p.worker.calls[0].reply();
+  assert.ok(await p.until(() => p.worker.calls.length === 2), "the echoing field goes to the AI");
+  p.worker.calls[1].reply({ 父亲在本公司财务部任职情况说明: "无" });
+  const result = await running;
+  assert.equal(p.value("relative"), "父亲在本公司财务部任职");
+  assert.equal(result.unfilledCount, 1, "the echoing field is reported as not filled");
+  assert.match(p.ui.diag.value, /- （字段名已隐藏）：input\[text\]/);
+  assert.equal(p.ui.diag.value.includes("财务部"), false);
+});

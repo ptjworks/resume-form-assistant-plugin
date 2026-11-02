@@ -2728,7 +2728,10 @@
         grownFields.push(...added);
         // 后来冒出来的题里才有问到对方公司的：这时再读这个网站记住的回答（#429）。
         if (!siteAnswersSettled() && added.some(siteScopedField)) {
-          resumeFields.push(...siteAnswerResumeFields(await loadSiteAnswers()));
+          const siteFields = siteAnswerResumeFields(await loadSiteAnswers());
+          resumeFields.push(...siteFields);
+          // 诊断里的字段名要藏起这些回答，和一开始就有的资料一样。
+          resumeValues.push(...siteFields.map(field => normalizeForOverlap(field.value)).filter(value => value.length >= 2));
           if (!isCurrent()) return;
         }
         const helpers = self.ResumeProAIHelpers;
