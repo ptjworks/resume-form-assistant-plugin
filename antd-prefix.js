@@ -1,12 +1,15 @@
 // #301 antd 换了类名前缀：ConfigProvider 的 prefixCls（antd 4、5 都支持）把整套类名里的 ant- 一致地换掉，
 // 飞书招聘（*.jobs.feishu.cn、小米 mioffice）是 atsx-select、atsx-picker、atsx-form-item 这样。
 // 插件里认 antd 的选择器和类名都按默认的 ant- 写：这里按文档算出页面用的前缀，把 .ant- 换成各个前缀拼出选择器。
-// 前缀只按 antd 4、5 才有的结构认：X-select 下面直接是 X-select-selector，或 X-form-item-control-input 下面直接是
+// 前缀只按 antd 4、5、6 才有的结构认：X-select 下面直接是 X-select-selector（4、5），或 X-select 下面直接是装着
+// X-select-input 的 X-select-content（6，@rc-component/select 1.x），或 X-form-item-control-input 下面直接是
 // X-form-item-control-input-content。只看一个类名的后缀不行，arco、iView、Semi、Element 也有 X-select、X-picker-input、
 // X-form-item-label、X-select-dropdown 这样的类名。只读页面，不加类名、不改样式。
 (function attachAntdPrefix(scope) {
   const DEFAULT = "ant";
-  const SIGNS = [["select", "select-selector"], ["form-item-control-input", "form-item-control-input-content"]];
+  // [外层, 直接在外层下面的一层, 这一层里面还要有的（可以不写）]
+  const SIGNS = [["select", "select-selector"], ["select", "select-content", "select-input"],
+    ["form-item-control-input", "form-item-control-input-content"]];
   const QUERY = SIGNS.map(([, inner]) => `[class*="-${inner}"]`).join(", ");
   // 拼进选择器的前缀只收字母、数字、横线和下划线。
   const PREFIX = /^[A-Za-z][\w-]*$/;
@@ -30,10 +33,11 @@
       const parent = el.parentElement;
       if (!parent) continue;
       for (const name of String(el.getAttribute("class") || "").split(/\s+/)) {
-        for (const [outer, inner] of SIGNS) {
+        for (const [outer, inner, within] of SIGNS) {
           if (!name.endsWith(`-${inner}`)) continue;
           const prefix = name.slice(0, -inner.length - 1);
-          if (prefix !== DEFAULT && PREFIX.test(prefix) && parent.classList.contains(`${prefix}-${outer}`)) found.add(prefix);
+          if (prefix !== DEFAULT && PREFIX.test(prefix) && parent.classList.contains(`${prefix}-${outer}`)
+            && (!within || el.querySelector(`.${prefix}-${within}`))) found.add(prefix);
         }
       }
     }
