@@ -297,8 +297,15 @@
     return inputs <= maxInputs;
   }
 
+  // #429 antd 3、ant-design-vue 1.x 的区间日期：.ant-calendar-picker 里两个 .ant-calendar-range-picker-input。
+  // 和别的区间日期一样拆成开始、结束两个框；单个日期（.ant-calendar-picker-input）照旧按下拉认，走 custom-controls.js 的日历。
+  const CALENDAR_RANGE_INPUT = ".ant-calendar-range-picker-input";
   // 取 5 层以内最外层的日期组件容器：range picker 的两个输入框共用一个根。
   function datePickerRoot(el, ctx) {
+    if (el.matches(antdCss(el, CALENDAR_RANGE_INPUT))) {
+      const root = el.closest(antdCss(el, ".ant-calendar-picker"));
+      if (root && root !== ctx.body && componentScopeOk(root, ctx, 2)) return root;
+    }
     let best = null;
     let node = el.parentElement;
     for (let depth = 0; node && node !== ctx.body && depth < 5; depth += 1, node = node.parentElement) {

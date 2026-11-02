@@ -713,6 +713,11 @@
     const value = trim(text), number = /^(\d{1,2})\s*月$/.exec(value), chinese = /^(十一|十二|[一二三四五六七八九十])月$/.exec(value);
     return number ? Number(number[1]) : chinese ? CN_MONTHS.indexOf(chinese[1]) + 1 : 0;
   }
+  // 年月写在一起的标题（#429 Element 区间日历的「2026 年 11 月」）。
+  function yearMonthOf(text) {
+    const hit = /^(\d{4})\s*年\s*(\d{1,2})\s*月$/.exec(trim(text));
+    return hit && Number(hit[2]) >= 1 && Number(hit[2]) <= 12 ? { y: Number(hit[1]), m: Number(hit[2]) } : null;
+  }
   // 显示文字里第一段日期（组件可能把同一个值显示两遍），按日历精度比。
   function shownDate(text, mode) {
     const hit = /(\d{4})\s*(?:[-/.年]\s*(\d{1,2})\s*(?:[-/.月]\s*(\d{1,2}))?)?/.exec(String(text || ''));
@@ -748,6 +753,7 @@
     const cells = (read, keep = () => true) => leaves.filter(el => inCell(el) && read(el.textContent) && keep(el)).map(el => ({ value: read(el.textContent), node: el }));
     const headYear = leaves.find(el => !inCell(el) && yearOf(el.textContent));
     const headMonth = leaves.find(el => !inCell(el) && monthOf(el.textContent));
+    const headBoth = headYear || headMonth ? null : yearMonthOf(leaves.find(el => !inCell(el) && yearMonthOf(el.textContent))?.textContent);
     const disabledCell = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
         if (node.getAttribute?.('aria-disabled') === 'true' || node.hasAttribute?.('disabled')) return true;
@@ -779,8 +785,8 @@
       days: cells(dayOf, el => !otherMonth(el) && !disabledCell(el)),
       // 本月标成选中的日子。
       picked: cells(dayOf, el => !otherMonth(el) && pickedCell(el)).map(cell => cell.value),
-      headYear: headYear ? yearOf(headYear.textContent) : 0, headYearNode: headYear || null,
-      headMonth: headMonth ? monthOf(headMonth.textContent) : 0, headMonthNode: headMonth || null,
+      headYear: headYear ? yearOf(headYear.textContent) : headBoth?.y || 0, headYearNode: headYear || null,
+      headMonth: headMonth ? monthOf(headMonth.textContent) : headBoth?.m || 0, headMonthNode: headMonth || null,
       // 格子以外的字（标题、按钮）：年月认不出时，拿它看日历有没有动。
       head: leaves.filter(el => !inCell(el)).map(el => trim(el.textContent)).join('|'),
       button: (level, dir) => buttons.find(button => button.level === level && button.dir === dir)?.el || null,
@@ -942,6 +948,103 @@
     const done = await h.waitUntil(ctx, doc.documentElement, accepted, Boolean);
     if (done.reason) return done.reason === 'verification_timeout' ? missed() : { reason: done.reason };
     return { accepted, dayDefaulted };
+  }
+  // #429 区间日期的日历（antd 3、ant-design-vue 1.x 的 RangePicker，editable=false 的 Element daterange、monthrange，
+  // 以及打字没收下的 Element 区间）：并排两个面板。点开始框打开日历，用翻年、翻月按钮把左边面板翻到开始那个月（选月的翻到那一年），
+  // 点那一天，再翻到结束那个月点结束那天；组件拿到两头才提交、收起。只点了一头就收起，点的那头不算（真组件上看过）。
+  // 不在日历的框里打字：antd 3.26 的区间日历在结束框打字会把开始清掉。带时间的（要点「确定」）不处理。
+  // want：开始、结束的 { y, m, d }，d 为 0 时选 1 号（宿主在结果里写明）。由 control-adapters.js 的 operateRange 调用并核对两个框。
+  function rangePanels(layer, h) {
+    const tables = Array.from(layer.querySelectorAll('table')).filter(table => h.visible(table));
+    if (tables.length !== 2) return null;
+    // 每个面板取装着自己的表格、不装着另一个表格的最外层。
+    const panelOf = (table, other) => {
+      let node = table;
+      while (node.parentElement && node.parentElement !== layer && !node.parentElement.contains(other)) node = node.parentElement;
+      return node;
+    };
+    return [panelOf(tables[0], tables[1]), panelOf(tables[1], tables[0])];
+  }
+  async function pickRange(ctx, want, boxes, h) {
+    const doc = ctx.el.ownerDocument;
+    const info = { el: boxes[0], root: ctx.entry.root, before: ctx.popupsBeforeFocus || shownLayers(doc, h.visible) };
+    const reason = h.click(boxes[0], ctx); if (reason) return { reason };
+    const opened = await h.waitUntil(ctx, doc.documentElement, () => calendarNear(info, h), Boolean, 1500);
+    if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
+    const layer = opened.value;
+    ctx.observed = { ...ctx.observed, library: 'generic', popupRole: 'calendar' };
+    let outcome;
+    try { outcome = await clickRange(ctx, want, h, layer); } catch { outcome = { reason: 'operation_failed' }; }
+    // 选不成时收起点开的日历：点了的那一头不算，组件里的值不变。
+    if (outcome.reason && !h.stop(ctx)) await leaveCalendar(ctx, boxes[0], ctx.entry.root, layer, h);
+    return outcome;
+  }
+  async function clickRange(ctx, want, h, layer) {
+    const doc = ctx.el.ownerDocument;
+    const panels = () => (layer.isConnected && h.visible(layer) ? rangePanels(layer, h) : null);
+    const views = () => panels()?.map(panel => ({ panel, view: calendarView(panel, h) })) || null;
+    if (Array.from(layer.querySelectorAll('[class*="time-picker" i], [class*="time-header" i]')).some(h.visible)) return { reason: 'unsupported_control' };
+    // 日历打开有动画：格子显示出来才看得出是选日还是选月。
+    const shown = await h.waitUntil(ctx, doc.documentElement, views, seen => Boolean(seen && (seen[0].view.dayCells >= 28 || seen[0].view.months.length >= 12)), 1500);
+    if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'unsupported_control' : shown.reason };
+    const mode = shown.value[0].view.dayCells >= 28 ? 'date' : 'month';
+    // 面板显示的月份（选月的是年份），按月数比先后。
+    const at = view => (view?.headYear && (mode === 'month' || view.headMonth) ? view.headYear * 12 + (mode === 'month' ? 0 : view.headMonth) : 0);
+    const signature = () => (views() || []).map(({ view }) => at(view)).join('|');
+    for (const date of want) {
+      const goal = date.y * 12 + (mode === 'month' ? 0 : date.m);
+      let target = null;
+      for (let step = 0; !target; step += 1) {
+        const seen = views();
+        if (!seen || seen.some(({ view }) => !at(view))) return { reason: 'unsupported_control' };
+        target = seen.find(({ view }) => at(view) === goal) || null;
+        if (target) break;
+        if (step >= 60) return { reason: 'no_option_match' };
+        // 往前翻用左边面板的按钮，往后翻用右边面板的；两个面板各翻各的（antd 3 已有值时左边停在开始月、右边停在结束月），
+        // 要的月份夹在中间的翻左边。差一年以上翻年，不到一年翻月；先用这个面板自己的按钮（有翻月没翻年的就一直翻月），
+        // 面板上一个都没有才用日历里别处的，免得各翻各的时翻了另一个面板。
+        const [left, right] = seen;
+        const dir = goal < at(left.view) ? -1 : 1;
+        const moving = dir < 0 || goal < at(right.view) ? left : right;
+        const diff = Math.abs(goal - at(moving.view));
+        const levels = mode === 'month' ? ['year'] : diff >= 12 ? ['year', 'month'] : ['month'];
+        const pick = view => levels.map(level => view.button(level, dir)).find(Boolean);
+        const button = pick(moving.view) || pick(calendarView(layer, h));
+        if (!button) return { reason: 'no_option_match' };
+        const before = signature();
+        const reason = h.click(button, ctx); if (reason) return { reason };
+        const moved = await h.waitUntil(ctx, doc.documentElement, signature, now => Boolean(now) && now !== before, 1000);
+        if (moved.reason) return { reason: moved.reason === 'verification_timeout' ? 'selection_not_committed' : moved.reason };
+      }
+      const hits = mode === 'date' ? target.view.days.filter(cell => cell.value === (date.d || 1)) : target.view.months.filter(cell => cell.value === date.m);
+      if (hits.length !== 1) return { reason: 'no_option_match' };
+      const reason = h.click(hits[0].node, ctx, true); if (reason) return { reason };
+    }
+    const closed = await h.waitUntil(ctx, doc.documentElement, () => !layer.isConnected || !h.visible(layer), Boolean);
+    return closed.reason ? { reason: closed.reason === 'verification_timeout' ? 'selection_not_committed' : closed.reason } : {};
+  }
+  // 打字没收下时收起这个区间的日历（见 control-adapters.js 的 typedRange），收法同 leaveCalendar。交回日历还开着没有。
+  // before：打字之前就开着的弹层（上一个日期框的日历可能还在退场），不当成这次打开的。
+  async function leaveRange(ctx, boxes, h, before = new Set()) {
+    const layer = calendarNear({ el: boxes[0], root: ctx.entry.root, before }, h);
+    if (layer && !h.stop(ctx)) await leaveCalendar(ctx, boxes[1], ctx.entry.root, layer, h);
+    return Boolean(layer?.isConnected && h.visible(layer));
+  }
+  // 收起日历：在框上按 Esc（Element 收到后不往外传），没收再在页面空白处按下、松开（不派发 click）。
+  // 框在对话框、抽屉里：不按 Esc，只在对话框里、框旁边按下、松开，和 run 失败时收起弹层一样。
+  async function leaveCalendar(ctx, el, root, layer, h) {
+    const doc = el.ownerDocument, gone = () => !layer.isConnected || !h.visible(layer);
+    if (gone()) return;
+    const dialog = dialogOf(root);
+    if (dialog) {
+      const spot = pressSpot(root, dialog);
+      if (spot) press(spot);
+    } else {
+      el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+      const left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
+      if (left.reason === 'verification_timeout' && !gone() && !h.stop(ctx)) press(doc.body);
+    }
+    if (!h.stop(ctx)) await h.waitUntil(ctx, doc.documentElement, gone, Boolean, POPUP_LEAVE_MS);
   }
   async function perform(ctx, raw, h, state) {
     const info = describe(ctx.entry);
@@ -1918,5 +2021,5 @@
       || String(el.getAttribute('class') || '').split(/\s+/).some(token => CHECKED_TOKEN.test(token)));
   }
   scope.ResumeProCustomControls = { describe, acceptsFreeText, snapshot, hasExistingValue, readSelection, visiblePopups, optionTarget, isChecked, run, suggest,
-    openLayers, dismissOpened };
+    openLayers, dismissOpened, pickRange, leaveRange };
 })(typeof self !== 'undefined' ? self : globalThis);

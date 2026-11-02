@@ -85,6 +85,7 @@
     cascade_unsupported: "两级选择暂不支持",
     control_disabled: "字段不可操作",
     invalid_date: "日期格式或范围不符",
+    range_incomplete: "起止日期缺一头",
     format_mismatch: "只能填数字",
     readonly_picker: "网页自己的选择框",
     operation_failed: "控件操作失败",
@@ -2798,6 +2799,12 @@
             const stop = members.findIndex(field => !ready.has(field.fieldId));
             if (stop >= 0) members.slice(stop).forEach(field => ready.delete(field.fieldId));
           }
+          // #429 区间日期两头一起填（见下面写入时的 range）：另一头要等 AI、框里又空着的，这一头也等 AI 回来再填。
+          // 另一头框里原来就有日期的照常先填，连同那个日期一起选。
+          for (const fieldId of Array.from(ready)) {
+            const partnerId = rangePartnerId(fieldMap, fieldMap.get(fieldId));
+            if (partnerId && !ready.has(partnerId) && !hasExistingValue(fieldMap.get(partnerId))) ready.delete(fieldId);
+          }
           early = local.filter(match => ready.has(match.fieldId)).sort(byOrder);
         } catch {
           early = [];
@@ -3144,7 +3151,30 @@
             && other.binding?.item?.parentElement === pair && fillValueSnapshot(other) === approvedValues.get(other) && !hasExistingValue(other))
           : null;
         const partnerBefore = partner ? fillValueSnapshot(partner) : null;
-        let filled = await setElementValue(element, match.value, beforeWrite, controlCurrent, onWrite, { fill: true });
+        // #429 区间日期：另一头这次也要填的，把它的值一起交给控件层，一次点开填完两头（见 control-adapters.js 的 operateRange）。
+        const rangeId = rangePartnerId(fieldMap, element);
+        const writeField = async () => {
+          let other = rangeId ? fieldMap.get(rangeId) : null;
+          // 页面重画过（下面找回新字段重试时）：另一头也按新页面找回，和这一头一样，内容和批准时一样才换成新的。
+          if (other && !isFieldBindingCurrent(other)) {
+            const fresh = rebindFieldEntry(other);
+            if (fresh && fillValueSnapshot(fresh) === approvedValues.get(other)) {
+              approvedValues.set(fresh, approvedValues.get(other));
+              fieldMap.set(rangeId, fresh);
+              other = fresh;
+            }
+          }
+          const range = other ? { entry: other, value: queue.find(next => next.fieldId === rangeId)?.value ?? null } : null;
+          const before = range ? fillValueSnapshot(range.entry) : null;
+          const done = await setElementValue(element, match.value, beforeWrite, controlCurrent, onWrite, { fill: true, range });
+          // 另一头的框是这次一起填上的：按填上的值重新批准，轮到它时不当成用户改的。
+          if (range && approvedValues.get(range.entry) === before) {
+            const now = fillValueSnapshot(range.entry);
+            if (now !== null && now !== before) approvedValues.set(range.entry, now);
+          }
+          return done;
+        };
+        let filled = await writeField();
         stopInterruptedControl();
         // 选完页面立刻重画（智联学位）：旧字段已经不在了，看找回的新字段——
         // 内容和填写前一样（重建冲掉了这次写入）就在新字段上重做一次；显示的正是刚选的值就算填上；
@@ -3157,7 +3187,7 @@
             approvedValues.set(fresh, approved);
             fieldMap.set(match.fieldId, fresh);
             element = fresh;
-            filled = await setElementValue(element, match.value, beforeWrite, controlCurrent, onWrite, { fill: true });
+            filled = await writeField();
             stopInterruptedControl();
           } else if (fresh && showsFilledValue(fresh, match.value)) {
             approvedValues.set(fresh, now);
@@ -3845,6 +3875,16 @@
 
   function fieldBindingKey(binding) {
     return binding?.label ? [binding.controlKind, binding.section, binding.label, binding.repeatIndex, binding.repeatCount].join("\u0000") : "";
+  }
+
+  // #429 区间日期的另一头：同一个日期组件（root 相同）里另一个框的字段 id。
+  function rangePartnerId(fieldMap, entry) {
+    if (entry?.kind !== "element" || !entry.binding?.rangePart) return "";
+    for (const [fieldId, other] of fieldMap) {
+      if (other !== entry && other?.kind === "element" && other.root === entry.root
+        && other.binding?.rangePart && other.binding.rangePart !== entry.binding.rangePart) return fieldId;
+    }
+    return "";
   }
 
   // 页面重画后找回的字段显示的是不是刚填的值（只读，不写）：下拉看组件显示的文字，单选看选中项，其余看框里的值。
@@ -5283,7 +5323,8 @@
   }
 
   // fill：一键填写（含辅助新增）。只有它按框的要求整理要写的字、看写入后的弹层；侧栏和字段卡片的手动写入照原样写。
-  async function setElementValue(target, value, beforeWrite, isCurrent, onWrite, { fill = false } = {}) {
+  // range：区间日期另一头的字段和这次要填的值（#429，见填写流程）。
+  async function setElementValue(target, value, beforeWrite, isCurrent, onWrite, { fill = false, range = null } = {}) {
     const control = target?.kind === 'element' ? target.element : target;
     // 文本框才看弹层；不等文字提交时（测试）不看。
     overlayWatch?.stop(true);
@@ -5294,7 +5335,7 @@
     if (watch) overlayWatches.set(control, watch);
     else if (control && typeof control === 'object') overlayWatches.delete(control);
     let result = await operateControl(target, value, { hints: target?.hints, beforeWrite, isCurrent, onWrite, prepare: fill,
-      beforeDismiss: () => watch?.peek() });
+      beforeDismiss: () => watch?.peek(), range });
     if (result.ok && watch && isInputElement(control) && await calendarKeptOpen(watch, control, value)) {
       result = { ...result, ok: false, reason: "value_reverted", observed: { ...result.observed, rolledBack: true, after: "other" } };
     }
