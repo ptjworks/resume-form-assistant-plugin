@@ -5479,9 +5479,11 @@
     } catch {
       reply = null;
     }
-    const next = reply?.status === "ok" && typeof reply.site === "string" && Array.isArray(reply.answers)
-      ? { site: reply.site, answers: reply.answers }
-      : { status: String(reply?.status || "unavailable") };
+    const ok = reply?.status === "ok" && typeof reply.site === "string" && Array.isArray(reply.answers);
+    // 回复到的时候页面已经跳到别的网站（单页应用）：这份不是眼前这个网站的，不留，下次再读。
+    const here = self.ResumeProProfile?.siteKeyOf?.(location.href) || "";
+    const next = ok && reply.site === here ? { site: reply.site, answers: reply.answers }
+      : { status: ok ? "stale" : String(reply?.status || "unavailable") };
     // 保存时重读失败：留着上次读到的，候选不会因此从网站回答挪回补充字段。填写开始时已经清空，那时照实记下原因。
     if (next.site || !state.siteAnswers?.site) state.siteAnswers = next;
     return next;
@@ -5493,9 +5495,10 @@
     return answers?.site && answers.site === self.ResumeProProfile?.siteKeyOf?.(location.href) ? answers : null;
   }
 
-  // 不用再读的：已经有这个网站的回答，或者桌面不支持、认不出网站。别的失败（桌面暂时没连上之类）后来冒出公司题时再读。
+  // 不用再读的：已经有这个网站的回答，或者桌面不支持、认不出网站、后台不认这个发送方（再读结果也一样）。
+  // 别的失败（桌面暂时没连上之类）后来冒出公司题时再读。
   function siteAnswersSettled() {
-    return Boolean(currentSiteAnswers()) || ["unsupported", "no_site"].includes(state.siteAnswers?.status);
+    return Boolean(currentSiteAnswers()) || ["unsupported", "no_site", "forbidden"].includes(state.siteAnswers?.status);
   }
 
   function siteAnswerResumeFields(siteAnswers) {
@@ -5699,6 +5702,7 @@
     if (status === "invalid_payload" || status === "input_too_large") return "桌面没有接受这次的网站回答（可能超出数量限制，或桌面认为这道题不该按网站记住），什么都没有写入。";
     if (status === "unsupported") return "桌面程序版本较旧，不能按网站记住回答；更新桌面程序后再保存。";
     if (status === "no_site") return "认不出这个网站是哪家公司，网站回答没有保存。";
+    if (status === "stale") return "页面已经换到别的网站，网站回答这次没有保存；候选还在。";
     if (["not_installed", "not_paired", "never_paired", "incompatible", "unavailable"].includes(status)) {
       return `网站回答没有保存：${self.ResumeProResumeData.modeCopy(status).message}`;
     }

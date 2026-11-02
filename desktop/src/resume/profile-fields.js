@@ -463,6 +463,8 @@
     if (!["http:", "https:"].includes(url.protocol)) return "";
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     if (!host || SHARED_HOSTS.test(host)) return "";
+    // 端口 0 能写进网址，协议不收（只收 1～65535）。
+    if (url.port && !(Number(url.port) >= 1 && Number(url.port) <= 65535)) return "";
     let key = url.port ? `${host}:${url.port}` : host;
     const rule = PATH_TENANT_HOSTS.find((item) => item.host.test(host));
     if (rule) {

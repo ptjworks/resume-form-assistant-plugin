@@ -160,7 +160,8 @@ fn site_keys_are_a_host_with_at_most_one_company_segment() {
     for ok in ["campus.example.com", "127.0.0.1:8080", "app.mokahr.com/example-co", "wecruit.hotjob.cn/SU0123456789abcdef01234567"] {
         assert!(crate::is_site_key(ok), "{ok}");
     }
-    for bad in ["", "https://campus.example.com", "Campus.example.com", "-x.com", "a.com/b/c", "a.com/", "a.com:", "a.com:123456", "a.com?x=1", "a.com/中文", "[::1]"] {
+    assert!(crate::is_site_key("a.com:65535/acme"));
+    for bad in ["", "https://campus.example.com", "Campus.example.com", "-x.com", "a.com/b/c", "a.com/", "a.com:", "a.com:123456", "a.com:0", "a.com:65536", "a.com:99999", "a.com?x=1", "a.com/中文", "[::1]"] {
         assert!(!crate::is_site_key(bad), "{bad}");
     }
 }

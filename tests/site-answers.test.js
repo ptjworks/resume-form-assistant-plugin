@@ -34,6 +34,7 @@ test("siteKeyOf is the host, plus the company segment on recruiting sites shared
     ["file:///C:/form.html", ""],
     ["chrome-extension://abc/sidepanel.html", ""],
     ["https://[::1]/form", ""],
+    ["http://campus.example.com:0/form", ""],
     ["not a url", ""]
   ];
   for (const [url, site] of cases) assert.equal(profileApi.siteKeyOf(url), site, url);

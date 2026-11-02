@@ -318,7 +318,9 @@ pub fn is_site_key(site: &str) -> bool {
     };
     let host_ok = host.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
         && host.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-');
-    let port_ok = port.is_none_or(|p| (1..=5).contains(&p.len()) && p.chars().all(|c| c.is_ascii_digit()));
+    let port_ok = port.is_none_or(|p| {
+        (1..=5).contains(&p.len()) && p.chars().all(|c| c.is_ascii_digit()) && p.parse::<u32>().is_ok_and(|n| (1..=65535).contains(&n))
+    });
     let tenant_ok = tenant.is_none_or(|t| (1..=64).contains(&t.len())
         && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
     host_ok && port_ok && tenant_ok

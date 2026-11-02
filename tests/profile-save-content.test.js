@@ -32,7 +32,8 @@ const TEMPLATE = { id: "t", name: "模板", groups: [{ name: "基本信息", fie
 
 // 一个带桌面的页面：桌面档案和 revision 在 desktop 里，写入成功才落地；update 可以换成任意回复。
 // site：桌面里这个网站记住的回答（#429，{ answers }），null 是桌面不支持；siteSave 可以换掉桌面对保存的回复。
-function page({ profile = { values: {}, family: [], custom: [] }, update = null, desktopRead = null, matches = [], customControls, site = null, siteSave = null } = {}) {
+// siteKey 是后台回的网站（按发消息时的页面地址算）；页面在 https://jobs.example.test/apply。
+function page({ profile = { values: {}, family: [], custom: [] }, update = null, desktopRead = null, matches = [], customControls, site = null, siteSave = null, siteKey = "jobs.example.test" } = {}) {
   const late = lateScanner();
   const desktop = { profile, revision: 0 };
   const updates = [];
@@ -45,7 +46,7 @@ function page({ profile = { values: {}, family: [], custom: [] }, update = null,
     desktopRead: desktopRead && (() => desktopRead(desktop)) || (() => { reads += 1; return { status: "ok", data: {
       templates: [{ id: "t", name: "模板", fieldCount: 1 }], activeTemplate: TEMPLATE, profile: desktop.profile, profileRevision: desktop.revision } }; }),
     sendMessage: async (message) => {
-      if (message.type === "DESKTOP_SITE_ANSWERS_READ") return site ? { status: "ok", site: "jobs.example.test", answers: plain(site.answers) } : { status: "unsupported" };
+      if (message.type === "DESKTOP_SITE_ANSWERS_READ") return site ? { status: "ok", site: typeof siteKey === "function" ? siteKey() : siteKey, answers: plain(site.answers) } : { status: "unsupported" };
       if (message.type === "DESKTOP_SITE_ANSWERS_SAVE") {
         siteSaves.push(plain(message));
         const reply = siteSave ? await siteSave(message, site) : { status: "ok" };
@@ -570,4 +571,21 @@ test("a company question still empty after the fill keeps the offer waiting; onc
   const reply = await p.save([siteItem("是否有亲属在本公司工作")]);
   assert.equal(reply.ok, true);
   assert.deepEqual(p.siteSaves.map((message) => message.answers), [[{ key: "是否有亲属在本公司工作", value: "否" }]]);
+});
+
+test("site answers that arrive for another site (the page moved on) neither replace this site's nor get saved", async () => {
+  let siteKey = "jobs.example.test";
+  const p = page({ site: { answers: [] }, siteKey: () => siteKey });
+  const relative = new p.ctx.HTMLInputElement();
+  relative.value = "否";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  assert.deepEqual(p.snapshot().site.map((item) => item.key), ["是否有亲属在本公司工作"]);
+  // The reply to the read at save time names another site: nothing is written, the offer is kept as it was.
+  siteKey = "other.example.test";
+  const reply = await p.save([siteItem("是否有亲属在本公司工作")]);
+  assert.equal(reply.ok, false);
+  assert.match(reply.profileOffer.result.text, /页面已经换到别的网站/);
+  assert.equal(p.siteSaves.length, 0);
+  assert.deepEqual(reply.profileOffer.site.map((item) => item.key), ["是否有亲属在本公司工作"]);
 });

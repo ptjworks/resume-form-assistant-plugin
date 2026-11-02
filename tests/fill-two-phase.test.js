@@ -77,7 +77,7 @@ const input = (id, label, { type = "text", value = "" } = {}) => item(id, label,
 
 // body 是表单内容；confirm 返回 true/false；onGender：选了性别后页面要做的事（新出现字段之类）；resume 是简历资料；
 // custom 是「我的信息」里的补充字段；site 是桌面里这个网站记住的回答（#429），null 表示桌面不支持；
-// 也可以是函数：拿第几次读取，回答案数组，回 null 表示这次桌面没连上。
+// 也可以是函数：拿第几次读取，回答案数组，回 null 表示这次桌面没连上；字符串是后台回的状态（forbidden 之类）。
 function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [], site = null } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
@@ -105,6 +105,7 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME,
         sent.push(message.type);
         if (message.type === "DESKTOP_RESUME_READ") return { status: "ok", data };
         if (message.type === "DESKTOP_SITE_ANSWERS_READ") {
+          if (typeof site === "string") return { status: site };
           const answers = typeof site === "function" ? site(sent.filter((type) => type === message.type).length) : site;
           if (answers) return { status: "ok", site: "jobs.example.test", answers };
           return { status: typeof site === "function" ? "unavailable" : "unsupported" };
@@ -795,12 +796,15 @@ test("a company question revealed later reads the site answers again after a fai
   assert.equal(retried.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 2);
   assert.equal(retried.worker.calls.length, 1, "the revealed question did not go to the AI");
 
-  const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site: null, onGender: reveal });
-  running = old.run();
-  assert.ok(await old.until(() => old.value("gender") === "m" && old.worker.calls.length === 1));
-  old.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
-  assert.ok(await old.until(() => old.worker.calls.length === 2), "the revealed question goes to the AI");
-  old.worker.calls[1].reply({ 是否曾在本行实习: "否" });
-  await running;
-  assert.equal(old.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1, "an old desktop is asked once");
+  // 桌面不支持，或者后台不认这个发送方：再读结果也一样，只读一次。
+  for (const site of [null, "forbidden"]) {
+    const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site, onGender: reveal });
+    running = old.run();
+    assert.ok(await old.until(() => old.value("gender") === "m" && old.worker.calls.length === 1));
+    old.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+    assert.ok(await old.until(() => old.worker.calls.length === 2), "the revealed question goes to the AI");
+    old.worker.calls[1].reply({ 是否曾在本行实习: "否" });
+    await running;
+    assert.equal(old.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1, `asked once (${site})`);
+  }
 });

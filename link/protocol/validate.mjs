@@ -798,5 +798,6 @@ function candidateTimestampsAreReal(payload) {
 // a recruiting platform shared by many companies one more path segment naming the company.
 // Same rule as the Rust validator's is_site_key.
 export function isSiteKey(site) {
-  return typeof site === "string" && /^[a-z0-9][a-z0-9.-]*(?::[0-9]{1,5})?(?:\/[A-Za-z0-9_-]{1,64})?$/.test(site);
+  const match = typeof site === "string" && /^[a-z0-9][a-z0-9.-]*(?::([0-9]{1,5}))?(?:\/[A-Za-z0-9_-]{1,64})?$/.exec(site);
+  return Boolean(match) && (match[1] === undefined || (Number(match[1]) >= 1 && Number(match[1]) <= 65535));
 }
