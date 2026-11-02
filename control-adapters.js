@@ -410,7 +410,8 @@
         // 聚焦之前记下看得见的弹层（见 custom-controls.js 的 shownLayers）：有的下拉、日历一聚焦就展开，聚焦后再记就把它算成了原有的。
         // 只读日期框也走 custom-controls 的日历路径（#301 智联 Element 日期一聚焦就打开）。
         if (custom || (ctx.kind === 'date' && ctx.el?.readOnly)) ctx.popupsBeforeFocus = scope.ResumeProCustomControls?.visiblePopups?.(ctx.entry, visible) || null;
-        if (!direct) focus(ctx.el);
+        // #429 区间日期的两个框由 operateRange 自己去点：先不聚焦，Element 一聚焦就打开日历，两头已经填好时只核对、不该打开。
+        if (!direct && !(ctx.kind === 'date' && rangeBoxes(ctx))) focus(ctx.el);
         await delay(0);
         const afterFocus = stop(ctx, true);
         if (afterFocus) return result(false, afterFocus, ctx);
@@ -512,6 +513,11 @@
     // 题目和占位提示：一段起止取哪一头看它们（见 ai-helpers.js 的 rangeDateValue）。
     const dateHint = ctx => [ctx.entry?.binding?.label, ctx.el?.getAttribute?.('placeholder'), ctx.el?.getAttribute?.('aria-label')].filter(Boolean).join(' ');
     async function operateDate(ctx, raw) {
+      const boxes = rangeBoxes(ctx);
+      const ranged = boxes ? await operateRange(ctx, raw, boxes) : null;
+      if (ranged && !ranged.single) return ranged;
+      // 照原来只填这一个框：和原来一样先聚焦（区间的框进来时没有聚焦，见 operate）。
+      if (ranged?.single) focus(ctx.el);
       // #301 日期题收到一段起止（「2019.09-2023.06」）：题目写明开始还是结束时取那一头，各种日期控件都一样。
       raw = helpers?.rangeDateValue?.(raw, dateHint(ctx)) ?? raw;
       if (['date', 'month', 'datetime-local', 'time', 'week'].includes(ctx.el.type)) {
@@ -579,9 +585,10 @@
       if (picked.typeText && (stop(ctx) || ctx.el.readOnly)) return { reason: stop(ctx) || picked.reason };
       return picked;
     }
-    async function antDatePick(ctx, raw, popup) {
+    // range：区间日期的弹层（#429），并排两个面板，年、月按钮用左边那个（见 antRange）。
+    async function antDatePick(ctx, raw, popup, range = false) {
       const find = (node, selector) => node.querySelector(antd(node, selector));
-      if (popup.querySelectorAll(antd(popup, '.ant-picker-panel')).length !== 1) return { reason: 'unsupported_control' };
+      if (popup.querySelectorAll(antd(popup, '.ant-picker-panel')).length !== (range ? 2 : 1)) return { reason: 'unsupported_control' };
       const mode = find(popup, '.ant-picker-month-panel') ? 'month' : find(popup, '.ant-picker-year-panel') ? 'year' : 'date';
       const expected = mode === 'year' ? String(raw).match(/^\s*(\d{4})(?:年|\b)/)?.[1] : helpers?.normalizeDateValue?.(raw, mode);
       if (!expected || !(mode === 'year' ? /^\d{4}$/ : mode === 'month' ? /^\d{4}-\d{2}$/ : /^\d{4}-\d{2}-\d{2}$/).test(expected)) return { reason: 'invalid_date' };
@@ -623,11 +630,186 @@
       const monthCell = find(popup, `.ant-picker-month-panel td[title="${expected.slice(0, 7)}"]`);
       const monthWhy = await take(monthCell, mode === 'month'); if (monthWhy) return { reason: monthWhy };
       if (mode === 'date') {
-        const day = await waitUntil(ctx, popup, () => find(popup, `.ant-picker-date-panel td[title="${expected}"]`), Boolean);
+        // 区间的两个面板里，前一个月、后一个月露出的日子也带同样的 title：先找本月的那格。
+        const day = await waitUntil(ctx, popup, () => find(popup, `.ant-picker-date-panel td.ant-picker-cell-in-view[title="${expected}"]`)
+          || find(popup, `.ant-picker-date-panel td[title="${expected}"]`), Boolean);
         if (day.reason) return { reason: day.reason };
         const why = await take(day.value, true); if (why) return { reason: why };
       }
       return { expected, mode };
+    }
+
+    // #429 区间日期（RangePicker、daterange）：扫描时拆成开始、结束两个框，各是一题。组件要两头都选了才收下：
+    // antd 3/4/5、Element 只选一头，弹层一收就丢了（真组件上看过）。宿主把另一头这次要填的值（options.range）一起交来，
+    // 一次点开把两头填完，再分别核对两个框。轮到另一头时它的框已经是要填的值、弹层也收了，只核对。
+    // 另一头没有能填的日期（没有值、写的是至今）：它的框里原来有日期的，连同那个日期一起选。框也是空的：
+    // - antd 4/5 只选这一头，收起弹层看组件留没留下（网站允许只填一头，allowEmpty；antd 4 选完就收下，antd 5 收起时收下）；
+    //   没留下就是要两头都有，报起止日期缺一头，组件里的值不变。
+    // - 侧栏、字段卡片里手动填 Element 能打字的区间：写进这一个框，弹层开着等另一头，组件还没收下，报起止日期缺一头；
+    //   再手动填另一头时开始框里已经有字，两头一起提交，那一题报填上。一键填写里另一头不会再来，Element 不收单独一头，不写。
+    // - 认不出是哪家组件、框能打字的：可能一个框自己就收下，照原来只填这一个框（single），按框里的字核对。
+    // - 别的不动，报起止日期缺一头。
+    // 这一头写的是至今：区间日历里没有这一项，和单个日期一样报没有匹配的选项。
+    function rangeBoxes(ctx) {
+      const root = ctx.entry?.root;
+      if (!ctx.entry?.binding?.rangePart || typeof root?.contains !== 'function' || !root.contains(ctx.el)) return null;
+      const boxes = Array.from(root.querySelectorAll('input')).filter(box => !['hidden', 'checkbox', 'radio'].includes(box.type) && visible(box));
+      return boxes.length === 2 && boxes.includes(ctx.el) ? boxes : null;
+    }
+    const pad2 = value => String(value).padStart(2, '0');
+    // 拆成年、月、日，只到月的 d 是 0。认不出、年份不在 1900～2100、没有这一天的给 null。
+    function dateParts(value) {
+      const text = String(value ?? '').trim();
+      const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(helpers?.normalizeDateValue?.(text, 'date') || '');
+      const hit = day || /^(\d{4})-(\d{2})$/.exec(helpers?.normalizeDateValue?.(text, 'month') || '');
+      if (!hit) return null;
+      const parts = { y: Number(hit[1]), m: Number(hit[2]), d: day ? Number(day[3]) : 0 };
+      const real = new Date(parts.y, parts.m - 1, parts.d || 1);
+      return parts.y >= 1900 && parts.y <= 2100 && real.getMonth() === parts.m - 1 && real.getDate() === (parts.d || 1) ? parts : null;
+    }
+    // 框里显示的是不是这一天：只到月的不看日子，月份框显示的没有日子也算。
+    function showsDate(box, want) {
+      const shown = dateParts(box?.value);
+      return Boolean(shown && want) && shown.y === want.y && shown.m === want.m && (!want.d || !shown.d || shown.d === want.d);
+    }
+    // 页面上开着的日期弹层（antd 4/5、antd 3、Element）：开着时框里的字可能还没提交。
+    const CALENDAR_LAYERS = '.ant-picker-dropdown, .ant-calendar-picker-container, .el-picker-panel';
+    async function operateRange(ctx, raw, boxes) {
+      const own = boxes.indexOf(ctx.el), other = 1 - own;
+      const hint = (entry, box) => [entry?.binding?.label, box.getAttribute('placeholder'), box.getAttribute('aria-label')].filter(Boolean).join(' ');
+      const end = (value, entry, box) => String(helpers?.rangeDateValue?.(value ?? '', hint(entry, box)) ?? value ?? '').trim();
+      const ownValue = end(raw, ctx.entry, ctx.el);
+      if (helpers?.isPresentDate?.(ownValue)) return { reason: 'no_option_match' };
+      const want = [];
+      want[own] = dateParts(ownValue);
+      if (!want[own]) return { reason: 'invalid_date' };
+      // 另一头自己没有值时，这一头收到的一段起止（「2019.09-2023.06」）里的另一个日期就是它的。
+      const partner = ctx.options.range?.entry?.element === boxes[other] ? ctx.options.range : null;
+      want[other] = dateParts(partner?.value != null ? end(partner.value, partner.entry, boxes[other]) : '')
+        || dateParts(helpers?.rangeDateParts?.(raw)?.[other]) || dateParts(boxes[other].value);
+      if (!want[other]) {
+        const typing = !boxes.some(box => box.readOnly);
+        if (typing && ctx.entry.pickerType === 'generic') return { single: true };
+        if (typing && ctx.entry.pickerType === 'element' && !ctx.options.prepare) {
+          const typed = await typedRange(ctx, want, boxes, own);
+          return { reason: typed.reason || 'range_incomplete' };
+        }
+        if (ctx.entry.pickerType !== 'antd') return { reason: 'range_incomplete' };
+      }
+      const order = date => (date.y * 12 + date.m) * 32 + (date.d || 1);
+      if (want[other] && order(want[0]) > order(want[1])) return { reason: 'invalid_date' };
+      const accepted = () => showsDate(ctx.el, want[own]);
+      // 资料只到月、框里显示到日：选的是 1 号，结果里写明。
+      const finished = () => ({ accepted, dayDefaulted: !want[own].d && Boolean(dateParts(ctx.el.value)?.d) });
+      const doc = ctx.el.ownerDocument;
+      const calendarOpen = () => Array.from(doc.querySelectorAll(antd(doc, CALENDAR_LAYERS))).some(visible);
+      // 只有一头的（antd）：另一个框空着才算已经填好。
+      const settled = index => (want[index] ? showsDate(boxes[index], want[index]) : !String(boxes[index].value ?? '').trim());
+      if (settled(0) && settled(1) && !calendarOpen()) return finished();
+      const custom = scope.ResumeProCustomControls;
+      let done = ctx.entry.pickerType === 'antd' ? await antRange(ctx, want, boxes)
+        : boxes.some(box => box.readOnly) ? (custom?.pickRange ? await custom.pickRange(ctx, want, boxes, host) : { reason: 'unsupported_control' })
+          : await typedRange(ctx, want, boxes);
+      // 按组件的格式打字没收下（网站改了显示格式）：收起弹层，改点日历格子。
+      if (done.retype && custom?.pickRange && !stop(ctx, true)) done = await custom.pickRange(ctx, want, boxes, host);
+      if (done.reason) return { reason: done.reason };
+      // 两头分别核对：组件收下的是不是要填的那两天。只有一头的（antd）：这次打开的弹层收起了、组件留下了它才算；
+      // 没留下就是网站要两头都有。页面上别的日期弹层开着不相干。
+      if (!want[other]) return settled(0) && settled(1) && !done.open ? finished() : { reason: 'range_incomplete' };
+      if (!showsDate(boxes[0], want[0]) || !showsDate(boxes[1], want[1])) return { reason: 'selection_not_committed' };
+      return finished();
+    }
+    // antd 4/5 的 RangePicker：弹层里并排两个面板。点开始框打开，按单个日期的做法（antDatePick）点年、月、日选开始；
+    // 选完 rc-picker 把焦点交给结束框、弹层不收，再同样点出结束日，两头都有了才一起提交、收起。
+    // 只有一头（want 里另一头是空的）：选完让框失焦收起弹层，留没留下由 operateRange 核对；交回这次打开的弹层还开着没有（open）。
+    async function antRange(ctx, want, boxes) {
+      const doc = ctx.el.ownerDocument;
+      const dropdowns = () => Array.from(doc.querySelectorAll(antd(doc, '.ant-picker-dropdown'))).filter(visible);
+      const before = ctx.popupsBefore || new Set(dropdowns());
+      const active = box => doc.activeElement === box || antdHas(box.parentElement, 'ant-picker-input-active');
+      let popup = null;
+      const picked = await (async () => {
+        for (const index of [0, 1]) {
+          if (!want[index]) continue;
+          // 结束框原来就是要的日子，选完开始就一起提交、收起了：不再点开。
+          if (index && popup && !visible(popup) && showsDate(boxes[index], want[index])) continue;
+          // 弹层开着、轮到的正是这个框（选完开始，焦点交给了结束框）就接着选；不然点这个框。
+          if (!popup || !visible(popup) || !active(boxes[index])) {
+            focus(boxes[index]);
+            const reason = click(boxes[index], ctx); if (reason) return { reason };
+            const opened = await waitUntil(ctx, doc.documentElement, () => {
+              const all = dropdowns(), added = all.filter(node => !before.has(node));
+              const shown = popup && visible(popup) ? popup : added.length === 1 ? added[0] : ctx.alreadyOpen && all.length === 1 ? all[0] : null;
+              return shown && active(boxes[index]) ? shown : null;
+            }, Boolean);
+            if (opened.reason) return { reason: opened.reason };
+            popup = opened.value;
+            ctx.observed = { library: 'antd', popupRole: 'calendar' };
+          }
+          // 带时间的区间（showTime）要点「确定」，这里不处理。
+          if (popup.querySelector(antd(popup, '.ant-picker-time-panel'))) return { reason: 'unsupported_control' };
+          const one = await antDatePick(ctx, `${want[index].y}-${pad2(want[index].m)}-${pad2(want[index].d || 1)}`, popup, true);
+          if (one.reason) return one;
+          if (index === 0 && want[1]) {
+            const turned = await waitUntil(ctx, doc.documentElement, () => !visible(popup) || active(boxes[1]), Boolean);
+            if (turned.reason) return { reason: turned.reason === 'verification_timeout' ? 'selection_not_committed' : turned.reason };
+          }
+        }
+        if (!(want[0] && want[1]) && visible(popup)) {
+          // 等 rc-picker 把焦点交给另一个框（antd 4 过一会儿才交）再失焦，不然失焦的是开始框，弹层跟着焦点又开着。
+          await waitUntil(ctx, doc.documentElement, () => !visible(popup) || boxes.some(box => box !== ctx.el && active(box)), Boolean, 300);
+          return { leave: true };
+        }
+        const closed = await waitUntil(ctx, doc.documentElement, () => !popup.isConnected || !visible(popup), Boolean);
+        return closed.reason ? { reason: closed.reason === 'verification_timeout' ? 'selection_not_committed' : closed.reason } : {};
+      })().catch(() => ({ reason: 'operation_failed' }));
+      // 选不成时收起自己点开的弹层，同 antDate：已经选的那一头不算，组件里的值不变。只选一头的也这样收起（leave）。
+      if ((picked.reason || picked.leave) && popup && !before.has(popup) && !stop(ctx) && popup.isConnected && visible(popup)) {
+        // 失焦有焦点的那个框；没收起时再失焦一次，这时焦点已经不在框里，还是对着它（焦点又回到哪个框就对着那个）。
+        let focused = boxes.find(box => doc.activeElement === box) || ctx.el;
+        const gone = () => !popup.isConnected || !visible(popup);
+        leavePicker(focused);
+        const leaving = await waitUntil(ctx, doc.documentElement, () => gone() || Array.from(popup.classList).some(token => /-leave$/.test(token)), Boolean, 100);
+        if (leaving.reason === 'verification_timeout' && !stop(ctx)) {
+          focused = boxes.find(box => doc.activeElement === box) || focused;
+          leavePicker(focused);
+        }
+        await waitUntil(ctx, doc.documentElement, gone, Boolean, 600);
+      }
+      return picked.reason ? picked : { open: Boolean(popup?.isConnected && visible(popup)) };
+    }
+    // 能打字的区间（Element UI、Element Plus 的 daterange、monthrange）：两个框按组件默认的格式（YYYY-MM-DD、YYYY-MM）各写各的，
+    // 再在结束框上回车。两头都收下时组件提交并收起弹层；不收（网站改了显示格式）弹层还开着，交回去改点格子（retype）。
+    // only：手动只填一头时只写这一个框，不回车，弹层开着等另一头（见 operateRange）。
+    async function typedRange(ctx, want, boxes, only = -1) {
+      const mode = ctx.entry.pickerInputType === 'month' ? 'month' : 'date';
+      const text = date => mode === 'month' ? `${date.y}-${pad2(date.m)}` : `${date.y}-${pad2(date.m)}-${pad2(date.d || 1)}`;
+      const doc = ctx.el.ownerDocument, View = doc.defaultView;
+      // 只看这次打开的日历：上一个日期框的日历可能还在退场。
+      const layers = () => Array.from(doc.querySelectorAll(antd(doc, CALENDAR_LAYERS))).filter(visible);
+      const before = new Set(layers());
+      const calendarOpen = () => layers().some(layer => !before.has(layer));
+      for (const index of only < 0 ? [0, 1] : [only]) {
+        focus(boxes[index]);
+        const reason = click(boxes[index], ctx); if (reason) return { reason };
+        // 和单个日期一样，先给页面留出画弹层的时间。
+        if (index === 0 || only >= 0) await delay(150);
+        // 点开以后没有新冒出来的日历：这个区间的日历可能早就开着（手动先填了一头，日历一直开着等另一头），开着的都要看。
+        if (index === 0 && !layers().some(layer => !before.has(layer))) before.clear();
+        const stopped = stop(ctx, true); if (stopped) return { reason: stopped };
+        write(boxes[index], text(want[index]), ctx); input(boxes[index]);
+        // 让一拍：Element UI 要等 Vue 处理完这次改动，紧跟着回车不收起弹层。
+        await delay(0);
+      }
+      if (only >= 0) return {};
+      const stopped = stop(ctx, true); if (stopped) return { reason: stopped };
+      if (View?.KeyboardEvent) boxes[1].dispatchEvent(new View.KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      const taken = await waitUntil(ctx, doc.documentElement, () => showsDate(boxes[0], want[0]) && showsDate(boxes[1], want[1]) && !calendarOpen(), Boolean);
+      if (!taken.reason) return {};
+      if (taken.reason !== 'verification_timeout') return { reason: taken.reason };
+      // 没收下：收起日历，框里打的字随之撤掉（对话框里不按 Esc，见 custom-controls.js 的 leaveCalendar）。
+      const open = await scope.ResumeProCustomControls?.leaveRange?.(ctx, boxes, host, before);
+      return open || calendarOpen() ? { reason: 'selection_not_committed' } : { retype: true };
     }
 
     // #301 简道云日期框（.fx-form-datetime .x-datetime）：框里能打字，日历跟着跳到打的日子；可它要等日历收起

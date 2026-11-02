@@ -5,12 +5,14 @@
 // Element UI 2：已选的是 .el-select__tags 里的 .el-tag（文字在 .el-select__tags-text，删除是 .el-tag__close），
 //   filterable 时在 .el-select__input 里搜；弹层 .el-select-dropdown.is-multiple 挂在 body 下，失焦不收，Esc 或点外面才收。
 // Element Plus：.el-select__selection 里一项一个 .el-select__selected-item > .el-tag；没选东西时组件上看不出是多选。
+// antd 6：条目外层换成 .ant-select-content-item，替身见 helpers/antd6-select.js。
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
 const scanner = require("../field-scan.js");
 const helpers = require("../ai-helpers.js");
+const antd6 = require("./helpers/antd6-select.js");
 
 const visible = (el) => !el.closest("[hidden]");
 function load(label, control, { wrap = (html) => html } = {}) {
@@ -354,6 +356,34 @@ test("antd multiple select with collapsed tags (+ N) is not guessed", async () =
   const rest = h.doc.createElement("div"); rest.className = "ant-select-selection-overflow-item ant-select-selection-overflow-item-rest";
   rest.innerHTML = '<span class="ant-select-selection-item">+ 2 ...</span>';
   h.root.querySelector(".ant-select-selection-overflow-item-suffix").before(rest);
+  const result = await h.api.operate(h.target, "英语、日语");
+  assert.equal(result.reason, "unsupported_control");
+  assert.deepEqual(h.state.clicks, []);
+});
+
+// #429 antd 6（@rc-component/select 1.x）：标签在 .ant-select-content-item 里，折起来的一格是 .ant-select-content-item-rest。
+function antd6Multi(choices, { selected = [], maxTags = Infinity } = {}) {
+  const h = load("外语语种", antd6.selectHtml("ant", { multiple: true }));
+  const root = h.doc.querySelector(".ant-select");
+  const state = antd6.wire(h.doc, root, choices, { multiple: true, values: selected, maxTags });
+  return { ...h, root, state };
+}
+
+test("antd 6 multiple select: each value is picked, tags not wanted are removed and the dropdown is closed", async () => {
+  const h = antd6Multi(LANGS, { selected: ["韩语", "英语"] });
+  assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ["韩语", "英语"]);
+  const result = await h.api.operate(h.target, "英语、日语");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.state.clicks, ["日语"], "英语 is already picked");
+  assert.deepEqual(h.state.removed, ["韩语"]);
+  assert.deepEqual(h.state.values, ["英语", "日语"]);
+  assert.equal(h.state.open, false, "closed after picking");
+  assert.equal(h.api.check(h.target).ok, true);
+});
+
+test("antd 6 multiple select with tags folded into + N is not guessed", async () => {
+  const h = antd6Multi(LANGS, { selected: ["英语", "法语", "德语"], maxTags: 1 });
+  assert.equal(h.w.ResumeProCustomControls.readSelection(h.target), null);
   const result = await h.api.operate(h.target, "英语、日语");
   assert.equal(result.reason, "unsupported_control");
   assert.deepEqual(h.state.clicks, []);
