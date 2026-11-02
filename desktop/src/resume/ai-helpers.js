@@ -173,6 +173,8 @@
     normalizeParsedFields,
     normalizeDateValue,
     rangeDateValue,
+    rangeDateParts,
+    isPresentDate,
     detectCascadeGroups
   };
 
@@ -839,18 +841,34 @@
   }
 
   // 日期题收到一段起止（「2019.09-2023.06」，#301 北森）：题目或占位提示写明开始还是结束，就取前一个或后一个日期。
-  // 两样都写了（起止时间）、都没写，或不是正好两个日期的，原样交回，由日期控件报日期不对。
+  // 「2023.09-至今」的结束取「至今」（#429）。两样都写了（起止时间）、都没写，或不是一段起止的，原样交回，由日期控件报日期不对。
   const SPAN_DATE = /(?:19|20)\d{2}(?:\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?|\s*[\/\-.]\s*\d{1,2}(?!\d)(?:\s*[\/\-.]\s*\d{1,2}(?!\d))?|\s*年)?/g;
   // 「起」「止」单独成词才算（「在校时间（起）」「在校时间：止」）：「发起」「起薪」「禁止」里的不算。
   const SPAN_START = /开始|起始|入学|入职|(?:^|[\s(（【\[:：])起(?=$|[\s)）】\]:：])|\b(?:start|from|begin)/i;
   const SPAN_END = /结束|截止|终止|毕业|离职|(?:^|[\s(（【\[:：])止(?=$|[\s)）】\]:：])|\b(?:end|until)\b/i;
   function rangeDateValue(rawValue, hint) {
     const raw = String(rawValue ?? "").trim();
-    const dates = raw.match(SPAN_DATE) || [];
-    if (dates.length !== 2 || raw.replace(SPAN_DATE, "").replace(/[\s\-~～—–至到]/g, "")) return raw;
+    const parts = rangeDateParts(raw);
+    if (!parts) return raw;
     const text = String(hint ?? "");
     const start = SPAN_START.test(text), end = SPAN_END.test(text);
-    return start === end ? raw : dates[start ? 0 : 1].trim();
+    return start === end ? raw : parts[start ? 0 : 1];
+  }
+
+  // #429 「至今」「现在」这类写法（和 custom-controls.js 日历认的一样）。
+  const PRESENT_DATE = /^(?:至今|至今在读|今|现在|present|now|till now|to date)$/i;
+  function isPresentDate(value) {
+    return PRESENT_DATE.test(String(value ?? "").trim());
+  }
+  // 一段起止拆成开始、结束：正好两个日期（「2019.09-2023.06」），或一个日期后面跟着至今（「2023.09-至今」，结束取「至今」）。
+  // 别的写法给 null。
+  const SPAN_OPEN_END = /^\s*(?:(?:[\-~～—–到]|至(?!今))\s*)?(至今在读|至今|现在|今|present|now|till now|to date)\s*$/i;
+  function rangeDateParts(rawValue) {
+    const raw = String(rawValue ?? "").trim();
+    const dates = raw.match(SPAN_DATE) || [];
+    if (dates.length === 2 && !raw.replace(SPAN_DATE, "").replace(/[\s\-~～—–至到]/g, "")) return [dates[0].trim(), dates[1].trim()];
+    const open = dates.length === 1 && raw.startsWith(dates[0]) ? SPAN_OPEN_END.exec(raw.slice(dates[0].length)) : null;
+    return open ? [dates[0].trim(), open[1]] : null;
   }
 
   function parseDateParts(raw) {
