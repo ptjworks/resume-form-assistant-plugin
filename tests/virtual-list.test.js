@@ -427,13 +427,14 @@ test("virtual list without search that does not redraw on scrolling: a value wri
 function followScroll(scroller, total, view, redraw) {
   let top = 0;
   Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => top,
-    set: (value) => { top = Math.max(0, Math.min(Number(value) || 0, total - view)); setTimeout(() => scroller.dispatchEvent(new scroller.ownerDocument.defaultView.Event("scroll")), 0); } });
+    set: (value) => { top = Math.max(0, Math.min(Number(value) || 0, total() - view)); setTimeout(() => scroller.dispatchEvent(new scroller.ownerDocument.defaultView.Event("scroll")), 0); } });
   scroller.addEventListener("scroll", redraw);
 }
 
 // antd 4/5 结构，不能搜索：一屏 256px、每项 32px，画 10 项，整屏用 translateY 挪到位置上。
 // multiple：多选，点一项切换、弹层开着，标签放在 overflow 里，输入框失焦才收起。
-function scrollingAntd(choices, { multiple = false } = {}) {
+// grow：越滚越长的懒加载，滚到最后一屏时再接 20 项。
+function scrollingAntd(choices, { multiple = false, grow = false } = {}) {
   const field = '<input type="search" autocomplete="off" class="ant-select-selection-search-input" role="combobox" aria-haspopup="listbox" aria-owns="rc_select_0_list"'
     + ' aria-autocomplete="list" aria-controls="rc_select_0_list" aria-expanded="false" readonly>';
   const h = load(`<div class="ant-select ${multiple ? "ant-select-multiple" : "ant-select-single"}"><div class="ant-select-selector">${multiple
@@ -443,9 +444,14 @@ function scrollingAntd(choices, { multiple = false } = {}) {
   const root = doc.querySelector(".ant-select"), input = root.querySelector("input");
   const picked = [], values = [], scrolls = [];
   let dropdown = null, holder = null, start = 0;
-  const total = choices.length * 32;
+  choices = [...choices];
+  const total = () => choices.length * 32;
   const redraw = () => {
     scrolls.push(holder.scrollTop);
+    if (grow && holder.scrollTop + 256 >= total() - 32) {
+      choices.push(...Array.from({ length: 20 }, (_, i) => `加载${String(choices.length + i).padStart(4, "0")}`));
+      dropdown.querySelector(".filler").style.height = `${total()}px`;
+    }
     start = Math.floor(holder.scrollTop / 32);
     const inner = dropdown.querySelector(".rc-virtual-list-holder-inner");
     inner.style.transform = `matrix(1, 0, 0, 1, 0, ${start * 32})`;
@@ -475,7 +481,7 @@ function scrollingAntd(choices, { multiple = false } = {}) {
       dropdown = doc.createElement("div"); dropdown.className = "ant-select-dropdown ant-select-dropdown-placement-bottomLeft";
       dropdown.innerHTML = `<div><div role="listbox" id="rc_select_0_list" style="height: 0px; width: 0px; overflow: hidden;"></div>
         <div class="rc-virtual-list" style="position: relative;"><div class="rc-virtual-list-holder" style="max-height: 256px; overflow-y: hidden;">
-        <div class="filler" style="height: ${total}px; position: relative; overflow: hidden;"><div class="rc-virtual-list-holder-inner"></div></div></div>
+        <div class="filler" style="height: ${total()}px; position: relative; overflow: hidden;"><div class="rc-virtual-list-holder-inner"></div></div></div>
         <div class="rc-virtual-list-scrollbar rc-virtual-list-scrollbar-vertical"><div class="rc-virtual-list-scrollbar-thumb"></div></div></div></div>`;
       doc.body.append(dropdown);
       holder = dropdown.querySelector(".rc-virtual-list-holder");
@@ -488,8 +494,8 @@ function scrollingAntd(choices, { multiple = false } = {}) {
   stubLayout(h.w, (el) => {
     const item = el.closest?.(".ant-select-item-option");
     if (item) return { top: (Number(item.dataset.index) - start) * 32, height: 32 };
-    if (el === holder) return { top: 0, height: 256, scrollHeight: total, clientHeight: 256 };
-    if (el.matches?.(".filler")) return { top: 0, height: total };
+    if (el === holder) return { top: 0, height: 256, scrollHeight: total(), clientHeight: 256 };
+    if (el.matches?.(".filler")) return { top: 0, height: total() };
     if (el.matches?.(".rc-virtual-list-holder-inner")) return { top: 0, height: el.children.length * 32 };
     return null;
   });
@@ -526,7 +532,7 @@ function scrollingSelectV2(choices) {
         <div style="height: ${total}px; width: 100%;"></div></div><div role="presentation" class="el-virtual-scrollbar"><div class="el-scrollbar__thumb"></div></div></div></div>`;
       doc.body.append(popper);
       list = popper.querySelector(".el-vl__window");
-      followScroll(list, total, 274, redraw);
+      followScroll(list, () => total, 274, redraw);
     }
     popper.hidden = false; input.setAttribute("aria-expanded", "true");
     redraw();
@@ -566,6 +572,15 @@ test("virtual list without search: two options off screen that both fit, or none
     assert.deepEqual(h.picked, []);
     assert.equal(h.holder().scrollTop, 0, "scrolled back to where it was");
   }
+});
+
+// 越滚越长、一直到不了底的列表：滚满上限就停下，按没有匹配报，滚回原处，不按看到的一部分去猜。
+test("virtual list without search that keeps loading more at the bottom stops scrolling, is not guessed and scrolls back", async () => {
+  const h = scrollingAntd(SCHOOLS.map((text, i) => i === 60 ? "北京大学（本部）" : text), { grow: true });
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.equal(h.holder().scrollTop, 0);
 });
 
 test("virtual list without search: a multiple select picks values off the first screen by scrolling", async () => {
