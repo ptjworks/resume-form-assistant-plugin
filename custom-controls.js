@@ -1642,8 +1642,9 @@
           list = searched.list;
           if (!list.length) return fail({ reason: 'no_option_match' });
           found = match(list, value, helpers, partialList(list, popup, ctx.popup));
-        } else if (found.reason === 'no_option_match' && partialList(list, popup, ctx.popup)) {
+        } else if (['antd', 'element'].includes(info.library) && found.reason === 'no_option_match' && partialList(list, popup, ctx.popup)) {
           // 没有能打字的搜索框：滚着看完整张列表（见 scanList），点之前按文字和位置再认一次。
+          // pickMultiple 只从 antd、Element 进来（两个调用处都先判断了库），这里照单选的门槛再写一遍。
           found = await scanList(ctx, h, listOf, popup, ctx.popup, value);
           if (found.option) { const again = found.again(); found = again ? { option: again } : { reason: 'options_not_rendered' }; }
         }
