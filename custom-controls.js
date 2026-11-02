@@ -597,9 +597,10 @@
   // 把装着选项的滚动层从头往下一屏一屏地滚（每次少滚一行，前后两屏叠着一行），每滚一次等画出来的选项停住 SCAN_STEADY_MS，
   // 按排版位置记下见过的每一项（文字相同、位置差不到半行的算同一项）。滚到底以后按整张列表比，和画全了的列表一样：
   // 对不上、几项都对得上都不选。对上的一项滚回它那一屏，按文字和位置认出来交回去；again() 按同样的办法再认一次，
-  // 点之前用（滚动后重画换了节点也认得出）。
+  // 点之前用（滚动后重画换了节点也认得出），认不出时调用方用 back() 滚回原处。
   // 下面这些都按没有匹配的选项报：滚了以后画出来的选项盖不住看得见的这一段（列表不跟着滚动重画）、滚不动、
-  // 滚了 SCAN_SCREENS 屏或 SCAN_MS 还没到底（越滚越长的懒加载、一直在变的列表）。没找到、出错时都滚回原处。
+  // 滚了 SCAN_SCREENS 屏或 SCAN_MS 还没到底（越滚越长的懒加载、一直在变的列表；等列表停住的时间也算在里面）。
+  // 没找到、出错时都滚回原处。
   // read 读弹层里当前画出来的选项。
   const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000;
   async function scanList(ctx, h, read, popup, layer, value) {
@@ -621,7 +622,7 @@
         const list = read(), key = list.map(keyOf).join('\n');
         if (key !== last) { last = key; since = Date.now(); }
         return list;
-      }, () => Date.now() - since >= SCAN_STEADY_MS);
+      }, () => Date.now() - since >= SCAN_STEADY_MS, Math.max(0, Math.min(h.timeoutMs ?? 2000, SCAN_MS - (Date.now() - started))));
     };
     let found = null;
     try {
@@ -657,7 +658,7 @@
       if (settled.reason) return { reason: settled.reason === 'verification_timeout' ? 'options_not_rendered' : settled.reason };
       const hit = locate(settled.value);
       if (!hit) return { reason: 'options_not_rendered' };
-      found = { option: hit, again: () => locate(read()) };
+      found = { option: hit, again: () => locate(read()), back: () => { scroller.scrollTop = home; } };
       return found;
     } finally {
       if (!found) scroller.scrollTop = home;
@@ -1560,6 +1561,7 @@
       // Re-read immediately before activation: async renders can replace an option.
       // 滚着找到的一项按文字和位置再认一次（scanList 的 again）：它可能是按「包含」对上的，当前这一屏又不全，按 pick 比只认同名。
       const again = scanned ? found.again() : null;
+      if (scanned && !again) found.back();
       const latest = scanned ? (again ? { option: again } : { reason: 'options_not_rendered' })
         : region ? regionPick(readOptions(level)) : pick(readOptions(level));
       if (multiplePopup()) return { reason: 'unsupported_control' };
@@ -1749,7 +1751,11 @@
           // 没有能打字的搜索框：滚着看完整张列表（见 scanList），点之前按文字和位置再认一次。
           // pickMultiple 只从 antd、Element 进来（两个调用处都先判断了库），这里照单选的门槛再写一遍。
           found = await scanList(ctx, h, listOf, popup, ctx.popup, value);
-          if (found.option) { const again = found.again(); found = again ? { option: again } : { reason: 'options_not_rendered' }; }
+          if (found.option) {
+            const again = found.again();
+            if (!again) found.back();
+            found = again ? { option: again } : { reason: 'options_not_rendered' };
+          }
         }
       }
       if (found.reason) return fail(found);
