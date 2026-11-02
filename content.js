@@ -2114,11 +2114,12 @@
     return { saved: Boolean(recipeCache.recipe), stale: recipeCache.lastUse === "stale" };
   }
 
-  // #429 侧栏的平台提示（见 site-knowledge.js）：按网址记住；认不出时过 2 秒再看页面特征，单页应用的表单是后画出来的。
+  // #429 侧栏的平台提示（见 site-knowledge.js）：同一网址 2 秒内用上次认的，过了再认一次（要读页面特征；单页应用的表单是后画出来的，
+  // 也会换掉）。
   let siteHintSeen = { href: "", at: 0, text: "" };
   function siteHint() {
     const href = location.href;
-    if (siteHintSeen.href === href && (siteHintSeen.text || Date.now() - siteHintSeen.at < 2000)) return siteHintSeen.text;
+    if (siteHintSeen.href === href && Date.now() - siteHintSeen.at < 2000) return siteHintSeen.text;
     let text = "";
     try {
       const knowledge = self.ResumeProSiteKnowledge;
@@ -5136,8 +5137,9 @@
     const knowledge = self.ResumeProSiteKnowledge;
     const max = knowledge?.limitOf(element) || 0;
     if (!max) return null;
-    const doc = element.ownerDocument;
-    return { max, bytes: Boolean(knowledge.detect(doc, doc?.URL)?.bytes) };
+    // 看框所在文档的网址（同源框架里的表单看框架自己的）；about:blank 这类认不出网站的框架看整页的。
+    const url = String(element.ownerDocument?.URL || "");
+    return { max, bytes: knowledge.countsBytes(/^https?:/i.test(url) ? url : location.href) };
   }
   function lengthHint(element) {
     const limit = textLimit(element);

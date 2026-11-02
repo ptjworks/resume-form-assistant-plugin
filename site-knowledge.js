@@ -13,9 +13,9 @@
       looks: doc => (has(doc, "[class*='apply-field-']") && has(doc, "[class*='sd-Select']")) || mentions(doc, "_MOKA_ENV_") },
     { id: "feishu", name: "飞书招聘", overwrites: true, hosts: [/(^|\.)jobs\.feishu\.cn$/, /(^|\.)jobs\.larksuite\.com$/],
       looks: doc => has(doc, ".ud-formily-item") && has(doc, "[data-form-field-id]") },
-    // 北森旧版门户（zhiye.com 下 Portal/、campusxq 这类路径）的解析只截短专业名，不算。
+    // 北森旧版门户（zhiye.com 下 Portal/、campusxq 这类路径）的解析只截短专业名，不算。旧版是 IIS 站点，路径不分大小写。
     { id: "beisen", name: "北森", overwrites: true, hosts: [/(^|\.)zhiye\.com$/, /(^|\.)italentx?\.(?:cn|com)$/, /(^|\.)beisen\.com$/],
-      skip: { host: /(^|\.)zhiye\.com$/, path: /^\/(?:Portal\/|campusxq|internxq|socialxq)/ },
+      skip: { host: /(^|\.)zhiye\.com$/, path: /^\/(?:portal(?:\/|$)|campusxq|internxq|socialxq)/i },
       looks: doc => has(doc, ".form-item--phoenix") && has(doc, "[class*='phoenix-']") },
     { id: "dayee", name: "大易", overwrites: true, hosts: [/(^|\.)dayee\.com$/] },
     { id: "ctrip", name: "携程招聘", overwrites: true, hosts: [/^(?:careers|job)\.ctrip\.com$/] },
@@ -31,19 +31,29 @@
       return { host: "", path: "" };
     }
   }
-  // 网址认得出就是它（要求路径的还要路径对上）；认不出的看页面特征（公司自己的域名）。
+  function skipped(platform, { host, path }) {
+    return Boolean(platform.skip?.host.test(host) && platform.skip.path.test(path));
+  }
+  // 只看网址：host 认得出（要求路径的还要路径对上）。
+  function byUrl(href) {
+    const at = where(href);
+    return PLATFORMS.find(platform => !skipped(platform, at) && platform.hosts.some(pattern => pattern.test(at.host))
+      && (!platform.path || platform.path.test(at.path))) || null;
+  }
+  // 网址认不出的再看页面特征（公司自己的域名）。要读页面，调用方按页面隔一会儿认一次（见 content.js 的 siteHint）。
   function detect(doc, href) {
-    const { host, path } = where(href);
-    const skipped = platform => Boolean(platform.skip?.host.test(host) && platform.skip.path.test(path));
+    const known = byUrl(href);
+    if (known) return known;
+    const at = where(href);
     for (const platform of PLATFORMS) {
-      if (skipped(platform)) continue;
-      if (platform.hosts.some(pattern => pattern.test(host)) && (!platform.path || platform.path.test(path))) return platform;
-    }
-    for (const platform of PLATFORMS) {
-      if (skipped(platform)) continue;
+      if (skipped(platform, at)) continue;
       try { if (platform.looks?.(doc)) return platform; } catch { /* 读不了页面就当认不出 */ }
     }
     return null;
+  }
+  // 字数按字节算的站点：这几家都按网址认，不读页面。
+  function countsBytes(href) {
+    return Boolean(byUrl(href)?.bytes);
   }
   // 侧栏里的一句提示：只给上传后会覆盖已填内容的平台。
   function uploadHint(platform) {
@@ -56,27 +66,37 @@
     const value = String(text ?? "");
     return bytes ? value.length + (value.match(/[^\x00-\xff]/g) || []).length : value.length;
   }
-  // 「12 / 100」「0/20」这样的字数统计，取后面的上限。
+  // 浏览器只对这几类框和多行文本认 maxlength（HTML 规范），数字、日期这类框带了也不管用，不按它拦。
+  const MAXLENGTH_TYPES = new Set(["text", "search", "url", "tel", "email", "password"]);
+  // 组件自己的字数统计「12 / 100」「0/20」，取后面的上限。只认字数统计专用的类名：antd 的 X-show-count-suffix、X-data-count
+  // 和带 X-show-count 的外层上的 data-count，Element 的 X__count（el-input__count），word-limit、word-count 一类（Arco、Vant、iView）。
+  // 类名只是带 count 的（分页、步骤的「1 / 3」）不算。
   const COUNT = /^\s*\d+\s*\/\s*(\d+)\s*$/;
-  const COUNT_SELECTOR = "[data-count], [class*='count' i], [class*='word-limit' i]";
+  const COUNTER = /(?:-show-count-suffix|-data-count|__count|[-_]word-limit|[-_]word-count)$/i;
+  const COUNTER_WRAPPER = /-show-count$/i;
+  const classes = node => String(node.getAttribute?.("class") || "").split(/\s+/).filter(Boolean);
   // 框的字数上限：框自己的 maxlength；没有时看组件自己显示的字数统计（antd 4 带 showCount 的多行文本把 maxlength 拿掉了，
   // 只在外层的 data-count 里；antd 5 只设 count.max 的输入框只有「0 / 10」）。只在只装着这一个框的外层里找，最多往上三层。
   function limitOf(el) {
     if (!el || !["INPUT", "TEXTAREA"].includes(el.tagName)) return 0;
+    if (el.tagName === "INPUT" && !MAXLENGTH_TYPES.has(String(el.type || "text").toLowerCase())) return 0;
     const native = Number(el.maxLength);
     if (Number.isInteger(native) && native > 0) return native;
     let node = el.parentElement;
     for (let depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
       if (node.querySelectorAll("input:not([type='hidden']), textarea").length > 1) break;
-      for (const holder of [node, ...node.querySelectorAll(COUNT_SELECTOR)]) {
-        const hit = COUNT.exec(holder.getAttribute?.("data-count") || "") || (holder === node ? null : COUNT.exec(holder.textContent || ""));
+      const wrapped = classes(node).some(name => COUNTER_WRAPPER.test(name)) ? COUNT.exec(node.getAttribute("data-count") || "") : null;
+      if (wrapped && Number(wrapped[1]) > 0) return Number(wrapped[1]);
+      for (const holder of node.querySelectorAll("[class]")) {
+        if (!classes(holder).some(name => COUNTER.test(name))) continue;
+        const hit = COUNT.exec(holder.textContent || "");
         if (hit && Number(hit[1]) > 0) return Number(hit[1]);
       }
     }
     return 0;
   }
 
-  const api = { detect, uploadHint, measure, limitOf, platforms: PLATFORMS.map(({ id, name, overwrites = false, bytes = false }) => ({ id, name, overwrites, bytes })) };
+  const api = { detect, countsBytes, uploadHint, measure, limitOf, platforms: PLATFORMS.map(({ id, name, overwrites = false, bytes = false }) => ({ id, name, overwrites, bytes })) };
   scope.ResumeProSiteKnowledge = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);

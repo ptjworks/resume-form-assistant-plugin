@@ -157,3 +157,29 @@ test("the side panel status carries an upload hint on platforms whose resume upl
   assert.equal((await page(t, form).status()).siteHint, "");
   assert.equal((await page(t, form, { url: "https://xyz.51job.com/External/Apply.aspx" }).status()).siteHint, "");
 });
+
+test("filling reads no page features, and the upload hint is looked up again only after 2 seconds", async (t) => {
+  const form = row("school", "毕业院校", `<input id="school" maxlength="6">`) + row("major", "专业", `<input id="major" maxlength="10">`);
+  const p = page(t, `<div class="ud-formily-item" data-form-field-id="f1">${form}</div>`,
+    { url: "https://careers.example.test/apply", answers: { "毕业院校": "示例大学", "专业": "示例专业" } });
+  const knowledge = p.w.ResumeProSiteKnowledge;
+  const detect = knowledge.detect;
+  let reads = 0;
+  knowledge.detect = (...args) => { reads += 1; return detect(...args); };
+  await p.run();
+  assert.deepEqual(["school", "major"].map(p.value), ["示例大学", "示例专业"]);
+  assert.equal(reads, 0, "byte counting goes by the address; filling does not read page features per box");
+  // 侧栏轮询：2 秒内用上次认的；页面换掉（飞书的特征没了）后过了 2 秒再认，提示收起。
+  let now = Date.now();
+  p.w.Date.now = () => now;
+  const hint = "飞书招聘上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。";
+  assert.equal((await p.status()).siteHint, hint);
+  assert.equal((await p.status()).siteHint, hint);
+  assert.equal(reads, 1);
+  p.w.document.querySelector(".ud-formily-item").classList.remove("ud-formily-item");
+  now += 1000;
+  assert.equal((await p.status()).siteHint, hint);
+  now += 1500;
+  assert.equal((await p.status()).siteHint, "");
+  assert.equal(reads, 2);
+});
