@@ -2557,7 +2557,7 @@
       // 辅助新增不收起上一轮的保存候选，候选按的那份网站回答也留着用。
       if (!assisted) state.siteAnswers = null;
       if (fields.some(siteScopedField)) {
-        resumeFields.push(...siteAnswerResumeFields(state.siteAnswers?.site ? state.siteAnswers : await loadSiteAnswers()));
+        resumeFields.push(...siteAnswerResumeFields(currentSiteAnswers() || await loadSiteAnswers()));
       }
       // 诊断里要藏起来的简历内容（一个字的值太容易撞上普通字段名，不参与比较）。
       const resumeValues = resumeFields.map(field => normalizeForOverlap(field?.value)).filter(value => value.length >= 2);
@@ -2724,7 +2724,7 @@
         grown.found += added.length;
         grownFields.push(...added);
         // 后来冒出来的题里才有问到对方公司的：这时再读这个网站记住的回答（#429）。
-        if (state.siteAnswers === null && added.some(siteScopedField)) {
+        if (!siteAnswersSettled() && added.some(siteScopedField)) {
           resumeFields.push(...siteAnswerResumeFields(await loadSiteAnswers()));
           if (!isCurrent()) return;
         }
@@ -5487,13 +5487,25 @@
     return next;
   }
 
+  // 读到的是不是这个页面所在网站的回答：单页应用可能已经跳到另一家公司的地址。
+  function currentSiteAnswers() {
+    const answers = state.siteAnswers;
+    return answers?.site && answers.site === self.ResumeProProfile?.siteKeyOf?.(location.href) ? answers : null;
+  }
+
+  // 不用再读的：已经有这个网站的回答，或者桌面不支持、认不出网站。别的失败（桌面暂时没连上之类）后来冒出公司题时再读。
+  function siteAnswersSettled() {
+    return Boolean(currentSiteAnswers()) || ["unsupported", "no_site"].includes(state.siteAnswers?.status);
+  }
+
   function siteAnswerResumeFields(siteAnswers) {
     return siteAnswers?.site ? self.ResumeProProfile.siteAnswerFields(siteAnswers.answers) : [];
   }
 
   // 候选规划用：读到了这个网站的回答才按网站分；没读到（桌面旧、共享站点）这类题照旧按补充字段处理。
   function siteOfferContext() {
-    return state.siteAnswers?.site ? { answers: state.siteAnswers.answers } : null;
+    const answers = currentSiteAnswers();
+    return answers ? { answers: answers.answers } : null;
   }
 
   // 填完之后，网页上没匹配上的字段（已填的和空着的）和它们此刻的内容，列给用户勾选后存进桌面「我的信息」（#189）。
@@ -5508,7 +5520,7 @@
     state.profileDismissedCandidateSignature = null;
     state.profileOfferVersion += 1;
     // 问到对方公司的题这次填写时没读过网站回答（比如都没在填写的字段里）：读到后重算一遍，候选换了版本。
-    if (state.siteAnswers === null && candidates.some((candidate) => !candidate?.matched && siteScopedField(candidate))) {
+    if (!siteAnswersSettled() && candidates.some((candidate) => !candidate?.matched && siteScopedField(candidate))) {
       const version = state.profileOfferVersion;
       loadSiteAnswers().then(() => {
         if (version !== state.profileOfferVersion || !state.profileOfferCandidates?.length) return;
@@ -5520,7 +5532,8 @@
     const plan = currentProfilePlan(state.currentStore, stats);
 
     if (!api.planHasOffer(plan)) {
-      // 问到对方公司的题还空着（#429）：候选留着、卡片先不显示，用户在网页上答了，侧栏下一次刷新就列出来。
+      // 问到对方公司的题还空着（#429）：候选留着、卡片先不显示（没有可存的项时 syncProfileOfferCard 把它收起，
+      // 侧栏的快照也是 null），用户在网页上答了，侧栏下一次刷新就列出来。
       if (plan.siteWaiting) {
         syncProfileOfferCard(plan);
         return;
@@ -5643,7 +5656,7 @@
       pending: plan.pending.map(({ id, key, unreadable }) => ({ id, key, unreadable, defaultSelected: false })),
       conflicts: plan.conflicts.map(({ id, key, value, existing }) => ({ id, key, value, existing, defaultSelected: false })),
       site: (plan.site || []).map(({ id, key, value, existing, defaultSelected }) => ({ id, key, value, existing, defaultSelected })),
-      siteName: state.siteAnswers?.site || "",
+      siteName: currentSiteAnswers()?.site || "",
       notes: plan.notes.map((note) => note.text),
       same: plan.same,
       hidden: plan.hidden,
@@ -5683,7 +5696,7 @@
   function siteSaveFailure(status) {
     if (status === "conflict") return "这个网站的回答刚在桌面改过，网站回答这次没有保存；请重新核对后再保存。";
     if (status === "secret") return "桌面认为有一项回答像密码或验证码，网站回答这次没有保存。";
-    if (status === "invalid_payload" || status === "input_too_large") return "桌面没有接受这次的网站回答（可能超出数量限制），什么都没有写入。";
+    if (status === "invalid_payload" || status === "input_too_large") return "桌面没有接受这次的网站回答（可能超出数量限制，或桌面认为这道题不该按网站记住），什么都没有写入。";
     if (status === "unsupported") return "桌面程序版本较旧，不能按网站记住回答；更新桌面程序后再保存。";
     if (status === "no_site") return "认不出这个网站是哪家公司，网站回答没有保存。";
     if (["not_installed", "not_paired", "never_paired", "incompatible", "unavailable"].includes(status)) {

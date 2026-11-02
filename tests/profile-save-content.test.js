@@ -563,6 +563,7 @@ test("a company question still empty after the fill keeps the offer waiting; onc
   p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
   await p.fill();
   assert.equal(p.snapshot(), null, "nothing to save yet");
+  assert.equal(p.ui.parts["#resume-pro-profile-offer"].hidden, true, "the in-page card stays hidden too");
   relative.value = "否";
   const offer = p.snapshot();
   assert.deepEqual(offer.site.map((item) => [item.key, item.value, item.defaultSelected]), [["是否有亲属在本公司工作", "否", true]]);

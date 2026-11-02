@@ -2,6 +2,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const profileApi = require("../profile-fields.js");
 const helpers = require("../ai-helpers.js");
 
@@ -34,6 +37,16 @@ test("siteKeyOf is the host, plus the company segment on recruiting sites shared
     ["not a url", ""]
   ];
   for (const [url, site] of cases) assert.equal(profileApi.siteKeyOf(url), site, url);
+});
+
+// 桌面存储层（archive-store tests/site_answers.rs）用同一份对照，两边判断不一致就有一边先失败。
+test("the plugin judges questions and answers like the desktop store does", () => {
+  const vectors = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "desktop", "crates", "archive-store", "tests", "site_answer_vectors.json"), "utf8"));
+  for (const [raw, key] of vectors.keys) assert.equal(profileApi.normalizeKey(raw), key, raw);
+  for (const title of vectors.titles.accepted) assert.equal(profileApi.siteScopedTitle(profileApi.normalizeKey(title)), true, title);
+  for (const title of vectors.titles.rejected) assert.equal(profileApi.siteScopedTitle(profileApi.normalizeKey(title)), false, title);
+  for (const answer of vectors.answers.identifiers) assert.equal(profileApi.looksLikeIdentifier(answer), true, answer);
+  for (const answer of vectors.answers.plain) assert.equal(profileApi.looksLikeIdentifier(answer), false, answer);
 });
 
 test("siteScopedTitle takes questions about the company, and still none of the four kept-out kinds", () => {
@@ -99,6 +112,15 @@ test("plan: with this site's answers, company questions go to the site list inst
   assert.deepEqual(family.site.map((item) => item.key), ["是否有亲属在本公司工作"]);
   assert.deepEqual(family.filled, []);
   assert.deepEqual(planOf([web("是否有亲属在本公司工作", "否", { section: "家庭成员" })]).filled, []);
+});
+
+test("plan: a company question the template already answers the same way is not offered again; a different answer is", () => {
+  const templateFields = [{ group: "其他", key: "是否有亲属在本公司工作", value: "否" }];
+  const same = profileApi.planProfileOffer({ candidates: [web("是否有亲属在本公司工作", "否")], profile: {}, templateFields, site: siteOf() });
+  assert.deepEqual([same.site, same.same, same.sameIds], [[], 1, ["site:是否有亲属在本公司工作"]]);
+  const other = profileApi.planProfileOffer({ candidates: [web("是否有亲属在本公司工作", "是")], profile: {}, templateFields, site: siteOf() });
+  assert.deepEqual(other.site.map((item) => [item.key, item.value, item.defaultSelected]), [["是否有亲属在本公司工作", "是", true]]);
+  assert.deepEqual(other.notes, [], "not reported as a conflict with the template");
 });
 
 test("plan: a site answer already the same is skipped, a different one waits for the user to replace it", () => {

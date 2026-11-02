@@ -593,6 +593,8 @@
         // 只记题目、不记回答没有用：网页上空着或读不准的不列，只数一下。
         if (!hasValue) { plan.siteWaiting += 1; continue; }
         if (value.length > JOB_SPECIFIC_VALUE_CHARS || looksLikeIdentifier(value)) { plan.notes.push(skipNote(id, key, "site-unfit")); continue; }
+        // 模板或预置字段里已有同名的题、回答也一样：不用再按网站记一遍。回答不同的照样列，这个网站的答法就是要跟着网站走。
+        if (fixedKeys.has(id) && sameValue(fixedValues.get(id) || "", value)) { plan.same += 1; plan.sameIds.push(`site:${id}`); continue; }
         const existing = siteAnswers.get(id);
         if (existing && sameValue(existing.value, value)) { plan.same += 1; plan.sameIds.push(`site:${id}`); continue; }
         if (plan.filled.length + plan.pending.length + plan.conflicts.length + plan.site.length >= limit) { plan.hidden += 1; continue; }
@@ -894,6 +896,7 @@
     emptyProfile,
     hasProfileContent,
     knownFieldKeys,
+    looksLikeIdentifier,
     mergeProfiles,
     mergeResumeFields,
     normalizeKey,

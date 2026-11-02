@@ -63,7 +63,7 @@ pub use resume::{
 };
 pub use resume_secrets::{is_secret_label, is_secret_value};
 pub use site_answers::{
-    question_key, SiteAnswer, SiteAnswerInput, MAX_SITE_ANSWERS, MAX_SITE_ANSWERS_PER_SITE, MAX_SITE_ANSWER_CHARS,
+    looks_like_identifier, question_key, site_question_allowed, SiteAnswer, SiteAnswerInput, MAX_SITE_ANSWERS, MAX_SITE_ANSWERS_PER_SITE, MAX_SITE_ANSWER_CHARS,
     MAX_SITE_QUESTION_CHARS,
 };
 pub use store::{ArchiveConfig, ArchiveStore};

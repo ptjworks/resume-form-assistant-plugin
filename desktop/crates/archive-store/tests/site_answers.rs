@@ -12,6 +12,38 @@ fn input(question: &str, answer: &str, previous: Option<&str>) -> SiteAnswerInpu
     SiteAnswerInput { question: question.into(), answer: answer.into(), previous: previous.map(str::to_string) }
 }
 
+#[test]
+fn the_store_judges_questions_and_answers_like_the_plugin() {
+    // 插件 tests/site-answers.test.js 用同一份对照。
+    let vectors: serde_json::Value = serde_json::from_str(include_str!("site_answer_vectors.json")).unwrap();
+    for pair in vectors["keys"].as_array().unwrap() {
+        assert_eq!(question_key(pair[0].as_str().unwrap()), pair[1].as_str().unwrap(), "{pair}");
+    }
+    for (kind, expected) in [("accepted", true), ("rejected", false)] {
+        for title in vectors["titles"][kind].as_array().unwrap() {
+            assert_eq!(site_question_allowed(title.as_str().unwrap()), expected, "{title}");
+        }
+    }
+    for (kind, expected) in [("identifiers", true), ("plain", false)] {
+        for answer in vectors["answers"][kind].as_array().unwrap() {
+            assert_eq!(looks_like_identifier(answer.as_str().unwrap()), expected, "{answer}");
+        }
+    }
+}
+
+#[test]
+fn only_questions_about_the_company_with_short_plain_answers_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    // 插件挑候选时已经筛过；这里是存储层自己再拦一次，回归了也不会把普通资料、号码存进这张表。
+    for bad in [input("兴趣爱好", "摄影", None), input("亲属在本公司工作的联系电话", "见附件", None),
+        input("是否有亲属在本公司工作", "父亲 13800138000", None), input("是否有亲属在本公司工作", "见 https://example.com", None)] {
+        assert_eq!(db.save_site_answers("campus.example.com", &[bad]).unwrap_err().code(), "validation_failed");
+    }
+    assert!(db.all_site_answers().unwrap().is_empty());
+    db.save_site_answers("campus.example.com", &[input("是否有亲属在本公司工作", "父亲在本公司财务部任职", None)]).unwrap();
+}
+
 fn pairs(answers: &[SiteAnswer]) -> Vec<(&str, &str)> {
     answers.iter().map(|a| (a.question.as_str(), a.answer.as_str())).collect()
 }

@@ -76,7 +76,8 @@ const item = (id, label, control) => `<div class="form-item" id="${id}-item"><la
 const input = (id, label, { type = "text", value = "" } = {}) => item(id, label, `<input id="${id}" name="${id}" type="${type}" value="${value}">`);
 
 // body 是表单内容；confirm 返回 true/false；onGender：选了性别后页面要做的事（新出现字段之类）；resume 是简历资料；
-// custom 是「我的信息」里的补充字段；site 是桌面里这个网站记住的回答（#429），null 表示桌面不支持。
+// custom 是「我的信息」里的补充字段；site 是桌面里这个网站记住的回答（#429），null 表示桌面不支持；
+// 也可以是函数：拿第几次读取，回答案数组，回 null 表示这次桌面没连上。
 function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [], site = null } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
@@ -103,7 +104,11 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME,
       sendMessage: async (message) => {
         sent.push(message.type);
         if (message.type === "DESKTOP_RESUME_READ") return { status: "ok", data };
-        if (message.type === "DESKTOP_SITE_ANSWERS_READ") return site ? { status: "ok", site: "jobs.example.test", answers: site } : { status: "unsupported" };
+        if (message.type === "DESKTOP_SITE_ANSWERS_READ") {
+          const answers = typeof site === "function" ? site(sent.filter((type) => type === message.type).length) : site;
+          if (answers) return { status: "ok", site: "jobs.example.test", answers };
+          return { status: typeof site === "function" ? "unavailable" : "unsupported" };
+        }
         if (["ENSURE_AI_HOST", "AI_HOST_READY"].includes(message.type)) return { ready: true };
         if (message.type === "AI_FILL" || message.type === "CANCEL_AI_FILL") return worker.dispatch(message);
         return {};
@@ -768,4 +773,34 @@ test("a company question revealed later reads the site answers then, and is fill
   assert.equal(p.w.document.querySelector("input[name=relative]:checked")?.value, "否");
   assert.equal(p.worker.calls.length, 1, "the revealed company question did not go to the AI");
   assert.equal(result.outcome, "success", p.ui.diag.value);
+});
+
+// 第一次读网站回答时桌面没连上：后来冒出的公司题再读一次；桌面明确不支持就不再读。
+test("a company question revealed later reads the site answers again after a failed read, but not from a desktop that lacks them", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const reveal = (doc) => {
+    if (doc.getElementById("intern")) return;
+    const holder = doc.createElement("div");
+    holder.innerHTML = input("intern", "是否曾在本行实习");
+    doc.getElementById("apply").append(holder.firstChild);
+  };
+  const retried = page(t, input("name", "姓名") + GENDER + COMPANY, {
+    site: (read) => (read === 1 ? null : [{ key: "是否曾在本行实习", value: "否" }]), onGender: reveal
+  });
+  let running = retried.run();
+  assert.ok(await retried.until(() => retried.value("gender") === "m" && retried.worker.calls.length === 1));
+  retried.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+  await running;
+  assert.equal(retried.value("intern"), "否", "filled from the second read");
+  assert.equal(retried.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 2);
+  assert.equal(retried.worker.calls.length, 1, "the revealed question did not go to the AI");
+
+  const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site: null, onGender: reveal });
+  running = old.run();
+  assert.ok(await old.until(() => old.value("gender") === "m" && old.worker.calls.length === 1));
+  old.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+  assert.ok(await old.until(() => old.worker.calls.length === 2), "the revealed question goes to the AI");
+  old.worker.calls[1].reply({ 是否曾在本行实习: "否" });
+  await running;
+  assert.equal(old.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1, "an old desktop is asked once");
 });

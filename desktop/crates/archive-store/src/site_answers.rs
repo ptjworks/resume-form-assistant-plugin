@@ -7,6 +7,9 @@
 //! 网站（`site`）由插件按网址算：小写 host，几家公司共用一个 host 的招聘平台再加一段公司路径；
 //! 格式由协议层的 `is_site_key` 检查。同一网站里题目按 [question_key] 归一后只存一条。
 
+use std::sync::OnceLock;
+
+use regex::Regex;
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 
@@ -52,6 +55,74 @@ pub fn question_key(question: &str) -> String {
         .chars()
         .filter(|c| !c.is_whitespace() && !DROPPED.contains(*c))
         .collect()
+}
+
+fn pattern(cell: &'static OnceLock<Regex>, source: &str) -> &'static Regex {
+    cell.get_or_init(|| Regex::new(source).unwrap())
+}
+
+// 下面几条与插件 `profile-fields.js` 的 COMPANY_REFERENCE、SAVED_ANSWER_EXCLUDED、JOB_SPECIFIC_LABEL、
+// HAS_HAN、IDENTIFIER_VALUE、DATE_IN_VALUE、NUMBER_SEPARATORS 同一口径（JS 的 `id(?![a-z])` 在这里写成
+// `id(?:[^a-z]|$)`，Rust 的正则没有环视）。插件挑候选时已经按它们筛过，这里是存储层的最后一道：
+// 网站回答这张表只放问到对方公司的题和短回答。两边的对照见 `tests/site_answer_vectors.json`。
+fn company_reference() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    pattern(&RE, r"(?:[本该贵我此]|我们|你们|这家|对方)(?:公司|企业|单位|部门|机构|集团|银行|行|司|院|校)|(?:亲属|亲戚|亲友|家人|家属|配偶|直系).*(?:工作|任职|就职)")
+}
+
+fn kept_out() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    pattern(&RE, r"(?i)证件|身份|护照|通行证|签证|驾驶证|驾照|准考证|考号|报名号|学籍|学号|工号|编号|证号|识别号|号码|社保|公积金|银行|开户|卡号|[账帐]号|[账帐]户|手机|电话|座机|传真|邮箱|邮件|e-?mail|微信|qq|地址|住址|邮编|邮政编码|联系方式|联系人|政治面貌|党员|团员|党派|入党|入团|薪|工资|待遇|收入|salary|id(?:[^a-z]|$)")
+}
+
+fn job_specific() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    pattern(&RE, r"为什么|原因|理由|动机|谈谈|请(?:简述|简要|描述|介绍|说明|阐述)|自我评价|自我介绍|应聘|报考|投递|[本该贵](?:岗位|职位|公司|单位)|岗位|职位|招聘(?:信息|渠道)|得知|推荐人|内推")
+}
+
+fn company_in_job_label() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    pattern(&RE, r"[本该贵](?:公司|单位)")
+}
+
+fn has_han() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    pattern(&RE, r"[\x{3400}-\x{9FFF}]")
+}
+
+fn identifier_value() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    pattern(&RE, r"(?i)[0-9]{5,}|@|https?://|www\.")
+}
+
+fn date_in_value() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    pattern(&RE, r"(?:19|20)[0-9]{2}\s*[-/.年]\s*[0-9]{1,2}(?:\s*[-/.月]\s*[0-9]{1,2}\s*日?)?")
+}
+
+fn number_separators() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    pattern(&RE, r"[\s\-—–()（）.·+]")
+}
+
+/// 题目问到对方公司（「本公司」「本行」「亲属……在……工作」），又不是证件、联系方式、政治面貌、薪资、
+/// 只适用于当前岗位、像密码的题。与插件 `siteScopedTitle` 同一口径。
+pub fn site_question_allowed(question: &str) -> bool {
+    let id = question_key(question);
+    has_han().is_match(&id)
+        && company_reference().is_match(&id)
+        && !kept_out().is_match(&id)
+        && !is_secret_label(&id)
+        && !job_specific().is_match(&company_in_job_label().replace_all(&id, ""))
+}
+
+/// 回答像号码、邮箱、网址：一长串数字（数字之间的空格、短横、括号不算断开，日期不算）、`@`、网址。
+/// 与插件 `looksLikeIdentifier` 同一口径。
+pub fn looks_like_identifier(answer: &str) -> bool {
+    let squeezed = number_separators()
+        .replace_all(&date_in_value().replace_all(answer, " "), "")
+        .into_owned();
+    identifier_value().is_match(answer) || identifier_value().is_match(&squeezed)
 }
 
 fn invalid(message: impl Into<String>) -> StoreError {
@@ -110,6 +181,12 @@ impl StoreTx<'_> {
             }
             if is_secret_label(&question) || is_secret_value(&answer) {
                 return Err(invalid(format!("「{question}」看起来是密码或验证码，这类内容不存进档案（档案会随备份带走）。")));
+            }
+            if !site_question_allowed(&question) {
+                return Err(invalid(format!("「{question}」不是问到对方公司的题，不按网站记住。")));
+            }
+            if looks_like_identifier(&answer) {
+                return Err(invalid(format!("「{question}」的回答像号码、邮箱或网址，不按网站记住。")));
             }
             if !seen.insert(key.clone()) {
                 return Err(invalid(format!("「{question}」在这次保存里出现了两次。")));
