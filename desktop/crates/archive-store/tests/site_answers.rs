@@ -64,6 +64,7 @@ fn a_rejected_batch_writes_nothing() {
         input("是否有亲属在本公司工作", &"很".repeat(MAX_SITE_ANSWER_CHARS + 1), None),
         input(&"题".repeat(MAX_SITE_QUESTION_CHARS + 1), "否", None),
         input("  ", "否", None),
+        input("是否有亲属在本公司工作", "否\u{1}", None),
     ] {
         assert_eq!(db.save_site_answers("campus.example.com", &[bad]).unwrap_err().code(), "validation_failed");
     }

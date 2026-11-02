@@ -1756,6 +1756,27 @@ mod tests {
     }
 
     #[test]
+    fn a_full_site_of_the_longest_answers_still_fits_one_read_envelope() {
+        let (_dir, store) = store();
+        let identity = store.identity();
+        // 四字节的字：题目 120 个、回答 300 个，30 道题，是一条读取响应最大的样子。
+        let wide = '\u{20000}';
+        let answers: Vec<Value> = (0..archive_store::MAX_SITE_ANSWERS_PER_SITE)
+            .map(|i| {
+                let prefix = format!("本公司{i:02}");
+                let key: String = prefix.chars().chain(std::iter::repeat_n(wide, archive_store::MAX_SITE_QUESTION_CHARS - prefix.chars().count())).collect();
+                json!({"key": key, "value": wide.to_string().repeat(archive_store::MAX_SITE_ANSWER_CHARS)})
+            })
+            .collect();
+        let save = v5_request("siteAnswers.save", &identity, json!({"site": "campus.example.com", "answers": answers}));
+        checked_v5_response(&save, &apply(&save, &store).unwrap());
+        let read = v5_request("siteAnswers.read", &identity, json!({"site": "campus.example.com"}));
+        let response = checked_v5_response(&read, &apply(&read, &store).unwrap());
+        assert_eq!(response["payload"]["answers"].as_array().unwrap().len(), archive_store::MAX_SITE_ANSWERS_PER_SITE);
+        assert!(serde_json::to_vec(&response).unwrap().len() <= MAX_ENVELOPE_BYTES);
+    }
+
+    #[test]
     fn site_answers_need_the_current_archive() {
         let (_dir, store) = store();
         let mut identity = store.identity();

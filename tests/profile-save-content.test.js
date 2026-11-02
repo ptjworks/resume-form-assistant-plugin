@@ -556,3 +556,17 @@ test("when the site answers fail but 我的信息 is saved, the result says both
   assert.deepEqual(p.desktop.profile.custom, [{ key: "兴趣爱好", value: "摄影" }]);
   assert.equal(reply.profileOffer.site.length, 1, "the unsaved site answer is still offered");
 });
+
+test("a company question still empty after the fill keeps the offer waiting; once answered on the page it is offered for this site", async () => {
+  const p = page({ site: { answers: [] } });
+  const relative = new p.ctx.HTMLInputElement();
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  assert.equal(p.snapshot(), null, "nothing to save yet");
+  relative.value = "否";
+  const offer = p.snapshot();
+  assert.deepEqual(offer.site.map((item) => [item.key, item.value, item.defaultSelected]), [["是否有亲属在本公司工作", "否", true]]);
+  const reply = await p.save([siteItem("是否有亲属在本公司工作")]);
+  assert.equal(reply.ok, true);
+  assert.deepEqual(p.siteSaves.map((message) => message.answers), [[{ key: "是否有亲属在本公司工作", value: "否" }]]);
+});

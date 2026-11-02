@@ -84,8 +84,9 @@ test("plan: with this site's answers, company questions go to the site list inst
     { id: "site:是否曾在本行实习", key: "是否曾在本行实习", value: "是", existing: "", defaultSelected: true }
   ]);
   assert.deepEqual(withSite.filled.map((item) => item.key), ["兴趣爱好", "我司内推人工号"]);
-  // 空着的公司题不列；回答像号码的不按网站记，说明原因。
+  // 空着的公司题不列，只数一下（调用方据此留着候选）；回答像号码的不按网站记，说明原因。
   assert.equal(withSite.pending.some((item) => item.key === "是否与本公司签过协议"), false);
+  assert.equal(withSite.siteWaiting, 1);
   assert.match(withSite.notes.map((note) => note.text).join(" "), /「是否认识本单位员工」的回答太长，或像号码/);
   assert.match(profileApi.profileOfferSummary(withSite), /2 项只在这个网站使用/);
   assert.equal(profileApi.planHasOffer(planOf([web("是否有亲属在本公司工作", "否")], { site: siteOf() })), true);

@@ -545,6 +545,7 @@
   //   site     #429：只在这个网站复用的题（siteScopedTitle）和网页上的回答，存到桌面的网站回答；id 带 site: 前缀，
   //            existing 是这个网站已经记住的不同回答（要用户勾选才替换）。只有传了 site（{ answers: 桌面里这个网站的回答 }，
   //            即桌面支持而且认得出网站）才分出来；不传时这类题照旧按补充字段处理。
+  //   siteWaiting  这类题网页上还空着的个数：只记回答，空着的不列；调用方据此留着候选，用户答了再列出来。
   function planProfileOffer({ candidates, profile: rawProfile, templateFields = [], limit = MAX_OFFERED_CANDIDATES, stats = null, site = null } = {}) {
     const profile = normalizeProfile(rawProfile);
     // 模板和预置字段（含家庭成员）：同名的没法再存成补充字段，存了也会被它们盖住。
@@ -578,7 +579,7 @@
       }
     }
 
-    const plan = { filled: [], pending: [], conflicts: [], site: [], notes: [], same: 0, sameIds: [], hidden: 0 };
+    const plan = { filled: [], pending: [], conflicts: [], site: [], siteWaiting: 0, notes: [], same: 0, sameIds: [], hidden: 0 };
     for (const entry of merged.values()) {
       const { id, key, value } = entry;
       if (entry.ambiguous) { plan.notes.push(skipNote(id, key, "ambiguous")); continue; }
@@ -589,8 +590,8 @@
       const unreadable = entry.state === "unreadable";
 
       if (siteAnswers && siteScopedTitle(id)) {
-        // 只记题目、不记回答没有用：网页上空着或读不准的不列。
-        if (!hasValue) continue;
+        // 只记题目、不记回答没有用：网页上空着或读不准的不列，只数一下。
+        if (!hasValue) { plan.siteWaiting += 1; continue; }
         if (value.length > JOB_SPECIFIC_VALUE_CHARS || looksLikeIdentifier(value)) { plan.notes.push(skipNote(id, key, "site-unfit")); continue; }
         const existing = siteAnswers.get(id);
         if (existing && sameValue(existing.value, value)) { plan.same += 1; plan.sameIds.push(`site:${id}`); continue; }

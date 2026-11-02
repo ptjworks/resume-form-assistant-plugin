@@ -5520,6 +5520,11 @@
     const plan = currentProfilePlan(state.currentStore, stats);
 
     if (!api.planHasOffer(plan)) {
+      // 问到对方公司的题还空着（#429）：候选留着、卡片先不显示，用户在网页上答了，侧栏下一次刷新就列出来。
+      if (plan.siteWaiting) {
+        syncProfileOfferCard(plan);
+        return;
+      }
       closeProfileOffer();
       return;
     }

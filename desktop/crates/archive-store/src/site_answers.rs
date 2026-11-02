@@ -104,6 +104,10 @@ impl StoreTx<'_> {
             if question.chars().count() > MAX_SITE_QUESTION_CHARS || answer.chars().count() > MAX_SITE_ANSWER_CHARS {
                 return Err(invalid("题目或回答太长，没有保存。"));
             }
+            // 控制字符在 JSON 里要转义成六个字节，30 条满长的回答会撑破一条 64 KiB 的读取响应；表单里也不该有。
+            if question.chars().chain(answer.chars()).any(char::is_control) {
+                return Err(invalid("题目或回答里有看不见的控制字符，没有保存。"));
+            }
             if is_secret_label(&question) || is_secret_value(&answer) {
                 return Err(invalid(format!("「{question}」看起来是密码或验证码，这类内容不存进档案（档案会随备份带走）。")));
             }
