@@ -394,3 +394,17 @@ test("a read-only range that cannot reach a day closes its calendar and keeps th
   assert.deepEqual(h.model(), ["2019-09-01", "2023-06-01"]);
   assert.equal(h.open(), false);
 });
+
+test("an editable range of an unknown component still fills one box alone when the other end has no value", async () => {
+  // 认不出是哪家组件的区间（类名带 date-picker 的自研组件）：可能一个框自己就收下，照原来只填这一个框。两头都有值时一起填。
+  const h = load(`<div class="row"><label class="row-label">在校时间</label>
+    <div class="my-date-picker"><input placeholder="开始日期"><span>至</span><input placeholder="结束日期"></div></div>`);
+  const { start, end } = parts(h.doc, "在校时间");
+  assert.equal(start.pickerType, "generic");
+  const lone = await h.api.operate(start, "2019-09-01", { range: { entry: end, value: null } });
+  assert.equal(lone.ok, true, JSON.stringify(lone));
+  assert.deepEqual([start.element.value, end.element.value], ["2019-09-01", ""]);
+  const pair = await h.api.operate(start, "2020-09-01", { range: { entry: end, value: "2023-06-30" } });
+  assert.equal(pair.ok, true, JSON.stringify(pair));
+  assert.deepEqual([start.element.value, end.element.value], ["2020-09-01", "2023-06-30"]);
+});

@@ -514,7 +514,10 @@
     const dateHint = ctx => [ctx.entry?.binding?.label, ctx.el?.getAttribute?.('placeholder'), ctx.el?.getAttribute?.('aria-label')].filter(Boolean).join(' ');
     async function operateDate(ctx, raw) {
       const boxes = rangeBoxes(ctx);
-      if (boxes) return await operateRange(ctx, raw, boxes);
+      const ranged = boxes ? await operateRange(ctx, raw, boxes) : null;
+      if (ranged && !ranged.single) return ranged;
+      // 照原来只填这一个框：和原来一样先聚焦（区间的框进来时没有聚焦，见 operate）。
+      if (ranged?.single) focus(ctx.el);
       // #301 日期题收到一段起止（「2019.09-2023.06」）：题目写明开始还是结束时取那一头，各种日期控件都一样。
       raw = helpers?.rangeDateValue?.(raw, dateHint(ctx)) ?? raw;
       if (['date', 'month', 'datetime-local', 'time', 'week'].includes(ctx.el.type)) {
@@ -678,6 +681,8 @@
       const partner = ctx.options.range?.entry?.element === boxes[other] ? ctx.options.range : null;
       want[other] = dateParts(partner?.value != null ? end(partner.value, partner.entry, boxes[other]) : '')
         || dateParts(helpers?.rangeDateParts?.(raw)?.[other]) || dateParts(boxes[other].value);
+      // 认不出是哪家组件、框又能打字的：可能一个框自己就收下，照原来只填这一个框（single，见 operateDate）。
+      if (!want[other] && ctx.entry.pickerType === 'generic' && !boxes.some(box => box.readOnly)) return { single: true };
       if (!want[other]) return { reason: 'range_incomplete' };
       const order = date => (date.y * 12 + date.m) * 32 + (date.d || 1);
       if (order(want[0]) > order(want[1])) return { reason: 'invalid_date' };
