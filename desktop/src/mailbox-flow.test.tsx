@@ -60,6 +60,36 @@ test("duplicate addresses lead to the existing account without testing or overwr
   expect(invoke.mock.calls.some(([name]) => name === "mailbox_connect")).toBe(false);
 });
 
+test("changing from retained school settings to an existing address cannot bypass duplicate protection", async () => {
+  const { ui, view, handlers, invoke } = setup();
+  view.accounts = [{ id: "existing", email: "existing@school.example", paused: false, failures: 0, lastError: null, lastChecked: null, headerIssues: 0,
+    connection: { host: "old.school.example", port: 993, encryption: "tls", username: "existing@school.example", sendId: false } }];
+  handlers.mailbox_discover = async (args) => ({ config: { host: "mail.school.example", port: 993, encryption: "tls", username: args?.email as string, sendId: false }, note: "已发现设置", helpUrl: null });
+  handlers.mailbox_connect = async () => {};
+  await ui.refresh(); ui.openSetup();
+  fireEvent.input(el("mailbox-email"), { target: { value: "new@school.example" } });
+  fireEvent.click(el("mailbox-detect"));
+  await waitFor(() => expect(el("mailbox-credentials").hidden).toBe(false));
+  fireEvent.click(el("mailbox-change-email"));
+  fireEvent.input(el("mailbox-email"), { target: { value: "existing@school.example" } });
+  expect(el("mailbox-address-panel").hidden).toBe(false);
+  expect(el("mailbox-credentials").hidden).toBe(true);
+  fireEvent.click(el("mailbox-detect"));
+  expect(el("mailbox-detection").textContent).toContain("这个邮箱已经添加");
+  expect(invoke.mock.calls.some(([name]) => name === "mailbox_connect")).toBe(false);
+
+  // Defense in depth: even a programmatic address change after entering the
+  // credentials step is rejected again at submit time.
+  fireEvent.input(el("mailbox-email"), { target: { value: "other@school.example" } });
+  fireEvent.click(el("mailbox-detect"));
+  await waitFor(() => expect(el("mailbox-credentials").hidden).toBe(false));
+  el<HTMLInputElement>("mailbox-email").value = "existing@school.example";
+  fireEvent.input(el("mailbox-secret"), { target: { value: "synthetic-code" } });
+  fireEvent.submit(el("mailbox-form"));
+  expect(el("mailbox-detection").textContent).toContain("这个邮箱已经添加");
+  expect(invoke.mock.calls.some(([name]) => name === "mailbox_connect")).toBe(false);
+});
+
 test("successful setup closes before a slow scan; the list and new mailbox action remain usable", async () => {
   const { ui, view, handlers, invoke, openSettings } = setup(); await ui.refresh(); ui.openSetup();
   handlers.mailbox_connect = async () => { view.accounts.push({ id: "new", email: "new@qq.com", paused: false, failures: 0, lastError: null, lastChecked: null, headerIssues: 0 }); };
@@ -107,6 +137,10 @@ test("an in-flight connection cannot be closed or submitted twice", async () => 
   fireEvent.keyDown(el("mailbox-dialog"), { key: "Escape" });
   expect(el<HTMLDialogElement>("mailbox-dialog").open).toBe(true);
   expect(el<HTMLButtonElement>("mailbox-close").disabled).toBe(true);
+  expect(el<HTMLButtonElement>("mailbox-change-email").disabled).toBe(true);
+  fireEvent.click(el("mailbox-change-email"));
+  expect(el("mailbox-credentials").hidden).toBe(false);
+  expect(el("mailbox-address-panel").hidden).toBe(true);
   expect(invoke.mock.calls.filter(([name]) => name === "mailbox_connect")).toHaveLength(1);
   finish();
   await waitFor(() => expect(el<HTMLDialogElement>("mailbox-dialog").open).toBe(false));

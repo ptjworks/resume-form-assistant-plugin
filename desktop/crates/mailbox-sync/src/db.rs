@@ -22,6 +22,12 @@ pub struct Account {
     pub next_check: i64,
     pub header_issues: u32,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckResult {
+    Success,
+    Partial(Error),
+    Failure(Error),
+}
 impl Account {
     pub fn credential_id(&self) -> String {
         format!("mailbox:{}", self.id)
@@ -339,6 +345,89 @@ impl Database {
             params![id, error.to_string(), now + 60],
         )?;
         Ok(())
+    }
+    /// Commit a scan's final account status only while it still describes the
+    /// connection that was scanned. A pause made while network I/O was running
+    /// wins over the late result; reconnect/delete races cannot update the new
+    /// account state through an old snapshot.
+    pub fn commit_check_result(
+        &self,
+        expected: &Account,
+        result: CheckResult,
+        now: i64,
+    ) -> Result<Option<bool>> {
+        let tx = self.0.unchecked_transaction()?;
+        let stored = tx
+            .query_row(
+                "SELECT email,paused,failures,connection,source,source_account_id FROM accounts WHERE id=?1",
+                [&expected.id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, bool>(1)?,
+                        row.get::<_, u32>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(Error::Missing)?;
+        let (email, paused, failures, connection, source, source_account_id) = stored;
+        let source = SourceKind::from_db(&source)?;
+        let connection = if source == SourceKind::Imap {
+            Some(match connection {
+                Some(json) => serde_json::from_str::<ConnectionConfig>(&json)
+                    .map_err(|_| Error::Configuration)?
+                    .validated(&email)?,
+                None => ConnectionConfig::preset(&email)?,
+            })
+        } else {
+            None
+        };
+        if connection != expected.connection
+            || source != expected.source
+            || source_account_id != expected.source_account_id
+        {
+            return Err(Error::Changed);
+        }
+        if paused {
+            return Ok(None);
+        }
+        let next_paused = match result {
+            CheckResult::Success => {
+                tx.execute(
+                    "UPDATE accounts SET failures=0,last_error=NULL,last_checked=?2,next_check=?3 WHERE id=?1",
+                    params![expected.id, now, now + CHECK_INTERVAL],
+                )?;
+                false
+            }
+            CheckResult::Partial(error) => {
+                tx.execute(
+                    "UPDATE accounts SET failures=0,last_error=?2,next_check=?3 WHERE id=?1",
+                    params![expected.id, error.to_string(), now + 60],
+                )?;
+                false
+            }
+            CheckResult::Failure(error) => {
+                let next_failures = failures.saturating_add(1);
+                let next_paused = next_failures >= FAILURE_LIMIT;
+                tx.execute(
+                    "UPDATE accounts SET failures=?2,last_error=?3,paused=?4,next_check=?5 WHERE id=?1",
+                    params![
+                        expected.id,
+                        next_failures,
+                        error.to_string(),
+                        next_paused,
+                        now + retry_delay(next_failures)
+                    ],
+                )?;
+                next_paused
+            }
+        };
+        tx.commit()?;
+        Ok(Some(next_paused))
     }
     pub fn pause(&self, id: &str, paused: bool) -> Result<()> {
         self.0.execute(

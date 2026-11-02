@@ -9,7 +9,8 @@ use mailbox_sync::source::{
     SourceKind,
 };
 use mailbox_sync::{
-    classify, imap, Account, Candidate, ConnectionConfig, Cursor, Database, Error, Header,
+    classify, imap, Account, Candidate, CheckResult, ConnectionConfig, Cursor, Database, Error,
+    Header,
 };
 use serde::Serialize;
 use std::sync::MutexGuard;
@@ -633,15 +634,22 @@ fn run_checks(
         report.checked_accounts += 1;
         match scan(db, &account) {
             Ok(partial) => {
+                let outcome = if partial {
+                    CheckResult::Partial(Error::Protocol)
+                } else {
+                    CheckResult::Success
+                };
+                let Some(_) = mapped(db.commit_check_result(&account, outcome, now()))? else {
+                    report.skipped_paused += 1;
+                    continue;
+                };
                 if partial {
-                    mapped(db.partial_failure(&account.id, Error::Protocol, now()))?;
                     report.partial_accounts.push(CheckFailure {
                         account_id: account.id.clone(),
                         message: "收件箱已继续扫描，但部分文件夹或邮件未完成；程序会稍后重试，连续三次仍读不到的邮件可手动导入。".into(),
                         paused: false,
                     });
                 } else {
-                    mapped(db.success(&account.id, now()))?;
                     report.succeeded_accounts += 1;
                 }
             }
@@ -666,11 +674,18 @@ fn run_checks(
                 .into_iter()
                 .find(|category| fail(*category).code == error.code)
                 .unwrap_or(Error::Storage);
-                mapped(db.failure(&account.id, category, now()))?;
+                let Some(paused) = mapped(db.commit_check_result(
+                    &account,
+                    CheckResult::Failure(category),
+                    now(),
+                ))? else {
+                    report.skipped_paused += 1;
+                    continue;
+                };
                 report.failed_accounts.push(CheckFailure {
                     account_id: account.id.clone(),
                     message: fail(category).message,
-                    paused: mapped(db.account(&account.id))?.paused,
+                    paused,
                 });
             }
         }
@@ -1049,6 +1064,53 @@ mod tests {
             fail(Error::Changed).code
         );
         check_connection(&db, &db.account("a").unwrap()).unwrap();
+    }
+    #[test]
+    fn a_pause_during_scan_wins_over_late_partial_or_failed_results() {
+        for partial in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut db = Database::open(dir.path()).unwrap();
+            db.save_account("a", "a@qq.com").unwrap();
+            let accounts = db.accounts().unwrap();
+            let report = run_checks(&mut db, accounts, true, 0, |db, account| {
+                db.pause(&account.id, true).unwrap();
+                if partial {
+                    Ok(true)
+                } else {
+                    Err(fail(Error::Network))
+                }
+            })
+            .unwrap();
+            let account = db.account("a").unwrap();
+            assert!(account.paused);
+            assert_eq!(account.failures, 0);
+            assert!(account.last_error.is_none());
+            assert_eq!(report.skipped_paused, 1);
+            assert!(report.partial_accounts.is_empty());
+            assert!(report.failed_accounts.is_empty());
+        }
+    }
+    #[test]
+    fn reconnect_during_scan_rejects_the_old_terminal_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::open(dir.path()).unwrap();
+        let old = db.save_account("a", "a@qq.com").unwrap();
+        let accounts = db.accounts().unwrap();
+        let error = match run_checks(&mut db, accounts, true, 0, |db, account| {
+            let mut changed = account.connection.clone().unwrap();
+            changed.host = "imap.school.example".into();
+            db.save_configured_account(&account.id, &account.email, &changed)
+                .unwrap();
+            Err(fail(Error::Network))
+        }) {
+            Ok(_) => panic!("old scan result must not commit after reconnect"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, fail(Error::Changed).code);
+        let updated = db.account("a").unwrap();
+        assert_ne!(updated.connection, old.connection);
+        assert_eq!(updated.failures, 0);
+        assert!(updated.last_error.is_none());
     }
     #[test]
     fn custom_school_settings_and_os_credentials_keep_the_same_account_on_update() {

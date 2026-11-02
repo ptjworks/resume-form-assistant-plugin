@@ -171,6 +171,9 @@ export function mountMailboxes(
   let signature = "";
   let inboxState: "pending" | "stored" | "recycled" = "stored";
   let activeCandidateId: string | null = null;
+  const existingAccountForAddress = () => current.accounts.find(account =>
+    account.email.trim().toLowerCase() === normalizedAddress() && account.id !== editingAccount?.id,
+  );
   const actionIds = ["mailbox-save", "mailbox-settings-check", "mailbox-inbox-check", "mailbox-save-selected", "mailbox-ignore-selected", "mailbox-load-more", "mailbox-detect"];
   function say(where: "settings" | "inbox", text: string, error = false) {
     const el = get(`mailbox-${where}-status`);
@@ -183,7 +186,7 @@ export function mountMailboxes(
     get<HTMLButtonElement>("mailbox-save").disabled = busy || awaitingReview;
     get("mailbox-save").textContent = busy && detection.dataset.state === "connecting" ? "正在连接…" : editingAccount ? "连接并更新" : "连接并添加";
     ["mailbox-settings-check", "mailbox-inbox-check"].forEach(id => { get<HTMLButtonElement>(id).disabled = busy || checking; });
-    ["mailbox-add", "mailbox-empty-add", "mailbox-cancel", "mailbox-close", "mailbox-back", "mailbox-config-next"].forEach(id => { get<HTMLButtonElement>(id).disabled = busy; });
+    ["mailbox-add", "mailbox-empty-add", "mailbox-cancel", "mailbox-close", "mailbox-back", "mailbox-config-next", "mailbox-change-email", "mailbox-view-existing"].forEach(id => { get<HTMLButtonElement>(id).disabled = busy; });
     get<HTMLButtonElement>("mailbox-detect").disabled = busy || detection.dataset.state === "searching";
     get("mailbox-detect").textContent = detection.dataset.state === "searching" ? "正在识别…" : "下一步";
     secret.disabled = awaitingReview;
@@ -485,7 +488,7 @@ export function mountMailboxes(
       ? `IMAP：${host.value.trim()} · ${port.value} · ${encryption.value === "tls" ? "TLS" : "STARTTLS"}`
       : "点击下一步识别邮箱，或按官方说明填写收信设置。";
   }
-  function updateProvider(preserveForDomain = false, usePreset = false) {
+  function updateProvider(preserveForDomain = false, usePreset = false, advance = false) {
     ++discoveryToken; discoveryRequested = ""; schoolHelpUrl = null;
     const provider = mailboxProvider(email.value), config = usePreset ? localMailConnection(email.value) : null;
     const keep = preserveForDomain && retainConfiguration && !!addressDomain() && addressDomain() === connectionDomain;
@@ -512,7 +515,7 @@ export function mountMailboxes(
     else if (email.value.trim()) showProgress("typing", "邮箱地址待确认", "输入完成后按回车，或点击“确认并识别”，再查找邮箱配置。");
     else showProgress("empty", "先填写邮箱地址", "第 1 步：输入完整邮箱地址，按回车或点击“确认并识别”。");
     updateServerLabel();
-    if (config || keep) setSetupStep("credentials");
+    if (advance && config) setSetupStep("credentials");
     else setSetupStep("email");
     showEndpointReview();
   }
@@ -525,11 +528,18 @@ export function mountMailboxes(
       return;
     }
     email.removeAttribute("aria-invalid");
-    const existing = current.accounts.find(account => account.email.trim().toLowerCase() === address && account.id !== editingAccount?.id);
+    const existing = existingAccountForAddress();
     get("mailbox-view-existing").hidden = !existing;
     if (existing) { showProgress("error", "这个邮箱已经添加", "可查看已添加的邮箱，或修改它的连接设置。"); return; }
     if (localMailConnection(address) || /@(outlook\.com|hotmail\.com|live\.com|msn\.com)$/i.test(address)) {
-      updateProvider(false, true);
+      updateProvider(false, true, true);
+      return;
+    }
+    if (retainConfiguration && !!host.value.trim() && addressDomain() === connectionDomain) {
+      showProgress("edited", "邮箱地址已更新，收信设置已保留", "请核对登录用户名，再填写密码或授权码。", 2);
+      if (!showEndpointReview()) {
+        setSetupStep("credentials"); configuration.open = false; secret.focus();
+      }
       return;
     }
     const token = ++discoveryToken; discoveryRequested = address;
@@ -611,6 +621,14 @@ export function mountMailboxes(
     if (setupStep === "configuration") { get("mailbox-config-next").click(); return; }
     const config = readConnection();
     if (!email.validity.valid || !email.value.trim()) { setSetupStep("email"); email.focus(); return; }
+    const existing = existingAccountForAddress();
+    if (existing) {
+      setSetupStep("email");
+      get("mailbox-view-existing").hidden = false;
+      showProgress("error", "这个邮箱已经添加", "请查看或修改已有邮箱，不会覆盖它的连接和待确认来信。");
+      email.focus();
+      return;
+    }
     if (!validConnection()) return;
     if (!secret.value.trim()) { secret.setAttribute("aria-invalid", "true"); showProgress("error", "请填写密码或授权码", "按当前邮箱的教程获取后，填写到下方输入框。", 2); secret.focus(); return; }
     const destinationChanged = editingAccount && (!editingAccount.connection ||
@@ -660,6 +678,7 @@ export function mountMailboxes(
   }));
   get("mailbox-retry-read").addEventListener("click", () => { void refresh(); });
   get("mailbox-view-existing").addEventListener("click", () => {
+    if (busy) return;
     recentlyAdded = normalizedAddress(); closeSetup(); openSettings(); signature = ""; void refresh();
   });
   ["mailbox-close", "mailbox-cancel"].forEach(id => get(id).addEventListener("click", () => closeSetup()));
@@ -670,7 +689,7 @@ export function mountMailboxes(
     setSetupStep(setupStep === "credentials" && (configurationStep || editingAccount) ? "configuration" : "email");
     detection.hidden = true; (setupStep === "email" ? email : host).focus();
   });
-  get("mailbox-change-email").addEventListener("click", () => { setSetupStep("email"); detection.hidden = true; email.focus(); });
+  get("mailbox-change-email").addEventListener("click", () => { if (busy) return; setSetupStep("email"); detection.hidden = true; email.focus(); });
   get("mailbox-toggle-secret").addEventListener("click", () => {
     const visible = secret.type === "password"; secret.type = visible ? "text" : "password";
     get("mailbox-toggle-secret").textContent = visible ? "隐藏" : "显示";
