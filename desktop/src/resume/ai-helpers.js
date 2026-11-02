@@ -356,8 +356,11 @@
   function idTypeMatch(field, resumeFields, formScope) {
     const own = resumeFields.filter((item) => String(item?.value ?? "").trim() && isSamePersonScope(item, formScope));
     const stated = String(own.find((item) => /证件(类型|种类)/.test(normalizeText(item.key)))?.value ?? "").trim();
-    const number = own.map((item) => isResumeFieldMatch("id_number", item, field) ? idNumberInfo(item.value) : null)
-      .find((info) => info?.valid);
+    // 和证件号码框取同一条：按顺序第一条认作证件号、号码框也收得下的（isValueValidForField 的 id_number）。
+    const numberItem = own.find((item) => isResumeFieldMatch("id_number", item, field)
+      && /^[0-9xX]{8,18}$/.test(String(item.value).replace(/\s/g, "")));
+    const info = numberItem ? idNumberInfo(numberItem.value) : null;
+    const number = info?.valid ? info : null;
     const match = (value) => ({ fieldId: field.fieldId, value });
     if (!number) return stated ? match(stated) : null;
     const names = ID_TYPE_NAMES[number.kind];

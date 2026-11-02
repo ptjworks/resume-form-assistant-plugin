@@ -838,6 +838,11 @@ test("id type: a stated type wins, and one the number contradicts is blocked ins
   assert.deepEqual(idTypeMatch(split, idResume("港澳台居民居住证", "830000199201300022")), { fieldId: "type", value: "台湾居民居住证" });
   assert.equal(idTypeMatch(idTypeField(["身份证", "护照", "其它"]), idResume("其它", "810000199408230021")).value, "其它");
   assert.equal(idTypeMatch(idTypeField(all), idResume("其它", "810000199408230021")).value, "港澳居民居住证");
+  // 号码框填的是排在前面的那条（纯数字的护照号），不拿后面的身份证号来比；字母开头的护照号进不了号码框，号码框填的是身份证号。
+  const both = (first, second) => [{ group: "基本信息", key: "证件类型", value: "护照" },
+    { group: "基本信息", key: "证件号码", value: first }, { group: "基本信息", key: "身份证号", value: second }];
+  assert.deepEqual(idTypeMatch(idTypeField(all), both("123456789", "11010519491231002X")), { fieldId: "type", value: "护照" });
+  assert.equal(idTypeMatch(idTypeField(all), both("E12345678", "11010519491231002X")).blocked, "id_type_mismatch");
   // 紧急联系人的证件类型不用本人的资料。
   assert.equal(idTypeMatch(idTypeField(all, { group: "紧急联系人" }), idResume("", "11010519491231002X")), undefined);
 });
