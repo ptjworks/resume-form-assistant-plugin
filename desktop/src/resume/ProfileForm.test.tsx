@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { Invoke, ProfileRecordView } from "../api.ts";
 import { InvokeProvider } from "../react/invoke.tsx";
 import { ProfileForm } from "./ProfileForm.tsx";
+import { idNumberInfo } from "./profile.ts";
 import type { ProfileProbe } from "./ProfileForm.tsx";
 import type { Listen } from "./LegacyImport.tsx";
 
@@ -115,6 +116,18 @@ test("证件号码没通过校验时在框下提示，字段名不变", async ()
   await user.clear(number);
   await user.type(number, "E12345678");
   expect(screen.queryByText("号码没通过校验，请核对。")).toBeNull();
+});
+
+test("拿不到 ai-helpers 时证件号码不提示，也不报错", () => {
+  const g = globalThis as { ResumeProAIHelpers?: unknown };
+  const saved = g.ResumeProAIHelpers;
+  delete g.ResumeProAIHelpers;
+  try {
+    expect(idNumberInfo("110105194912310021")).toBeNull();
+  } finally {
+    g.ResumeProAIHelpers = saved;
+  }
+  expect(idNumberInfo("110105194912310021")).toEqual({ valid: false, kind: "" });
 });
 
 test("保存时带上读到的版本号和规范化后的档案", async () => {

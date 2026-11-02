@@ -327,16 +327,7 @@
         return;
       }
       const matchIndex = resumeFields.findIndex((resumeField, index) => {
-        if (usedResumeIndexes.has(index)) {
-          return false;
-        }
-
-        if (!isSamePersonScope(resumeField, formScope) || !isResumeFieldMatch(semantic, resumeField, field, () => keyTypeOf(index))) {
-          return false;
-        }
-
-        // 语义对得上、但值这个字段收不下的（下拉里没有这个选项），不能占住位置，接着往后找。
-        return isValueValidForField(field, resumeField.value);
+        return !usedResumeIndexes.has(index) && fitsResumeField(semantic, field, resumeField, formScope, () => keyTypeOf(index));
       });
 
       if (matchIndex >= 0) {
@@ -351,14 +342,23 @@
     return matches;
   }
 
+  // 一条简历资料能不能填进这个网页字段：同一个人、语义对得上、值这个字段收得下。
+  // 语义对得上、但值收不下的（下拉里没有这个选项），不能占住位置，调用方接着往后找。
+  function fitsResumeField(semantic, field, resumeField, formScope, keyType) {
+    return isSamePersonScope(resumeField, formScope) && isResumeFieldMatch(semantic, resumeField, field, keyType)
+      && isValueValidForField(field, resumeField.value);
+  }
+
+  // 证件类型拿来比的号码按普通的证件号码框取（idTypeMatch）。
+  const ID_NUMBER_FIELD = { label: "证件号码", inputType: "text", options: [] };
+
   // #429 证件类型：号码看不出类型的照资料填。看得出的，资料没写就按号码选；资料写的和号码对不上不填，
   // 带上 blocked，填写时记作没填上（「和证件号码对不上」），也不再交给 AI。
   function idTypeMatch(field, resumeFields, formScope) {
     const own = resumeFields.filter((item) => String(item?.value ?? "").trim() && isSamePersonScope(item, formScope));
     const stated = String(own.find((item) => /证件(类型|种类)/.test(normalizeText(item.key)))?.value ?? "").trim();
-    // 和证件号码框取同一条：按顺序第一条认作证件号、号码框也收得下的（isValueValidForField 的 id_number）。
-    const numberItem = own.find((item) => isResumeFieldMatch("id_number", item, field)
-      && /^[0-9xX]{8,18}$/.test(String(item.value).replace(/\s/g, "")));
+    // 和证件号码框取同一条：用同一个判断（fitsResumeField），按顺序取第一条。
+    const numberItem = own.find((item) => fitsResumeField("id_number", ID_NUMBER_FIELD, item, formScope));
     const info = numberItem ? idNumberInfo(numberItem.value) : null;
     const number = info?.valid ? info : null;
     const match = (value) => ({ fieldId: field.fieldId, value });

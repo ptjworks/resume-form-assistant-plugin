@@ -843,6 +843,11 @@ test("id type: a stated type wins, and one the number contradicts is blocked ins
     { group: "基本信息", key: "证件号码", value: first }, { group: "基本信息", key: "身份证号", value: second }];
   assert.deepEqual(idTypeMatch(idTypeField(all), both("123456789", "11010519491231002X")), { fieldId: "type", value: "护照" });
   assert.equal(idTypeMatch(idTypeField(all), both("E12345678", "11010519491231002X")).blocked, "id_type_mismatch");
+  // 同一张表上：号码框填的就是拿来比的那条。
+  for (const [first, type, number] of [["123456789", { value: "护照" }, "123456789"], ["E12345678", { value: "护照", blocked: "id_type_mismatch" }, "11010519491231002X"]]) {
+    const matches = helpers.buildRuleBasedMatches([idTypeField(all), textField("no", "证件号码")], both(first, "11010519491231002X"));
+    assert.deepEqual(matches, [{ fieldId: "type", ...type }, { fieldId: "no", value: number }], first);
+  }
   // 紧急联系人的证件类型不用本人的资料。
   assert.equal(idTypeMatch(idTypeField(all, { group: "紧急联系人" }), idResume("", "11010519491231002X")), undefined);
 });

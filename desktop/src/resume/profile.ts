@@ -51,7 +51,7 @@ interface ProfileApi {
 
 export const profileApi = (globalThis as unknown as { ResumeProProfile: ProfileApi }).ResumeProProfile;
 
-/** 18 位证件号的校验结果（ai-helpers.js，#429），不是 18 位的返回 null。 */
+/** 18 位证件号的校验结果（ai-helpers.js，#429），不是 18 位的返回 null。拿不到 ai-helpers 时也返回 null，只是不提示。 */
 export const idNumberInfo = (value: string): { valid: boolean; kind: string } | null =>
-  (globalThis as unknown as { ResumeProAIHelpers: { idNumberInfo(value: string): { valid: boolean; kind: string } | null } })
-    .ResumeProAIHelpers.idNumberInfo(value);
+  (globalThis as unknown as { ResumeProAIHelpers?: { idNumberInfo?(value: string): { valid: boolean; kind: string } | null } })
+    .ResumeProAIHelpers?.idNumberInfo?.(value) ?? null;
