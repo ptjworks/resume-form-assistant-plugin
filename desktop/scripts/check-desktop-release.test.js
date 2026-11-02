@@ -426,13 +426,16 @@ test("首次显式退出只有在持久标记存在时才允许慢启动清理�
     acceptance.indexOf('Write-Host "Verify delayed hidden launch'),
   );
   assert.match(firstQuit, /WaitForExit\(10000\)/);
+  assert.match(firstQuit, /if \(\$CheckExplicitQuit\) \{/);
   assert.match(firstQuit, /Test-Path -LiteralPath \$marker -PathType Leaf/);
   assert.match(firstQuit, /WaitForExit\(20000\)/);
   assert.match(firstQuit, /within 30 seconds/);
   assert.ok(
+    firstQuit.indexOf("if ($CheckExplicitQuit) {") < firstQuit.indexOf("Test-Path -LiteralPath $marker -PathType Leaf") &&
     firstQuit.indexOf("Test-Path -LiteralPath $marker -PathType Leaf") < firstQuit.indexOf("WaitForExit(20000)"),
-    "额外宽限必须在退出标记校验之后",
+    "额外宽限必须在显式退出模式和退出标记校验之后",
   );
+  assert.match(firstQuit, /if \(\$CheckExplicitQuit\) \{[\s\S]*?Test-Path -LiteralPath \$marker -PathType Leaf/);
 });
 
 test("beta 的 tag 建成预发布并带上风险说明，正式 tag 必须来自 main", () => {
