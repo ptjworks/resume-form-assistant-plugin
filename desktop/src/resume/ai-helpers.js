@@ -50,6 +50,11 @@
   };
   // 选项里没有分开写的居住证、只有合写的一项时选合写的（findSelectOptionIndex）。
   const JOINT_RESIDENCE = "港澳台居民居住证";
+  // 资料里写的证件类型认得出是哪一种（连同 OPTION_SYNONYMS 里的写法），才拿来和号码比；认不出的不算对不上。
+  const STATED_ID_TYPES = [
+    ["居民身份证", ["resident"]], ["港澳居民居住证", ["hkmo"]], ["台湾居民居住证", ["tw"]], [JOINT_RESIDENCE, ["hkmo", "tw"]],
+    ["外国人永久居留身份证", ["foreign"]], ["护照", []], ["港澳居民来往内地通行证", []], ["台湾居民来往大陆通行证", []]
+  ];
 
   // #429 下拉、单选的选项和资料是同一个意思的不同写法，又不是包含关系（「汉族」对「汉」、「共青团员」对「中国共产主义青年团团员」）。
   // 每组是同一个意思的几种写法，选项里正好一项是同组的另一种写法才用它（findSelectOptionIndex）。只收确定同义的：
@@ -358,10 +363,13 @@
     const names = ID_TYPE_NAMES[number.kind];
     const inferred = hasRealOptions(field) ? names.find((name) => findSelectOptionIndex(field.options, name) >= 0) : names[0];
     if (!stated) return inferred ? match(inferred) : null;
-    if (findSelectOptionIndex(names, stated) >= 0) return match(stated);
+    const blocked = { ...match(stated), blocked: "id_type_mismatch" };
     // 「我的信息」的证件类型里没有居住证和永久居留证，持这几种证的只能选「其他」。
-    if (stated === "其他" && number.kind !== "resident") return match(inferred || stated);
-    return { ...match(stated), blocked: "id_type_mismatch" };
+    if (stated === "其他") return number.kind === "resident" ? blocked : match(inferred || stated);
+    // 括号里的补充（「居民身份证（二代）」）不看。认不出的写法照资料填，选项里没有就交给 AI。
+    const bare = stated.replace(/[（(][^）)]*[）)]/g, "");
+    const kinds = STATED_ID_TYPES.find(([name]) => isSameOptionText(name, bare))?.[1];
+    return !kinds || kinds.includes(number.kind) ? match(stated) : blocked;
   }
 
   // 级联地区题要的整条路径：题目自己没写层级（写了「籍贯（省）」的照常只要省），简历里同一个问题至少有省和下面一级，按省、市、县拼起来。

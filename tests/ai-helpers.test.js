@@ -824,6 +824,13 @@ test("id type: a stated type wins, and one the number contradicts is blocked ins
   assert.equal(idTypeMatch(idTypeField(all), idResume("其他", "830000199201300022")).value, "台湾居民居住证", "lands on the joint option");
   assert.equal(idTypeMatch(idTypeField(["身份证", "护照", "其他"]), idResume("其他", "830000199201300022")).value, "其他");
   assert.equal(idTypeMatch(idTypeField(all), idResume("其他", "11010519491231002X")).blocked, "id_type_mismatch");
+  // 认得出的写法才比：同义写法、括号里的补充照样对得上；港澳和台湾的居住证不互认；认不出的写法照资料填。
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("居民身份证（二代）", "11010519491231002X")), { fieldId: "type", value: "居民身份证（二代）" });
+  assert.equal(idTypeMatch(idTypeField(all), idResume("台胞证", "11010519491231002X")).blocked, "id_type_mismatch");
+  assert.equal(idTypeMatch(idTypeField(all), idResume("台湾居民居住证", "810000199408230021")).blocked, "id_type_mismatch");
+  assert.equal(idTypeMatch(idTypeField(all), idResume("港澳居民居住证", "830000199201300022")).blocked, "id_type_mismatch");
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("港澳台居民居住证", "830000199201300022")), { fieldId: "type", value: "港澳台居民居住证" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("港澳台居住证", "810000199408230021")), { fieldId: "type", value: "港澳台居住证" });
   // 紧急联系人的证件类型不用本人的资料。
   assert.equal(idTypeMatch(idTypeField(all, { group: "紧急联系人" }), idResume("", "11010519491231002X")), undefined);
 });
