@@ -92,7 +92,7 @@ export function installDesktopLink(api) {
     if (message?.type === SITE_ANSWERS_READ || message?.type === SITE_ANSWERS_SAVE) {
       const site = siteOfSender(sender, api.runtime.id);
       if (site === null) { sendResponse({ status: 'forbidden' }); return false; }
-      const work = message.type === SITE_ANSWERS_READ ? siteAnswers.read(site) : siteAnswers.save(site, message.answers);
+      const work = message.type === SITE_ANSWERS_READ ? siteAnswers.read(site) : siteAnswers.save(site, message.answers, message.site);
       work.then(sendResponse, () => sendResponse({ status: 'unavailable' }));
       return true;
     }

@@ -132,7 +132,9 @@
     profileDismissedCandidateSignature: null,
     profileSaving: false,
     // #429：这个网站记住的回答，{ site, answers } 或读不到时的 { status }；null 是这次填写还没读过。
-    siteAnswers: null
+    siteAnswers: null,
+    // 给出这批候选时页面所在的网站（#429）：网站回答只存到这个网站，页面换了网站就不存。
+    profileOfferSite: ""
   };
   // #188 辅助新增的状态，只在本页内存里；控制逻辑见 handlePanelRepeat。
   const REPEAT_ACTIVE = ["scanning", "planning", "preview", "executing", "filling"];
@@ -5484,8 +5486,9 @@
     const here = self.ResumeProProfile?.siteKeyOf?.(location.href) || "";
     const next = ok && reply.site === here ? { site: reply.site, answers: reply.answers }
       : { status: ok ? "stale" : String(reply?.status || "unavailable") };
-    // 保存时重读失败：留着上次读到的，候选不会因此从网站回答挪回补充字段。填写开始时已经清空，那时照实记下原因。
-    if (next.site || !state.siteAnswers?.site) state.siteAnswers = next;
+    // 保存时重读失败：留着已经读到的这个网站的回答，候选不会因此从网站回答挪回补充字段。
+    // 留着的不是眼前这个网站的（页面已经换了网站），照实换成这次的结果，免得「认不出网站」之类之后还反复去读。
+    if (next.site || !currentSiteAnswers()) state.siteAnswers = next;
     return next;
   }
 
@@ -5518,6 +5521,7 @@
     if (!api) return;
 
     state.profileOfferCandidates = candidates;
+    state.profileOfferSite = api.siteKeyOf?.(location.href) || "";
     state.profileOfferResult = null;
     state.profileResultCandidateSignature = "";
     state.profileDismissedCandidateSignature = null;
@@ -5551,6 +5555,7 @@
     const card = shadowRoot?.querySelector("#resume-pro-profile-offer");
     if (card) card.hidden = true;
     state.profileOfferCandidates = [];
+    state.profileOfferSite = "";
     state.profileOfferResult = null;
     state.profileResultCandidateSignature = "";
     state.profileDismissedCandidateSignature = null;
@@ -5715,12 +5720,15 @@
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const read = await loadSiteAnswers();
       if (!read.site) return { saved: [], skipped: [], error: siteSaveFailure(read.status) };
+      // 用户核对候选时是另一个网站（单页应用已经跳走）：那些回答不是这个网站的，不存。
+      if (read.site !== state.profileOfferSite) return { saved: [], skipped: [], error: siteSaveFailure("stale") };
       const plan = currentProfilePlan();
       const outcome = api.applySiteSelection(plan, selection ?? api.defaultProfileSelection(plan));
       if (!outcome.answers.length) return { saved: [], skipped: outcome.skipped, error: "" };
       let reply = null;
       try {
-        reply = await chrome.runtime.sendMessage({ type: "DESKTOP_SITE_ANSWERS_SAVE", answers: outcome.answers });
+        // 带上要存到的网站：后台按发消息时的页面地址再核对一次，读和存之间页面换了网站就不写。
+        reply = await chrome.runtime.sendMessage({ type: "DESKTOP_SITE_ANSWERS_SAVE", site: read.site, answers: outcome.answers });
       } catch {
         reply = null;
       }
@@ -8172,8 +8180,12 @@
       setSiteAnswers(value) {
         state.siteAnswers = value;
       },
+      getSiteAnswers() {
+        return state.siteAnswers;
+      },
       setProfileOffer({ candidates }) {
         state.profileOfferCandidates = candidates;
+        state.profileOfferSite = self.ResumeProProfile?.siteKeyOf?.(location.href) || "";
         state.profileOfferResult = null;
         state.profileOfferVersion += 1;
       },

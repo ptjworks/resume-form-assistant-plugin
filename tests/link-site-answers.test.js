@@ -31,7 +31,7 @@ test('reads and saves go out as v5 envelopes about the one site', async () => {
   const saved = await c.siteAnswers.save('campus.example.com', [
     { key: '是否有亲属在本公司工作', value: '否', extra: 'dropped' },
     { key: '是否曾在本行实习', value: '是', previous: '否' }
-  ]);
+  ], 'campus.example.com');
   assert.equal(saved.status, 'ok');
   assert.deepEqual(c.sent.map((m) => [m.messageType, m.protocolVersion, m.archiveId]), [
     ['siteAnswers.read', 5, identity.archiveId], ['siteAnswers.save', 5, identity.archiveId]
@@ -44,23 +44,28 @@ test('reads and saves go out as v5 envelopes about the one site', async () => {
 test('a desktop that predates #429 is never sent these messages', async () => {
   const c = await client({ capabilities: ['handshake', 'resume.read', 'mail.import'] });
   assert.deepEqual(await c.siteAnswers.read('campus.example.com'), { status: 'unsupported' });
-  assert.deepEqual(await c.siteAnswers.save('campus.example.com', [{ key: '是否有亲属在本公司工作', value: '否' }]), { status: 'unsupported' });
+  assert.deepEqual(await c.siteAnswers.save('campus.example.com', [{ key: '是否有亲属在本公司工作', value: '否' }], 'campus.example.com'), { status: 'unsupported' });
   assert.equal(c.sent.length, 0);
 });
 
 test('a shared site, an empty batch and refusals come back as a status, never as saved', async () => {
   assert.deepEqual(await (await client()).siteAnswers.read(''), { status: 'no_site' });
-  assert.deepEqual(await (await client()).siteAnswers.save('campus.example.com', []), { status: 'invalid_payload' });
+  assert.deepEqual(await (await client()).siteAnswers.save('campus.example.com', [], 'campus.example.com'), { status: 'invalid_payload' });
   for (const [code, status] of [['conflict', 'conflict'], ['secret_forbidden', 'secret'], ['invalid_payload', 'invalid_payload'],
     ['protocol_incompatible', 'unsupported'], ['restore_epoch_mismatch', 'restore_epoch_mismatch']]) {
     const c = await client({ reply: () => ({ status: 'fatal', code }) });
-    assert.deepEqual(await c.siteAnswers.save('campus.example.com', [{ key: '是否有亲属在本公司工作', value: '否' }]), { status }, code);
+    assert.deepEqual(await c.siteAnswers.save('campus.example.com', [{ key: '是否有亲属在本公司工作', value: '否' }], 'campus.example.com'), { status }, code);
   }
   const down = await client({ reply: () => ({ status: 'retryable', code: 'unavailable' }) });
   assert.deepEqual(await down.siteAnswers.read('campus.example.com'), { status: 'unavailable' });
   // The plugin's own validator refuses a password-looking question before anything is sent.
   const local = await client();
-  assert.deepEqual(await local.siteAnswers.save('campus.example.com', [{ key: '本公司内网密码', value: '不知道' }]), { status: 'secret' });
+  assert.deepEqual(await local.siteAnswers.save('campus.example.com', [{ key: '本公司内网密码', value: '不知道' }], 'campus.example.com'), { status: 'secret' });
+  assert.equal(local.sent.length, 0);
+  // 页面核对回答时是另一个网站（单页应用跳走了），或者没说要存到哪个网站：什么都不发。
+  for (const expected of ['app.mokahr.com/acme', undefined]) {
+    assert.deepEqual(await local.siteAnswers.save('campus.example.com', [{ key: '是否有亲属在本公司工作', value: '否' }], expected), { status: 'stale' });
+  }
   assert.equal(local.sent.length, 0);
 });
 

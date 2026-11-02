@@ -690,7 +690,8 @@
 
     for (const choice of Array.isArray(selection) ? selection : []) {
       const id = text(choice?.id);
-      if (!id || seenIds.has(id)) continue;
+      // 网站回答（#429，id 带 site:）走 applySiteSelection，这里不碰，也不报成「找不到了」。
+      if (!id || id.startsWith("site:") || seenIds.has(id)) continue;
       seenIds.add(id);
       const item = items.get(id);
       const key = item?.key || notes.get(id)?.key || text(choice?.key) || id;

@@ -33,7 +33,7 @@ const TEMPLATE = { id: "t", name: "模板", groups: [{ name: "基本信息", fie
 // 一个带桌面的页面：桌面档案和 revision 在 desktop 里，写入成功才落地；update 可以换成任意回复。
 // site：桌面里这个网站记住的回答（#429，{ answers }），null 是桌面不支持；siteSave 可以换掉桌面对保存的回复。
 // siteKey 是后台回的网站（按发消息时的页面地址算）；页面在 https://jobs.example.test/apply。
-function page({ profile = { values: {}, family: [], custom: [] }, update = null, desktopRead = null, matches = [], customControls, site = null, siteSave = null, siteKey = "jobs.example.test" } = {}) {
+function page({ profile = { values: {}, family: [], custom: [] }, update = null, desktopRead = null, matches = [], customControls, site = null, siteSave = null, siteKey = "jobs.example.test", location } = {}) {
   const late = lateScanner();
   const desktop = { profile, revision: 0 };
   const updates = [];
@@ -42,12 +42,15 @@ function page({ profile = { values: {}, family: [], custom: [] }, update = null,
   let ctx;
   const persist = () => ctx.helpers.setCurrentStore({ templates: [TEMPLATE], activeTemplateId: "t", profile: desktop.profile, profileRevision: desktop.revision });
   ctx = loadHighlightHelpers({
-    formElements: [], fieldScan: late.proxy, customControls,
+    formElements: [], fieldScan: late.proxy, customControls, location,
     desktopRead: desktopRead && (() => desktopRead(desktop)) || (() => { reads += 1; return { status: "ok", data: {
       templates: [{ id: "t", name: "模板", fieldCount: 1 }], activeTemplate: TEMPLATE, profile: desktop.profile, profileRevision: desktop.revision } }; }),
     sendMessage: async (message) => {
-      if (message.type === "DESKTOP_SITE_ANSWERS_READ") return site ? { status: "ok", site: typeof siteKey === "function" ? siteKey() : siteKey, answers: plain(site.answers) } : { status: "unsupported" };
+      const key = typeof siteKey === "function" ? siteKey() : siteKey;
+      if (message.type === "DESKTOP_SITE_ANSWERS_READ") return !site ? { status: "unsupported" } : !key ? { status: "no_site" } : { status: "ok", site: key, answers: plain(site.answers) };
       if (message.type === "DESKTOP_SITE_ANSWERS_SAVE") {
+        // Like the service worker: the site the page reviewed must still be the page's site.
+        if (message.site !== key) return { status: "stale" };
         siteSaves.push(plain(message));
         const reply = siteSave ? await siteSave(message, site) : { status: "ok" };
         if (reply.status !== "ok") return reply;
@@ -588,4 +591,43 @@ test("site answers that arrive for another site (the page moved on) neither repl
   assert.match(reply.profileOffer.result.text, /页面已经换到别的网站/);
   assert.equal(p.siteSaves.length, 0);
   assert.deepEqual(reply.profileOffer.site.map((item) => item.key), ["是否有亲属在本公司工作"]);
+});
+
+test("answers reviewed on one site are not saved after the page moves to another site", async () => {
+  const location = { href: "https://jobs.example.test/apply", pathname: "/apply" };
+  let siteKey = "jobs.example.test";
+  const p = page({ site: { answers: [] }, siteKey: () => siteKey, location });
+  const relative = new p.ctx.HTMLInputElement();
+  relative.value = "否";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  const offer = p.snapshot();
+  assert.equal(offer.siteName, "jobs.example.test");
+  // A single-page app moves to another company's site before the user clicks save.
+  location.href = "https://other.example.test/apply";
+  siteKey = "other.example.test";
+  const reply = await p.ctx.helpers.addUnansweredToProfile({ version: offer.version,
+    selected: [{ ...siteItem("是否有亲属在本公司工作"), reviewedValue: "否" }] });
+  assert.equal(reply.ok, false);
+  assert.match(reply.profileOffer.result.text, /页面已经换到别的网站/);
+  assert.equal(p.siteSaves.length, 0, "nothing is written under the new site");
+});
+
+test("moving from a site with answers to a shared recruiting site records that, so later questions are not read again and again", async () => {
+  const location = { href: "https://jobs.example.test/apply", pathname: "/apply" };
+  let siteKey = "jobs.example.test";
+  const p = page({ site: { answers: [{ key: "是否有亲属在本公司工作", value: "否" }] }, siteKey: () => siteKey, location });
+  const relative = new p.ctx.HTMLInputElement();
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  assert.equal(p.ctx.helpers.getSiteAnswers().site, "jobs.example.test");
+  location.href = "https://xiaoyuan.zhaopin.com/apply";
+  siteKey = "";
+  relative.value = "是";
+  // Saving re-reads without clearing what was read for the old site.
+  const reply = await p.ctx.helpers.addUnansweredToProfile({ version: p.ctx.helpers.getProfileOfferVersion(),
+    selected: [{ ...siteItem("是否有亲属在本公司工作"), reviewedValue: "是", replaceOf: "否" }] });
+  assert.equal(reply.ok, false);
+  assert.deepEqual(plain(p.ctx.helpers.getSiteAnswers()), { status: "no_site" });
+  assert.equal(p.siteSaves.length, 0);
 });

@@ -75,9 +75,14 @@ export function createSiteAnswers({ session, store, sendNative, sleep, uuid, now
     return request('siteAnswers.read', { site });
   }
 
-  /** `answers` is [{ key, value, previous? }]; anything else on an item is dropped. */
-  async function save(site, answers) {
+  /**
+   * `answers` is [{ key, value, previous? }]; anything else on an item is dropped. `expected` is the
+   * site the page reviewed the answers on: when the page has moved to another site since, nothing
+   * is written (`stale`).
+   */
+  async function save(site, answers, expected) {
     if (!site) return { status: 'no_site' };
+    if (typeof expected !== 'string' || expected !== site) return { status: 'stale' };
     const items = (Array.isArray(answers) ? answers : []).map(item => ({
       key: String(item?.key ?? ''),
       value: String(item?.value ?? ''),

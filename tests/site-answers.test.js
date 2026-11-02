@@ -158,6 +158,9 @@ test("applySiteSelection keeps only what the user reviewed and still matches the
   // 补充字段那边照旧，不碰 site: 的项。
   const profileSide = profileApi.applyProfileSelection({}, plan, all.filter((item) => !item.id.startsWith("site:")));
   assert.deepEqual(profileSide.saved.map((item) => item.key), ["兴趣爱好"]);
+  // 选择里混着网站回答（页面里旧按钮按默认勾选存）：补充字段那边不碰它们，也不报「找不到了」。
+  const mixed = profileApi.applyProfileSelection({}, plan, profileApi.defaultProfileSelection(plan));
+  assert.deepEqual([mixed.saved.map((item) => item.key), mixed.skipped], [["兴趣爱好"], []]);
   // 页面里旧按钮（没有勾选信息）按默认勾选存，网站回答也在里面。
   assert.deepEqual(profileApi.defaultProfileSelection(plan).map((item) => item.kind), ["filled", "site", "site"]);
 });
