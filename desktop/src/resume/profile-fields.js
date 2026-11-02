@@ -154,21 +154,33 @@
   // 离开所在区块就看不懂的笼统题目。
   const GENERIC_TITLE = /^(?:其[他它](?:信息|说明|情况)?|补充(?:说明|信息|内容)?|附加(?:说明|信息)?|附言|留言)$/;
   const CONTACT_SECTION = /紧急联系|联系人|监护人/;
-  // 按网站存回答时的网站（#429）：几家公司共用一个 host 的招聘平台，公司在路径里。
-  // Moka 的 app.mokahr.com/{campus-recruitment|campus_apply|apply|…}/{公司}/…（手机版前面多一段 m）；
-  // hotjob 的 wecruit.hotjob.cn/SU{24 位十六进制}/…；飞书、Greenhouse、Lever 的第一段。
+  // 按网站存回答时的网站（#429）：几家公司共用一个域名的招聘平台，公司在路径或查询参数里。
+  // 这些平台的整个域名（含子域名）都只按下面认得出的公司算，认不出就不按网站存，宁可交给 AI 也不串到别家：
+  // Moka 的 {app.}mokahr.com/{campus-recruitment|campus_apply|apply|…}/{公司}/…（手机版前面多一段 m）；
+  // hotjob 的 wecruit.hotjob.cn/SU{24 位十六进制}/…；
+  // Greenhouse 的 {job-}boards{.eu}.greenhouse.io/{公司}/…，嵌入页 /embed/job_app?for={公司}；
+  // Lever 的 jobs{.eu}.lever.co/{公司}/…。
   const MOKA_ROUTES = new Set(["campus-recruitment", "social-recruitment", "intern-recruitment", "campus_apply", "social_apply", "apply", "recommendation-apply"]);
   const TENANT_SEGMENT = /^[A-Za-z0-9_-]{1,64}$/;
+  // 平台自己的路径，不是公司。
+  const RESERVED_SEGMENTS = new Set(["embed", "api", "v0", "v1", "jobs", "job", "apply", "search", "s", "index", "static", "assets"]);
+  const companySegment = (segment) => (segment && !RESERVED_SEGMENTS.has(segment.toLowerCase()) ? segment : "");
   const PATH_TENANT_HOSTS = [
-    { host: /^(?:app\.)?mokahr\.com$/, tenant: (segments) => {
+    { host: /(?:^|\.)mokahr\.com$/, tenant: (segments) => {
       const rest = segments[0] === "m" ? segments.slice(1) : segments;
-      return MOKA_ROUTES.has(rest[0]) ? rest[1] : "";
+      return MOKA_ROUTES.has(rest[0]) ? companySegment(rest[1]) : "";
     } },
-    { host: /^wecruit\.hotjob\.cn$/, tenant: (segments) => /^SU[0-9a-f]{24}$/i.test(segments[0] || "") ? segments[0] : "" },
-    { host: /^(?:jobs\.feishu\.cn|(?:job-)?boards\.greenhouse\.io|jobs\.lever\.co)$/, tenant: (segments) => segments[0] || "" }
+    { host: /(?:^|\.)hotjob\.cn$/, tenant: (segments) => /^SU[0-9a-f]{24}$/i.test(segments[0] || "") ? segments[0] : "" },
+    { host: /(?:^|\.)greenhouse\.io$/, tenant: (segments, url) => {
+      if (!/^(?:job-)?boards(?:\.eu)?\.greenhouse\.io$/.test(url.hostname.toLowerCase())) return "";
+      return segments[0] === "embed" ? url.searchParams.get("for") || "" : companySegment(segments[0]);
+    } },
+    { host: /(?:^|\.)lever\.co$/, tenant: (segments, url) => /^jobs(?:\.eu)?\.lever\.co$/.test(url.hostname.toLowerCase()) ? companySegment(segments[0]) : "" }
   ];
-  // 公司在查询参数里或认不出来的共享站点：不按网站存，免得把一家公司的回答填到另一家。
-  const SHARED_HOSTS = /(?:^|\.)(?:51job\.com|zhaopin\.com|nowcoder\.com|zhipin\.com|liepin\.com|lagou\.com|shixiseng\.com|yingjiesheng\.com|iguopin\.com|ncss\.cn|linkedin\.com|indeed\.com)$/;
+  // 公司在查询参数里、在不认得的路径里，或者认不出来的共享站点（含子域名）：不按网站存，免得把一家公司的回答填到另一家。
+  const SHARED_HOSTS = /(?:^|\.)(?:51job\.com|zhaopin\.com|nowcoder\.com|zhipin\.com|liepin\.com|lagou\.com|shixiseng\.com|yingjiesheng\.com|iguopin\.com|ncss\.cn|gaoxiaojob\.com|chinahr\.com|kanzhun\.com|wintalent\.cn|linkedin\.com|indeed\.com|ashbyhq\.com|workable\.com|smartrecruiters\.com)$/;
+  // 平台本身的域名：公司在它们的子域名上（acme.zhiye.com、acme.jobs.feishu.cn），这几个域名本身不算哪一家。
+  const SHARED_EXACT = /^(?:zhiye\.com|italent\.cn|jobs\.feishu\.cn)$/;
   // 和协议 isSiteKey 一样的形状：host[:port][/一段]。
   const SITE_KEY = /^[a-z0-9][a-z0-9.-]*(?::[0-9]{1,5})?(?:\/[A-Za-z0-9_-]{1,64})?$/;
   // 只在同一个网站复用的题：题目问到对方公司。去掉「本公司」这几个字再看是不是只适用于当前岗位（「为什么选择本公司」还是）。
@@ -462,13 +474,13 @@
     }
     if (!["http:", "https:"].includes(url.protocol)) return "";
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    if (!host || SHARED_HOSTS.test(host)) return "";
+    if (!host || SHARED_HOSTS.test(host) || SHARED_EXACT.test(host)) return "";
     // 端口 0 能写进网址，协议不收（只收 1～65535）。
     if (url.port && !(Number(url.port) >= 1 && Number(url.port) <= 65535)) return "";
     let key = url.port ? `${host}:${url.port}` : host;
     const rule = PATH_TENANT_HOSTS.find((item) => item.host.test(host));
     if (rule) {
-      const tenant = rule.tenant(url.pathname.split("/").filter(Boolean));
+      const tenant = rule.tenant(url.pathname.split("/").filter(Boolean), url);
       if (!TENANT_SEGMENT.test(tenant || "")) return "";
       key = `${key}/${tenant}`;
     }

@@ -50,7 +50,7 @@ function aiWorker(clock, resume = RESUME) {
       if (message.kind === "desktop-cancel") { cancels.push(message.callId); return; }
       if (message.kind !== "desktop-complete") return;
       const fields = JSON.parse(message.user.split("\n")[1]);
-      const call = { fields, labels: fields.map((field) => field.label) };
+      const call = { fields, labels: fields.map((field) => field.label), prompt: message.user };
       const answer = (reply) => context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId, reply } });
       // 按题目名回答；不传就只回这几项里资料有的。
       call.reply = (values = null) => answer({ ok: true, text: JSON.stringify(fields
@@ -78,7 +78,7 @@ const input = (id, label, { type = "text", value = "" } = {}) => item(id, label,
 // body 是表单内容；confirm 返回 true/false；onGender：选了性别后页面要做的事（新出现字段之类）；resume 是简历资料；
 // custom 是「我的信息」里的补充字段；site 是桌面里这个网站记住的回答（#429），null 表示桌面不支持；
 // 也可以是函数：拿第几次读取，回答案数组，回 null 表示这次桌面没连上；字符串是后台回的状态（forbidden 之类）。
-function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [], site = null } = {}) {
+function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [], site = null, siteKey = "jobs.example.test" } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
   const w = dom.window;
@@ -107,7 +107,7 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME,
         if (message.type === "DESKTOP_SITE_ANSWERS_READ") {
           if (typeof site === "string") return { status: site };
           const answers = typeof site === "function" ? site(sent.filter((type) => type === message.type).length) : site;
-          if (answers) return { status: "ok", site: "jobs.example.test", answers };
+          if (answers) return { status: "ok", site: siteKey, answers };
           return { status: typeof site === "function" ? "unavailable" : "unsupported" };
         }
         if (["ENSURE_AI_HOST", "AI_HOST_READY"].includes(message.type)) return { ready: true };
@@ -806,5 +806,20 @@ test("a company question revealed later reads the site answers again after a fai
     old.worker.calls[1].reply({ 是否曾在本行实习: "否" });
     await running;
     assert.equal(old.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1, `asked once (${site})`);
+  }
+});
+
+// 公司题本地填不了（页面上同名的有两道）时交给 AI：资料里可以有这个网站自己记住的回答，别的网站的不会有。
+test("a company question left to the AI may see this site's remembered answer, never another site's", async (t) => {
+  const twice = input("r1", "是否有亲属在本公司工作") + input("r2", "是否有亲属在本公司工作");
+  const answer = [{ key: "是否有亲属在本公司工作", value: "父亲在本公司财务部任职" }];
+  for (const [siteKey, expected] of [["jobs.example.test", true], ["other.example.test", false]]) {
+    const p = page(t, input("name", "姓名") + twice, { site: answer, siteKey });
+    const running = p.run();
+    assert.ok(await p.until(() => p.worker.calls.length === 1));
+    assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作", "是否有亲属在本公司工作"]);
+    assert.equal(p.worker.calls[0].prompt.includes("财务部"), expected, siteKey);
+    p.worker.calls[0].reply({});
+    await running;
   }
 });

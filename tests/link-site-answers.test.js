@@ -97,3 +97,20 @@ test('the worker answers a content script about its own page and refuses anyone 
   // A shared recruiting site is answered without asking the desktop.
   assert.deepEqual(await ask({ type: 'DESKTOP_SITE_ANSWERS_READ' }, { id: 'own', tab: { id: 1 }, frameId: 0, url: 'https://xiaoyuan.zhaopin.com/job/1' }), { status: 'no_site' });
 });
+
+// The service worker imports profile-fields.js as an ES module: strict mode, no DOM. Node's own
+// require() of it is neither, so load it the way the worker does and make sure siteKeyOf is there.
+test('profile-fields.js loads as a strict ES module with no DOM, as the service worker imports it', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'profile-fields.js'), 'utf8');
+  const saved = globalThis.ResumeProProfile;
+  delete globalThis.ResumeProProfile;
+  try {
+    await import(`data:text/javascript;charset=utf-8,${encodeURIComponent(`${source}\n//# strict-check ${Date.now()}`)}`);
+    assert.equal(typeof globalThis.document, 'undefined');
+    assert.equal(globalThis.ResumeProProfile.siteKeyOf('https://app.mokahr.com/campus-recruitment/acme/1'), 'app.mokahr.com/acme');
+  } finally {
+    globalThis.ResumeProProfile = saved;
+  }
+});
