@@ -184,6 +184,8 @@
   // #429 多选下拉的已选标签：文字和标签上的删除按钮。按 2026-10-31 在 Chromium 里跑的 antd 5.21.6、ant-design-vue 1.7.8、
   // Element UI 2.15.14、Element Plus 2.8.8 看到的结构：antd 4/5 是 .ant-select-selection-item（在 overflow 的条目里），
   // antd 3 和 ant-design-vue 1.x 是 .ant-select-selection__choice，Element 是 .el-tag（文字在 .el-select__tags-text 里）。
+  // antd 6（@rc-component/select 1.x，2026-11-02 在 antd 6.6.8 上看到）的条目外层换成了 .ant-select-content-item，
+  // 折起来的一格是 .ant-select-content-item-rest，标签本身还是 .ant-select-selection-item。
   // 折起来的标签（antd 的 maxTagCount 留下「+ 2 ...」，Element 的 collapse-tags 留下「+ 2」）读不全，返回 null。
   // 折起来的那一格：写着「+ 2」「+ 2 ...」「+2…」，没有删除按钮（真组件上都是这样）。选项本身叫「+86」的标签带删除按钮，不算。
   const COLLAPSED_TAG = /^\+\s*\d+\s*(?:\.\.\.|…)?$/;
@@ -193,12 +195,13 @@
     if (!root?.isConnected) return null;
     if (library === 'antd') {
       // 不折起来的时候 antd 也可能留着这一格，只是看不见（rc-overflow 给 opacity: 0）：看得见、写着「+ N」才算折起来。
-      const rest = root.querySelector(antd(root, '.ant-select-selection-overflow-item-rest'));
+      const rest = root.querySelector(antd(root, '.ant-select-selection-overflow-item-rest, .ant-select-content-item-rest'));
       const css = rest?.ownerDocument?.defaultView?.getComputedStyle?.(rest);
       if (rest && !rest.hidden && css?.display !== 'none' && css?.visibility !== 'hidden' && parseFloat(css?.opacity ?? '1') !== 0
         && /^\+\s*\d/.test(trim(rest.textContent))) return null;
       // antd 3 和 ant-design-vue 1.x 的 maxTagCount 把多出来的折成一个写着「+ 2 ...」的 choice（2026-11-01 在 ant-design-vue 1.7.8 上看到）。
-      const tags = Array.from(root.querySelectorAll(antd(root, '.ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix):not(.ant-select-selection-overflow-item-rest) .ant-select-selection-item, .ant-select-selection__choice')), node => ({
+      const tags = Array.from(root.querySelectorAll(antd(root, '.ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix):not(.ant-select-selection-overflow-item-rest) .ant-select-selection-item, '
+        + '.ant-select-content-item:not(.ant-select-content-item-suffix):not(.ant-select-content-item-rest) .ant-select-selection-item, .ant-select-selection__choice')), node => ({
         node, text: trim((node.querySelector(antd(node, '.ant-select-selection-item-content, .ant-select-selection__choice__content')) || node).textContent),
         remove: node.querySelector(antd(node, '.ant-select-selection-item-remove, .ant-select-selection__choice__remove')) })).filter(tag => tag.text);
       return tags.some(collapsedTag) ? null : tags;
@@ -261,6 +264,13 @@
     }
     if (selector) {
       const values = Array.from(root.querySelectorAll(selector), node => trim(node.textContent)).filter(Boolean);
+      // antd 6（@rc-component/select 1.x，2026-11-02 在 antd 6.6.8 上看到）的单选和级联不再套 selection-item：
+      // 已选文字直接写在根下面的 .ant-select-content 里（选项带样式时套一层 .ant-select-content-value），旁边是输入框，
+      // 搜索时打的字在输入框里；没选时是 .ant-select-placeholder。
+      const content = library === 'antd' && !info.multiple && !values.length ? root.querySelector(antd(root, ':scope > .ant-select-content')) : null;
+      const shown = content ? trim(Array.from(content.childNodes).filter(node => node.nodeType === 3
+        || (node.nodeType === 1 && !node.matches(antd(node, 'input, .ant-select-placeholder')))).map(node => node.textContent).join('')) : '';
+      if (shown) values.push(shown);
       if (values.length) return cascade ? values.join(' / ').split(/\s*(?:\/|>|→)\s*/).filter(Boolean) : values;
       // Element UI (Vue 2) stores the committed label directly in its input. Its readonly flag
       // flips while the dropdown opens (#269 智联), so only Element Plus (wrapper markup) stops here.
@@ -520,7 +530,7 @@
         disabled: node.getAttribute('aria-disabled') === 'true' || node.matches(antd(node, '.ant-select-item-option-disabled, .ant-cascader-menu-item-disabled, .is-disabled, .arco-select-option-disabled, .arco-cascader-list-item-disabled, .layui-disabled')) || Boolean(node.disabled) };
     });
   }
-  // #301 虚拟列表（antd 4/5 默认、Element Plus el-select-v2）只画出看得见的十来项，同名的一项可能还在屏外。
+  // #301 虚拟列表（antd 4/5/6 默认、Element Plus el-select-v2）只画出看得见的十来项，同名的一项可能还在屏外。
   // 装着选项、能滚动的那一层，内容比画出来的选项和文字高出大半行以上，就算列表不全；里面画全了的（短的、不虚拟的长列表）不算。
   // 量不出高度（没有排版，jsdom）时只看虚拟列表的类名；真浏览器里画出的选项都有高度，走不到这里。
   // antd 不管长短都套着 rc-virtual-list，只有滚动条说明在虚拟滚动。
@@ -1044,7 +1054,7 @@
     };
     const initiallyOwned = ownedPopup(info, h.visible);
     const alreadyOpen = (info.combo.getAttribute('aria-expanded') === 'true' && initiallyOwned.popup) || layuiList();
-    const trigger = info.cascade ? info.el : info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector')) || info.root
+    const trigger = info.cascade ? info.el : info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector, .ant-select-content')) || info.root
       : info.library === 'element' ? info.root.querySelector('.el-select__wrapper, .el-input') || info.root
       : info.library === 'arco' ? info.root.querySelector('.arco-select-view') || info.root : info.combo;
     if (!alreadyOpen) { const reason = h.click(info.library === 'generic' ? coverOf(trigger, info) || trigger : trigger, ctx); if (reason) return { reason }; }
@@ -1509,7 +1519,7 @@
     // 联想框里插件打过字：之后才到的建议会再弹出来，由宿主发 Tab 收起（closeSuggestions）。
     return { accepted: () => accepted(false), closeSuggestions: Boolean(info.freeText && searchDone) };
   }
-  // #429 antd（4/5、3 和 ant-design-vue 1.x）、Element（UI 2、Plus）的多选下拉。要选的几项按 splitMultipleValues 拆开
+  // #429 antd（4/5/6、3 和 ant-design-vue 1.x）、Element（UI 2、Plus）的多选下拉。要选的几项按 splitMultipleValues 拆开
   // （整段正好是一个标签或选项时不拆），标签和要选的项对不对得上和选项一样按 findSelectOptionIndex 认。
   // 点开下拉一项一项找：列表不全或没有时在组件自己的搜索框里搜，没选上的点一下，等它成了标签再找下一项。
   // 有一项找不到就停下报那一项的原因，已经点了的不撤回（和单选一样），原来的标签不动。都选上了再点删除去掉这次不要的标签
@@ -1579,7 +1589,7 @@
       return added.length > 1 ? { reason: 'ambiguous_popup' } : added.length === 1 ? { popup: added[0] } : null;
     };
     if (pending.length && !popup) {
-      const trigger = info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector')) || info.root
+      const trigger = info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector, .ant-select-content')) || info.root
         : info.root.querySelector('.el-select__wrapper, .el-input') || info.root;
       const reason = h.click(trigger, ctx); if (reason) return { reason };
       const opened = await h.waitUntil(ctx, doc.documentElement, findPopup, Boolean);
