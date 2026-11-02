@@ -15,6 +15,7 @@ import { createFillRecords } from './fillrecords.mjs';
 import { createStaging } from './staging.mjs';
 import { createUploads } from './uploads.mjs';
 import { createMail } from './mail.mjs';
+import { createSiteAnswers, siteOfSender, SITE_ANSWERS_READ, SITE_ANSWERS_SAVE } from './site-answers.mjs';
 import { createQQExporter } from './qq-export.mjs';
 import { DESKTOP_MESSAGE_TYPES } from './messages.mjs';
 
@@ -48,6 +49,7 @@ export function installDesktopLink(api) {
   const session = createSession({ ...deps, onProbe: probe => usage.observe(probe) });
   const resume = createResume({ ...deps, session });
   const mail = createMail({ ...deps, session });
+  const siteAnswers = createSiteAnswers({ ...deps, session });
   const exportQQ = createQQExporter(api);
   const ai = createAi({ ...deps, session, port: nativePort(api) });
   const legacy = createLegacy({
@@ -85,6 +87,13 @@ export function installDesktopLink(api) {
         sendResponse({ status: 'forbidden' }); return false;
       }
       mail.save(message).then(sendResponse, () => sendResponse({ status: 'unavailable' }));
+      return true;
+    }
+    if (message?.type === SITE_ANSWERS_READ || message?.type === SITE_ANSWERS_SAVE) {
+      const site = siteOfSender(sender, api.runtime.id);
+      if (site === null) { sendResponse({ status: 'forbidden' }); return false; }
+      const work = message.type === SITE_ANSWERS_READ ? siteAnswers.read(site) : siteAnswers.save(site, message.answers);
+      work.then(sendResponse, () => sendResponse({ status: 'unavailable' }));
       return true;
     }
     if (!DESKTOP_MESSAGE_TYPES.has(message?.type)) return false;

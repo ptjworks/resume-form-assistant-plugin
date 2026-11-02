@@ -361,6 +361,7 @@ export async function validateRequest(value) {
     if (e.code) throw e;
     throw fail("invalid_payload", e.message);
   }
+  if (RULES.v5MessageTypes.includes(type) && value.protocolVersion < 5) throw fail("protocol_incompatible", `${type} requires protocolVersion 5`);
   if (RULES.v4MessageTypes.includes(type) && value.protocolVersion < 4) throw fail("protocol_incompatible", "mail.import requires protocolVersion 4");
   if (RULES.v3MessageTypes.includes(type) && value.protocolVersion < 3) throw fail("protocol_incompatible", `${type} requires protocolVersion 3`);
   if (RULES.v2MessageTypes.includes(type) && value.protocolVersion < 2) {
@@ -422,6 +423,9 @@ export async function validateRequest(value) {
         }
       }
     }
+  }
+  if (RULES.v5MessageTypes.includes(type) && !isSiteKey(value.payload.site)) {
+    throw fail("invalid_payload", "site must be host[:port][/segment]");
   }
   if (type === "mail.import") {
     const p = value.payload;
@@ -543,6 +547,10 @@ export function validateResponseForRequest(value, request) {
       !Object.hasOwn(request.payload ?? {}, "tier") && request.payload?.purpose !== "analyze") {
     throw fail("invalid_payload", "ai.complete tier is only returned to a request that asked for one");
   }
+  // #429: answers for one site go back only to a request about that site.
+  if (RULES.v5MessageTypes.includes(request.messageType) && value.ok && value.payload?.site !== request.payload?.site) {
+    throw fail("invalid_payload", "site answers response names a different site");
+  }
   if (request.messageType === "mail.import" && value.ok) {
     const p = value.payload;
     const final = request.payload.chunkIndex + 1 === request.payload.chunkCount;
@@ -659,6 +667,7 @@ export function validateResponse(value, requestType) {
     }
   }
   validateSchema(value, responseSchema());
+  if (RULES.v5MessageTypes.includes(requestType) && value.protocolVersion < 5) throw fail("protocol_incompatible", `${requestType} response requires protocolVersion 5`);
   if (RULES.v4MessageTypes.includes(requestType) && value.protocolVersion < 4) throw fail("protocol_incompatible", "mail.import response requires protocolVersion 4");
   if (RULES.v3MessageTypes.includes(requestType) && value.protocolVersion < 3) throw fail("protocol_incompatible", `${requestType} response requires protocolVersion 3`);
   if (RULES.v2MessageTypes.includes(requestType) && value.protocolVersion < 2) {
@@ -783,4 +792,11 @@ function candidateTimestampsAreReal(payload) {
       }
     }
   }
+}
+
+// #429: the site a set of answers belongs to — a lowercase host, an optional port, and for
+// a recruiting platform shared by many companies one more path segment naming the company.
+// Same rule as the Rust validator's is_site_key.
+export function isSiteKey(site) {
+  return typeof site === "string" && /^[a-z0-9][a-z0-9.-]*(?::[0-9]{1,5})?(?:\/[A-Za-z0-9_-]{1,64})?$/.test(site);
 }

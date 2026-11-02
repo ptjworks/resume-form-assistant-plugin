@@ -1,5 +1,12 @@
 {
   "requests": [
+    {"id": "site-answers-read-ok", "path": "requests/site-answers-read-ok.json", "schema": "accept", "protocol": {"accept": true}},
+    {"id": "site-answers-read-v4", "path": "requests/site-answers-read-v4.json", "schema": "accept", "protocol": {"accept": false, "code": "protocol_incompatible"}},
+    {"id": "site-answers-read-missing-identity", "path": "requests/site-answers-read-missing-identity.json", "schema": "accept", "protocol": {"accept": false, "code": "identity_missing"}},
+    {"id": "site-answers-read-bad-site", "path": "requests/site-answers-read-bad-site.json", "schema": "accept", "protocol": {"accept": false, "code": "invalid_payload"}},
+    {"id": "site-answers-save-ok", "path": "requests/site-answers-save-ok.json", "schema": "accept", "protocol": {"accept": true}},
+    {"id": "site-answers-save-secret-label", "path": "requests/site-answers-save-secret-label.json", "schema": "accept", "protocol": {"accept": false, "code": "secret_forbidden"}},
+    {"id": "site-answers-save-empty", "path": "requests/site-answers-save-empty.json", "schema": "reject", "protocol": {"accept": false, "code": "invalid_payload"}},
     {"id": "mail-import-ok", "path": "requests/mail-import-ok.json", "schema": "accept", "protocol": {"accept": true}},
     {"id": "mail-import-v3", "path": "requests/mail-import-v3.json", "schema": "accept", "protocol": {"accept": false, "code": "protocol_incompatible"}},
     {"id": "mail-import-missing-identity", "path": "requests/mail-import-missing-identity.json", "schema": "accept", "protocol": {"accept": false, "code": "identity_missing"}},
@@ -147,6 +154,9 @@
     {"id": "resume-update-profile-values-apiurl-http-rejected", "path": "requests/resume-update-profile-values-apiurl-http-rejected.json", "schema": "accept", "protocol": {"accept": false, "code": "secret_forbidden"}}
   ],
   "responses": [
+    {"id": "site-answers-read-ok", "path": "responses/site-answers-read-ok.json", "requestType": "siteAnswers.read", "schema": "accept", "protocol": {"accept": true}, "request": "requests/site-answers-read-ok.json", "strict": {"accept": true}},
+    {"id": "site-answers-read-other-site", "path": "responses/site-answers-read-other-site.json", "requestType": "siteAnswers.read", "schema": "accept", "protocol": {"accept": true}, "request": "requests/site-answers-read-ok.json", "strict": {"accept": false, "code": "invalid_payload"}},
+    {"id": "site-answers-save-ok", "path": "responses/site-answers-save-ok.json", "requestType": "siteAnswers.save", "schema": "accept", "protocol": {"accept": true}, "request": "requests/site-answers-save-ok.json", "strict": {"accept": true}},
     {"id": "mail-import-saved", "path": "responses/mail-import-saved.json", "requestType": "mail.import", "schema": "accept", "protocol": {"accept": true}, "request": "requests/mail-import-ok.json", "strict": {"accept": true}},
     {"id": "mail-import-premature", "path": "responses/mail-import-premature.json", "requestType": "mail.import", "schema": "accept", "protocol": {"accept": true}, "request": "requests/mail-import-ok.json", "strict": {"accept": false, "code": "invalid_payload"}},
     {"id": "job-save-error", "path": "responses/job-save-error.json", "requestType": "job.save", "schema": "accept", "protocol": {"accept": true}},

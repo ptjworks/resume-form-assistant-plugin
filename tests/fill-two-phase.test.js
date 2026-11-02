@@ -76,8 +76,8 @@ const item = (id, label, control) => `<div class="form-item" id="${id}-item"><la
 const input = (id, label, { type = "text", value = "" } = {}) => item(id, label, `<input id="${id}" name="${id}" type="${type}" value="${value}">`);
 
 // body 是表单内容；confirm 返回 true/false；onGender：选了性别后页面要做的事（新出现字段之类）；resume 是简历资料；
-// custom 是「我的信息」里的补充字段。
-function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [] } = {}) {
+// custom 是「我的信息」里的补充字段；site 是桌面里这个网站记住的回答（#429），null 表示桌面不支持。
+function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [], site = null } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
   const w = dom.window;
@@ -103,6 +103,7 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME,
       sendMessage: async (message) => {
         sent.push(message.type);
         if (message.type === "DESKTOP_RESUME_READ") return { status: "ok", data };
+        if (message.type === "DESKTOP_SITE_ANSWERS_READ") return site ? { status: "ok", site: "jobs.example.test", answers: site } : { status: "unsupported" };
         if (["ENSURE_AI_HOST", "AI_HOST_READY"].includes(message.type)) return { ready: true };
         if (message.type === "AI_FILL" || message.type === "CANCEL_AI_FILL") return worker.dispatch(message);
         return {};
@@ -707,4 +708,64 @@ test("an assisted fill counts same questions across the whole page, not just the
   p.worker.calls[0].reply({ 每周可实习天数: "3天", 毕业院校: "示例大学" });
   await running;
   assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "3天", "示例大学"]);
+});
+
+// #429 第五项第 2 点：问到对方公司的题，用这个网站记住的回答在 AI 回来之前填；补充字段里同名的不用。
+const SITE = [{ key: "是否有亲属在本公司工作", value: "否" }];
+const COMPANY = radios("relative", "是否有亲属在本公司工作", ["是", "否"]);
+
+test("a company question takes this site's remembered answer with the local matches, not the custom field's", async (t) => {
+  const p = page(t, input("name", "姓名") + COMPANY + input("salary", "期望薪资"),
+    { custom: [{ key: "是否有亲属在本公司工作", value: "是" }], site: SITE });
+  const checked = () => p.w.document.querySelector("input[name=relative]:checked")?.value || "";
+  const running = p.run();
+  assert.ok(await p.until(() => checked() && p.worker.calls.length === 1), `the site answer waits for the AI: ${checked()}`);
+  assert.equal(checked(), "否");
+  assert.deepEqual(p.worker.calls[0].labels, ["期望薪资"]);
+  assert.equal(p.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1);
+  p.worker.calls[0].reply({ 期望薪资: "面议" });
+  const result = await running;
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+  assert.equal(lineOf((await p.report()).diagnosticsReport, "local_matches"), "2");
+});
+
+test("without a remembered answer, or with a desktop that has none, the company question goes to the AI", async (t) => {
+  for (const site of [null, []]) {
+    const p = page(t, input("name", "姓名") + COMPANY, { site });
+    const running = p.run();
+    assert.ok(await p.until(() => p.worker.calls.length === 1));
+    assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作"]);
+    p.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+    assert.equal((await running).outcome, "success");
+  }
+});
+
+test("a page with no question about the company never asks the desktop for site answers", async (t) => {
+  const p = page(t, BASIC, { site: SITE });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  p.worker.calls[0].reply();
+  await running;
+  assert.equal(p.sent.includes("DESKTOP_SITE_ANSWERS_READ"), false);
+});
+
+test("a company question revealed later reads the site answers then, and is filled without the AI", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const p = page(t, input("name", "姓名") + GENDER + input("school", "毕业院校"), {
+    site: SITE,
+    onGender: (doc) => {
+      if (doc.getElementById("relative-item")) return;
+      const holder = doc.createElement("div");
+      holder.innerHTML = COMPANY;
+      doc.getElementById("apply").append(holder.firstChild);
+    }
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
+  assert.equal(p.sent.includes("DESKTOP_SITE_ANSWERS_READ"), false, "nothing about the company on the page yet");
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.equal(p.w.document.querySelector("input[name=relative]:checked")?.value, "否");
+  assert.equal(p.worker.calls.length, 1, "the revealed company question did not go to the AI");
+  assert.equal(result.outcome, "success", p.ui.diag.value);
 });

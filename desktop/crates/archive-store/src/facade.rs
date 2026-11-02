@@ -431,4 +431,26 @@ impl ArchiveStore {
     pub fn save_profile(&self, profile: serde_json::Value, expected_revision: i64) -> Result<ProfileRecord, StoreError> {
         self.transaction(|tx| tx.save_profile(profile, expected_revision))
     }
+
+    // ---- 按网站记住的回答(#429) ----
+
+    pub fn site_answers(&self, site: &str) -> Result<Vec<crate::SiteAnswer>, StoreError> {
+        self.transaction(|tx| tx.site_answers(site))
+    }
+
+    pub fn all_site_answers(&self) -> Result<Vec<crate::SiteAnswer>, StoreError> {
+        self.transaction(|tx| tx.all_site_answers())
+    }
+
+    pub fn save_site_answers(&self, site: &str, inputs: &[crate::SiteAnswerInput]) -> Result<Vec<crate::SiteAnswer>, StoreError> {
+        self.transaction(|tx| tx.save_site_answers(site, inputs))
+    }
+
+    pub fn delete_site_answer(&self, site: &str, question: &str) -> Result<usize, StoreError> {
+        self.transaction(|tx| tx.delete_site_answer(site, question))
+    }
+
+    pub fn delete_site(&self, site: &str) -> Result<usize, StoreError> {
+        self.transaction(|tx| tx.delete_site(site))
+    }
 }

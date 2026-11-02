@@ -273,6 +273,9 @@ button:disabled { cursor: not-allowed; }
 .profile-group__title { margin: 0; font-size: 12px; font-weight: 650; color: var(--ink); }
 .profile-group__toggle { padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 11px; }
 .profile-group__hint { margin: 2px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+/* #429：只在这个网站用的回答单独一组。 */
+.profile-site { padding-top: 7px; border-top: 1px solid var(--line); }
+.profile-site__title { margin: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .profile-items { display: grid; gap: 4px; margin-top: 6px; }
 .profile-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; line-height: 1.45; }
 .profile-item input { margin-top: 3px; accent-color: var(--accent); }

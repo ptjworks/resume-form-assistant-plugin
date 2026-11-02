@@ -1,0 +1,18 @@
+{
+  "protocolVersion": 5,
+  "correlationId": "55555555-5555-4555-8555-555555555552",
+  "ok": true,
+  "payload": {
+    "site": "app.mokahr.com/example",
+    "answers": [
+      {
+        "key": "是否有亲属在本公司工作",
+        "value": "否"
+      },
+      {
+        "key": "是否曾在本行实习",
+        "value": "是"
+      }
+    ]
+  }
+}

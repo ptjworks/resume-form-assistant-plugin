@@ -41,6 +41,8 @@ pub fn apply(request: &Request, store: &ArchiveStore) -> Result<Answer, ErrorCod
         MessageType::SnapshotChunk => snapshot_chunk(request, store),
         MessageType::ResumeRead => resume_read(request, store),
         MessageType::ResumeUpdate => resume_update(request, store),
+        MessageType::SiteAnswersRead => site_answers_read(request, store),
+        MessageType::SiteAnswersSave => site_answers_save(request, store),
         MessageType::Health | MessageType::Handshake => Err(ErrorCode::UnknownMessageType),
         MessageType::AiComplete | MessageType::UiOpen | MessageType::UsageTouch | MessageType::UsageSettings | MessageType::LegacyImport => Err(ErrorCode::ProtocolIncompatible),
     }
@@ -131,6 +133,58 @@ fn resume_update(request: &Request, store: &ArchiveStore) -> Result<Answer, Erro
         result_id: None,
         payload: json!({"activeTemplateId": active, "profileRevision": revision}),
     })
+}
+
+/// #429: the answers this archive remembers for one site. The site comes from the plugin's
+/// service worker, which works it out from the address of the page that asked.
+fn site_answers_read(request: &Request, store: &ArchiveStore) -> Result<Answer, ErrorCode> {
+    ensure_current_identity(request, store)?;
+    let site = request.payload["site"].as_str().ok_or(ErrorCode::InvalidPayload)?;
+    site_answers_answer(request, site, store.site_answers(site).map_err(code_of)?)
+}
+
+/// #429: answers the user confirmed on one site. The whole batch is written or none of it:
+/// an answer whose `previous` no longer matches the archive is a `conflict`, the plugin
+/// re-reads and asks again.
+fn site_answers_save(request: &Request, store: &ArchiveStore) -> Result<Answer, ErrorCode> {
+    ensure_current_identity(request, store)?;
+    let site = request.payload["site"].as_str().ok_or(ErrorCode::InvalidPayload)?;
+    let inputs = request.payload["answers"]
+        .as_array()
+        .ok_or(ErrorCode::InvalidPayload)?
+        .iter()
+        .map(|item| {
+            let text = |key: &str| item[key].as_str().map(str::to_string);
+            Ok(archive_store::SiteAnswerInput {
+                question: text("key").ok_or(ErrorCode::InvalidPayload)?,
+                answer: text("value").ok_or(ErrorCode::InvalidPayload)?,
+                previous: text("previous"),
+            })
+        })
+        .collect::<Result<Vec<_>, ErrorCode>>()?;
+    if inputs.iter().any(|input| archive_store::is_secret_label(&input.question) || archive_store::is_secret_value(&input.answer)) {
+        return Err(ErrorCode::SecretForbidden);
+    }
+    site_answers_answer(request, site, store.save_site_answers(site, &inputs).map_err(code_of)?)
+}
+
+fn site_answers_answer(
+    request: &Request,
+    site: &str,
+    answers: Vec<archive_store::SiteAnswer>,
+) -> Result<Answer, ErrorCode> {
+    let payload = json!({
+        "site": site,
+        "answers": answers.into_iter().map(|a| json!({"key": a.question, "value": a.answer})).collect::<Vec<_>>()
+    });
+    let response = json!({
+        "protocolVersion": request.protocol_version,
+        "correlationId": request.message_id,
+        "ok": true,
+        "payload": payload
+    });
+    resume_pro_protocol::validate_response_for_request(&response, request).map_err(|err| err.code)?;
+    Ok(Answer { result_id: None, payload })
 }
 
 pub fn legacy_import(
@@ -1642,5 +1696,71 @@ mod tests {
         std::fs::remove_file(&snapshots).unwrap();
         let retried = ack(&upload.chunk(&identity, &app_id, upload.count() - 1), &store);
         assert_eq!(retried["ackKind"], "snapshot");
+    }
+
+    fn v5_request(message_type: &str, identity: &ArchiveIdentity, payload: Value) -> Request {
+        let envelope = json!({
+            "protocolVersion": 5,
+            "messageId": "33333333-3333-4333-8333-333333333333",
+            "clientInstanceId": CLIENT,
+            "messageType": message_type,
+            "occurredAt": "2026-11-02T00:00:00.000Z",
+            "archiveId": identity.archive_id,
+            "restoreEpoch": identity.restore_epoch,
+            "payload": payload
+        });
+        validate_request_bytes(&serde_json::to_vec(&envelope).unwrap()).unwrap()
+    }
+
+    fn checked_v5_response(request: &Request, answer: &Answer) -> Value {
+        let response = json!({
+            "protocolVersion": 5,
+            "correlationId": request.message_id,
+            "ok": true,
+            "payload": answer.payload
+        });
+        resume_pro_protocol::validate_response_for_request(&response, request).unwrap();
+        response
+    }
+
+    #[test]
+    fn site_answers_are_saved_and_read_back_for_that_site_only() {
+        let (_dir, store) = store();
+        let identity = store.identity();
+        let read = v5_request("siteAnswers.read", &identity, json!({"site": "campus.example.com"}));
+        assert_eq!(checked_v5_response(&read, &apply(&read, &store).unwrap())["payload"]["answers"], json!([]));
+        let save = v5_request("siteAnswers.save", &identity, json!({"site": "campus.example.com", "answers": [
+            {"key": "是否有亲属在本公司工作", "value": "否"}
+        ]}));
+        let saved = checked_v5_response(&save, &apply(&save, &store).unwrap());
+        assert_eq!(saved["payload"], json!({"site": "campus.example.com", "answers": [{"key": "是否有亲属在本公司工作", "value": "否"}]}));
+        let read_back = checked_v5_response(&read, &apply(&read, &store).unwrap());
+        assert_eq!(read_back["payload"]["answers"][0]["value"], "否");
+        let other = v5_request("siteAnswers.read", &identity, json!({"site": "app.mokahr.com/other"}));
+        assert_eq!(checked_v5_response(&other, &apply(&other, &store).unwrap())["payload"]["answers"], json!([]));
+    }
+
+    #[test]
+    fn a_site_answer_changed_since_it_was_seen_is_a_conflict_and_a_secret_is_refused() {
+        let (_dir, store) = store();
+        let identity = store.identity();
+        let save = |answers: Value| v5_request("siteAnswers.save", &identity, json!({"site": "campus.example.com", "answers": answers}));
+        apply(&save(json!([{"key": "是否有亲属在本公司工作", "value": "否"}])), &store).unwrap();
+        assert!(matches!(apply(&save(json!([{"key": "是否有亲属在本公司工作", "value": "是"}])), &store), Err(ErrorCode::Conflict)));
+        assert!(matches!(
+            apply(&save(json!([{"key": "是否有亲属在本公司工作", "value": "是", "previous": "否"}])), &store),
+            Ok(_)
+        ));
+        assert!(matches!(apply(&save(json!([{"key": "是否曾在本行实习", "value": "验证码：123456"}])), &store), Err(ErrorCode::SecretForbidden)));
+        assert_eq!(store.site_answers("campus.example.com").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn site_answers_need_the_current_archive() {
+        let (_dir, store) = store();
+        let mut identity = store.identity();
+        identity.restore_epoch = "dddddddd-dddd-4ddd-8ddd-dddddddddddd".into();
+        let read = v5_request("siteAnswers.read", &identity, json!({"site": "campus.example.com"}));
+        assert!(matches!(apply(&read, &store), Err(ErrorCode::RestoreEpochMismatch)));
     }
 }

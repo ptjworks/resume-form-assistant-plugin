@@ -18,7 +18,9 @@ export type MessageType =
   | "legacy.import"
   | "usage.touch"
   | "usage.settings"
-  | "mail.import";
+  | "mail.import"
+  | "siteAnswers.read"
+  | "siteAnswers.save";
 
 /** Resume Pro request envelope */
 export interface RequestEnvelope {
@@ -28,7 +30,7 @@ export interface RequestEnvelope {
   messageId: string;
   /** pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ */
   clientInstanceId: string;
-  messageType: "health" | "handshake" | "application.queryCandidates" | "job.save" | "fill.submit" | "snapshot.chunk" | "submit.confirm" | "outbox.reconcile" | "resume.read" | "resume.update" | "ai.complete" | "ui.open" | "legacy.import" | "usage.touch" | "usage.settings" | "mail.import";
+  messageType: "health" | "handshake" | "application.queryCandidates" | "job.save" | "fill.submit" | "snapshot.chunk" | "submit.confirm" | "outbox.reconcile" | "resume.read" | "resume.update" | "ai.complete" | "ui.open" | "legacy.import" | "usage.touch" | "usage.settings" | "mail.import" | "siteAnswers.read" | "siteAnswers.save";
   /**
    * UTC RFC3339 subset: YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS.fractionZ. Pattern is syntactic; validators also reject impossible dates/times. No timezone offset other than Z.
    * pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$
@@ -283,6 +285,46 @@ export interface ResumeUpdatePayload {
   expectedRevision?: number;
 }
 
+export interface SiteAnswersReadPayload {
+  /**
+   * 站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查
+   * minLength: 1
+   * maxLength: 200
+   */
+  site: string;
+}
+
+export interface SiteAnswersSavePayload {
+  /**
+   * 站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查
+   * minLength: 1
+   * maxLength: 200
+   */
+  site: string;
+  /**
+   * minItems: 1
+   * maxItems: 30
+   */
+  answers: {
+    /**
+     * minLength: 1
+     * maxLength: 120
+     */
+    key: string;
+    /**
+     * minLength: 1
+     * maxLength: 300
+     */
+    value: string;
+    /**
+     * 用户确认时看到的桌面旧回答；不带表示桌面里本来没有这道题
+     * minLength: 1
+     * maxLength: 300
+     */
+    previous?: string;
+  }[];
+}
+
 export interface SnapshotChunkPayload {
   /** pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ */
   sourceRestoreEpoch: string;
@@ -372,9 +414,9 @@ export interface HandshakeResponsePayload {
   restoreEpoch: string;
   /**
    * minItems: 1
-   * maxItems: 16
+   * maxItems: 32
    */
-  capabilities: ("health" | "handshake" | "application.queryCandidates" | "job.save" | "fill.submit" | "snapshot.chunk" | "submit.confirm" | "outbox.reconcile" | "resume.read" | "resume.update" | "ai.complete" | "ui.open" | "legacy.import" | "usage.touch" | "usage.settings" | "mail.import")[];
+  capabilities: ("health" | "handshake" | "application.queryCandidates" | "job.save" | "fill.submit" | "snapshot.chunk" | "submit.confirm" | "outbox.reconcile" | "resume.read" | "resume.update" | "ai.complete" | "ui.open" | "legacy.import" | "usage.touch" | "usage.settings" | "mail.import" | "siteAnswers.read" | "siteAnswers.save")[];
 }
 
 export interface HealthResponsePayload {
@@ -529,6 +571,50 @@ export interface ResumeUpdateResponsePayload {
   profileRevision: number;
 }
 
+export interface SiteAnswersReadResponsePayload {
+  /**
+   * 站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查
+   * minLength: 1
+   * maxLength: 200
+   */
+  site: string;
+  /** maxItems: 30 */
+  answers: {
+    /**
+     * minLength: 1
+     * maxLength: 120
+     */
+    key: string;
+    /**
+     * minLength: 1
+     * maxLength: 300
+     */
+    value: string;
+  }[];
+}
+
+export interface SiteAnswersSaveResponsePayload {
+  /**
+   * 站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查
+   * minLength: 1
+   * maxLength: 200
+   */
+  site: string;
+  /** maxItems: 30 */
+  answers: {
+    /**
+     * minLength: 1
+     * maxLength: 120
+     */
+    key: string;
+    /**
+     * minLength: 1
+     * maxLength: 300
+     */
+    value: string;
+  }[];
+}
+
 export interface SnapshotChunkResponsePayload {
   ackKind: "chunk" | "snapshot";
   /**
@@ -586,6 +672,8 @@ export interface RequestPayloadByType {
   "usage.touch": UsageTouchPayload;
   "usage.settings": UsageSettingsPayload;
   "mail.import": MailImportPayload;
+  "siteAnswers.read": SiteAnswersReadPayload;
+  "siteAnswers.save": SiteAnswersSavePayload;
 }
 
 /** Response payload type for a given messageType. Several writes share one response. */
@@ -606,6 +694,8 @@ export interface ResponsePayloadByType {
   "usage.touch": UsageTouchResponsePayload;
   "usage.settings": UsageSettingsResponsePayload;
   "mail.import": MailImportResponsePayload;
+  "siteAnswers.read": SiteAnswersReadResponsePayload;
+  "siteAnswers.save": SiteAnswersSaveResponsePayload;
 }
 
 /** One request envelope, narrowed to the payload its messageType carries. */

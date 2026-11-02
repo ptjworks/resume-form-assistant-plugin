@@ -294,9 +294,34 @@ fn validate_payload_extras(ty: MessageType, payload: &Map<String, Value>) -> Res
             }
         }
         MessageType::LegacyImport => validate_legacy_import(payload)?,
+        MessageType::SiteAnswersRead | MessageType::SiteAnswersSave => {
+            if !is_site_key(payload["site"].as_str().unwrap()) {
+                return Err(invalid_payload("site must be host[:port][/segment]"));
+            }
+        }
         _ => {}
     }
     Ok(())
+}
+
+/// #429: the site a set of answers belongs to — a lowercase host, an optional port, and for
+/// a recruiting platform shared by many companies one more path segment naming the company.
+/// Nothing else: no scheme, query or longer path, so a whole page address never lands here.
+pub fn is_site_key(site: &str) -> bool {
+    let (host_port, tenant) = match site.split_once('/') {
+        Some((head, tail)) => (head, Some(tail)),
+        None => (site, None),
+    };
+    let (host, port) = match host_port.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (host_port, None),
+    };
+    let host_ok = host.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && host.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-');
+    let port_ok = port.is_none_or(|p| (1..=5).contains(&p.len()) && p.chars().all(|c| c.is_ascii_digit()));
+    let tenant_ok = tenant.is_none_or(|t| (1..=64).contains(&t.len())
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+    host_ok && port_ok && tenant_ok
 }
 
 fn invalid_payload(message: &str) -> ProtocolError {
@@ -464,6 +489,13 @@ pub fn validate_response_for_request(value: &Value, req: &Request) -> Result<(),
         && req.payload["purpose"] != "analyze"
     {
         return Err(invalid("ai.complete tier is only returned to a request that asked for one"));
+    }
+    // #429: answers for one site go back only to a request about that site.
+    if matches!(req.message_type, MessageType::SiteAnswersRead | MessageType::SiteAnswersSave)
+        && value["ok"] == true
+        && value["payload"]["site"] != req.payload["site"]
+    {
+        return Err(invalid("site answers response names a different site"));
     }
     if req.message_type == MessageType::MailImport && value["ok"] == true {
         let p = &value["payload"];

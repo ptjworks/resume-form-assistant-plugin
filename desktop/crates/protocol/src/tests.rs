@@ -152,7 +152,17 @@ fn identity_rules_for_v2_types() {
 fn handshake_announces_supported_maximum() {
     let payload = crate::identity::handshake_response_payload(&current(), "0.4.0");
     assert_eq!(payload["minProtocolVersion"], 1);
-    assert_eq!(payload["maxProtocolVersion"], 4);
+    assert_eq!(payload["maxProtocolVersion"], 5);
+}
+
+#[test]
+fn site_keys_are_a_host_with_at_most_one_company_segment() {
+    for ok in ["campus.example.com", "127.0.0.1:8080", "app.mokahr.com/example-co", "wecruit.hotjob.cn/SU0123456789abcdef01234567"] {
+        assert!(crate::is_site_key(ok), "{ok}");
+    }
+    for bad in ["", "https://campus.example.com", "Campus.example.com", "-x.com", "a.com/b/c", "a.com/", "a.com:", "a.com:123456", "a.com?x=1", "a.com/中文", "[::1]"] {
+        assert!(!crate::is_site_key(bad), "{bad}");
+    }
 }
 
 #[test]
