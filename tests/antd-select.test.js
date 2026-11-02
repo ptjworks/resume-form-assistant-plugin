@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
 const scanner = require('../field-scan.js');
+const antd6 = require('./helpers/antd6-select.js');
 
 const visible = el => !el.closest('[hidden]');
 function load(label, control) {
@@ -294,4 +295,58 @@ test('AntD AutoComplete without suggestions on opening is typed into like other 
   assert.deepEqual(h.searches, ['北京大学']);
   assert.equal(h.input.value, '北京大学');
   assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ['北京大学']);
+});
+
+// #429 antd 6（@rc-component/select 1.x）：没有 .ant-select-selector，单选的已选文字直接写在 .ant-select-content 里。
+// 替身见 helpers/antd6-select.js（按真 antd 6.6.8 的结构写）。
+function antd6Select(choices, { label = '学历', ...options } = {}) {
+  const h = load(label, antd6.selectHtml('ant', options));
+  const root = h.doc.querySelector('.ant-select');
+  return { ...h, root, input: root.querySelector('input'), state: antd6.wire(h.doc, root, choices, options) };
+}
+
+test('AntD 6 single selection is verified from the text in its content', async () => {
+  const h = antd6Select(['大专', '本科', '硕士', '博士']);
+  const result = await h.api.operate(h.target, '硕士');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.state.picked, ['硕士']);
+  assert.equal(h.state.open, false);
+  assert.equal(h.api.check(h.target).ok, true);
+  const content = h.root.querySelector('.ant-select-content');
+  Array.from(content.childNodes).filter(node => node.nodeType === 3).forEach(node => node.remove());
+  assert.equal(h.api.check(h.target).reason, 'value_reverted');
+});
+
+test('AntD 6 shows the choice as plain text: read back, while the placeholder and a typed query are not the choice', () => {
+  const shown = antd6Select(['本科', '硕士'], { selected: '本科', search: true });
+  assert.deepEqual(Array.from(shown.w.ResumeProCustomControls.readSelection(shown.target).texts), ['本科']);
+  assert.equal(shown.w.ResumeProCustomControls.hasExistingValue(shown.target), true);
+  // 搜索时打的字只在输入框里，已选的还是本科。
+  shown.input.value = '硕';
+  assert.deepEqual(Array.from(shown.w.ResumeProCustomControls.readSelection(shown.target).texts), ['本科']);
+  // 选项带 className 时套一层 .ant-select-content-value。
+  const styled = antd6Select(['学士', '硕士'], { label: '学位', selected: '学士', styled: true });
+  assert.deepEqual(Array.from(styled.w.ResumeProCustomControls.readSelection(styled.target).texts), ['学士']);
+  const empty = antd6Select(['本科', '硕士']);
+  assert.deepEqual(Array.from(empty.w.ResumeProCustomControls.readSelection(empty.target).texts), []);
+  assert.equal(empty.w.ResumeProCustomControls.hasExistingValue(empty.target), false);
+});
+
+test('AntD 6 search select without a popup before typing is searched in its own input', async () => {
+  const h = antd6Select(['北京大学', '北京师范大学', '清华大学'], { label: '毕业院校', search: true, remote: true });
+  const result = await h.api.operate(h.target, '北京大学');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.state.picked, ['北京大学']);
+  assert.deepEqual(h.state.searches, ['北京大学']);
+  assert.equal(h.input.value, '');
+});
+
+test('AntD 6 Cascader is picked column by column and its path is read back', async () => {
+  const region = { 广东省: { 深圳市: ['南山区', '福田区'], 广州市: ['天河区'] }, 江苏省: { 苏州市: ['昆山市'] } };
+  const h = antd6Select(region, { label: '现居住地', cascader: true });
+  assert.equal(h.target.controlKind, 'cascader');
+  const result = await h.api.operate(h.target, '广东省/深圳市/南山区');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.state.picked, ['广东省/深圳市/南山区']);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.w.ResumeProCustomControls.readSelection(h.target))), { texts: ['广东省', '深圳市', '南山区'], cascade: true });
 });
