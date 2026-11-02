@@ -242,7 +242,11 @@
     const month = Number(text.slice(10, 12));
     const day = Number(text.slice(12, 14));
     const birth = new Date(Date.UTC(year, month - 1, day));
-    const dateOk = year >= 1900 && birth.getUTCMonth() === month - 1 && birth.getUTCDate() === day && birth.getTime() <= Date.now();
+    // 和本地的今天按年月日比，不按时刻。
+    const now = new Date();
+    const today = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
+    const dateOk = year >= 1900 && birth.getUTCMonth() === month - 1 && birth.getUTCDate() === day
+      && year * 10000 + month * 100 + day <= today;
     const head = text.slice(0, 2);
     const kind = ID_PROVINCES.has(head) ? "resident" : head === "81" || head === "82" ? "hkmo" : head === "83" ? "tw"
       : text[0] === "9" && ID_PROVINCES.has(text.slice(1, 3)) ? "foreign" : "";
@@ -314,7 +318,7 @@
 
       const formScope = personScope(fieldContextText(field));
       if (semantic === "id_type") {
-        const match = idTypeMatch(field, resumeFields, formScope);
+        const match = idTypeMatch(field, resumeFields, formScope, keyTypeOf);
         if (match) matches.push(match);
         return;
       }
@@ -354,11 +358,12 @@
 
   // #429 证件类型：号码看不出类型的照资料填。看得出的，资料没写就按号码选；资料写的和号码对不上不填，
   // 带上 blocked，填写时记作没填上（「和证件号码对不上」），也不再交给 AI。
-  function idTypeMatch(field, resumeFields, formScope) {
+  function idTypeMatch(field, resumeFields, formScope, keyTypeOf) {
     const own = resumeFields.filter((item) => String(item?.value ?? "").trim() && isSamePersonScope(item, formScope));
     const stated = String(own.find((item) => /证件(类型|种类)/.test(normalizeText(item.key)))?.value ?? "").trim();
-    // 和证件号码框取同一条：用同一个判断（fitsResumeField），按顺序取第一条。
-    const numberItem = own.find((item) => fitsResumeField("id_number", ID_NUMBER_FIELD, item, formScope));
+    // 和证件号码框取同一条：同一个判断（fitsResumeField），按顺序取第一条。不跳过已经用掉的资料：
+    // 号码框排在证件类型前面时，它用掉的正是要比的这条。
+    const numberItem = resumeFields.find((item, index) => fitsResumeField("id_number", ID_NUMBER_FIELD, item, formScope, () => keyTypeOf(index)));
     const info = numberItem ? idNumberInfo(numberItem.value) : null;
     const number = info?.valid ? info : null;
     const match = (value) => ({ fieldId: field.fieldId, value });

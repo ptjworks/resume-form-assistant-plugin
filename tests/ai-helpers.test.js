@@ -766,6 +766,13 @@ test("idNumberInfo checks the check digit, the birth date and the leading code",
   assert.deepEqual(info("110105200002300015"), { valid: false, kind: "" });
   assert.deepEqual(info("11010520991231002X"), { valid: false, kind: "" });
   assert.deepEqual(info("710000199001010015"), { valid: false, kind: "" });
+  // 出生日期按本地的年月日和今天比：今天出生的算数，明天的不算。
+  const W = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+  const withCheck = (body) => body + "10X98765432"[[...body].reduce((sum, digit, i) => sum + W[i] * Number(digit), 0) % 11];
+  const ymd = (date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+  const now = new Date();
+  assert.equal(info(withCheck(`110105${ymd(now)}001`)).valid, true);
+  assert.equal(info(withCheck(`110105${ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1))}001`)).valid, false);
   // 不是 18 位的不判：15 位一代证、护照、通行证。
   for (const value of ["110105491231002", "E12345678", "H12345678", "", null]) assert.equal(info(value), null, String(value));
 });
@@ -843,10 +850,15 @@ test("id type: a stated type wins, and one the number contradicts is blocked ins
     { group: "基本信息", key: "证件号码", value: first }, { group: "基本信息", key: "身份证号", value: second }];
   assert.deepEqual(idTypeMatch(idTypeField(all), both("123456789", "11010519491231002X")), { fieldId: "type", value: "护照" });
   assert.equal(idTypeMatch(idTypeField(all), both("E12345678", "11010519491231002X")).blocked, "id_type_mismatch");
+  // 字段名认不出（「号码1」）的号码照样按值认作证件号，和号码框一样。
+  assert.equal(idTypeMatch(idTypeField(["身份证", "港澳台居民居住证"]), [{ group: "基本信息", key: "号码1", value: "810000199408230021" }]).value, "港澳居民居住证");
   // 同一张表上：号码框填的就是拿来比的那条。
   for (const [first, type, number] of [["123456789", { value: "护照" }, "123456789"], ["E12345678", { value: "护照", blocked: "id_type_mismatch" }, "11010519491231002X"]]) {
     const matches = helpers.buildRuleBasedMatches([idTypeField(all), textField("no", "证件号码")], both(first, "11010519491231002X"));
     assert.deepEqual(matches, [{ fieldId: "type", ...type }, { fieldId: "no", value: number }], first);
+    // 号码框排在前面也一样。
+    const reversed = helpers.buildRuleBasedMatches([textField("no", "证件号码"), idTypeField(all)], both(first, "11010519491231002X"));
+    assert.deepEqual(reversed, [{ fieldId: "no", value: number }, { fieldId: "type", ...type }], `${first} reversed`);
   }
   // 紧急联系人的证件类型不用本人的资料。
   assert.equal(idTypeMatch(idTypeField(all, { group: "紧急联系人" }), idResume("", "11010519491231002X")), undefined);
