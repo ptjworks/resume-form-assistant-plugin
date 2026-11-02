@@ -365,11 +365,14 @@
     if (!stated) return inferred ? match(inferred) : null;
     const blocked = { ...match(stated), blocked: "id_type_mismatch" };
     // 「我的信息」的证件类型里没有居住证和永久居留证，持这几种证的只能选「其他」。
-    if (stated === "其他") return number.kind === "resident" ? blocked : match(inferred || stated);
+    if (/^其[他它]$/.test(stated)) return number.kind === "resident" ? blocked : match(inferred || stated);
     // 括号里的补充（「居民身份证（二代）」）不看。认不出的写法照资料填，选项里没有就交给 AI。
     const bare = stated.replace(/[（(][^）)]*[）)]/g, "");
     const kinds = STATED_ID_TYPES.find(([name]) => isSameOptionText(name, bare))?.[1];
-    return !kinds || kinds.includes(number.kind) ? match(stated) : blocked;
+    if (kinds && !kinds.includes(number.kind)) return blocked;
+    // 资料写合写的「港澳台居民居住证」、选项分开写的：号码分得清是哪一种，按号码选。
+    const fits = !hasRealOptions(field) || findSelectOptionIndex(field.options, stated) >= 0;
+    return kinds && !fits && inferred ? match(inferred) : match(stated);
   }
 
   // 级联地区题要的整条路径：题目自己没写层级（写了「籍贯（省）」的照常只要省），简历里同一个问题至少有省和下面一级，按省、市、县拼起来。

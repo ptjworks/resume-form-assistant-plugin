@@ -778,6 +778,7 @@ test("residence permits fall back to the joint option only when the page has no 
   // 合写的要分到港澳还是台湾看不出来，不选。
   assert.equal(pick(["港澳居民居住证", "台湾居民居住证"], "港澳台居民居住证"), null);
   assert.equal(pick(["护照", "外国人永久居留证"], "外国人永久居留身份证"), "外国人永久居留证");
+  assert.equal(pick(["护照", " 港澳台居民居住证 "], "港澳居民居住证"), " 港澳台居民居住证 ");
 });
 
 const idTypeField = (texts, extra = {}) => ({ fieldId: "type", label: "证件类型", inputType: "select", tagName: "select", options: options(texts), ...extra });
@@ -831,6 +832,12 @@ test("id type: a stated type wins, and one the number contradicts is blocked ins
   assert.equal(idTypeMatch(idTypeField(all), idResume("港澳居民居住证", "830000199201300022")).blocked, "id_type_mismatch");
   assert.deepEqual(idTypeMatch(idTypeField(all), idResume("港澳台居民居住证", "830000199201300022")), { fieldId: "type", value: "港澳台居民居住证" });
   assert.deepEqual(idTypeMatch(idTypeField(all), idResume("港澳台居住证", "810000199408230021")), { fieldId: "type", value: "港澳台居住证" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("居民身份证 (二代)", "11010519491231002X")), { fieldId: "type", value: "居民身份证 (二代)" });
+  // 资料写合写的居住证、选项分开写：按号码选分写的那项。
+  const split = idTypeField(["居民身份证", "港澳居民居住证", "台湾居民居住证"]);
+  assert.deepEqual(idTypeMatch(split, idResume("港澳台居民居住证", "830000199201300022")), { fieldId: "type", value: "台湾居民居住证" });
+  assert.equal(idTypeMatch(idTypeField(["身份证", "护照", "其它"]), idResume("其它", "810000199408230021")).value, "其它");
+  assert.equal(idTypeMatch(idTypeField(all), idResume("其它", "810000199408230021")).value, "港澳居民居住证");
   // 紧急联系人的证件类型不用本人的资料。
   assert.equal(idTypeMatch(idTypeField(all, { group: "紧急联系人" }), idResume("", "11010519491231002X")), undefined);
 });
