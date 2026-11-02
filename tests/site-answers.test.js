@@ -24,7 +24,10 @@ test("siteKeyOf is the host, plus the company segment on recruiting sites shared
     ["https://acme.jobs.feishu.cn/campus/position/1", "acme.jobs.feishu.cn"],
     ["https://app.mokahr.com/campus-recruitment/acme/1234#/job/5", "app.mokahr.com/acme"],
     ["https://app.mokahr.com/m/campus_apply/acme/9", "app.mokahr.com/acme"],
-    ["https://wecruit.hotjob.cn/SU0123456789abcdef01234567/pb/index.html", "wecruit.hotjob.cn/SU0123456789abcdef01234567"],
+    ["https://wecruit.hotjob.cn/SU0123456789ABCDEF01234567/pb/index.html", "wecruit.hotjob.cn/su0123456789abcdef01234567"],
+    // 公司段大小写不同也是同一家。
+    ["https://app.mokahr.com/campus-recruitment/Acme/1", "app.mokahr.com/acme"],
+    ["https://job-boards.greenhouse.io/embed/job_app?for=ACME", "job-boards.greenhouse.io/acme"],
     ["https://job-boards.greenhouse.io/acme/jobs/123", "job-boards.greenhouse.io/acme"],
     // Greenhouse 嵌入页的公司在 for 参数里；路径第一段 embed 是平台自己的，不是公司。
     ["https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123", "job-boards.greenhouse.io/acme"],

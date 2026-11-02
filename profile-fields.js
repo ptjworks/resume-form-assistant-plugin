@@ -482,7 +482,8 @@
     if (rule) {
       const tenant = rule.tenant(url.pathname.split("/").filter(Boolean), url);
       if (!TENANT_SEGMENT.test(tenant || "")) return "";
-      key = `${key}/${tenant}`;
+      // 公司段统一小写：同一家公司在网址里大小写不同（Acme、acme）也算一个网站。
+      key = `${key}/${tenant.toLowerCase()}`;
     }
     return SITE_KEY.test(key) && key.length <= 200 ? key : "";
   }
