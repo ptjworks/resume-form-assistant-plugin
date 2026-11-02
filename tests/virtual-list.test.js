@@ -433,7 +433,8 @@ function followScroll(scroller, total, view, redraw) {
 
 // antd 4/5 结构，不能搜索：一屏 256px、每项 32px，画 10 项，整屏用 translateY 挪到位置上。
 // multiple：多选，点一项切换、弹层开着，标签放在 overflow 里，输入框失焦才收起。
-// grow：越滚越长的懒加载，滚到最后一屏时再接 20 项。
+// grow：越滚越长的懒加载。true 是每次滚到最后一屏都马上再接 20 项（一直到不了底）；
+// { delay, more } 是滚到最后一屏后过 delay 毫秒接上 more 里的下一页，接完为止。
 function scrollingAntd(choices, { multiple = false, grow = false } = {}) {
   const field = '<input type="search" autocomplete="off" class="ant-select-selection-search-input" role="combobox" aria-haspopup="listbox" aria-owns="rc_select_0_list"'
     + ' aria-autocomplete="list" aria-controls="rc_select_0_list" aria-expanded="false" readonly>';
@@ -443,14 +444,16 @@ function scrollingAntd(choices, { multiple = false, grow = false } = {}) {
   const { doc } = h;
   const root = doc.querySelector(".ant-select"), input = root.querySelector("input");
   const picked = [], values = [], scrolls = [];
-  let dropdown = null, holder = null, start = 0;
+  let dropdown = null, holder = null, start = 0, loading = false;
+  const pages = grow && grow !== true ? [...grow.more] : [];
+  const append = (items) => { choices.push(...items); dropdown.querySelector(".filler").style.height = `${total()}px`; };
   choices = [...choices];
   const total = () => choices.length * 32;
   const redraw = () => {
     scrolls.push(holder.scrollTop);
     if (grow && holder.scrollTop + 256 >= total() - 32) {
-      choices.push(...Array.from({ length: 20 }, (_, i) => `加载${String(choices.length + i).padStart(4, "0")}`));
-      dropdown.querySelector(".filler").style.height = `${total()}px`;
+      if (grow === true) append(Array.from({ length: 20 }, (_, i) => `加载${String(choices.length + i).padStart(4, "0")}`));
+      else if (pages.length && !loading) { loading = true; setTimeout(() => { loading = false; append(pages.shift()); redraw(); }, grow.delay); }
     }
     start = Math.floor(holder.scrollTop / 32);
     const inner = dropdown.querySelector(".rc-virtual-list-holder-inner");
@@ -581,6 +584,30 @@ test("virtual list without search that keeps loading more at the bottom stops sc
   assert.equal(result.reason, "no_option_match", JSON.stringify(result));
   assert.deepEqual(h.picked, []);
   assert.equal(h.holder().scrollTop, 0);
+});
+
+// #429 懒加载的列表：滚到底以后过 200ms 才接上下一页（比等列表停住的 80ms 晚）。
+const LAZY = Array.from({ length: 30 }, (_, i) => i === 20 ? "北京大学医学部" : i === 25 ? "人工智能与大数据" : `示例大学${String(i).padStart(3, "0")}`);
+const PAGE = Array.from({ length: 20 }, (_, i) => `补充大学${String(i).padStart(2, "0")}`);
+
+test("a lazily loaded list whose next page comes late is scanned to its real end: the same name there is chosen, not a longer one seen first", async () => {
+  const h = scrollingAntd(LAZY, { grow: { delay: 200, more: [[...PAGE.slice(0, 10), "北京大学", ...PAGE.slice(10)]] } });
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.picked, ["北京大学"]);
+});
+
+test("a list that grew while being scanned only takes an option written the same; one that merely holds the value is not guessed", async () => {
+  const h = scrollingAntd(LAZY, { grow: { delay: 200, more: [PAGE] } });
+  const result = await h.api.operate(h.target, "人工智能");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.equal(h.holder().scrollTop, 0);
+  // 写法相同的照样选上。
+  const same = scrollingAntd(LAZY, { grow: { delay: 200, more: [PAGE] } });
+  const found = await same.api.operate(same.target, "补充大学15");
+  assert.equal(found.ok, true, JSON.stringify(found));
+  assert.deepEqual(same.picked, ["补充大学15"]);
 });
 
 test("virtual list without search: a multiple select picks values off the first screen by scrolling", async () => {

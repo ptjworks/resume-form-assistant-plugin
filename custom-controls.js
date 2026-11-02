@@ -595,21 +595,34 @@
   }
   // #429 不能搜索的虚拟列表（antd 4/5/6 的 rc-virtual-list、Element Plus 的 el-select-v2）只画出一屏，屏外的选项不在页面上。
   // 把装着选项的滚动层从头往下一屏一屏地滚（每次少滚一行，前后两屏叠着一行），每滚一次等画出来的选项停住 SCAN_STEADY_MS，
-  // 按排版位置记下见过的每一项（文字相同、位置差不到半行的算同一项）。滚到底以后按整张列表比，和画全了的列表一样：
-  // 对不上、几项都对得上都不选。对上的一项滚回它那一屏，按文字和位置认出来交回去；again() 按同样的办法再认一次，
+  // 按排版位置记下见过的每一项（文字相同、位置差不到半行的算同一项）。滚到底以后再等 SCAN_TAIL_MS，列表变长了就接着滚。
+  // 看全了（滚的时候列表一直没变长，到底以后也没变长、没有加载中的标记）按整张列表比，和画全了的列表一样：
+  // 对不上、几项都对得上都不选。列表变长过（懒加载）或到底时还显示着加载中，说不准后面还有没有，只认文字相同
+  // （见 sameOption）的一项，「包含」和同一个意思的另一种写法都不认。
+  // 对上的一项滚回它那一屏，按文字和位置认出来交回去；again() 按同样的办法再认一次，
   // 点之前用（滚动后重画换了节点也认得出），认不出时调用方用 back() 滚回原处。
   // 下面这些都按没有匹配的选项报：滚了以后画出来的选项盖不住看得见的这一段（列表不跟着滚动重画）、滚不动、
   // 滚了 SCAN_SCREENS 屏或 SCAN_MS 还没到底（越滚越长的懒加载、一直在变的列表；等列表停住的时间也算在里面）。
   // 没找到、出错时都滚回原处。
   // read 读弹层里当前画出来的选项。
-  const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000;
+  const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000, SCAN_TAIL_MS = 500;
+  // 弹层里显示着加载中：aria-busy、加载圈（类名以 loading 结尾、antd 的 ant-spin-spinning、Element 的 el-loading-mask），
+  // 或一段「加载中」「loading」这样的字。
+  const LOADING_MARKS = '[aria-busy="true"], .ant-spin-spinning, .el-loading-mask, .is-loading, [class*="loading" i]';
+  function loadingShown(layer, h) {
+    return Array.from(layer.querySelectorAll(antd(layer, LOADING_MARKS))).some(node => h.visible(node)
+      && (node.matches(antd(node, '[aria-busy="true"], .ant-spin-spinning, .el-loading-mask, .is-loading'))
+        || String(node.getAttribute('class') || '').split(/\s+/).some(token => LOADING_TOKEN.test(token))))
+      || Array.from(layer.querySelectorAll('*')).some(node => !node.children.length && GENERIC_LOADING.test(trim(node.textContent)) && h.visible(node));
+  }
   async function scanList(ctx, h, read, popup, layer, value) {
     const first = read().filter(option => option.node?.isConnected);
     const scroller = first.length && popup?.isConnected ? listScroller(first.map(option => option.node), listLimit(popup, layer)) : null;
     const heights = first.map(option => option.node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
     const row = heights[Math.floor(heights.length / 2)] || 0;
     if (!scroller || !row) return { reason: 'no_option_match' };
-    const home = scroller.scrollTop, started = Date.now();
+    const home = scroller.scrollTop, started = Date.now(), startHeight = scroller.scrollHeight;
+    const left = () => SCAN_MS - (Date.now() - started);
     const keyOf = option => `${option.value}\u0000${option.text}`;
     // 画出来的选项和它们在滚动内容里的位置。
     const placed = list => {
@@ -622,14 +635,14 @@
         const list = read(), key = list.map(keyOf).join('\n');
         if (key !== last) { last = key; since = Date.now(); }
         return list;
-      }, () => Date.now() - since >= SCAN_STEADY_MS, Math.max(0, Math.min(h.timeoutMs ?? 2000, SCAN_MS - (Date.now() - started))));
+      }, () => Date.now() - since >= SCAN_STEADY_MS, Math.max(0, Math.min(h.timeoutMs ?? 2000, left())));
     };
     let found = null;
     try {
       const seen = [];
-      let previous = -1;
+      let previous = -1, grew = false;
       for (let screen = 0, target = 0; ; screen++) {
-        if (screen >= SCAN_SCREENS || Date.now() - started > SCAN_MS) return { reason: 'no_option_match' };
+        if (screen >= SCAN_SCREENS || left() < 0) return { reason: 'no_option_match' };
         scroller.scrollTop = target;
         const settled = await settle();
         if (settled.reason) return { reason: settled.reason === 'verification_timeout' ? 'no_option_match' : settled.reason };
@@ -645,10 +658,19 @@
             seen.push({ key: keyOf(option), at, text: option.text, value: option.value, full: option.full, disabled: option.disabled });
           }
         }
-        if (bottom >= scroller.scrollHeight - 1) break;
+        if (scroller.scrollHeight > startHeight) grew = true;
         target = view + Math.max(scroller.clientHeight - row, row);
+        if (bottom < scroller.scrollHeight - 1) continue;
+        // 到底了：再等 SCAN_TAIL_MS 看列表还变不变长。变长了接着往下滚；剩下的时间不够等满的，当作说不准。
+        const height = scroller.scrollHeight, waited = left() >= SCAN_TAIL_MS;
+        const tail = await h.waitUntil(ctx, scroller.ownerDocument.documentElement, () => scroller.scrollHeight, now => now > height, Math.max(0, Math.min(SCAN_TAIL_MS, left())));
+        if (tail.reason && tail.reason !== 'verification_timeout') return { reason: tail.reason };
+        if (tail.value) { grew = true; continue; }
+        if (!waited || loadingShown(listLimit(popup, layer), h)) grew = true;
+        break;
       }
-      const matched = match(seen.sort((a, b) => a.at - b.at), value, h.helpers);
+      const list = seen.sort((a, b) => a.at - b.at);
+      const matched = grew ? sameOption(list, value, h.helpers) : match(list, value, h.helpers);
       if (!matched.option) return { reason: matched.reason };
       const wanted = matched.option;
       const locate = list => placed(list).find(({ option, at }) => keyOf(option) === wanted.key && Math.abs(at - wanted.at) < row / 2)?.option || null;
