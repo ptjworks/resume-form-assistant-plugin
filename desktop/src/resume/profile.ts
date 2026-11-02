@@ -1,6 +1,7 @@
 // 插件的 profile-fields.js 是 IIFE：没有 CommonJS 时把 API 挂到 globalThis.ResumeProProfile。
 // 这里只做一次副作用导入，再给 TS 一个有类型的入口。
 import "./profile-fields.js";
+import "./ai-helpers.js";
 
 export interface ProfileFieldDef {
   id: string;
@@ -49,3 +50,8 @@ interface ProfileApi {
 }
 
 export const profileApi = (globalThis as unknown as { ResumeProProfile: ProfileApi }).ResumeProProfile;
+
+/** 18 位证件号的校验结果（ai-helpers.js，#429），不是 18 位的返回 null。 */
+export const idNumberInfo = (value: string): { valid: boolean; kind: string } | null =>
+  (globalThis as unknown as { ResumeProAIHelpers: { idNumberInfo(value: string): { valid: boolean; kind: string } | null } })
+    .ResumeProAIHelpers.idNumberInfo(value);

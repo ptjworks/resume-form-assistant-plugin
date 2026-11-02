@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { KeyboardEvent, MutableRefObject } from "react";
 import type { ProfileRecordView } from "../api.ts";
 import { useInvoke } from "../react/invoke.tsx";
-import { profileApi } from "./profile.ts";
+import { idNumberInfo, profileApi } from "./profile.ts";
 import type { FamilyMember, Profile, ProfileFieldDef } from "./profile.ts";
 import type { Notice } from "./resume-text.ts";
 import type { DesktopEvent, Listen } from "./LegacyImport.tsx";
@@ -149,6 +149,9 @@ function FieldInput({
   }
   // macOS WKWebView 有时把 type=month 渲成普通文本框，给个占位符提示格式。
   const placeholder = def.placeholder ?? (def.type === "month" ? "YYYY-MM" : undefined);
+  // #429 18 位的证件号码核对校验码和出生日期，对不上只提示，照常保存。
+  // 提示放在 label 里跟着输入框排版，aria-hidden 让它不算进字段名，读屏经 aria-describedby 读到。
+  const badId = def.id === "idNumber" && idNumberInfo(value)?.valid === false;
   return (
     <label htmlFor={id}>
       {label}
@@ -157,8 +160,10 @@ function FieldInput({
         type={def.type === "month" ? "month" : "text"}
         value={value}
         placeholder={placeholder}
+        aria-describedby={badId ? `${id}-hint` : undefined}
         onChange={(event) => onChange(event.target.value)}
       />
+      {badId ? <span id={`${id}-hint`} className="field-hint" aria-hidden="true">号码没通过校验，请核对。</span> : null}
     </label>
   );
 }

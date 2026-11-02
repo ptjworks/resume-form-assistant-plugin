@@ -88,7 +88,9 @@
     format_mismatch: "只能填数字",
     readonly_picker: "网页自己的选择框",
     operation_failed: "控件操作失败",
-    cancelled: "填写已停止"
+    cancelled: "填写已停止",
+    // #429 本地规则特意不填的（ai-helpers.js 的 blocked）。
+    id_type_mismatch: "和证件号码对不上"
   };
   let shadowRoot = null;
   // idle → running → ready or failed; unsupported on a page that cannot hold the controller.
@@ -2986,7 +2988,8 @@
             continue;
           }
           // 先填时页面跟着带出值的另一半（Moka 的月份）不算已有内容。
-          if (entry && !pageFilled.has(entry) && hasExistingValue(entry)) occupied.add(entry);
+          // 不填的（blocked）不用问要不要覆盖。
+          if (entry && !match.blocked && !pageFilled.has(entry) && hasExistingValue(entry)) occupied.add(entry);
           later.push(match);
         }
         if (occupied.size && !window.confirm(
@@ -3117,6 +3120,10 @@
         const fieldMeta = fieldMetaMap.get(match.fieldId);
         if (fieldMeta?.cascadeGroup !== undefined && failedCascadeGroups.has(fieldMeta.cascadeGroup)) {
           noteControlFailure(element, fieldMeta, match.value, 'cascade_parent_failed');
+          continue;
+        }
+        if (match.blocked) {
+          noteControlFailure(element, fieldMeta, match.value, match.blocked);
           continue;
         }
         // Host-owned accounting callback: a guard refusal before any write is

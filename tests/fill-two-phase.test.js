@@ -233,11 +233,12 @@ test("cancelling while the early fill is still writing only cancels the AI wait;
 
 // AI 回来、填完它自己的字段以后：先填的字段被上面 AI 选的题目清空了，按原值再填一次，和原来从上往下填的结果一样。
 test("a local field the page clears when the AI's choice above it changes is filled again after that choice", async (t) => {
-  const resume = [["基本信息", "证件类型", "身份证"], ["基本信息", "身份证号", "110101199001011234"], ...RESUME];
-  const TYPE = item("idType", "证件类型", `<select id="idType" name="idType"><option value="">请选择</option><option value="1">身份证</option><option value="2">护照</option></select>`);
+  // 证件类型现在本地就填（#429），这里用交给 AI 的国籍。
+  const resume = [["基本信息", "国籍", "中国"], ["基本信息", "身份证号", "110101199001011234"], ...RESUME];
+  const TYPE = item("nation", "国籍", `<select id="nation" name="nation"><option value="">请选择</option><option value="1">中国</option><option value="2">其他</option></select>`);
   const p = page(t, input("name", "姓名") + TYPE + input("idNo", "证件号码"), { resume });
-  // 常见的 Vue watch：证件类型一变，证件号码清空。
-  p.w.document.getElementById("idType").addEventListener("change", () => {
+  // 常见的 Vue watch：国籍一变，证件号码清空。
+  p.w.document.getElementById("nation").addEventListener("change", () => {
     const number = p.w.document.getElementById("idNo");
     number.value = "";
     number.dispatchEvent(new p.w.Event("input", { bubbles: true }));
@@ -245,10 +246,10 @@ test("a local field the page clears when the AI's choice above it changes is fil
   const running = p.run();
   assert.ok(await p.until(() => p.value("idNo") && p.worker.calls.length === 1 && /AI 匹配中/.test(p.ui.fill.textContent)),
     "the number is filled before the AI answers");
-  assert.deepEqual(p.worker.calls[0].labels, ["证件类型"]);
+  assert.deepEqual(p.worker.calls[0].labels, ["国籍"]);
   p.worker.calls[0].reply();
   const result = await running;
-  assert.deepEqual(["name", "idType", "idNo"].map(p.value), ["测试用户", "1", "110101199001011234"]);
+  assert.deepEqual(["name", "nation", "idNo"].map(p.value), ["测试用户", "1", "110101199001011234"]);
   assert.equal(result.outcome, "success", p.ui.diag.value);
   assert.equal(result.filledCount, 3);
   assert.equal(p.ui.status.textContent, "已填写 3 个字段。");
@@ -707,4 +708,50 @@ test("an assisted fill counts same questions across the whole page, not just the
   p.worker.calls[0].reply({ 每周可实习天数: "3天", 毕业院校: "示例大学" });
   await running;
   assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "3天", "示例大学"]);
+});
+
+// #429 证件类型按资料和号码本地填；资料写的和号码对不上的不填，报「和证件号码对不上」，也不交给 AI。
+const ID_PAGE = (selected = "") => input("name", "姓名") + item("idType", "证件类型", `<select id="idType" name="idType"><option value="">请选择</option>`
+  + [["1", "居民身份证"], ["2", "港澳台居民居住证"], ["3", "护照"]].map(([value, text]) => `<option value="${value}"${value === selected ? " selected" : ""}>${text}</option>`).join("")
+  + `</select>`) + input("idNo", "证件号码") + input("school", "毕业院校");
+
+test("the ID number picks the ID type before the AI answers when the profile states none", async (t) => {
+  const p = page(t, ID_PAGE(), { resume: [["基本信息", "证件号码", "810000199408230021"], ...RESUME] });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("idNo") && p.worker.calls.length === 1), "filled before the AI answers");
+  assert.deepEqual(["idType", "idNo"].map(p.value), ["2", "810000199408230021"]);
+  assert.deepEqual(p.worker.calls[0].labels, ["毕业院校"]);
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+  assert.equal(result.filledCount, 4);
+});
+
+test("an ID type the number contradicts is left empty and reported, not sent to the AI", async (t) => {
+  const resume = [["基本信息", "证件类型", "居民身份证"], ["基本信息", "证件号码", "810000199408230021"], ...RESUME];
+  const p = page(t, ID_PAGE(), { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("idNo") && p.worker.calls.length === 1), "the number is filled before the AI answers");
+  assert.deepEqual(p.worker.calls[0].labels, ["毕业院校"]);
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.deepEqual(["name", "idType", "idNo", "school"].map(p.value), ["测试用户", "", "810000199408230021", "示例大学"]);
+  assert.equal(result.filledCount, 3);
+  assert.equal(result.unfilledCount, 1);
+  assert.equal(p.ui.status.textContent, "已填写 3 个字段。1 项没填上：证件类型（和证件号码对不上），请手动补上。");
+  const report = (await p.report()).diagnosticsReport;
+  assert.match(report, /^- .*: select reason=id_type_mismatch$/m);
+});
+
+test("a contradicted ID type that already has a value asks no overwrite question and stays as it is", async (t) => {
+  const resume = [["基本信息", "证件类型", "护照"], ["基本信息", "证件号码", "11010519491231002X"], ...RESUME];
+  const p = page(t, ID_PAGE("1"), { resume, confirm: () => false });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1), "the AI is asked");
+  assert.deepEqual(p.worker.calls[0].labels, ["毕业院校"]);
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.equal(p.confirms.length, 0);
+  assert.deepEqual(["idType", "idNo", "school"].map(p.value), ["1", "11010519491231002X", "示例大学"]);
+  assert.equal(result.unfilledCount, 1);
 });

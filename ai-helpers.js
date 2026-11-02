@@ -20,6 +20,8 @@
     { type: "gender", keywords: ["性别", "gender"] },
     { type: "birth_date", keywords: ["出生日期", "生日", "birth", "出生年月"] },
     { type: "name", keywords: ["姓名", "name", "realname"] },
+    // 证件类型只认下拉和单选（inferFieldSemantic）：号码框的占位文字可能写着「请先选择证件类型」。
+    { type: "id_type", keywords: ["证件类型", "证件种类", "idtype", "idcardtype"] },
     { type: "id_number", keywords: ["身份证", "证件号码", "证件号", "idnumber", "身份证号"] },
     { type: "hometown", keywords: ["籍贯", "生源地", "户口", "户籍", "nativeplace", "hometown", "hukou"] },
     { type: "region", keywords: ["国家/地区", "国家地区", "country", "region", "地区"] },
@@ -34,6 +36,20 @@
   // 字段名认不出、只能按值猜手机和证件号时用（isResumeFieldMatch）。
   const MOBILE_VALUE = /^(\+?86)?1[3-9]\d{9}$/;
   const CN_ID_VALUE = /^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dxX]$/;
+  // #429 18 位身份证号（GB 11643）：6 位地址码、8 位出生日期、3 位顺序码、1 位校验码（ISO 7064 MOD 11-2）。
+  // 港澳台居民居住证（81、82、83 开头）和 2023 版外国人永久居留身份证（9 加省级代码开头）也是这个编法。
+  // 15 位的一代证 2013 年起停用，不认。规则对照 china-id-card（MIT）自己写的，没有拷它的代码。
+  const ID_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+  const ID_PROVINCES = new Set("11 12 13 14 15 21 22 23 31 32 33 34 35 36 37 41 42 43 44 45 46 50 51 52 53 54 61 62 63 64 65".split(" "));
+  // 号码看得出的证件类型在选项里的写法，按顺序找；选项读不到（自定义下拉）时用第一个。
+  const ID_TYPE_NAMES = {
+    resident: ["居民身份证"],
+    hkmo: ["港澳居民居住证", "港澳台居民居住证"],
+    tw: ["台湾居民居住证", "港澳台居民居住证"],
+    foreign: ["外国人永久居留身份证"]
+  };
+  // 选项里没有分开写的居住证、只有合写的一项时选合写的（findSelectOptionIndex）。
+  const JOINT_RESIDENCE = "港澳台居民居住证";
 
   // #429 下拉、单选的选项和资料是同一个意思的不同写法，又不是包含关系（「汉族」对「汉」、「共青团员」对「中国共产主义青年团团员」）。
   // 每组是同一个意思的几种写法，选项里正好一项是同组的另一种写法才用它（findSelectOptionIndex）。只收确定同义的：
@@ -53,6 +69,8 @@
     ["居民身份证", "身份证", "中国居民身份证", "中华人民共和国居民身份证", "大陆居民身份证", "二代身份证"],
     ["港澳居民来往内地通行证", "回乡证"],
     ["台湾居民来往大陆通行证", "台胞证"],
+    // 2017 年改名前叫「外国人永久居留证」。
+    ["外国人永久居留身份证", "外国人永久居留证"],
     // 政治面貌：国标全称（GB/T 4762）、常用简称。单写「党员」不收：民主党派的党员也这么写。
     ["中共党员", "中国共产党党员", "共产党员"],
     ["中共预备党员", "中国共产党预备党员", "预备党员"],
@@ -158,6 +176,7 @@
   const helpers = {
     normalizeText,
     inferFieldSemantic,
+    idNumberInfo,
     buildRuleBasedMatches,
     isSecretFormField,
     isSafeResumeField,
@@ -202,8 +221,28 @@
       field?.idAttr,
       field?.ariaLabel
     ].filter(Boolean).join(" "));
+    const choice = field?.inputType === "select" || field?.inputType === "radio";
 
-    return SEMANTIC_KEYWORDS.find((item) => item.keywords.some((keyword) => haystack.includes(keyword)))?.type || "";
+    return SEMANTIC_KEYWORDS.find((item) => (item.type !== "id_type" || choice)
+      && item.keywords.some((keyword) => haystack.includes(keyword)))?.type || "";
+  }
+
+  // 18 位的号码返回 { valid, kind }：校验码、出生日期和开头都对才 valid，kind 是 ID_TYPE_NAMES 里的一种，不 valid 时为空。
+  // 不是 18 位数字（末位可以是 X）的返回 null。
+  function idNumberInfo(value) {
+    const text = String(value ?? "").replace(/\s/g, "").toUpperCase();
+    if (!/^\d{17}[\dX]$/.test(text)) return null;
+    const sum = ID_WEIGHTS.reduce((total, weight, i) => total + weight * Number(text[i]), 0);
+    const year = Number(text.slice(6, 10));
+    const month = Number(text.slice(10, 12));
+    const day = Number(text.slice(12, 14));
+    const birth = new Date(Date.UTC(year, month - 1, day));
+    const dateOk = year >= 1900 && birth.getUTCMonth() === month - 1 && birth.getUTCDate() === day && birth.getTime() <= Date.now();
+    const head = text.slice(0, 2);
+    const kind = ID_PROVINCES.has(head) ? "resident" : head === "81" || head === "82" ? "hkmo" : head === "83" ? "tw"
+      : text[0] === "9" && ID_PROVINCES.has(text.slice(1, 3)) ? "foreign" : "";
+    const valid = Boolean(kind) && dateOk && "10X98765432"[sum % 11] === text[17];
+    return { valid, kind: valid ? kind : "" };
   }
 
   // 简历字段名是哪一类：先查 FIELD_SEMANTICS，再认 DOB 这类缩写（整个名字才算，Adobe 不算）和别的号码。
@@ -251,7 +290,7 @@
   }
 
   function buildRuleBasedMatches(formFields, resumeFields) {
-    const strongTypes = new Set(["name", "email", "phone", "gender", "birth_date", "id_number", "hometown", "region"]);
+    const strongTypes = new Set(["name", "email", "phone", "gender", "birth_date", "id_type", "id_number", "hometown", "region"]);
     const matches = [];
     const usedResumeIndexes = new Set();
     // 简历字段名的类别每项只算一次，用到时才算。
@@ -269,6 +308,11 @@
       }
 
       const formScope = personScope(fieldContextText(field));
+      if (semantic === "id_type") {
+        const match = idTypeMatch(field, resumeFields, formScope);
+        if (match) matches.push(match);
+        return;
+      }
       // #429 级联的地区题（一个「籍贯」框从省选到区县）：同一个问题下简历里分开存的省、市、县拼成一条路径（「河南省/南阳市/南召县」）。
       const composed = semantic === "hometown" && field?.cascade === true
         ? composeRegionPath(field, resumeFields, usedResumeIndexes, formScope) : null;
@@ -300,6 +344,24 @@
     });
 
     return matches;
+  }
+
+  // #429 证件类型：号码看不出类型的照资料填。看得出的，资料没写就按号码选；资料写的和号码对不上不填，
+  // 带上 blocked，填写时记作没填上（「和证件号码对不上」），也不再交给 AI。
+  function idTypeMatch(field, resumeFields, formScope) {
+    const own = resumeFields.filter((item) => String(item?.value ?? "").trim() && isSamePersonScope(item, formScope));
+    const stated = String(own.find((item) => /证件(类型|种类)/.test(normalizeText(item.key)))?.value ?? "").trim();
+    const number = own.map((item) => isResumeFieldMatch("id_number", item, field) ? idNumberInfo(item.value) : null)
+      .find((info) => info?.valid);
+    const match = (value) => ({ fieldId: field.fieldId, value });
+    if (!number) return stated ? match(stated) : null;
+    const names = ID_TYPE_NAMES[number.kind];
+    const inferred = hasRealOptions(field) ? names.find((name) => findSelectOptionIndex(field.options, name) >= 0) : names[0];
+    if (!stated) return inferred ? match(inferred) : null;
+    if (findSelectOptionIndex(names, stated) >= 0) return match(stated);
+    // 「我的信息」的证件类型里没有居住证和永久居留证，持这几种证的只能选「其他」。
+    if (stated === "其他" && number.kind !== "resident") return match(inferred || stated);
+    return { ...match(stated), blocked: "id_type_mismatch" };
   }
 
   // 级联地区题要的整条路径：题目自己没写层级（写了「籍贯（省）」的照常只要省），简历里同一个问题至少有省和下面一级，按省、市、县拼起来。
@@ -353,7 +415,8 @@
         return false;
       }
 
-      return isValueValidForField(formField, match.value);
+      // 本地规则特意不填的（blocked）照样留着：填写时要报出来，也不能让 AI 再填。
+      return Boolean(match.blocked) || isValueValidForField(formField, match.value);
     });
   }
 
@@ -440,6 +503,11 @@
       && new Set(usable.map(({ option }) => groupOf(option)).filter((other) => other?.family === group.family)).size < 2;
     const synonyms = group && !outOfScope ? usable.filter(({ option }) => groupOf(option) === group) : [];
     if (synonyms.length === 1) return synonyms[0].index;
+
+    if ([ID_TYPE_NAMES.hkmo[0], ID_TYPE_NAMES.tw[0]].includes(normalizedTarget)) {
+      index = findUsable((option) => normalizeText(optionText(option)) === JOINT_RESIDENCE);
+      if (index >= 0) return index;
+    }
 
     // 「全日制」不能落到「非全日制」，反过来也一样。
     const negatedBefore = (text, at) => /(非|不|无|未)$/.test(text.slice(0, at));
@@ -684,6 +752,11 @@
     }
   }
 
+  function hasRealOptions(field) {
+    return Array.isArray(field?.options)
+      && field.options.some((option) => !isPlaceholderOption(option) && String(typeof option === "object" && option !== null ? option.text ?? "" : option ?? "").trim());
+  }
+
   function isValueValidForField(field, value) {
     const text = String(value ?? "").trim();
     const semantic = inferFieldSemantic(field);
@@ -694,10 +767,7 @@
 
     // 只有「请选择」、选项还没加载出来的下拉框（没被识别成联动组的下一级）这里不判，
     // 交给页面填写时等选项出来再选；否则值在这里就被丢掉，页面上的重试拿不到东西。
-    const hasRealOptions = Array.isArray(field?.options)
-      && field.options.some((option) => !isPlaceholderOption(option) && String(typeof option === "object" && option !== null ? option.text ?? "" : option ?? "").trim());
-
-    if ((field?.inputType === "select" || field?.inputType === "radio") && hasRealOptions && field?.cascadeGroup === undefined) {
+    if ((field?.inputType === "select" || field?.inputType === "radio") && hasRealOptions(field) && field?.cascadeGroup === undefined) {
       // 和网页上实际选值用同一套规则，否则页面能选上的值会先在这里被丢掉。多选（#429）每一项都要对得上。
       const parts = field?.multiple === true ? splitMultipleValues(text, field.options) : [text];
       if (!parts.length || parts.some((part) => findSelectOptionIndex(field.options, part) < 0)) {

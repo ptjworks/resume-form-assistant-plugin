@@ -100,6 +100,23 @@ test("待补充的补充字段要标出来", async () => {
   expect(within(row).getByText("待补充")).toBeTruthy();
 });
 
+// #429 18 位的证件号码没通过校验（校验码、出生日期）时在框下提示；不是 18 位的（护照）不提示。
+test("证件号码没通过校验时在框下提示，字段名不变", async () => {
+  const user = userEvent.setup();
+  mount(() => record);
+  const number = await screen.findByRole("textbox", { name: "证件号码" });
+  await user.type(number, "110105194912310021");
+  expect(screen.getByText("号码没通过校验，请核对。")).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "证件号码" }).getAttribute("aria-describedby")).toBe("profile-idNumber-hint");
+  await user.clear(number);
+  await user.type(number, "11010519491231002X");
+  expect(screen.queryByText("号码没通过校验，请核对。")).toBeNull();
+  expect(number.getAttribute("aria-describedby")).toBeNull();
+  await user.clear(number);
+  await user.type(number, "E12345678");
+  expect(screen.queryByText("号码没通过校验，请核对。")).toBeNull();
+});
+
 test("保存时带上读到的版本号和规范化后的档案", async () => {
   const user = userEvent.setup();
   const calls = mount((command, args) =>
