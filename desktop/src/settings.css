@@ -42,10 +42,10 @@
 /* 卡片里的按钮与输入框：只在设置页内生效。 */
 #view-settings .settings-content button, .settings-dialog button { min-height: 36px; padding: 6px 14px; border-radius: 8px; font-size: 13px; }
 #view-settings .settings-content button .icon, .settings-dialog button .icon { width: 15px; height: 15px; margin-right: 6px; vertical-align: -2px; }
-#view-settings .settings-content input:not([type="checkbox"]), #view-settings .settings-content select, .settings-dialog input:not([type="checkbox"]), .settings-dialog textarea { min-height: 40px; border-radius: 8px; border-color: var(--card-line); }
-#view-settings .settings-content input:not([type="checkbox"]), .settings-dialog input:not([type="checkbox"]), .settings-dialog textarea { width: 100%; }
+#view-settings .settings-content input:not([type="checkbox"]), #view-settings .settings-content select, .settings-dialog input:not([type="checkbox"]), .settings-dialog select, .settings-dialog textarea { min-height: 40px; border-radius: 8px; border-color: var(--card-line); }
+#view-settings .settings-content input:not([type="checkbox"]), .settings-dialog input:not([type="checkbox"]), .settings-dialog select, .settings-dialog textarea { width: 100%; }
 /* macOS 原生下拉框不认 min-height，比旁边的输入框矮一截：改成自绘，箭头和折叠栏同色。 */
-#view-settings .settings-content select { -webkit-appearance: none; appearance: none; padding: 6px 32px 6px 10px; background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237b8494' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 11px center / 13px 13px; }
+#view-settings .settings-content select, .settings-dialog select { -webkit-appearance: none; appearance: none; padding: 6px 32px 6px 10px; background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237b8494' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 11px center / 13px 13px; }
 #view-settings .settings-content select:disabled { background-color: #f6f8fa; }
 #view-settings .settings-content input:not([type="checkbox"]):focus, #view-settings select:focus, .settings-dialog textarea:focus { border-color: #8fbcb2; }
 .settings-danger { color: var(--danger); border-color: #e6b9b9; background: var(--panel); }
