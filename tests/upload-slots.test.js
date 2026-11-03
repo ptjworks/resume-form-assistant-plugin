@@ -130,7 +130,21 @@ test("a box that already holds a file is seen as taken", () => {
     ${element({ id: "b", title: "证件照", accept: "image/*", picture: true, list: `<li class="el-upload-list__item is-success"><img class="el-upload-list__item-thumbnail" src="blob:https://jobs.example.test/1"></li>` })}
     <div class="row"><span>成绩单</span><div class="x-upload"><input id="c" type="file" style="display:none"><span>上传</span></div><span class="file">成绩单.pdf</span></div>
     ${antd({ id: "d", title: "证件照", extra: "支持 .jpg .png 格式" })}`);
-  assert.deepEqual(found(doc).map(slot => [slot.input.id, slot.hasFile]), [["a", true], ["b", true], ["c", true], ["d", false]]);
+  // 文件项、缩略图是有文件的根据；只有一段像文件名的字认不准，照「已经有文件」处理，另记一下。
+  assert.deepEqual(found(doc).map(slot => [slot.input.id, slot.hasFile, slot.fileUnsure]),
+    [["a", true, false], ["b", true, false], ["c", true, true], ["d", false, false]]);
+});
+
+test("a file name with spaces or brackets shown as text still keeps the box from a second upload; hints and template links do not", () => {
+  const box = (id, text) => `<div class="row"><span>${id === "plain" ? "简历" : "附件"}</span><div class="x-upload"><input id="${id}" type="file" style="display:none"><span>上传</span></div><span class="file">${text}</span></div>`;
+  const doc = page([
+    box("spaced", "我的 简历.pdf"), box("bracket", "简历 (1).pdf"), box("hint", "支持格式 .pdf"), box("hint2", "请上传 PDF 或 Word，例如 张三.docx"),
+    box("template", "报名表模板.docx"), box("plain", "选择文件")
+  ].join(""));
+  assert.deepEqual(found(doc).map(slot => [slot.input.id, slot.hasFile, slot.fileUnsure]), [
+    ["spaced", true, true], ["bracket", true, true], ["hint", false, false], ["hint2", false, false], ["template", false, false], ["plain", false, false]]);
+  const [spaced] = found(doc);
+  assert.equal(slots.fileEvidence(spaced, isVisible), "text");
 });
 
 test("a file is picked by template, then the default, then the only one; otherwise the user picks", () => {
@@ -277,4 +291,15 @@ test("a native file box with no component is done once it holds the file; the pa
   picked = [{ name: "成绩单.pdf" }];
   assert.equal(slots.state(slot, "成绩单.pdf", seen, [doc], isVisible).state, "done");
   assert.equal(slots.state(slot, "别的.pdf", seen, [doc], isVisible).state, "none");
+});
+
+test("busy signs that were on the page before the upload are not counted", () => {
+  const doc = page(`<div role="progressbar" aria-valuenow="40"></div><p id="status">资料审核处理中</p><div id="x"></div>`);
+  const baseline = new Set(slots.busyMarks([doc], isVisible));
+  assert.equal(slots.busy([doc], isVisible), true, "without a baseline the permanent ones count");
+  assert.equal(slots.busy([doc], isVisible, () => false, baseline), false);
+  doc.getElementById("x").innerHTML = `<div class="ant-spin ant-spin-spinning"></div>`;
+  assert.equal(slots.busy([doc], isVisible, () => false, baseline), true, "a spinner that appeared afterwards counts");
+  doc.getElementById("x").innerHTML = `<p>正在导入资料</p>`;
+  assert.equal(slots.busy([doc], isVisible, () => false, baseline), false, "导入 is not one of the words");
 });

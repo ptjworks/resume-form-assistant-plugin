@@ -188,11 +188,17 @@ async function page(t, body, { url = "https://app.mokahr.com/campus_apply/exampl
 }
 
 // 替身网站：选了文件就在列表里列出来；简历传上 3 秒后「解析」：姓名填上解析的值、兴趣爱好被清空。
-function fakeSite(p, { parse = true, dialog = false, silentPhoto = false } = {}) {
+function fakeSite(p, { parse = true, dialog = false, silentPhoto = false, failResume = false } = {}) {
   const doc = p.w.document;
   doc.getElementById("resume").addEventListener("change", (event) => {
     const file = event.target.files[0];
     p.seen.events.push("resume");
+    if (failResume) {
+      // 网站拒收：文件项标成出错，弹一条报错提示。
+      doc.querySelector(".ant-upload-list").innerHTML = `<div class="ant-upload-list-item ant-upload-list-item-error"><span title="${file.name}">${file.name}</span></div>`;
+      doc.body.insertAdjacentHTML("beforeend", `<div class="ant-message"><div class="ant-message-notice"><span>文件格式不对，上传失败</span></div></div>`);
+      return;
+    }
     doc.querySelector(".ant-upload-list").innerHTML = `<div class="ant-upload-list-item ant-upload-list-item-done"><span title="${file.name}">${file.name}</span></div>`;
     if (dialog) {
       p.time.after(2000, () => doc.body.insertAdjacentHTML("beforeend", `<div class="ant-modal" role="dialog"><div class="ant-modal-body">检测到已填写的信息，是否用简历内容覆盖？</div><button type="button" id="overwrite">覆盖</button><button type="button">取消</button></div>`));
@@ -214,6 +220,12 @@ function fakeSite(p, { parse = true, dialog = false, silentPhoto = false } = {})
     doc.querySelector(".el-upload-list").innerHTML = `<li class="el-upload-list__item is-success"><img class="el-upload-list__item-thumbnail" src="blob:https://app.mokahr.com/1"></li>`;
   });
   doc.getElementById("school").addEventListener("input", () => p.seen.events.push("fill"));
+}
+
+function spinAfterResume(p) {
+  p.w.document.getElementById("resume").addEventListener("change", () => {
+    p.w.document.body.insertAdjacentHTML("beforeend", `<div class="ant-spin ant-spin-spinning" id="spin"></div>`);
+  });
 }
 
 const FORM = row("name", "姓名", `<input id="name">`) + row("hobby", "兴趣爱好", `<input id="hobby" value="看书">`)
@@ -264,7 +276,7 @@ test("after the side panel's yes: resume first, then the parse, the user's value
     "改回了网站解析改掉的 1 项：兴趣爱好。"
   ]);
   // 等解析至少等了 Moka 的 12 秒。
-  assert.match(p.ui.diag.value, /上传：框 resume 1、photo 1、other 1；结果 done 2、skipped 1；没传的原因 other_kind 1；解析等待 done，12\.\d s；改回 1，没改回 0，网站填的 0/);
+  assert.match(p.ui.diag.value, /上传：框 resume 1、photo 1、other 1；结果 done 2、skipped 1；没传的原因 other_kind 1；解析等待 done，12\.\d s；改回 1，没改回 0，停下后又变过 0，网站填的 0/);
 });
 
 test("file contents and names stay out of messages, storage, logs, diagnostics, reports and AI requests", async (t) => {
@@ -290,7 +302,8 @@ test("a parse that runs past the limit stops before filling; the next fill puts 
   const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
   fakeSite(p);
   // 网站一直在转圈：等到 60 秒上限。
-  p.w.document.body.insertAdjacentHTML("beforeend", `<div class="ant-spin ant-spin-spinning" id="spin"></div>`);
+  // 传上简历以后网站一直在转圈（传之前就有的转圈不算忙，见 busy 的 baseline）。
+  spinAfterResume(p);
   await p.send({ type: "RESUME_PANEL_FILL" });
   await p.confirm();
   let done = await p.finished();
@@ -303,7 +316,7 @@ test("a parse that runs past the limit stops before filling; the next fill puts 
   assert.deepEqual(await p.send({ type: "RESUME_PANEL_FILL" }), { ok: true, upload: true });
   const offer = (await p.status()).upload;
   assert.deepEqual(offer.slots.map((slot) => [slot.title, slot.reason]), [["简历附件", "has_file"], ["证件照", ""], ["作品集", "other_kind"]]);
-  assert.deepEqual(offer.restore, { count: 1, labels: ["兴趣爱好"], pending: true });
+  assert.deepEqual(offer.restore, { count: 1, labels: ["兴趣爱好"], pending: true, laterCount: 0, later: [] });
   await p.confirm();
   done = await p.finished();
   await Promise.all(p.fills);
@@ -382,8 +395,10 @@ test("with an old desktop there is no card: the fill runs and the result says wh
     "证件照：桌面程序版本较旧，不能上传文件；更新桌面程序，或者自己上传。",
     "作品集：桌面程序版本较旧，不能上传文件；更新桌面程序，或者自己上传。"
   ]);
-  // 会覆盖的平台：不能传时侧栏还是原来那句提示。
-  assert.equal(now.siteHint, "Moka 上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。");
+  // 会覆盖的平台：桌面的回答到之前不先给一句可能不对的提示；回答是不能传，还是原来那句。
+  assert.equal(now.siteHint, "");
+  await settle();
+  assert.equal((await p.status()).siteHint, "Moka 上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。");
 });
 
 test("a page without a file of the kind it asks for gets no card and a line pointing to the desktop", async (t) => {
@@ -442,4 +457,146 @@ test("when the user stops the fill, the files after it are not uploaded", async 
   assert.equal(p.seen.events.includes("photo"), false);
   assert.ok(done.upload.lines.includes("证件照：没有上传。"), done.upload.lines.join(" | "));
   assert.ok(done.upload.lines.includes(`简历附件：已上传 ${RESUME_FILE.name}。`));
+});
+
+test("when the site refuses the resume, nothing is filled and nothing else is uploaded", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p, { failResume: true });
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  const done = await p.finished();
+  // 网站可能其实收到了文件、过一会儿才解析：不能接着填，否则解析结果会把填好的盖掉。
+  assert.equal(p.fills.length, 0);
+  assert.equal(p.value("school"), "");
+  assert.equal(p.w.document.getElementById("photo").files.length, 0);
+  assert.deepEqual(done.upload.lines.slice(0, 3), [
+    "简历上传失败，所以没有继续填写。请在网页上看一下简历框，自己传好简历、等页面不动了，再点一键填写。",
+    "简历附件：网站提示「文件格式不对，上传失败」，没有传上。",
+    "证件照：没有上传。"
+  ]);
+  assert.match(p.ui.diag.value, /解析等待 upload_failed/);
+});
+
+test("on a platform that parses, a resume that never reached the site stops the fill as well", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const offer = (await p.status()).upload;
+  // 后台只给证件照（简历没有确认）：简历取不到，照片取到了也不传。
+  p.grants.grant(9, "https://app.mokahr.com", [{ fileId: PHOTO_FILE.fileId, sha256: PHOTO_FILE.sha256 }]);
+  assert.deepEqual(await p.send({ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: offer.version, epoch: offer.epoch,
+    choices: [{ slot: "upload-0", fileId: RESUME_FILE.fileId }, { slot: "upload-1", fileId: PHOTO_FILE.fileId }] }), { ok: true });
+  const done = await p.finished();
+  assert.equal(p.fills.length, 0);
+  assert.equal(p.w.document.getElementById("resume").files.length, 0);
+  assert.equal(p.w.document.getElementById("photo").files.length, 0);
+  assert.deepEqual(done.upload.lines.slice(0, 3), [
+    "简历上传失败，所以没有继续填写。请在网页上看一下简历框，自己传好简历、等页面不动了，再点一键填写。",
+    "简历附件：没有在侧栏确认，没有上传。",
+    "证件照：没有上传。"
+  ]);
+});
+
+test("只填写，不改回 leaves the values the site changed, drops the record and says so", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  // 传上简历以后网站一直在转圈（传之前就有的转圈不算忙，见 busy 的 baseline）。
+  spinAfterResume(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  await p.finished();
+  p.w.document.getElementById("spin").remove();
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const offer = (await p.status()).upload;
+  assert.deepEqual(offer.restore, { count: 1, labels: ["兴趣爱好"], pending: true, laterCount: 0, later: [] });
+  assert.deepEqual(await p.send({ type: "RESUME_PANEL_UPLOAD", action: "fill", version: offer.version, epoch: offer.epoch }), { ok: true });
+  await Promise.all(p.fills);
+  assert.equal(p.value("hobby"), "", "not put back");
+  assert.equal(p.value("school"), "示例大学");
+  assert.deepEqual((await p.status()).upload.lines, ["这次没有改回上次被网站改掉的 1 项，请核对：兴趣爱好。"]);
+  // 记录不留：下一次一键填写不再提改回，免得把这次填好的又改回去。
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  assert.equal((await p.status()).upload.restore, null);
+});
+
+test("an upload result belongs to its page: after an in-page navigation it is gone", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" }, listStatus: "unsupported" });
+  fakeSite(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await Promise.all(p.fills);
+  const now = await p.status();
+  assert.equal(now.upload.phase, "done");
+  assert.equal(now.upload.host, "app.mokahr.com");
+  p.w.history.pushState({}, "", "/campus_apply/example/2");
+  assert.equal((await p.status()).upload, null);
+});
+
+test("the platform hint waits for the desktop's answer, then says one-click fill uploads the resume first", async (t) => {
+  const p = await page(t, FORM);
+  assert.equal((await p.status()).siteHint, "");
+  await settle();
+  assert.equal((await p.status()).siteHint, "Moka 上传简历后会重新解析并覆盖已填内容。一键填写会先上传简历，等解析完再填写。");
+});
+
+test("a box that seems to hold a file already (its name shown as text, with spaces) is left alone", async (t) => {
+  const seemsTaken = `
+    <div class="ant-form-item"><div class="ant-form-item-label"><label title="简历附件">简历附件</label></div>
+      <div class="ant-form-item-control"><span class="ant-upload-wrapper">
+        <div class="ant-upload ant-upload-select"><span class="ant-upload" role="button"><input id="resume" type="file" accept=".pdf" style="display:none"><button type="button">上传文件</button></span></div>
+        <div class="ant-upload-list ant-upload-list-text"></div></span>
+        <span class="uploaded">我的 简历 (终版).pdf</span></div></div>`;
+  const p = await page(t, row("school", "毕业院校", `<input id="school">`) + seemsTaken + elementPhoto("photo", "证件照"),
+    { url: "https://jobs.example.test/apply", answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const offer = (await p.status()).upload;
+  assert.deepEqual(offer.slots.map((slot) => [slot.title, slot.reason, slot.fileId]), [["简历附件", "file_unsure", ""], ["证件照", "", PHOTO_FILE.fileId]]);
+  await p.confirm();
+  const done = await p.finished();
+  await Promise.all(p.fills);
+  assert.equal(p.w.document.getElementById("resume").files.length, 0);
+  assert.equal(p.w.document.getElementById("photo").files[0].name, PHOTO_FILE.name);
+  assert.ok(done.upload.lines.includes("简历附件：框里像是已经有文件了，没有上传，请看一下网页。"), done.upload.lines.join(" | "));
+  assert.match(p.ui.diag.value, /没传的原因 file_unsure 1/);
+});
+
+test("a progress bar or a status line that was on the page before the upload does not keep the wait going", async (t) => {
+  // 页面上常驻一个步骤进度条和一句「审核处理中」：传简历之前就在，不说明网站在解析。
+  const p = await page(t, FORM + `<div role="progressbar" aria-valuenow="40">40%</div><p>资料审核处理中</p>`, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  const done = await p.finished();
+  await Promise.all(p.fills);
+  assert.deepEqual(p.seen.events, ["resume", "parse", "fill", "photo"]);
+  assert.match(p.ui.diag.value, /解析等待 done，12\.\d s/);
+  assert.ok(!done.upload.lines.some((line) => line.includes("还在解析")));
+});
+
+test("after a stop, a box the user changed by hand is not put back; the one only the site changed is", async (t) => {
+  const form = FORM + row("city", "期望城市", `<input id="city" value="北京">`);
+  const p = await page(t, form, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p, { parse: false });
+  spinAfterResume(p);
+  // 网站解析在 3 秒时清空兴趣爱好、把期望城市改成上海，然后一直转圈：等到上限停下。
+  p.w.document.getElementById("resume").addEventListener("change", () => p.time.after(3000, () => {
+    p.w.document.getElementById("hobby").value = "";
+    p.w.document.getElementById("city").value = "上海";
+  }));
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  await p.finished();
+  assert.deepEqual(["hobby", "city"].map(p.value), ["", "上海"]);
+  // 停下以后用户自己改了兴趣爱好：不知道是谁改的，不改回，列出来；期望城市停下以后没变过，改回。
+  p.w.document.getElementById("hobby").value = "跑步";
+  p.w.document.getElementById("spin").remove();
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const offer = (await p.status()).upload;
+  assert.deepEqual(offer.restore, { count: 1, labels: ["期望城市"], pending: true, laterCount: 1, later: ["兴趣爱好"] });
+  await p.confirm();
+  const done = await p.finished();
+  await Promise.all(p.fills);
+  assert.deepEqual(["hobby", "city"].map(p.value), ["跑步", "北京"]);
+  assert.ok(done.upload.lines.includes("改回了网站解析改掉的 1 项：期望城市。"), done.upload.lines.join(" | "));
+  assert.ok(done.upload.lines.includes("这几项在上次停下以后又变过，没有改回，请核对：兴趣爱好。"), done.upload.lines.join(" | "));
 });

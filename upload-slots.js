@@ -123,7 +123,10 @@
   const LIST_ITEM = "[class*='upload-list-item'], .el-upload-list__item, [class*='upload-list'] > li, [class*='file-item'], [class*='fileItem'], [class*='file-list'] > li, [class*='attachment-item']";
   const PICTURE = /picture-card|picture-circle|avatar|photo-wall|image-upload/i;
   const HINT_TOKEN = /(?:^|[-_])(?:tip|tips|hint|desc|description|extra|help|note|notice|explain)(?:$|[-_])/i;
-  const FILE_NAME = /^[^\s:：，,、;；]{1,96}\.(?:pdf|docx?|jpe?g|png|zip|rar)$/i;
+  // 像文件名的一段字：以扩展名结尾，点前面不是空格（「我的 简历.pdf」「简历 (1).pdf」算，「支持格式 .pdf」不算）。
+  // 提示、模板下载这类说明文字不算。只当兜底：认出来也只说「像是有文件」。
+  const FILE_NAME = /^[^\n:：，,、;；]{0,118}[^\s.]\.(?:pdf|docx?|jpe?g|png|zip|rar)$/i;
+  const NOT_FILE_NAME = /支持|格式|仅限|只能|不超过|大小|类型|扩展名|请上传|模板|样表|示例|例如|下载/;
 
   // 上传组件的根：从 file 框往上，取最外一层带 upload 字样、只装着这一个 file 框、没有别的可见输入框的元素。
   // 认不出组件、框本身又看不见（自己写的「上传」按钮包着藏起来的 file 框）时，取往上最近一层看得见、只装着它的元素。
@@ -214,21 +217,29 @@
         kind: decided.kind, reason: decided.reason,
         siteLimit, limit: siteLimit === null ? MAX_FILE_BYTES : Math.min(siteLimit, MAX_FILE_BYTES),
         language: Object.keys(LANGUAGE_WORDS).filter(key => LANGUAGE_WORDS[key].test(title)),
-        hasFile: hasFile({ input, root, scope: scopeEl }, isVisible)
+        ...(() => {
+          const evidence = fileEvidence({ input, root, scope: scopeEl }, isVisible);
+          return { hasFile: Boolean(evidence), fileUnsure: evidence === "text" };
+        })()
       });
     }
     return slots;
   }
 
   // 框里已经有文件：file 框自己带着文件，表单项里有文件项、网页传上去的缩略图，或单独一段文字就是文件名。
-  function hasFile(slot, isVisible = () => true) {
+  // 框里已经有文件的根据：files（file 框自己带着文件）、list（表单项里有文件项）、thumb（网站传上去的缩略图），
+  // text（只有一段像文件名的字，认不准：照「已经有文件」处理，不传，原因码单独记）；没有根据是 ""。
+  function fileEvidence(slot, isVisible = () => true) {
     try {
-      if (slot.input?.files?.length) return true;
+      if (slot.input?.files?.length) return "files";
     } catch { /* 读不到就看页面 */ }
     const scopeEl = slot.scope || slot.root;
-    if (listItems(scopeEl).some(el => isVisible(el))) return true;
-    if (thumbnails(scopeEl).some(el => isVisible(el))) return true;
-    return visibleText(scopeEl, isVisible).some(text => FILE_NAME.test(text));
+    if (listItems(scopeEl).some(el => isVisible(el))) return "list";
+    if (thumbnails(scopeEl).some(el => isVisible(el))) return "thumb";
+    return visibleText(scopeEl, isVisible).some(text => text.length <= 120 && FILE_NAME.test(text) && !NOT_FILE_NAME.test(text)) ? "text" : "";
+  }
+  function hasFile(slot, isVisible = () => true) {
+    return Boolean(fileEvidence(slot, isVisible));
   }
 
   // 还是原来那个框：file 框还在、上传区还在，题目没变。
@@ -316,7 +327,7 @@
   const DIALOG = "[role='dialog'], [role='alertdialog'], [aria-modal='true'], .ant-modal, .el-message-box, .el-dialog, [class*='modal-content'], [class*='dialog-content']";
   const BUTTON = "button, [role='button'], .ant-btn, .el-button";
   const BUSY = ".ant-spin-spinning, [class*='spin-spinning'], .el-loading-mask, [class*='loading-mask'], [aria-busy='true'], [role='progressbar'], [class*='upload-list-item-uploading'], .el-upload-list__item.is-uploading";
-  const BUSY_WORDS = /(?:解析|识别|上传|处理|导入)中|正在(?:解析|识别|上传|处理|导入)|parsing|uploading/i;
+  const BUSY_WORDS = /(?:解析|识别|上传|处理)中|正在(?:解析|识别|上传|处理)|parsing|uploading/i;
 
   const outermost = list => list.filter(el => !list.some(other => other !== el && other.contains(el)));
   function visibleAll(docs, selector, isVisible) {
@@ -389,9 +400,9 @@
     return { state: "none", message: "" };
   }
 
-  // 网页在忙：转圈、加载遮罩、进度条、还在传的文件项，或看得见的「解析中」「正在上传」这类短句。
-  function busy(docs, isVisible = () => true, exclude = () => false) {
-    if (visibleAll(docs, BUSY, isVisible).some(el => !exclude(el))) return true;
+  // 网页上的忙碌标志：转圈、加载遮罩、进度条、还在传的文件项，或看得见的「解析中」「正在上传」这类短句（记它所在的元素）。
+  function busyMarks(docs, isVisible = () => true, exclude = () => false) {
+    const marks = visibleAll(docs, BUSY, isVisible).filter(el => !exclude(el));
     for (const doc of docs) {
       const root = doc.body;
       if (!root) continue;
@@ -405,10 +416,15 @@
         const value = squash(node.data);
         if (!value || value.length > 30 || !BUSY_WORDS.test(value)) continue;
         const parent = node.parentElement;
-        if (parent && !exclude(parent) && isVisible(parent)) return true;
+        if (parent && !exclude(parent) && isVisible(parent)) marks.push(parent);
       }
     }
-    return false;
+    return marks;
+  }
+  // 网页在忙。baseline 是传简历之前就在的标志（常驻的步骤进度条、「审核处理中」这类状态字）：它们不说明网站在解析，不算，
+  // 不然每次都要等到上限。
+  function busy(docs, isVisible = () => true, exclude = () => false, baseline = null) {
+    return busyMarks(docs, isVisible, exclude).some(mark => !baseline?.has(mark));
   }
 
   // 传之后等网站的反应，最多 timeoutMs。sleep、now 由调用方给（测试用假时钟）。stopped() 为真时立刻停。
@@ -438,7 +454,7 @@
       await sleep(200);
       const at = now();
       const elapsed = at - start;
-      onTick(elapsed);
+      onTick(elapsed, changed);
       if (stopped()) return { status: "stopped", elapsed, changed };
       const seen = read();
       if (seen.dialog) return { status: "dialog", text: seen.dialog, elapsed, changed };
@@ -457,8 +473,8 @@
 
   const api = {
     MAX_FILE_BYTES, KIND_NAMES, KIND_MIMES,
-    accepts, acceptsKind, classify, limitBytes, find, hasFile, current, chooseFile, fits, put,
-    before, state, busy, watch, waitForParse, dialogs
+    accepts, acceptsKind, classify, limitBytes, find, hasFile, fileEvidence, current, chooseFile, fits, put,
+    before, state, busy, busyMarks, watch, waitForParse, dialogs
   };
   scope.ResumeProUploadSlots = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }

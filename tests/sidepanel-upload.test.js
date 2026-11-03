@@ -96,9 +96,10 @@ test("the card lists the site, each box with the file the page suggests, and wha
   ]);
   assert.deepEqual([...p.get("upload-notes").querySelectorAll("li")].map((item) => item.textContent), [
     "Moka上传简历后会重新解析：先传简历，等解析完再填写，最后传其他文件。",
-    "上传后网站会重新解析，已填的 2 项会改回：兴趣爱好、期望城市；表单被网站重排时可能改不回，改不回的会列出来。"
+    "上传后网站会重新解析。已填的 2 项要是被改掉，会改回：兴趣爱好、期望城市；表单被网站重排时可能改不回，改不回的会列出来。"
   ]);
   assert.equal(p.get("upload-confirm").textContent, "上传并填写");
+  assert.equal(p.get("upload-fill").textContent, "只填写");
   assert.equal(p.get("upload-confirm").disabled, false);
   assert.equal(p.workerCalls("DESKTOP_RESUME_FILES_GRANT").length, 0, "nothing is granted by showing the card");
 });
@@ -150,7 +151,9 @@ test("a box with nothing on the desktop says so and offers the desktop page; a c
   await p.poll();
   assert.deepEqual(p.rows().map((row) => [row.title, row.chosen, row.note]), [
     ["简历附件", null, "已经有文件了，不替换。"], ["证件照", null, "桌面里还没有证件照。打开桌面简历资料"]]);
+  // 主按钮先改回；另一个按钮写明不改回。
   assert.equal(p.get("upload-confirm").textContent, "改回并填写");
+  assert.equal(p.get("upload-fill").textContent, "只填写，不改回");
   assert.equal(p.get("upload-confirm").disabled, false);
   p.get("upload-rows").querySelector("[data-upload-open]").click();
   await flush();
@@ -169,7 +172,7 @@ test("while uploading the stop button says 停止上传; afterwards the result l
   assert.equal(p.get("cancel-button").textContent, "停止上传");
   assert.equal(p.get("fill-progress-phase").textContent, "正在等网站解析简历，大约 12 秒（已等 4 秒）…");
   assert.equal(p.get("task-panel").hidden, true);
-  p.state.status = { ready: true, busy: false, upload: { phase: "done", version: 3, epoch: "e1", tone: "warn",
+  p.state.status = { ready: true, busy: false, upload: { phase: "done", version: 3, epoch: "e1", host: "app.mokahr.com", tone: "warn",
     lines: ["简历附件：已上传 测试用户_简历.pdf。", "证件照：传了 证件照.jpg，没确认网站收到，请看一下网页。", 42], addFiles: false } };
   await p.poll();
   assert.equal(p.get("cancel-button").hidden, true);
@@ -206,4 +209,33 @@ test("when the page turns the card down, the yes given to the worker is taken ba
   assert.deepEqual(p.workerCalls("DESKTOP_RESUME_FILES_GRANT").length, 1);
   assert.deepEqual(p.workerCalls("DESKTOP_RESUME_FILES_REVOKE"), [{ type: "DESKTOP_RESUME_FILES_REVOKE", tabId: 7 }]);
   assert.equal(p.get("panel-toast").textContent, "这张卡片已经过期，请重新点一键填写。");
+});
+
+test("a box that seems to hold a file already offers no file; a pending card with a file chosen says it puts back first", async (t) => {
+  const p = await openPanel(t, { upload: { ...OFFER, slots: [
+    { id: "upload-0", title: "简历附件", kind: "resume", reason: "file_unsure", fileId: "", accept: "", limit: 10485760, siteLimit: null },
+    { id: "upload-1", title: "证件照", kind: "photo", reason: "", fileId: "p1", accept: "image/*", limit: 10485760, siteLimit: null }],
+  restore: { count: 1, labels: ["兴趣爱好"], pending: true } } });
+  await p.poll();
+  assert.deepEqual(p.rows().map((row) => [row.title, row.chosen, row.note]), [["简历附件", null, "框里像是已经有文件了，不替换。"], ["证件照", "p1", ""]]);
+  assert.equal(p.get("upload-confirm").textContent, "改回、上传并填写");
+  assert.equal(p.get("upload-fill").textContent, "只填写，不改回");
+});
+
+test("an upload result from another site than the tab shows is not drawn", async (t) => {
+  const p = await openPanel(t, { upload: { phase: "done", version: 3, epoch: "e1", host: "other.example.test", tone: "ok", lines: ["简历附件：已上传 测试用户_简历.pdf。"] } });
+  await p.poll();
+  assert.equal(p.get("upload-result").hidden, true);
+  p.state.status = { ready: true, upload: { phase: "done", version: 3, epoch: "e1", host: "app.mokahr.com", tone: "ok", lines: ["简历附件：已上传 测试用户_简历.pdf。"] } };
+  await p.poll();
+  assert.equal(p.get("upload-result").hidden, false);
+});
+
+test("a pending card says which boxes changed after the stop and will not be put back", async (t) => {
+  const p = await openPanel(t, { upload: { ...OFFER, restore: { count: 1, labels: ["兴趣爱好"], pending: true, laterCount: 1, later: ["期望城市"] } } });
+  await p.poll();
+  assert.deepEqual([...p.get("upload-notes").querySelectorAll("li")].map((item) => item.textContent).slice(1), [
+    "上次上传后网站改了你填过的 1 项，会先改回：兴趣爱好。",
+    "停下以后又变过的 1 项不改回，请核对：期望城市。"
+  ]);
 });

@@ -157,11 +157,18 @@ test("a box with maxlength 0 is filled as before: 0 is not taken as a limit", as
 
 test("the side panel status carries an upload hint on platforms whose resume upload overwrites the form", async (t) => {
   const form = row("name", "姓名", `<input id="name">`);
-  assert.equal((await page(t, form, { url: "https://app.mokahr.com/campus_apply/example/1" }).status()).siteHint,
+  // #429 第 4 项：会覆盖的平台要先问桌面有没有简历附件（一键填写能不能替用户传），问到之前不给提示，免得先给一句不对的。
+  // 这里的桌面不认这条消息，等于不能传：问到以后是原来那句。
+  const hintOf = async (p) => {
+    assert.equal((await p.status()).siteHint, "", "no hint before the desktop has answered");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return (await p.status()).siteHint;
+  };
+  assert.equal(await hintOf(page(t, form, { url: "https://app.mokahr.com/campus_apply/example/1" })),
     "Moka 上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。");
   // 跑在公司自己域名上的飞书：按页面特征认。
   const feishu = `<div class="ud-formily-item" data-form-field-id="f1">${form}</div>`;
-  assert.equal((await page(t, feishu, { url: "https://careers.example.test/apply" }).status()).siteHint,
+  assert.equal(await hintOf(page(t, feishu, { url: "https://careers.example.test/apply" })),
     "飞书招聘上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。");
   assert.equal((await page(t, form).status()).siteHint, "");
   assert.equal((await page(t, form, { url: "https://xyz.51job.com/External/Apply.aspx" }).status()).siteHint, "");
@@ -182,13 +189,16 @@ test("filling reads no page features, and the upload hint is looked up again onl
   let now = Date.now();
   p.w.Date.now = () => now;
   const hint = "飞书招聘上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。";
+  // 第一次要先问桌面能不能替用户传简历（#429 第 4 项）：问到之前不给提示，问到以后再认一次页面。
+  assert.equal((await p.status()).siteHint, "");
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal((await p.status()).siteHint, hint);
   assert.equal((await p.status()).siteHint, hint);
-  assert.equal(reads, 1);
+  assert.equal(reads, 2);
   p.w.document.querySelector(".ud-formily-item").classList.remove("ud-formily-item");
   now += 1000;
   assert.equal((await p.status()).siteHint, hint);
   now += 1500;
   assert.equal((await p.status()).siteHint, "");
-  assert.equal(reads, 2);
+  assert.equal(reads, 3);
 });

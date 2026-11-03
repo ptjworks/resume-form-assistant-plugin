@@ -890,7 +890,8 @@
     if (raw.phase === "running") return { phase: "running", version, epoch };
     if (raw.phase === "done") {
       const lines = (Array.isArray(raw.lines) ? raw.lines : []).filter((line) => typeof line === "string" && line).slice(0, 20).map((line) => line.slice(0, 300));
-      return lines.length ? { phase: "done", version, epoch, lines, tone: ["ok", "warn"].includes(raw.tone) ? raw.tone : "info", addFiles: raw.addFiles === true } : null;
+      return lines.length ? { phase: "done", version, epoch, host: typeof raw.host === "string" ? raw.host.slice(0, 255) : "", lines,
+        tone: ["ok", "warn"].includes(raw.tone) ? raw.tone : "info", addFiles: raw.addFiles === true } : null;
     }
     const number = (value) => Number.isInteger(value) && value > 0 ? value : null;
     const slots = (Array.isArray(raw.slots) ? raw.slots : []).slice(0, 20)
@@ -907,7 +908,9 @@
       }));
     const restore = raw.restore && typeof raw.restore === "object" && Number.isInteger(raw.restore.count) && raw.restore.count > 0
       ? { count: raw.restore.count, pending: raw.restore.pending === true,
-        labels: (Array.isArray(raw.restore.labels) ? raw.restore.labels : []).filter((label) => typeof label === "string").slice(0, 5).map((label) => label.slice(0, 40)) }
+        labels: (Array.isArray(raw.restore.labels) ? raw.restore.labels : []).filter((label) => typeof label === "string").slice(0, 5).map((label) => label.slice(0, 40)),
+        laterCount: Number.isInteger(raw.restore.laterCount) && raw.restore.laterCount > 0 ? raw.restore.laterCount : 0,
+        later: (Array.isArray(raw.restore.later) ? raw.restore.later : []).filter((label) => typeof label === "string").slice(0, 5).map((label) => label.slice(0, 40)) }
       : null;
     if (!epoch || (!slots.length && !restore)) return null;
     return { phase: "offer", version, epoch, host: typeof raw.host === "string" ? raw.host.slice(0, 255) : "",
@@ -925,7 +928,7 @@
 
   function setUploadView(view, tabId) {
     // 卡片上的网站要和侧栏看到的标签页一样；不一样（页面跳走了）就不显示。
-    const shown = view?.phase === "offer" && view.host !== pageHostWithPort ? null : view;
+    const shown = ["offer", "done"].includes(view?.phase) && view.host !== pageHostWithPort ? null : view;
     const key = shown?.phase === "offer" ? `${tabId}:${shown.epoch}:${shown.version}` : "";
     if (key && key !== uploadFilesKey) {
       uploadFilesKey = key;
@@ -969,7 +972,7 @@
   function uploadCandidates(slot) {
     const api = self.ResumeProUploadSlots;
     const files = Array.isArray(uploadFiles) ? uploadFiles : [];
-    if (!api || ["has_file", "desktop_old", "desktop_unavailable"].includes(slot.reason)) return [];
+    if (!api || ["has_file", "file_unsure", "desktop_old", "desktop_unavailable"].includes(slot.reason)) return [];
     const known = ["resume", "photo", "transcript"].includes(slot.kind);
     return files.filter((file) => (!known || file.kind === slot.kind) && api.fits({ accept: slot.accept, limit: slot.limit }, file));
   }
@@ -978,6 +981,7 @@
     const kind = UPLOAD_KIND_NAMES[slot.kind] || "文件";
     switch (slot.reason) {
       case "has_file": return "已经有文件了，不替换。";
+      case "file_unsure": return "框里像是已经有文件了，不替换。";
       case "desktop_old": return "桌面程序版本较旧，不能上传。";
       case "desktop_unavailable": return "桌面暂时连不上，不能上传。";
       case "no_file": return `桌面里还没有${kind}。`;
@@ -1046,15 +1050,23 @@
       const notes = [];
       if (offer.platform) notes.push(`${offer.platform}上传简历后会重新解析：先传简历，等解析完再填写，最后传其他文件。`);
       if (offer.restore) {
-        const labels = `${offer.restore.labels.join("、")}${offer.restore.count > offer.restore.labels.length ? " 等" : ""}`;
+        const list = (labels, count) => `${labels.join("、")}${count > labels.length ? " 等" : ""}`;
+        const labels = list(offer.restore.labels, offer.restore.count);
+        // 只有被解析改掉的才改回：没改的不动。
         notes.push(offer.restore.pending
           ? `上次上传后网站改了你填过的 ${offer.restore.count} 项，会先改回：${labels}。`
-          : `上传后网站会重新解析，已填的 ${offer.restore.count} 项会改回：${labels}；表单被网站重排时可能改不回，改不回的会列出来。`);
+          : `上传后网站会重新解析。已填的 ${offer.restore.count} 项要是被改掉，会改回：${labels}；表单被网站重排时可能改不回，改不回的会列出来。`);
+        if (offer.restore.pending && offer.restore.laterCount) {
+          notes.push(`停下以后又变过的 ${offer.restore.laterCount} 项不改回，请核对：${list(offer.restore.later, offer.restore.laterCount)}。`);
+        }
       }
       elements.uploadNotes.hidden = !notes.length;
       elements.uploadNotes.replaceChildren(...notes.map((text) => { const item = document.createElement("li"); item.textContent = text; return item; }));
       const chosen = offer.slots.some((slot) => uploadChoice(slot));
-      elements.uploadConfirm.textContent = chosen || !offer.restore?.pending ? "上传并填写" : "改回并填写";
+      // 上次被打断、记着要改回的：主按钮先改回；另一个按钮写明不改回。
+      const restoring = Boolean(offer.restore?.pending);
+      elements.uploadConfirm.textContent = restoring ? (chosen ? "改回、上传并填写" : "改回并填写") : "上传并填写";
+      elements.uploadFill.textContent = restoring ? "只填写，不改回" : "只填写";
       elements.uploadConfirm.disabled = uploadPending || uploadFiles === null || (!chosen && !offer.restore?.pending);
       elements.uploadFill.disabled = uploadPending;
       elements.uploadCancel.disabled = uploadPending;

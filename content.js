@@ -132,8 +132,9 @@
     platform: null,
     // 卡片上先说会改回哪些：{ count, labels, pending }
     preview: null,
-    // 上次解析被打断时记下的值：{ href, records, at }
+    // 上次解析被打断时记下的值：{ href, records, at, stopValues }；pendingNotes 是其中改不回的，写进这一次的结果
     pending: null,
+    pendingNotes: [],
     // upload、fill：正在上传还是正在填写（侧栏的停止按哪一边算）
     step: "",
     stop: false,
@@ -147,7 +148,7 @@
     sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
   };
   // 桌面有没有简历附件（侧栏提示用），一分钟问一次桌面。
-  let uploadFilesSeen = { at: -Infinity, asking: false, hasResume: false };
+  let uploadFilesSeen = { at: -Infinity, asking: false, known: false, hasResume: false };
   const state = {
     dragOffsetX: 0,
     dragOffsetY: 0,
@@ -2189,7 +2190,10 @@
     try {
       const knowledge = self.ResumeProSiteKnowledge;
       const platform = knowledge?.detect(document, href) || null;
-      text = knowledge?.uploadHint(platform, { canUpload: Boolean(platform?.overwrites) && canUploadResume() }) || "";
+      const canUpload = platform?.overwrites ? canUploadResume() : false;
+      // 还没问到桌面里有没有简历附件：先照旧显示这个页面上次的那句，不先给一句可能不对的；问到以后下一次再认。
+      if (canUpload === null) return siteHintSeen.href === href ? siteHintSeen.text : "";
+      text = knowledge?.uploadHint(platform, { canUpload }) || "";
     } catch {
       text = "";
     }
@@ -2247,13 +2251,16 @@
     }
   }
 
+  // 一键填写能不能替用户传简历（侧栏提示用）。桌面里有没有简历附件一分钟问一次；问的时候照旧用上次问到的，
+  // 从来没问到过时返回 null（还不知道）。
   function canUploadResume() {
     if (Date.now() - uploadFilesSeen.at > 60000 && !uploadFilesSeen.asking) {
       uploadFilesSeen.asking = true;
       listDesktopFiles().then((listed) => {
-        uploadFilesSeen = { at: Date.now(), asking: false, hasResume: listed.files.some((file) => file?.kind === "resume") };
-      }, () => { uploadFilesSeen = { at: Date.now(), asking: false, hasResume: false }; });
+        uploadFilesSeen = { at: Date.now(), asking: false, known: true, hasResume: listed.files.some((file) => file?.kind === "resume") };
+      }, () => { uploadFilesSeen = { at: Date.now(), asking: false, known: true, hasResume: false }; });
     }
+    if (!uploadFilesSeen.known) return null;
     if (!uploadFilesSeen.hasResume) return false;
     try {
       return findUploadSlots().some((slot) => slot.kind === "resume" && !slot.hasFile);
@@ -2335,6 +2342,20 @@
   }
 
   // 上次解析被打断时记下的值，还在这一页、没过期，并且有用户原来填的框被改了：下一次一键填写先改回它们（卡片里先说）。
+  // 停下来时记下的值留到下一次：records 是传简历之前的样子，stopValues 是停下那一刻每个框的值。
+  function keepPending(records) {
+    let located = [];
+    try {
+      located = locateRecords(records);
+    } catch {
+      located = [];
+    }
+    upload.pending = { href: upload.href, records, at: Date.now(),
+      stopValues: records.map((record, index) => { try { return located[index] ? fillValueSnapshot(located[index]) : null; } catch { return null; } }) };
+  }
+
+  // 上次被打断的值，分三种：labels 改回（和用户原来填的不一样、和停下那一刻一样：是网站解析改的）；
+  // later 不改回（停下以后又变过：可能是用户自己改的，也可能是网站后来写的，认不准）；missed 找不到原来的框。
   function pendingRestore() {
     const pending = upload.pending;
     if (!pending || pending.href !== location.href || Date.now() - pending.at > UPLOAD_PENDING_MS) {
@@ -2342,18 +2363,39 @@
       return null;
     }
     const located = locateRecords(pending.records);
-    const changed = pending.records.filter((record, index) => record.filled
-      && (!located[index] || fillValueSnapshot(located[index]) !== record.snapshot));
-    if (!changed.length) {
+    const labels = [];
+    const later = [];
+    const missed = [];
+    pending.records.forEach((record, index) => {
+      if (!record.filled) return;
+      const entry = located[index];
+      if (!entry) { missed.push(record.label); return; }
+      const now = fillValueSnapshot(entry);
+      if (now === record.snapshot) return;
+      if (now === pending.stopValues?.[index]) labels.push(record.label);
+      else later.push(record.label);
+    });
+    if (!labels.length && !later.length && !missed.length) {
       upload.pending = null;
       return null;
     }
-    return { ...pending, labels: changed.map((record) => record.label) };
+    return { ...pending, labels, later, missed };
+  }
+
+  // 上次被打断的值里改不回的：结果里请用户核对。
+  function pendingNotes(pending) {
+    return [
+      ...(pending?.later?.length ? [`这几项在上次停下以后又变过，没有改回，请核对：${summarizeLabels(pending.later)}。`] : []),
+      ...(pending?.missed?.length ? [`上次被网站解析改掉的这几项找不到原来的框，没有改回，请核对：${summarizeLabels(pending.missed)}。`] : [])
+    ];
   }
 
   // 卡片上「会改回哪些」：已知会覆盖的平台上要传简历、页面上已经有内容时先说；上次被打断的，说那次被改掉的。
   function uploadPreview(plan, files, pending) {
-    if (pending) return { count: pending.labels.length, labels: pending.labels.slice(0, 5), pending: true };
+    if (pending) {
+      return { count: pending.labels.length, labels: pending.labels.slice(0, 5), pending: true,
+        laterCount: pending.later.length, later: pending.later.slice(0, 5) };
+    }
     const resume = plan.some((item) => item.fileId && files.find((file) => file.fileId === item.fileId)?.kind === "resume");
     if (!resume || !upload.platform?.overwrites) return null;
     const labels = recordFormValues().filter((record) => record.filled).map((record) => record.label);
@@ -2368,6 +2410,7 @@
     upload.report = null;
     upload.phase = "idle";
     upload.plan = [];
+    upload.pendingNotes = [];
     if (!api) return false;
     const slots = findUploadSlots();
     const pending = pendingRestore();
@@ -2382,7 +2425,7 @@
     }
     const kindOf = (fileId) => listed.files.find((file) => file.fileId === fileId)?.kind || "";
     const plan = slots.map((slot) => {
-      if (slot.hasFile) return { slot, fileId: null, reason: "has_file" };
+      if (slot.hasFile) return { slot, fileId: null, reason: slot.fileUnsure ? "file_unsure" : "has_file" };
       if (listed.status !== "ok") return { slot, fileId: null, reason: listed.status === "unsupported" ? "desktop_old" : "desktop_unavailable" };
       return { slot, ...api.chooseFile(slot, listed.files, { templateId }) };
     });
@@ -2399,14 +2442,17 @@
     upload.platform = platform;
     upload.href = location.href;
     upload.plan = plan;
-    upload.pending = pending ? { href: pending.href, records: pending.records, at: pending.at } : null;
-    if (!plan.some((item) => item.fileId || item.reason === "choose") && !pending) {
-      const lines = plan.map((item) => uploadLine(item)).filter(Boolean);
-      upload.result = lines.length ? { lines, tone: "info" } : null;
+    // 上次被打断的值里有能改回的才留着（卡片上问）；只剩改不回的，结果里请用户核对，记录不再留。
+    const restorable = pending && pending.labels.length ? pending : null;
+    upload.pending = restorable ? { href: pending.href, records: pending.records, at: pending.at, stopValues: pending.stopValues } : null;
+    if (!plan.some((item) => item.fileId || item.reason === "choose") && !restorable) {
+      const lines = [...plan.map((item) => uploadLine(item)).filter(Boolean), ...pendingNotes(pending)];
+      upload.result = lines.length ? { lines, tone: pending ? "warn" : "info" } : null;
       upload.phase = upload.result ? "done" : "idle";
       return false;
     }
-    upload.preview = uploadPreview(plan, listed.files, pending);
+    upload.pendingNotes = restorable ? [] : pendingNotes(pending);
+    upload.preview = uploadPreview(plan, listed.files, restorable);
     upload.phase = "offer";
     upload.version += 1;
     return true;
@@ -2426,8 +2472,14 @@
     }
     if (upload.phase === "running") return { phase: "running", version: upload.version, epoch: upload.epoch, step: upload.step };
     if (upload.phase === "done" && upload.result) {
-      return { phase: "done", version: upload.version, epoch: upload.epoch, lines: upload.result.lines, tone: upload.result.tone,
-        addFiles: upload.plan.some((item) => item.reason === "no_file") };
+      // 结果是那一页的：单页应用换了页面就不再给侧栏，免得把上一页的「已上传」当成这一页的。
+      if (location.href !== upload.href) {
+        upload.phase = "idle";
+        upload.result = null;
+        return null;
+      }
+      return { phase: "done", version: upload.version, epoch: upload.epoch, host: location.host, lines: upload.result.lines,
+        tone: upload.result.tone, addFiles: upload.plan.some((item) => item.reason === "no_file") };
     }
     return null;
   }
@@ -2445,6 +2497,7 @@
         case "dialog": return `${name}：网站弹出了「${uploadClip(outcome.message)}」，请在网页上处理。`;
         case "uploading": case "unconfirmed": case "none": return `${name}：传了 ${file}，没确认网站收到，请看一下网页。`;
         case "has_file": return `${name}：已经有文件了，没有替换。`;
+        case "file_unsure": return `${name}：框里像是已经有文件了，没有上传，请看一下网页。`;
         case "slot_changed": case "slot_gone": return `${name}：上传框已经变了，没有上传。`;
         case "fetch_conflict": return `${name}：桌面里的这个文件换过或删掉了，没有上传。`;
         case "fetch_corrupt": return `${name}：从桌面读出来的文件不完整，没有上传。`;
@@ -2456,6 +2509,7 @@
     }
     switch (item.reason) {
       case "has_file": return `${name}：已经有文件了，没有替换。`;
+      case "file_unsure": return `${name}：框里像是已经有文件了，没有上传，请看一下网页。`;
       case "desktop_old": return `${name}：桌面程序版本较旧，不能上传文件；更新桌面程序，或者自己上传。`;
       case "desktop_unavailable": return `${name}：桌面暂时连不上，没有上传。`;
       case "no_file": return `这页要${kinds[item.slot.kind] || "文件"}，桌面里还没有。到桌面「简历资料 › 附件」添加，或者自己上传。`;
@@ -2492,8 +2546,20 @@
       return { ok: true };
     }
     if (action === "fill") {
-      upload.phase = "idle";
+      // 「只填写，不改回」：上次被网站改掉的值这次不改回，记录也不留（留着的话，下一次会把这次填好的又改回去），结果里写明。
+      const skipped = upload.pending && upload.preview?.pending ? upload.preview : null;
       upload.pending = null;
+      upload.phase = "idle";
+      const more = (list, count) => `${list.join("、")}${count > list.length ? " 等" : ""}`;
+      const lines = [
+        ...(skipped ? [`这次没有改回上次被网站改掉的 ${skipped.count} 项，请核对：${more(skipped.labels, skipped.count)}。`] : []),
+        ...(skipped?.laterCount ? [`这几项在上次停下以后又变过，也没有改回，请核对：${more(skipped.later, skipped.laterCount)}。`] : []),
+        ...upload.pendingNotes
+      ];
+      if (lines.length) {
+        upload.result = { lines, tone: "warn" };
+        upload.phase = "done";
+      }
       return startPanelFill();
     }
     if (action !== "confirm") return { ok: false, error: "当前操作不可用。" };
@@ -2562,17 +2628,18 @@
   }
 
   // 等解析时侧栏的进度：已知会解析覆盖的平台先说大约要多久（至少等这么久），过了这个时间说最多等多久；别的网站说最多等多久。
-  function parseStep(timing, ms) {
+  function parseStep(timing, ms, changed = false) {
     const seconds = (value) => Math.max(1, Math.round(value / 1000));
     const waited = Math.floor(ms / 1000);
-    if (!timing.known) return `正在等网站处理简历，已等 ${waited} 秒，最多 ${seconds(timing.extendMs)} 秒…`;
+    // 别的网站：表单值变过才把上限放宽，没变过的上限是 maxMs。
+    if (!timing.known) return `正在等网站处理简历，已等 ${waited} 秒，最多 ${seconds(changed ? timing.extendMs : timing.maxMs)} 秒…`;
     return ms < timing.minMs ? `正在等网站解析简历，大约 ${seconds(timing.minMs)} 秒（已等 ${waited} 秒）…`
       : `正在等网站解析简历，已等 ${waited} 秒，最多 ${seconds(timing.maxMs)} 秒…`;
   }
 
   // 等解析时每 200ms 读一次：记下的框现在的值（加上页面上输入框的个数，看得出整张表重画）、网页忙不忙、
   // 有没有新弹出的对话框、简历框传得怎么样。
-  function readParse(records, sent, docs) {
+  function readParse(records, sent, docs, baseline = null) {
     const api = self.ResumeProUploadSlots;
     const states = sent.map((item) => api.state(item.slot, item.file.name, item.seen, docs, isVisible));
     const dialog = states.find((seen) => seen.state === "dialog");
@@ -2583,7 +2650,7 @@
     const values = records.map((record) => { try { return fillValueSnapshot(record.entry) ?? "∅"; } catch { return "∅"; } });
     return {
       signature: `${controls}\u0001${values.join("\u0001")}`,
-      busy: api.busy(docs, isVisible, (element) => Boolean(element.closest?.(`#${SIDEBAR_ID}`))),
+      busy: api.busy(docs, isVisible, (element) => Boolean(element.closest?.(`#${SIDEBAR_ID}`)), baseline),
       dialog: dialog ? dialog.message || "对话框" : "",
       upload: states.some((seen) => seen.state === "error") ? "error"
         : states.some((seen) => seen.state === "uploading") ? "uploading"
@@ -2593,8 +2660,10 @@
 
   // 把网站解析改掉的、用户原来填的值写回去。只写认得准的框；读不准原值的控件（多选、级联、勾选）、找不到的框列出来请用户核对。
   // 原来空着、解析填上的框记下来：照常填写时有资料就填，不问要不要覆盖。
-  async function restoreFormValues(records) {
-    const out = { restored: [], missed: [], parsed: [] };
+  // stopValues：上次停下那一刻每个框的值（接着上次被打断的改回时才有）。停下以后又变过的框，可能是用户自己改的，
+  // 也可能是网站后来写的，认不准：不写，列出来（later）。原来空着的框也一样，不当成网站填的。
+  async function restoreFormValues(records, stopValues = null) {
+    const out = { restored: [], missed: [], parsed: [], later: [] };
     const located = locateRecords(records);
     for (const [index, record] of records.entries()) {
       if (upload.stop || location.href !== upload.href) break;
@@ -2605,6 +2674,10 @@
       }
       const now = fillValueSnapshot(entry);
       if (now === null || now === record.snapshot) continue;
+      if (stopValues && now !== stopValues[index]) {
+        if (record.filled) out.later.push(record.label);
+        continue;
+      }
       if (!record.filled) {
         if (hasExistingValue(entry)) out.parsed.push({ entry, label: record.label, snapshot: now });
         continue;
@@ -2661,7 +2734,7 @@
       for (const item of items) {
         if (!item.file) continue;
         if (!api.current(item.slot, options.describe, isVisible)) item.outcome = { code: "slot_changed" };
-        else if (api.hasFile(item.slot, isVisible)) item.outcome = { code: "has_file" };
+        else if (api.hasFile(item.slot, isVisible)) item.outcome = { code: api.fileEvidence(item.slot, isVisible) === "text" ? "file_unsure" : "has_file" };
       }
       const wanted = items.filter((item) => item.file && !item.outcome);
       if (wanted.length) step("正在从桌面取文件…");
@@ -2683,10 +2756,25 @@
       const ready = wanted.filter((item) => !item.outcome);
       const first = ready.filter((item) => item.file.kind === "resume");
       const later = ready.filter((item) => item.file.kind !== "resume");
+      // 会覆盖的平台上简历没能交给网站（取不到文件、框不收）：也不往下填。用户之后自己传简历，网站一解析，填好的就被盖掉。
+      const resumeLost = () => Boolean(upload.platform?.overwrites)
+        && wanted.some((item) => item.file.kind === "resume" && item.outcome);
+      const stopForResume = (sent, records) => {
+        for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible, { withDialogs: false }));
+        if (sent.length && records) keepPending(records);
+        for (const item of later) item.outcome = { code: "not_reached" };
+        lines.push("简历上传失败，所以没有继续填写。请在网页上看一下简历框，自己传好简历、等页面不动了，再点一键填写。");
+      };
+      if (resumeLost()) {
+        stopForResume([], null);
+        return;
+      }
       if (first.length || upload.pending) {
         // 上次被打断记下的值优先：那时还是用户自己填的样子。
         const records = upload.pending?.records || recordFormValues();
         const sent = [];
+        // 传简历之前就在的忙碌标志（常驻的进度条、「审核处理中」这类状态字）：等解析时不算。
+        const busyBaseline = new Set(api.busyMarks(docs, isVisible, (element) => Boolean(element.closest?.(`#${SIDEBAR_ID}`))));
         if (first.length) {
           step("正在上传简历…");
           for (const item of first) {
@@ -2696,27 +2784,34 @@
             else item.outcome = { code: put.reason };
           }
         }
+        if (resumeLost()) {
+          stopForResume(sent, records);
+          return;
+        }
         if (sent.length) {
           const timing = self.ResumeProSiteKnowledge?.parseTiming?.(upload.platform)
             || { known: false, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000 };
-          parse = await api.waitForParse(() => readParse(records, sent, docs), {
+          parse = await api.waitForParse(() => readParse(records, sent, docs, busyBaseline), {
             ...timing, now: uploadClock.now, sleep: uploadClock.sleep,
             stopped: () => upload.stop || location.href !== upload.href,
-            onTick: (ms) => step(parseStep(timing, ms))
+            onTick: (ms, changed) => step(parseStep(timing, ms, changed))
           });
           // 简历本身传没传上只看它自己的框：网站弹的对话框另起一句说。
           for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible, { withDialogs: false }));
-          if (["dialog", "timeout", "stopped"].includes(parse.status)) {
+          // 简历没传上（网站报错）也停下：网站可能其实收到了文件、过一会儿才解析，解析结果会把填好的盖掉。
+          if (["dialog", "timeout", "stopped", "upload_failed"].includes(parse.status)) {
             // 不填，记下的值留到下一次一键填写：那时简历框里已经有文件，不会再传，先改回再填。
-            upload.pending = { href: upload.href, records, at: Date.now() };
+            keepPending(records);
             for (const item of later) item.outcome = { code: "not_reached" };
             lines.push(parse.status === "dialog" ? `网站在问「${uploadClip(parse.text, 80)}」，请自己选，选完再点一键填写。`
-              : parse.status === "timeout" ? "网站还在解析简历，等页面不动了再点一键填写。" : "已停止，没有填写。");
+              : parse.status === "timeout" ? "网站还在解析简历，等页面不动了再点一键填写。"
+                : parse.status === "upload_failed" ? "简历上传失败，所以没有继续填写。请在网页上看一下简历框，自己传好简历、等页面不动了，再点一键填写。"
+                  : "已停止，没有填写。");
             return;
           }
         }
         if (location.href !== upload.href) throw new Error("网页已经变了，没有填写。");
-        restored = await restoreFormValues(records);
+        restored = await restoreFormValues(records, upload.pending?.stopValues || null);
         upload.pending = null;
         uploadParsed = new WeakMap(restored.parsed.map((item) => [uploadNode(item.entry), item.snapshot]).filter(([node]) => node));
       }
@@ -2738,7 +2833,10 @@
       for (const item of later) {
         if (upload.stop || location.href !== upload.href) { item.outcome = { code: "stopped" }; continue; }
         if (!api.current(item.slot, options.describe, isVisible)) { item.outcome = { code: "slot_changed" }; continue; }
-        if (api.hasFile(item.slot, isVisible)) { item.outcome = { code: "has_file" }; continue; }
+        if (api.hasFile(item.slot, isVisible)) {
+          item.outcome = { code: api.fileEvidence(item.slot, isVisible) === "text" ? "file_unsure" : "has_file" };
+          continue;
+        }
         step(`正在上传${api.KIND_NAMES[item.file.kind] || "文件"}…`);
         item.seen = api.before(item.slot, docs, isVisible);
         const put = api.put(item.slot, files.get(item.file.fileId).file);
@@ -2755,9 +2853,10 @@
       const restoreLines = [
         ...(restored?.restored.length ? [`改回了网站解析改掉的 ${restored.restored.length} 项：${summarizeLabels(restored.restored)}。`] : []),
         ...(restored?.missed.length ? [`网站解析改了 ${restored.missed.length} 项，没能确定原来的框或原来的值，没有改回，请核对：${summarizeLabels(restored.missed)}。`] : []),
+        ...(restored?.later.length ? [`这几项在上次停下以后又变过，没有改回，请核对：${summarizeLabels(restored.later)}。`] : []),
         ...(parsedLeft.length ? [`网站解析填的 ${parsedLeft.length} 项没有改，请核对：${summarizeLabels(parsedLeft)}。`] : [])
       ];
-      const all = [...lines, ...slotLines, ...restoreLines];
+      const all = [...lines, ...slotLines, ...restoreLines, ...upload.pendingNotes];
       const fine = items.every((item) => !item.file || item.outcome?.code === "done") && !lines.length && !restored?.missed.length;
       upload.result = all.length ? { lines: all, tone: fine ? "ok" : "warn" } : null;
       upload.report = uploadReport(items, parse, restored, parsedLeft);
@@ -2787,6 +2886,7 @@
       waitMs: Number.isFinite(parse?.elapsed) ? parse.elapsed : null,
       restored: restored?.restored.length || 0,
       missed: restored?.missed.length || 0,
+      later: restored?.later.length || 0,
       parsed: parsedLeft.length
     };
   }
@@ -2797,7 +2897,7 @@
     const parse = /^[a-z_]{1,32}$/.test(report.parse || "") ? report.parse : "none";
     const waited = Number.isFinite(report.waitMs) ? `，${(report.waitMs / 1000).toFixed(1)} s` : "";
     return `上传：框 ${words(report.kinds)}；结果 ${words(report.results)}；没传的原因 ${words(report.reasons)}；解析等待 ${parse}${waited}；`
-      + `改回 ${report.restored || 0}，没改回 ${report.missed || 0}，网站填的 ${report.parsed || 0}`;
+      + `改回 ${report.restored || 0}，没改回 ${report.missed || 0}，停下后又变过 ${report.later || 0}，网站填的 ${report.parsed || 0}`;
   }
 
   function writeUploadDiagnostics(report) {
