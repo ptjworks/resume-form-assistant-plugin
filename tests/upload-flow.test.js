@@ -313,7 +313,9 @@ test("a dialog from the site stops everything and is never clicked", async (t) =
   const done = await p.finished();
   assert.equal(clicked, false);
   assert.equal(p.fills.length, 0);
-  assert.equal(done.upload.lines[0], "网站在问「检测到已填写的信息，是否用简历内容覆盖？覆盖取消」，请自己选，选完再点一键填写。");
+  assert.equal(done.upload.lines[0], "网站在问「检测到已填写的信息，是否用简历内容覆盖？」，请自己选，选完再点一键填写。");
+  // 简历本身已经交给网站了，单独说；对话框不算进简历框的结果里。
+  assert.equal(done.upload.lines[1], `简历附件：已上传 ${RESUME_FILE.name}。`);
   assert.equal(p.w.document.getElementById("photo").files.length, 0);
 });
 

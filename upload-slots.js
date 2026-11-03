@@ -347,8 +347,14 @@
     };
   }
 
+  // 对话框里的话：不带按钮上的字（antd 给两个字的按钮加了空格，「取 消」）。
+  function dialogText(el, isVisible) {
+    return squash(visibleText(el, isVisible, node => Boolean(node.matches?.(BUTTON))).join(" ")).slice(0, 120);
+  }
+
   // 这个框这一刻的样子：done 网站显示传好了，error 网站报错（带网站原话），uploading 还在传，dialog 网站弹了对话框，none 还没看到。
-  function state(slot, name, seen, docs, isVisible = () => true) {
+  // withDialogs 为 false 时不看对话框，只看这个框自己（网站弹对话框时，简历本身传没传上）。
+  function state(slot, name, seen, docs, isVisible = () => true, { withDialogs = true } = {}) {
     const scopeEl = slot.scope || slot.root;
     const text = el => squash(el.textContent).slice(0, 120);
     const fresh = listItems(scopeEl).filter(el => !seen.items.has(el) && isVisible(el));
@@ -361,8 +367,8 @@
       if (/uploading|is-uploading/.test(classes) || Array.from(el.querySelectorAll("[role='progressbar'], [class*='progress']")).some(node => isVisible(node))) return "uploading";
       return "done";
     };
-    const newDialog = dialogs(docs, isVisible).find(el => !seen.dialogs.has(el));
-    if (newDialog) return { state: "dialog", message: text(newDialog) };
+    const newDialog = withDialogs ? dialogs(docs, isVisible).find(el => !seen.dialogs.has(el)) : null;
+    if (newDialog) return { state: "dialog", message: dialogText(newDialog, isVisible) };
     const alert = visibleAll(docs, MESSAGE, isVisible).find(el => !seen.messages.has(el) && ERROR_WORDS.test(el.textContent || ""));
     const inline = Array.from(scopeEl?.querySelectorAll?.(INLINE_ERROR) || [])
       .find(el => !seen.errors.has(el) && isVisible(el) && ERROR_WORDS.test(el.textContent || "") && !listItems(scopeEl).some(item => item.contains(el)));
@@ -373,6 +379,10 @@
     if (items.some(el => status(el) === "uploading")) return { state: "uploading", message: "" };
     if (items.length) return { state: "done", message: "" };
     if (thumbnails(scopeEl).some(img => !seen.thumbs.has(img) && isVisible(img))) return { state: "done", message: "" };
+    // 原生的 file 框（没有组件，框自己就是上传区）：框里就是这个文件，提交表单时才传，这就是它的全部状态。
+    try {
+      if (slot.root === slot.input && name && slot.input.files?.[0]?.name === name) return { state: "done", message: "" };
+    } catch { /* 读不到就看页面 */ }
     // 别的写法：表单项里冒出了这个文件名。
     const now = visibleText(scopeEl, isVisible).join(" ");
     if (name && now.includes(name) && !seen.text.includes(name)) return { state: "done", message: "" };

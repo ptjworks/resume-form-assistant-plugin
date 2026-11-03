@@ -191,7 +191,7 @@ test("what the site did with the file: a done or failed list item, an error mess
     "Element drops a refused file from its list; the message is what is left");
   doc.querySelector(".ant-message").innerHTML = "";
   doc.body.insertAdjacentHTML("beforeend", `<div class="ant-modal" role="dialog"><div class="ant-modal-body">是否用简历内容覆盖已填写的信息？</div><button>覆盖</button><button>取消</button></div>`);
-  assert.deepEqual(slots.state(slot, "测试用户_简历.pdf", seen, docs, isVisible), { state: "dialog", message: "是否用简历内容覆盖已填写的信息？覆盖取消" });
+  assert.deepEqual(slots.state(slot, "测试用户_简历.pdf", seen, docs, isVisible), { state: "dialog", message: "是否用简历内容覆盖已填写的信息？" });
 });
 
 test("busy: a spinner, a loading mask or a short 'parsing' line, never the panel's own text", () => {
@@ -264,4 +264,16 @@ test("waiting on a site that is not known to parse: quiet for 1.5 s is enough; a
   result = await slots.waitForParse(() => ({ signature: String(Math.min(c.at(), 12000)), busy: false, upload: "done" }),
     { ...c, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000, earlyOnChange: true });
   assert.deepEqual([result.status, result.elapsed, result.changed], ["done", 13600, true]);
+});
+
+test("a native file box with no component is done once it holds the file; the page shows nothing else", () => {
+  const doc = page(`<div class="row"><label for="cv">成绩单</label><input id="cv" type="file" accept=".pdf"></div>`);
+  const [slot] = found(doc);
+  const seen = slots.before(slot, [doc], isVisible);
+  let picked = [];
+  Object.defineProperty(slot.input, "files", { configurable: true, get: () => picked });
+  assert.equal(slots.state(slot, "成绩单.pdf", seen, [doc], isVisible).state, "none");
+  picked = [{ name: "成绩单.pdf" }];
+  assert.equal(slots.state(slot, "成绩单.pdf", seen, [doc], isVisible).state, "done");
+  assert.equal(slots.state(slot, "别的.pdf", seen, [doc], isVisible).state, "none");
 });

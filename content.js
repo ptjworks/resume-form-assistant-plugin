@@ -2695,7 +2695,8 @@
             stopped: () => upload.stop || location.href !== upload.href,
             onTick: (ms) => step(`正在等网站解析简历（已等 ${Math.floor(ms / 1000)} 秒）…`)
           });
-          for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible));
+          // 简历本身传没传上只看它自己的框：网站弹的对话框另起一句说。
+          for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible, { withDialogs: false }));
           if (["dialog", "timeout", "stopped"].includes(parse.status)) {
             // 不填，记下的值留到下一次一键填写：那时简历框里已经有文件，不会再传，先改回再填。
             upload.pending = { href: upload.href, records, at: Date.now() };
