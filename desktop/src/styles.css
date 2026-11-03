@@ -471,6 +471,29 @@ button.danger:hover:not(:disabled) { background: #fcf1f1; border-color: #e3aaaa;
 .site-answers-answer { margin: 2px 0 0; font-size: 13px; font-weight: 500; white-space: pre-wrap; overflow-wrap: anywhere; }
 .site-answers button { min-height: 30px; padding: 3px 12px; border-radius: 8px; font-size: 12px; }
 .site-answers-note { flex: none; margin: 0 24px 16px; }
+.resume-files { flex: 1; }
+.resume-files-head { flex: none; padding: 16px 24px; border-bottom: 1px solid var(--card-line); }
+.resume-files-head h2 { margin: 0; font-size: 19px; font-weight: 600; }
+.resume-files-head p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.resume-files-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
+.resume-files-group { padding: 14px 16px; border: 1px solid var(--card-line); border-radius: 12px; }
+.resume-files-group > p { margin: 4px 0 0; font-size: 13px; }
+.resume-files-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.resume-files-group-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.resume-files-group ul { margin: 0; padding: 0; list-style: none; }
+.resume-files-group li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #edf0f3; }
+.resume-files-main { flex: 1; min-width: 0; }
+.resume-files-name { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.resume-files-meta { margin: 2px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.resume-files-thumb { flex: none; width: 36px; height: 48px; border-radius: 4px; background: #edf0f3; object-fit: cover; }
+.resume-files-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.resume-files button { min-height: 30px; padding: 3px 12px; border-radius: 8px; font-size: 12px; }
+.resume-files-note { flex: none; margin: 0 24px 16px; }
+.resume-files-form { display: flex; flex-direction: column; gap: 12px; }
+.resume-files-form > label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.resume-files-form fieldset { margin: 0; padding: 8px 12px; border: 1px solid var(--card-line); border-radius: 8px; }
+.resume-files-form legend { font-size: 12px; color: var(--muted); }
+.resume-files-check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 
 /* 简历页的弹窗：白色面板、细边、轻阴影；内容长时只滚动正文，标题与按钮一直可见。 */
 dialog.resume-dialog { width: calc(100% - 32px); max-width: 540px; max-height: calc(100dvh - 48px); padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 20px 60px #1c233033; }

@@ -155,7 +155,7 @@ fn a_v7_archive_gains_the_table_and_keeps_its_profile() {
     old.save_profile(profile.clone(), 0).unwrap();
     old.close().unwrap();
     let upgraded = ArchiveStore::open(cfg).unwrap();
-    assert_eq!(upgraded.schema_version(), 8);
+    assert_eq!(upgraded.schema_version(), archive_store::current_schema_version());
     assert!(upgraded.migration_backup.as_ref().is_some_and(|path| path.is_file()));
     assert_eq!(upgraded.get_profile().unwrap().profile, profile);
     upgraded.save_site_answers("campus.example.com", &[input("是否有亲属在本公司工作", "否", None)]).unwrap();

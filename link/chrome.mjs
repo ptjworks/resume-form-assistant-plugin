@@ -49,6 +49,51 @@ export function nativePort(api) {
   });
 }
 
+/**
+ * One Native Messaging port for a run of requests sent one after another (#429: a resume file
+ * read chunk by chunk). The host serves frames until the port closes, so a long file costs one
+ * host process rather than one per chunk. `send` answers in nativeSender's shape, so the same
+ * transport classifies the reply; `close` ends the run and answers anything still waiting.
+ */
+export function nativeChannel(api) {
+  return hostName => {
+    let port = null;
+    let closed = null;
+    let waiting = null;
+    const settle = result => {
+      const resolve = waiting;
+      waiting = null;
+      resolve?.(result);
+    };
+    try {
+      port = api.runtime.connectNative(hostName);
+      port.onMessage.addListener(response => settle({ response }));
+      port.onDisconnect.addListener(() => {
+        closed = api.runtime.lastError?.message ?? 'disconnected';
+        settle({ lastError: closed });
+      });
+    } catch (error) {
+      closed = error?.message ?? String(error);
+    }
+    return {
+      send: (_hostName, message) => new Promise(resolve => {
+        if (closed) { resolve({ lastError: closed }); return; }
+        if (waiting) { resolve({ lastError: 'a request is already waiting on this port' }); return; }
+        waiting = resolve;
+        try { port.postMessage(message); }
+        catch (error) { settle({ lastError: error?.message ?? String(error) }); }
+      }),
+      close: () => {
+        if (!closed) {
+          closed = 'closed';
+          try { port.disconnect(); } catch {}
+        }
+        settle({ lastError: 'closed' });
+      }
+    };
+  };
+}
+
 export function storageAdapter(api) {
   return {
     get: keys => api.storage.local.get(keys),

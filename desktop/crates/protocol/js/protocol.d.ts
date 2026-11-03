@@ -20,7 +20,9 @@ export type MessageType =
   | "usage.settings"
   | "mail.import"
   | "siteAnswers.read"
-  | "siteAnswers.save";
+  | "siteAnswers.save"
+  | "resumeFiles.list"
+  | "resumeFiles.read";
 
 /** Resume Pro request envelope */
 export interface RequestEnvelope {
@@ -30,7 +32,7 @@ export interface RequestEnvelope {
   messageId: string;
   /** pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ */
   clientInstanceId: string;
-  messageType: "health" | "handshake" | "application.queryCandidates" | "job.save" | "fill.submit" | "snapshot.chunk" | "submit.confirm" | "outbox.reconcile" | "resume.read" | "resume.update" | "ai.complete" | "ui.open" | "legacy.import" | "usage.touch" | "usage.settings" | "mail.import" | "siteAnswers.read" | "siteAnswers.save";
+  messageType: "health" | "handshake" | "application.queryCandidates" | "job.save" | "fill.submit" | "snapshot.chunk" | "submit.confirm" | "outbox.reconcile" | "resume.read" | "resume.update" | "ai.complete" | "ui.open" | "legacy.import" | "usage.touch" | "usage.settings" | "mail.import" | "siteAnswers.read" | "siteAnswers.save" | "resumeFiles.list" | "resumeFiles.read";
   /**
    * UTC RFC3339 subset: YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS.fractionZ. Pattern is syntactic; validators also reject impossible dates/times. No timezone offset other than Z.
    * pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$
@@ -252,6 +254,25 @@ export interface QueryCandidatesPayload {
   sourceUrl?: string;
 }
 
+export interface ResumeFilesListPayload {
+}
+
+export interface ResumeFilesReadPayload {
+  /** pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ */
+  fileId: string;
+  /**
+   * 要读的那一版文件的 SHA-256：桌面里这个文件换过、删过就回 conflict
+   * pattern: ^[0-9a-f]{64}$
+   */
+  sha256: string;
+  /**
+   * 第几块，每块 resumeFileChunkBytes 字节
+   * minimum: 0
+   * maximum: 232
+   */
+  chunkIndex: number;
+}
+
 export interface ResumeReadPayload {
 }
 
@@ -416,7 +437,7 @@ export interface HandshakeResponsePayload {
    * minItems: 1
    * maxItems: 32
    */
-  capabilities: ("health" | "handshake" | "application.queryCandidates" | "job.save" | "fill.submit" | "snapshot.chunk" | "submit.confirm" | "outbox.reconcile" | "resume.read" | "resume.update" | "ai.complete" | "ui.open" | "legacy.import" | "usage.touch" | "usage.settings" | "mail.import" | "siteAnswers.read" | "siteAnswers.save")[];
+  capabilities: ("health" | "handshake" | "application.queryCandidates" | "job.save" | "fill.submit" | "snapshot.chunk" | "submit.confirm" | "outbox.reconcile" | "resume.read" | "resume.update" | "ai.complete" | "ui.open" | "legacy.import" | "usage.touch" | "usage.settings" | "mail.import" | "siteAnswers.read" | "siteAnswers.save" | "resumeFiles.list" | "resumeFiles.read")[];
 }
 
 export interface HealthResponsePayload {
@@ -518,6 +539,72 @@ export interface QueryCandidatesResponsePayload {
     /** pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ */
     updatedAt?: string;
   }[];
+}
+
+export interface ResumeFilesListResponsePayload {
+  /** maxItems: 30 */
+  files: {
+    /** pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ */
+    fileId: string;
+    kind: "resume" | "photo" | "transcript" | "other";
+    /**
+     * 上传时用的文件名
+     * minLength: 1
+     * maxLength: 100
+     */
+    name: string;
+    /**
+     * 用户写的说明，比如「英文简历」；没写是空串
+     * maxLength: 30
+     */
+    label: string;
+    mime: "application/pdf" | "application/msword" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "image/jpeg" | "image/png";
+    /**
+     * minimum: 1
+     * maximum: 10485760
+     */
+    byteSize: number;
+    /** pattern: ^[0-9a-f]{64}$ */
+    sha256: string;
+    isDefault: boolean;
+    /**
+     * 用于哪些模板；空数组是所有模板。绑定的模板删掉后 id 还留着，这样的文件不用于别的模板
+     * maxItems: 25
+     */
+    templateIds: string[];
+    /** pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ */
+    updatedAt: string;
+  }[];
+}
+
+export interface ResumeFilesReadResponsePayload {
+  /** pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ */
+  fileId: string;
+  /** pattern: ^[0-9a-f]{64}$ */
+  sha256: string;
+  /**
+   * minimum: 1
+   * maximum: 10485760
+   */
+  byteSize: number;
+  /**
+   * minimum: 0
+   * maximum: 232
+   */
+  chunkIndex: number;
+  /**
+   * minimum: 1
+   * maximum: 233
+   */
+  chunkCount: number;
+  /** pattern: ^[0-9a-f]{64}$ */
+  chunkSha256: string;
+  /**
+   * 这一块的字节，标准 base64；45054 字节是 60072 个字符
+   * minLength: 4
+   * maxLength: 60072
+   */
+  bytesBase64: string;
 }
 
 export interface ResumeReadResponsePayload {
@@ -674,6 +761,8 @@ export interface RequestPayloadByType {
   "mail.import": MailImportPayload;
   "siteAnswers.read": SiteAnswersReadPayload;
   "siteAnswers.save": SiteAnswersSavePayload;
+  "resumeFiles.list": ResumeFilesListPayload;
+  "resumeFiles.read": ResumeFilesReadPayload;
 }
 
 /** Response payload type for a given messageType. Several writes share one response. */
@@ -696,6 +785,8 @@ export interface ResponsePayloadByType {
   "mail.import": MailImportResponsePayload;
   "siteAnswers.read": SiteAnswersReadResponsePayload;
   "siteAnswers.save": SiteAnswersSaveResponsePayload;
+  "resumeFiles.list": ResumeFilesListResponsePayload;
+  "resumeFiles.read": ResumeFilesReadResponsePayload;
 }
 
 /** One request envelope, narrowed to the payload its messageType carries. */

@@ -18,7 +18,7 @@ mod urls;
 mod validate;
 
 pub use digest::{
-    decode_standard_base64, payload_body_sha256, sha256_hex, snapshot_chunk_identity_sha256,
+    decode_standard_base64, encode_standard_base64, payload_body_sha256, sha256_hex, snapshot_chunk_identity_sha256,
 };
 pub use error::{ErrorCode, Layer, ProtocolError};
 pub use identity::{check_current_identity, handshake_response_payload, origin_allowed};
@@ -34,8 +34,8 @@ pub use snapshot::{
 pub use time::is_utc_timestamp;
 pub use types::*;
 pub use validate::{
-    is_site_key, payload_sha256, source_restore_epoch, utf8_json_len, validate_request_bytes, validate_request_value,
-    validate_response_for_request, validate_response_value,
+    is_site_key, payload_sha256, resume_file_mime_allowed, source_restore_epoch, utf8_json_len, validate_request_bytes,
+    validate_request_value, validate_response_for_request, validate_response_value,
 };
 
 pub const RULES_JSON: &str = include_str!("../rules.json");

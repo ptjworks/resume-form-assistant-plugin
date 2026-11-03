@@ -4,7 +4,7 @@ import { installFrontendErrors } from "./feedback.ts";
 import { mountFeedbackSettings } from "./react/feedback-mount.tsx";
 import { mountUsageSettings } from "./react/usage-mount.tsx";
 import { installUsageSignals } from "./usage-metrics.ts";
-import type { Invoke, RuntimeStatus } from "./api.ts";
+import type { Invoke, ResumeFileKind, RuntimeStatus } from "./api.ts";
 import { input, must } from "./dom.ts";
 import { createPairingController } from "./pairing-form.ts";
 import {
@@ -462,6 +462,13 @@ const applications = mountApplications(command, {
     : undefined,
 });
 
+const RESUME_FILE_FILTERS: Record<ResumeFileKind, { name: string; extensions: string[] }> = {
+  resume: { name: "简历附件", extensions: ["pdf", "doc", "docx"] },
+  photo: { name: "证件照", extensions: ["jpg", "jpeg", "png"] },
+  transcript: { name: "成绩单", extensions: ["pdf", "jpg", "jpeg", "png"] },
+  other: { name: "其他材料", extensions: ["pdf", "doc", "docx", "jpg", "jpeg", "png"] },
+};
+
 // 简历模板只收 .xlsx / .csv；导出默认用模板名。没有 Tauri 时为 null，界面会如实说明。
 const resumePickers =
   dialog?.open && dialog?.save
@@ -475,6 +482,11 @@ const resumePickers =
         },
         save: async (suggested: string) =>
           (await dialog.save?.({ defaultPath: suggested, filters: [{ name: "Excel", extensions: ["xlsx"] }] })) ?? null,
+        // #429：附件按种类限定扩展名；真正的类型由桌面按文件头核对。
+        openResumeFile: async (kind: ResumeFileKind) => {
+          const chosen = await dialog.open?.({ multiple: false, filters: [RESUME_FILE_FILTERS[kind]] });
+          return typeof chosen === "string" ? chosen : null;
+        },
       }
     : null;
 const resumeView = mountResume(

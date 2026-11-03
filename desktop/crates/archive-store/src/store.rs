@@ -55,6 +55,9 @@ pub struct ArchiveStore {
     schema_version: i64,
     /// 打开时若发生迁移,记录本次迁移前的自动备份路径(供诊断/恢复入口)。
     pub migration_backup: Option<PathBuf>,
+    /// 附件（#429）的增、换、删和清理一次只做一件。文件的写入、改名、删除在数据库事务外面做，
+    /// 这把锁保证清理不会删掉一份已经放好、还没登记的文件。
+    pub(crate) resume_file_writes: Mutex<()>,
     _pointer_lock: fslock::LockFile,
     _archive_lock: fslock::LockFile,
 }
@@ -213,6 +216,7 @@ impl ArchiveStore {
             identity: Mutex::new(identity),
             schema_version,
             migration_backup,
+            resume_file_writes: Mutex::new(()),
             _pointer_lock: pointer_lock,
             _archive_lock: archive_lock,
         })
@@ -273,18 +277,26 @@ impl ArchiveStore {
             attachments: count("SELECT COUNT(*) FROM attachment_blobs")?,
         };
         let mut stmt = conn.prepare(
-            "SELECT stored_rel_path, size_bytes, sha256 FROM attachment_blobs \
-             UNION ALL SELECT stored_rel_path, byte_size, sha256 FROM resume_snapshots",
+            "SELECT stored_rel_path, size_bytes, sha256, 0 FROM attachment_blobs \
+             UNION ALL SELECT stored_rel_path, byte_size, sha256, 0 FROM resume_snapshots \
+             UNION ALL SELECT stored_rel_path, byte_size, sha256, 1 FROM resume_files",
         )?;
         let mut referenced_files = Vec::new();
         for row in stmt.query_map([], |row| {
-            Ok(crate::BackupFileReference {
-                path: row.get(0)?,
-                size_bytes: row.get(1)?,
-                sha256: row.get(2)?,
-            })
+            Ok((
+                crate::BackupFileReference {
+                    path: row.get(0)?,
+                    size_bytes: row.get(1)?,
+                    sha256: row.get(2)?,
+                },
+                row.get::<_, i64>(3)? == 1,
+            ))
         })? {
-            let mut reference = row?;
+            let (mut reference, resume_file) = row?;
+            // 附件（#429）和读取用同一条：存储位置不对的记录不进清单，它记的路径不拿来比对、不进备份。
+            if resume_file && !crate::resume_files::stored_where_expected(&reference.path, &reference.sha256) {
+                continue;
+            }
             let path = &reference.path;
             if !(path.starts_with("attachments/") || path.starts_with("snapshots/")) {
                 return Err(StoreError::PathInvalid(path.clone()));

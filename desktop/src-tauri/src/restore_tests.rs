@@ -93,6 +93,71 @@ fn an_exported_archive_restores_with_the_same_counts() {
 }
 
 #[test]
+fn resume_files_travel_in_a_backup_and_come_back_whole() {
+    // #429: the files kept for upload live under attachments/ and must survive a backup the
+    // way evidence does — same bytes, same name, same default, still readable in chunks.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let resume = [b"%PDF-1.7\n".as_slice(), &vec![7u8; archive_store::RESUME_FILE_CHUNK_BYTES + 100]].concat();
+    let photo = [&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A][..], b"photo bytes"].concat();
+    let kept = store.add_resume_file(archive_store::ResumeFileKind::Resume, "测试用户_简历.pdf", &resume).unwrap();
+    store.add_resume_file(archive_store::ResumeFileKind::Photo, "证件照.png", &photo).unwrap();
+    let package = export_to(&store, &source.paths, "backup.zip");
+    store.close().unwrap();
+
+    let target = layout();
+    let report = restore_archive(&target.paths, &package, NOW, || Ok(())).unwrap();
+    let restored = ArchiveStore::open(ArchiveConfig::new(
+        std::path::PathBuf::from(&report.archive_dir),
+        target.paths.current_pointer.clone(),
+    ))
+    .unwrap();
+    let files = restored.resume_files().unwrap();
+    assert_eq!(files.iter().map(|f| (f.name.as_str(), f.is_default)).collect::<Vec<_>>(), vec![("测试用户_简历.pdf", true), ("证件照.png", true)]);
+    assert_eq!(restored.read_resume_file(&kept.id).unwrap().1, resume);
+    let mut joined = Vec::new();
+    for index in 0..2 {
+        joined.extend(restored.read_resume_file_chunk(&kept.id, &kept.sha256, index).unwrap().bytes);
+    }
+    assert_eq!(joined, resume);
+    assert!(restored.check_attachment_refs().unwrap().invalid_files.is_empty());
+}
+
+#[test]
+fn a_resume_file_record_pointing_outside_the_archive_never_brings_that_file_into_a_backup() {
+    // #429: a record whose stored path was changed to a file outside the archive. The backup
+    // list leaves the record out, so that path is never compared, read or packed.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let bytes = [b"%PDF-1.7\n".as_slice(), b"resume bytes"].concat();
+    let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    let outside = source.paths.data_root.join("outside-secret.pdf");
+    std::fs::write(&outside, b"%PDF-1.7\nnot part of the archive").unwrap();
+    let cfg = ArchiveConfig::new(source.paths.archive_dir.clone(), source.paths.current_pointer.clone());
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute(
+        "UPDATE resume_files SET stored_rel_path = ?1 WHERE id = ?2",
+        rusqlite::params![outside.to_string_lossy(), file.id],
+    )
+    .unwrap();
+    drop(raw);
+    // Its bytes are still where the hash says (the cleanup keeps them) but on no list: the
+    // backup stops and writes nothing.
+    let blocked = source.paths.data_root.join("blocked.zip");
+    let error = export_archive(&store, &source.paths, &blocked, NOW).unwrap_err();
+    assert!(format!("{error:?}").contains("孤立"), "{error:?}");
+    assert!(!blocked.exists());
+    // Without those bytes the backup goes through, and the outside file is not in it.
+    std::fs::remove_file(source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256)).unwrap();
+    let package = export_to(&store, &source.paths, "backup.zip");
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains("outside") && !entry.path.contains(&file.sha256)));
+    assert!(store.check_attachment_refs().unwrap().invalid_files.contains(&outside.to_string_lossy().to_string()));
+    assert_eq!(std::fs::read(&outside).unwrap(), b"%PDF-1.7\nnot part of the archive");
+    store.close().unwrap();
+}
+
+#[test]
 fn restoring_the_same_backup_twice_mints_two_different_epochs() {
     let source = layout();
     let (store, _app) = seeded(&source.paths);

@@ -73,7 +73,7 @@ pub struct SiteAnswersChanged {
 /// The highest protocol version the desktop actually serves right now.
 ///
 /// The desktop advertises v2 only after all five bridge handlers are wired.
-pub const SERVED_MAX_PROTOCOL_VERSION: u32 = 5;
+pub const SERVED_MAX_PROTOCOL_VERSION: u32 = 6;
 
 /// The application as a caller can see it: who it is, and what it will commit.
 ///
@@ -526,6 +526,12 @@ fn answer_watched<A: Application + ?Sized>(frame: &[u8], application: &A, peer_g
                 let v5 = rules["v5MessageTypes"].as_array()?;
                 payload["capabilities"].as_array_mut()?.extend(v5.iter().cloned());
             }
+            // #429: likewise for resume files — a v5 plugin's enum stops at siteAnswers.save.
+            if request.protocol_version >= 2 && client_max >= 6 {
+                let rules: serde_json::Value = serde_json::from_str(resume_pro_protocol::RULES_JSON).ok()?;
+                let v6 = rules["v6MessageTypes"].as_array()?;
+                payload["capabilities"].as_array_mut()?.extend(v6.iter().cloned());
+            }
             serde_json::to_vec(&serde_json::json!({
                 "protocolVersion": request.protocol_version,
                 "correlationId": request.message_id,
@@ -836,7 +842,7 @@ mod tests {
         );
         assert_eq!(value["payload"]["minProtocolVersion"], 1);
         assert_eq!(value["payload"]["maxProtocolVersion"], SERVED_MAX_PROTOCOL_VERSION);
-        assert_eq!(SERVED_MAX_PROTOCOL_VERSION, 5);
+        assert_eq!(SERVED_MAX_PROTOCOL_VERSION, 6);
         assert!(
             value["payload"]["capabilities"]
                 .as_array()
@@ -890,13 +896,31 @@ mod tests {
     }
 
     #[test]
+    fn resume_file_capabilities_are_only_announced_to_clients_offering_v6() {
+        // #429: a v5 plugin validates capabilities against an enum that ends at siteAnswers.save.
+        let app = open_archive();
+        for (max, expected) in [(2, false), (5, false), (6, true)] {
+            let frame = serde_json::to_vec(&serde_json::json!({"protocolVersion":2,"messageId":"11111111-1111-4111-8111-111111111111","clientInstanceId":"22222222-2222-4222-8222-222222222222","messageType":"handshake","occurredAt":"2026-11-03T00:00:00Z","payload":{"pluginVersion":"0.5.2","minProtocolVersion":2,"maxProtocolVersion":max}})).unwrap();
+            let result = answer(&frame, app.as_ref()).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&result).unwrap();
+            let capabilities = value["payload"]["capabilities"].as_array().unwrap();
+            assert_eq!(capabilities.iter().any(|item| item == "resumeFiles.list"), expected);
+            assert_eq!(capabilities.iter().any(|item| item == "resumeFiles.read"), expected);
+            assert_eq!(capabilities.iter().any(|item| item == "siteAnswers.read"), max >= 5);
+            assert_eq!(capabilities.len(), match max { 2 => 13, 5 => 18, _ => 20 });
+            let request = resume_pro_protocol::validate_request_bytes(&frame).unwrap();
+            resume_pro_protocol::validate_response_for_request(&value, &request).unwrap();
+        }
+    }
+
+    #[test]
     fn a_v2_only_client_can_handshake_after_the_bridge_is_wired() {
         const HANDSHAKE_V2_ONLY: &str = r#"{"protocolVersion":2,"messageId":"33333333-3333-4333-8333-333333333333","clientInstanceId":"11111111-1111-4111-8111-111111111111","messageType":"handshake","occurredAt":"2026-09-06T12:00:00.000Z","payload":{"pluginVersion":"0.4.0","minProtocolVersion":2,"maxProtocolVersion":2}}"#;
         let reply = answer(HANDSHAKE_V2_ONLY.as_bytes(), open_archive().as_ref()).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&reply).unwrap();
         assert_eq!(value["ok"], true);
         assert_eq!(value["protocolVersion"], 2);
-        assert_eq!(value["payload"]["maxProtocolVersion"], 5);
+        assert_eq!(value["payload"]["maxProtocolVersion"], 6);
         assert!(value["payload"]["capabilities"].as_array().unwrap().iter().any(|c| c == "legacy.import"));
         let request = resume_pro_protocol::validate_request_bytes(HANDSHAKE_V2_ONLY.as_bytes()).unwrap();
         resume_pro_protocol::validate_response_for_request(&value, &request).unwrap();
