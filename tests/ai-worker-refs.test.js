@@ -296,6 +296,23 @@ test("a text box takes no year, month or day of an item; questions about them an
   assert.equal(valueOf(result, "when"), undefined);
 });
 
+test("a text box asking for a whole date takes no year, month or day the AI picks out", async () => {
+  const env = worker((message, catalog) => [
+    { fieldId: "arrive", ref: `${catalog[0].ref}.month` }, { fieldId: "birthYm", ref: catalog[0].ref, part: "month" },
+    { fieldId: "birthYear", ref: `${catalog[0].ref}.year` }, { fieldId: "gradMonth", ref: catalog[0].ref, part: "month" }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "arrive", label: "到岗日期" }, { fieldId: "birthYm", label: "出生年月" },
+      { fieldId: "birthYear", label: "出生年份" }, { fieldId: "gradMonth", label: "毕业月份" }],
+    resumeFields: [{ group: "补充字段", key: "日期甲", value: "2026.07.15" }]
+  });
+  // 「到岗日期」「出生年月」要整个日期，AI 回的月份不填；明说要年份、月份的照填。
+  assert.equal(valueOf(result, "arrive"), undefined);
+  assert.equal(valueOf(result, "birthYm"), undefined);
+  assert.equal(valueOf(result, "birthYear"), "2026");
+  assert.equal(valueOf(result, "gradMonth"), "07");
+});
+
 test("a select of years under a question about a time takes the year of a span; a select of day counts does not", async () => {
   const env = worker();
   await env.run({

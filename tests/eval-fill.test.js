@@ -2,6 +2,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const http = require("node:http");
 const { pathToFileURL } = require("node:url");
 
 const load = () => import(pathToFileURL(path.join(__dirname, "..", "scripts", "eval-fill.mjs")).href);
@@ -71,6 +72,32 @@ test("the key goes only to https unless http is asked for by name", async () => 
   assert.equal(baseUrlAllowed("http://api.example.test/v1", true), false, "http leaves this machine only never");
   assert.equal(baseUrlAllowed("ftp://api.example.test"), false);
   assert.equal(baseUrlAllowed("not a url"), false);
+});
+
+test("a redirect from the model service is not followed, and no request with the key goes out after it", async () => {
+  const { realModel } = await load();
+  const seen = [];
+  const server = http.createServer((request, response) => {
+    seen.push({ url: request.url, key: request.headers.authorization || "" });
+    request.resume();
+    if (request.url.startsWith("/v1/")) {
+      response.writeHead(302, { location: `http://127.0.0.1:${server.address().port}/elsewhere/chat/completions` });
+      response.end();
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content: "[]" } }] }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const complete = realModel({ baseUrl: `http://127.0.0.1:${server.address().port}/v1`, model: "fictional-model", apiKey: "fictional-test-key" });
+    assert.deepEqual(await complete("system", "user"), { ok: false, reason: "redirect" });
+    assert.deepEqual(await complete("system", "user"), { ok: false, reason: "redirect" }, "nothing more is sent after a redirect");
+    assert.equal(complete.redirected, true);
+    assert.deepEqual(seen.map((item) => item.url), ["/v1/chat/completions"]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("padding the resume with unrelated saved questions makes the catalog too big for one request", async () => {

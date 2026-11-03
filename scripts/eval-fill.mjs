@@ -210,21 +210,31 @@ export function baseUrlAllowed(baseUrl, allowHttp = false) {
 }
 
 // OpenAI 兼容接口，和桌面发的同形：system + user，temperature 0，非流式。OpenCode 要带稳定的 x-opencode-session。
+// 服务商要求跳转（3xx）时不跟过去：Key 在请求头里，跟过去就带到了别的地方。这一次算失败、记下 redirected，
+// 之后的请求一律不发，main 跑完报错退出。
 export function realModel({ baseUrl, model, apiKey, fetchImpl = fetch }) {
   const session = randomUUID();
   const opencode = /(^|\.)opencode\.ai$/i.test(new URL(baseUrl).hostname);
-  return async (system, user) => {
+  const complete = async (system, user) => {
+    if (complete.redirected) return { ok: false, reason: "redirect" };
     const response = await fetchImpl(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
+      redirect: "manual",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}`, "user-agent": "wangshen-kuaitian-eval/0.1",
         ...(opencode ? { "x-opencode-session": session } : {}) },
       body: JSON.stringify({ model, temperature: 0, messages: [{ role: "system", content: system }, { role: "user", content: user }] })
     });
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+      complete.redirected = true;
+      return { ok: false, reason: "redirect" };
+    }
     if (!response.ok) return { ok: false, reason: `http_${response.status}` };
     const body = await response.json();
     const tokens = body.usage ? { prompt: body.usage.prompt_tokens || 0, completion: body.usage.completion_tokens || 0 } : null;
     return { ok: true, text: body.choices?.[0]?.message?.content || "", tokens };
   };
+  complete.redirected = false;
+  return complete;
 }
 
 async function main(argv) {
@@ -265,6 +275,10 @@ async function main(argv) {
   const only = option("--pages") ? new Set(option("--pages").split(",")) : null;
   if (only) corpus.pages = corpus.pages.filter((page) => only.has(page.name));
   const result = await evaluate(corpus, { modes, runs, complete });
+  if (complete.redirected) {
+    console.error("服务商要求跳转到别的地址，评测停下了：没有跟过去，之后也没有再发带 Key 的请求。请检查 --base-url。");
+    process.exit(3);
+  }
   const questions = corpus.pages.reduce((sum, page) => sum + page.fields.length, 0);
   console.log(`模型：${label}；${corpus.pages.length} 张表 ${questions} 题 × ${runs} 次`);
   console.table(Object.fromEntries(Object.entries(result.byMode).map(([mode, t]) => [mode, {

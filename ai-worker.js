@@ -605,6 +605,13 @@ function asksDatePart(field) {
   return /^\s*[年月日]\s*$/.test(String(field?.label ?? ""))
     || DATE_PART_WORDS.test([field?.label, field?.placeholder, field?.name, field?.idAttr].filter(Boolean).join(" "));
 }
+// 文本框（没有 fits）只在题目明说要年、月或日的一部分时收 AI 回的年、月、日：「出生年份」「毕业月份」「几月」「出生年」。
+// 「到岗日期」「出生年月」要的是整个日期，AI 回了年、月、日也整条不要（下拉照旧按 asksDatePart 带 fits）。
+const PART_ONLY_WORDS = /年份|月份|几月|几号|几日|(?:出生|毕业|入学|入职|离职)[年月](?![月日])|\b(?:year|month|day)\b/i;
+function asksPartOnly(field) {
+  return /^\s*[年月日]\s*$/.test(String(field?.label ?? ""))
+    || PART_ONLY_WORDS.test([field?.label, field?.placeholder, field?.name, field?.idAttr].filter(Boolean).join(" "));
+}
 // 编号后面可以跟年、月、日，或一段起止的开始、结束（start、end：AI 常这样写，提示词没要求，本地也认）。
 const REF_TOKEN = /^(r\d+)(?:\.(year|month|day|start|end))?$/;
 const SPAN_SIDES = ["start", "end"];
@@ -674,7 +681,7 @@ function refMatches(payload, fields, catalog, allowed) {
     });
     // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框（「期望年薪」）收到的整条不要。
     const parted = tokens.some(token => DATE_PARTS.includes(REF_TOKEN.exec(token)?.[2]));
-    if (parted && !field.fits && !asksDatePart(field)) return [];
+    if (parted && !field.fits && !asksPartOnly(field)) return [];
     // 同一个编号给了两次（refs: ["r1", "r1"]）只算一次，免得拼出「深圳、深圳」。
     tokens.splice(0, tokens.length, ...new Set(tokens));
     const usable = token => (!allowed || allowed.has(REF_TOKEN.exec(token)?.[1])) && (!field.fits || field.fits.includes(token));
