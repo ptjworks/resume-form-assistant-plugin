@@ -599,13 +599,15 @@
   // 看全了（滚的时候列表一直没变长，到底以后也没变长、没有加载中的标记）按整张列表比，和画全了的列表一样：
   // 对不上、几项都对得上都不选。列表变长过（懒加载）或到底时还显示着加载中，说不准后面还有没有，只认文字相同
   // （见 sameOption）的一项，「包含」和同一个意思的另一种写法都不认。
-  // 对上的一项滚回它那一屏，按文字和位置认出来交回去；again() 按同样的办法再认一次，
-  // 点之前用（滚动后重画换了节点也认得出），认不出时调用方用 back() 滚回原处。
+  // 对上的一项滚回它那一屏，按文字和位置认出来交回去；点之前用 again() 按同样的办法再认一次（滚动后重画换了节点也认得出），
+  // 当场认不出就等列表停住再认，还认不出报 options_not_rendered、滚回原处。
+  // 找到以后这两次等列表停住各自最多等 SCAN_SETTLE_MS，不受 SCAN_MS 限制：扫描可能刚好把时间用完。
+  // 一开始量不出行高、找不到滚动层（列表刚画出来），也先等列表停住再量一次。
   // 下面这些都按没有匹配的选项报：滚了以后画出来的选项盖不住看得见的这一段（列表不跟着滚动重画）、滚不动、
   // 滚了 SCAN_SCREENS 屏或 SCAN_MS 还没到底（越滚越长的懒加载、一直在变的列表；等列表停住的时间也算在里面）。
   // 没找到、出错时都滚回原处。
   // read 读弹层里当前画出来的选项。
-  const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000, SCAN_TAIL_MS = 500;
+  const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000, SCAN_TAIL_MS = 500, SCAN_SETTLE_MS = 400;
   // 弹层里显示着加载中：aria-busy、加载圈（类名以 loading 结尾、antd 的 ant-spin-spinning、Element 的 el-loading-mask），
   // 或一段「加载中」「loading」这样的字。
   const LOADING_MARKS = '[aria-busy="true"], .ant-spin-spinning, .el-loading-mask, .is-loading, [class*="loading" i]';
@@ -616,35 +618,47 @@
       || Array.from(layer.querySelectorAll('*')).some(node => !node.children.length && GENERIC_LOADING.test(trim(node.textContent)) && h.visible(node));
   }
   async function scanList(ctx, h, read, popup, layer, value) {
-    const first = read().filter(option => option.node?.isConnected);
-    const scroller = first.length && popup?.isConnected ? listScroller(first.map(option => option.node), listLimit(popup, layer)) : null;
-    const heights = first.map(option => option.node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
-    const row = heights[Math.floor(heights.length / 2)] || 0;
-    if (!scroller || !row) return { reason: 'no_option_match' };
-    const home = scroller.scrollTop, started = Date.now(), startHeight = scroller.scrollHeight;
+    if (!popup?.isConnected) return { reason: 'no_option_match' };
+    const started = Date.now();
     const left = () => SCAN_MS - (Date.now() - started);
     const keyOf = option => `${option.value}\u0000${option.text}`;
+    // 等画出来的选项停住 SCAN_STEADY_MS，最多等 limit。
+    const settle = limit => {
+      let last = null, since = Date.now();
+      return h.waitUntil(ctx, popup.ownerDocument.documentElement, () => {
+        const list = read(), key = list.map(keyOf).join('\n');
+        if (key !== last) { last = key; since = Date.now(); }
+        return list;
+      }, () => Date.now() - since >= SCAN_STEADY_MS, Math.max(0, limit));
+    };
+    // 装着选项的滚动层，和一行的高度（画出来的选项取中间的高度）。
+    const measure = list => {
+      const nodes = list.map(option => option.node).filter(node => node?.isConnected);
+      const heights = nodes.map(node => node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
+      return { scroller: nodes.length ? listScroller(nodes, listLimit(popup, layer)) : null, row: heights[Math.floor(heights.length / 2)] || 0 };
+    };
+    let { scroller, row } = measure(read());
+    if (!scroller || !row) {
+      const settled = await settle(SCAN_SETTLE_MS);
+      if (settled.reason && settled.reason !== 'verification_timeout') return { reason: settled.reason };
+      ({ scroller, row } = measure(read()));
+      if (!scroller || !row) return { reason: 'no_option_match' };
+    }
+    const home = scroller.scrollTop, startHeight = scroller.scrollHeight;
     // 画出来的选项和它们在滚动内容里的位置。
     const placed = list => {
       const top = layoutTops(scroller), base = top(scroller);
       return list.filter(option => option.node?.isConnected && scroller.contains(option.node)).map(option => ({ option, at: top(option.node) - base }));
-    };
-    const settle = () => {
-      let last = null, since = Date.now();
-      return h.waitUntil(ctx, scroller.ownerDocument.documentElement, () => {
-        const list = read(), key = list.map(keyOf).join('\n');
-        if (key !== last) { last = key; since = Date.now(); }
-        return list;
-      }, () => Date.now() - since >= SCAN_STEADY_MS, Math.max(0, Math.min(h.timeoutMs ?? 2000, left())));
     };
     let found = null;
     try {
       const seen = [];
       let previous = -1, grew = false;
       for (let screen = 0, target = 0; ; screen++) {
-        if (screen >= SCAN_SCREENS || left() < 0) return { reason: 'no_option_match' };
+        // 剩下的时间不够等列表停住一次，也算滚满了上限。
+        if (screen >= SCAN_SCREENS || left() < SCAN_STEADY_MS) return { reason: 'no_option_match' };
         scroller.scrollTop = target;
-        const settled = await settle();
+        const settled = await settle(Math.min(h.timeoutMs ?? 2000, left()));
         if (settled.reason) return { reason: settled.reason === 'verification_timeout' ? 'no_option_match' : settled.reason };
         const view = scroller.scrollTop, bottom = Math.min(view + scroller.clientHeight, scroller.scrollHeight);
         if (view <= previous) return { reason: 'no_option_match' };
@@ -665,7 +679,7 @@
         const height = scroller.scrollHeight, waited = left() >= SCAN_TAIL_MS;
         const tail = await h.waitUntil(ctx, scroller.ownerDocument.documentElement, () => scroller.scrollHeight, now => now > height, Math.max(0, Math.min(SCAN_TAIL_MS, left())));
         if (tail.reason && tail.reason !== 'verification_timeout') return { reason: tail.reason };
-        if (tail.value) { grew = true; continue; }
+        if (tail.value > height) { grew = true; continue; }
         if (!waited || loadingShown(listLimit(popup, layer), h)) grew = true;
         break;
       }
@@ -674,13 +688,23 @@
       if (!matched.option) return { reason: matched.reason };
       const wanted = matched.option;
       const locate = list => placed(list).find(({ option, at }) => keyOf(option) === wanted.key && Math.abs(at - wanted.at) < row / 2)?.option || null;
+      // 等列表停住再认这一项；等满了还在变，就按当时画出来的认。
+      const settledHit = async () => {
+        const settled = await settle(SCAN_SETTLE_MS);
+        if (settled.reason && settled.reason !== 'verification_timeout') return { reason: settled.reason };
+        const hit = locate(settled.value || read());
+        return hit ? { option: hit } : { reason: 'options_not_rendered' };
+      };
       // 滚回这一项所在的一屏（放在中间），按文字和位置认出它。
       scroller.scrollTop = Math.max(0, wanted.at - (scroller.clientHeight - row) / 2);
-      const settled = await settle();
-      if (settled.reason) return { reason: settled.reason === 'verification_timeout' ? 'options_not_rendered' : settled.reason };
-      const hit = locate(settled.value);
-      if (!hit) return { reason: 'options_not_rendered' };
-      found = { option: hit, again: () => locate(read()), back: () => { scroller.scrollTop = home; } };
+      const shown = await settledHit();
+      if (!shown.option) return shown;
+      found = { option: shown.option, again: async () => {
+        const now = locate(read());
+        const checked = now ? { option: now } : await settledHit();
+        if (!checked.option) scroller.scrollTop = home;
+        return checked;
+      } };
       return found;
     } finally {
       if (!found) scroller.scrollTop = home;
@@ -1581,10 +1605,8 @@
       }
       if (found.reason) return found;
       // Re-read immediately before activation: async renders can replace an option.
-      // 滚着找到的一项按文字和位置再认一次（scanList 的 again）：它可能是按「包含」对上的，当前这一屏又不全，按 pick 比只认同名。
-      const again = scanned ? found.again() : null;
-      if (scanned && !again) found.back();
-      const latest = scanned ? (again ? { option: again } : { reason: 'options_not_rendered' })
+      // 滚着找到的一项按文字和位置再认一次（scanList 的 again，认不出时它滚回原处）：它可能是按「包含」对上的，当前这一屏又不全，按 pick 比只认同名。
+      const latest = scanned ? await found.again()
         : region ? regionPick(readOptions(level)) : pick(readOptions(level));
       if (multiplePopup()) return { reason: 'unsupported_control' };
       if (latest.reason) return latest;
@@ -1773,11 +1795,7 @@
           // 没有能打字的搜索框：滚着看完整张列表（见 scanList），点之前按文字和位置再认一次。
           // pickMultiple 只从 antd、Element 进来（两个调用处都先判断了库），这里照单选的门槛再写一遍。
           found = await scanList(ctx, h, listOf, popup, ctx.popup, value);
-          if (found.option) {
-            const again = found.again();
-            if (!again) found.back();
-            found = again ? { option: again } : { reason: 'options_not_rendered' };
-          }
+          if (found.option) found = await found.again();
         }
       }
       if (found.reason) return fail(found);
