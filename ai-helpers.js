@@ -29,6 +29,9 @@
   ];
   // 关键词先 normalize 好：本地匹配里每一对网页字段和简历字段都要查这张表。
   const SEMANTIC_KEYWORDS = FIELD_SEMANTICS.map((item) => ({ type: item.type, keywords: item.keywords.map(normalizeText) }));
+  // 「联系方式」是泛称，可能要电话也可能要邮箱：只靠它认成电话的不作数，往后看（inferFieldSemantic）。
+  const CONTACT_WORD = normalizeText("联系方式");
+  const PHONE_WORDS = SEMANTIC_KEYWORDS.find((item) => item.type === "phone").keywords.filter((word) => word !== CONTACT_WORD);
   // 表里没有、但看得出是别的号码的简历字段名：不是手机也不是证件号，不按值去猜。
   const OTHER_NUMBER_KEY = /微信|wechat|qq|学号|学生证|工号|准考证|考生号|报名号|学籍|证书|编号|卡号|账号|帐号|邮编|邮政编码/;
   // 字段名认不出、只能按值猜手机和证件号时用（isResumeFieldMatch）；核对手机和证件号的值时也拿来互相排除（isValueValidForField）。
@@ -196,13 +199,21 @@
   // 区块只用来分清是谁的字段（personScope）。
   // 以题目为准：先只看 label，认不出再依次看 aria-label、placeholder、name、id，哪一样认得出就用哪一样。
   // 几样拼在一起按 FIELD_SEMANTICS 的顺序找，题目写「身份证号码」、name 是 mobile 的框会认成电话（排在前面）。
+  // 只靠「联系方式」认成电话的（CONTACT_WORD），后面几样认得出是电话还是邮箱就照那样认，都认不出才按电话；
+  // 后面认出别的类不算，「联系方式」的框 name 是 contactName 也不是姓名。
   function inferFieldSemantic(field) {
+    let contact = false;
     for (const part of [field?.label, field?.ariaLabel, field?.placeholder, field?.name, field?.idAttr]) {
       const haystack = normalizeText(part);
       const type = haystack && SEMANTIC_KEYWORDS.find((item) => item.keywords.some((keyword) => haystack.includes(keyword)))?.type;
-      if (type) return type;
+      if (!type || (contact && type !== "phone" && type !== "email")) continue;
+      if (type === "phone" && !PHONE_WORDS.some((word) => haystack.includes(word))) {
+        contact = true;
+        continue;
+      }
+      return type;
     }
-    return "";
+    return contact ? "phone" : "";
   }
 
   // 简历字段名是哪一类：先查 FIELD_SEMANTICS，再认 DOB 这类缩写（整个名字才算，Adobe 不算）和别的号码。

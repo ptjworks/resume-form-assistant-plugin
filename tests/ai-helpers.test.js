@@ -547,6 +547,25 @@ test("field kind goes by the question before the aria-label, placeholder, name a
   assert.equal(kind({ label: "备注", placeholder: "选填" }), "");
 });
 
+// 「联系方式」是泛称：只靠它认成电话的，后面几样写明了邮箱就是邮箱，写明了手机就是手机，都没写才按电话。
+// 后面认出的是别的类（name 是 contactName）不算，还按电话。
+test("a 联系方式 question is a phone unless what follows says email", () => {
+  const kind = (field) => helpers.inferFieldSemantic(field);
+  assert.equal(kind({ label: "联系方式", placeholder: "请输入邮箱" }), "email");
+  assert.equal(kind({ label: "联系方式", placeholder: "请输入手机号" }), "phone");
+  assert.equal(kind({ label: "联系方式" }), "phone");
+  assert.equal(kind({ label: "联系方式", ariaLabel: "联系方式", name: "email" }), "email");
+  assert.equal(kind({ label: "联系方式", name: "contactName" }), "phone");
+  assert.equal(kind({ label: "联系方式", name: "contactName", idAttr: "contactEmail" }), "email");
+  assert.equal(kind({ label: "联系方式（邮箱）", placeholder: "请输入手机号" }), "email");
+  assert.equal(kind({ label: "联系电话", placeholder: "请输入邮箱" }), "phone");
+
+  assert.deepEqual(ruleValues(
+    [textField("contact", "联系方式", { placeholder: "请输入邮箱" }), textField("phone", "联系方式", { placeholder: "请输入手机号" })],
+    [{ group: "基本信息", key: "手机号码", value: "13812345678" }, { group: "基本信息", key: "邮箱", value: "tester@example.com" }]
+  ), { contact: "tester@example.com", phone: "13812345678" });
+});
+
 // 同一个原因：name 是 schoolName、majorName 的框，拼在一起找会先碰上「name」，认成姓名，本人的姓名填进了毕业学校。
 test("a school or major question is not taken for the name because of its name attribute", () => {
   assert.equal(helpers.inferFieldSemantic({ label: "毕业学校", name: "schoolName" }), "school");
