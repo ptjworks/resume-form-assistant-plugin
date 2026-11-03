@@ -384,6 +384,23 @@ test("an item is on topic only by words of its own name, never by its group", as
   assert.deepEqual(result.matches.map((match) => match.fieldId), ["gain"]);
 });
 
+test("one shared word passes only when the question says nothing else", async () => {
+  const resume = [{ group: "自我评价", key: "自我评价", value: "踏实认真" }, { group: "技能", key: "专业技能", value: "虚构建模" },
+    { group: "兴趣", key: "爱好特长", value: "长跑" }];
+  const env = worker((message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key).ref;
+    return [{ fieldId: "team", ref: ref("自我评价") }, { fieldId: "self", ref: ref("自我评价") }, { fieldId: "how", ref: ref("自我评价") },
+      { fieldId: "skill", ref: ref("专业技能") }, { fieldId: "hobby", ref: ref("爱好特长") }];
+  });
+  const box = (fieldId, label) => ({ fieldId, label, tagName: "textarea", inputType: "textarea" });
+  const result = await env.run({
+    formFields: [box("team", "请评价你的团队"), box("self", "介绍一下你自己"), box("how", "你如何评价自己"), box("skill", "技能特长"), box("hobby", "兴趣爱好")],
+    resumeFields: resume
+  });
+  // 「请评价你的团队」只对上「评价」，「团队」资料项没说到，拦下；别的题除了对上的词没说别的，照填。
+  assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["hobby", "how", "self", "skill"]);
+});
+
 test("an open question whose answer is held back counts as having no ready answer, not as unwritten", async () => {
   const resume = Array.from({ length: 10 }, (_, i) => ({ group: "自我评价", key: `自我评价${i}`, value: `评价${i}` }));
   const env = worker((message, catalog) => [{ fieldId: "self", refs: catalog.map((entry) => entry.ref) }]);
@@ -821,6 +838,21 @@ test("an address with street, postcode or brackets after it goes to a cascade as
     resumeFields: values.map((value, at) => ({ group: "户籍与地区", key: `地址${at}`, value }))
   });
   assert.deepEqual(values.map((_, at) => valueOf(result, `c${at}`)), ["北京市海淀区", "广东省 深圳市 南山区", "深圳市南山区", "广东省深圳市南山区"]);
+});
+
+test("an address region data reads in full goes as it is, and one with a street never reads in full", async () => {
+  // 整段命中的分支（regionPrefix 的 whole）只收整段都是地名的：后面带着街道、门牌、邮编、括号的，resolve 认不出，走按前缀截的分支。
+  for (const value of ["北京市海淀区中关村大街1号", "广东省 深圳市 南山区 科苑路8号", "深圳市南山区 518000", "广东省深圳市南山区（科技园）"]) {
+    assert.equal(regions.resolve(value), null, value);
+  }
+  const values = ["广东省深圳市南山区", "深圳南山", "中国广东省深圳市南山区"];
+  values.forEach((value) => assert.ok(regions.resolve(value), value));
+  const env = worker((message, catalog) => catalog.map((entry, at) => ({ fieldId: `c${at}`, ref: entry.ref })));
+  const result = await env.run({
+    formFields: values.map((_, at) => ({ fieldId: `c${at}`, label: "现居住城市", inputType: "select", cascade: true, options: [] })),
+    resumeFields: values.map((value, at) => ({ group: "户籍与地区", key: `地址${at}`, value }))
+  });
+  assert.deepEqual(values.map((_, at) => valueOf(result, `c${at}`)), values);
 });
 
 test("a cascade given only a province is not filled; a city or a municipality is", async () => {
