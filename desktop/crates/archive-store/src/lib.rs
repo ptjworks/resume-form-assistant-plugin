@@ -63,7 +63,8 @@ pub use resume::{
     MAX_PROFILE_BYTES, MAX_TEMPLATES, MAX_TEMPLATE_BYTES, MAX_TEMPLATE_NAME_CHARS,
 };
 pub use resume_files::{
-    sniff_resume_file, ResumeFile, ResumeFileChunk, ResumeFileKind, ResumeFilePatch, MAX_RESUME_FILES, MAX_RESUME_FILE_BYTES,
+    sniff_resume_file, DamagedResumeFile, ResumeFile, ResumeFileChunk, ResumeFileKind, ResumeFileListing, ResumeFilePatch,
+    MAX_RESUME_FILES, MAX_RESUME_FILE_BYTES,
     MAX_RESUME_FILE_LABEL_CHARS, MAX_RESUME_FILE_NAME_CHARS, RESUME_FILES_DIR, RESUME_FILE_CHUNK_BYTES,
 };
 pub use resume_secrets::{is_secret_label, is_secret_value};

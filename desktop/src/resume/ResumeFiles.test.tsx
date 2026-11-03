@@ -25,7 +25,8 @@ function mount(
     if (command === "resume_overview_cmd") return { templates: [TEMPLATE], activeTemplateId: TEMPLATE.id };
     const result = handler(command, args);
     if (result instanceof Error) throw result;
-    return result;
+    // 桌面回的是「能用的文件 + 读不出来的记录」；用例里只给文件时补上空的后者。
+    return Array.isArray(result) ? { files: result, damaged: [] } : result;
   }) as Invoke;
   const picked: ResumeFileKind[] = [];
   const pickers: FilePickers = {
@@ -132,6 +133,46 @@ test("编辑文件名、说明、默认和模板，一次保存", async () => {
   expect(within(resumes).getByText("测试用户-简历.pdf").closest("li")?.textContent).toContain("默认");
 });
 
+test("绑定的模板删掉了不当成所有模板：标「模板已删除」，用户取消了才是所有模板", async () => {
+  const gone = "77777777-7777-4777-8777-777777777799";
+  let list = [
+    file("a1", "resume", "简历.pdf", "application/pdf", { isDefault: true, templateIds: [gone] }),
+    file("a2", "resume", "英文简历.pdf", "application/pdf", { templateIds: [TEMPLATE.id, gone] }),
+  ];
+  const { calls } = mount((command, args) => {
+    if (command === "list_resume_files_cmd") return list;
+    if (command === "update_resume_file_cmd") {
+      const patch = args?.patch as { templateIds: string[] };
+      list = list.map((f) => (f.id === args?.id ? { ...f, ...patch } : f));
+      return list;
+    }
+    return null;
+  });
+  const resumes = await screen.findByRole("region", { name: "简历附件" });
+  expect(within(resumes).getByText("PDF · 1.5 KB · 模板已删除，暂不使用")).toBeTruthy();
+  expect(within(resumes).getByText("PDF · 1.5 KB · 用于：互联网校招、模板已删除")).toBeTruthy();
+  expect(within(resumes).queryByText(/用于所有模板/)).toBeNull();
+
+  // 只改说明：已删除的模板照样带着，不变成空的。
+  const row = within(resumes).getByText("简历.pdf").closest("li")! as HTMLElement;
+  await userEvent.click(within(row).getByRole("button", { name: "编辑" }));
+  let dialog = await screen.findByRole("dialog");
+  expect((within(dialog).getByLabelText("模板已删除") as HTMLInputElement).checked).toBe(true);
+  await userEvent.type(within(dialog).getByLabelText("说明"), "中文");
+  await userEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(calls.filter((c) => c.command === "update_resume_file_cmd").at(-1)?.args).toMatchObject({ id: "a1", patch: { templateIds: [gone] } });
+
+  // 用户自己取消它，才是所有模板。
+  await userEvent.click(within(row).getByRole("button", { name: "编辑" }));
+  dialog = await screen.findByRole("dialog");
+  await userEvent.click(within(dialog).getByLabelText("模板已删除"));
+  await userEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(calls.filter((c) => c.command === "update_resume_file_cmd").at(-1)?.args).toMatchObject({ id: "a1", patch: { templateIds: [] } });
+  expect(within(row).getByText(/用于所有模板/)).toBeTruthy();
+});
+
 test("删除要先确认，替换按原来的种类选文件", async () => {
   let list = [file("b1", "photo", "证件照.jpg", "image/jpeg", { isDefault: true })];
   const { calls, picked } = mount((command, args) => {
@@ -188,6 +229,34 @@ test("保存或删除没成功时对话框留着，填的内容还在，原因�
   expect(screen.getByRole("dialog")).toBe(dialog);
   expect(within(resumes).getByText("简历.pdf")).toBeTruthy();
   expect(calls.filter((c) => c.command === "delete_resume_file_cmd")).toHaveLength(1);
+});
+
+test("读不出来的记录单独列出，可以只删记录", async () => {
+  let listing = {
+    files: [file("a1", "resume", "简历.pdf", "application/pdf", { isDefault: true })],
+    damaged: [{ id: "x1", name: "旧简历.pdf", reason: "存储位置不对" }],
+  };
+  const { calls } = mount((command, args) => {
+    if (command === "list_resume_files_cmd") return listing;
+    if (command === "delete_resume_file_cmd") {
+      listing = { ...listing, damaged: listing.damaged.filter((d) => d.id !== args?.id) };
+      return listing;
+    }
+    return null;
+  });
+  const broken = await screen.findByRole("region", { name: "读不出来的记录" });
+  expect(within(broken).getByText("有 1 个附件的记录读不出来，不会拿去上传。可以删掉这些记录，不动任何文件。")).toBeTruthy();
+  expect(within(broken).getByText("旧简历.pdf")).toBeTruthy();
+  expect(within(broken).getByText("存储位置不对")).toBeTruthy();
+  // 能用的文件照常列出。
+  expect(within(screen.getByRole("region", { name: "简历附件" })).getByText("简历.pdf")).toBeTruthy();
+  await userEvent.click(within(broken).getByRole("button", { name: "删除记录" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog.textContent).toContain("删掉的只是这条记录，不动任何文件");
+  await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "读不出来的记录" })).toBeNull());
+  expect(calls.find((c) => c.command === "delete_resume_file_cmd")?.args).toEqual({ id: "x1" });
+  expect(screen.getByRole("status").textContent).toBe("已删除「旧简历.pdf」这条读不出来的记录。");
 });
 
 test("没有连上桌面程序时只说明", () => {

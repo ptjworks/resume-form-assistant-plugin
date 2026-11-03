@@ -136,7 +136,7 @@ fn files_are_taken_by_their_content_and_kind_not_by_their_name() {
 }
 
 #[test]
-fn a_damaged_record_stops_the_list_instead_of_being_guessed() {
+fn a_damaged_record_is_listed_apart_never_guessed_and_the_rest_still_work() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(dir.path());
     let db = open(dir.path());
@@ -148,6 +148,9 @@ fn a_damaged_record_stops_the_list_instead_of_being_guessed() {
     for (i, damage) in [
         "UPDATE resume_files SET template_ids_json = 'not json'",
         "UPDATE resume_files SET template_ids_json = '{\"all\": true}'",
+        // 协议里的模板 id 是带连字符的 UUID：别的写法、超过上限的个数都按读不出算，不让整个列表发不出去。
+        "UPDATE resume_files SET template_ids_json = '[\"not-a-template\"]'",
+        "UPDATE resume_files SET template_ids_json = '[\"77777777777747778777777777777701\"]'",
         "PRAGMA ignore_check_constraints = ON; UPDATE resume_files SET kind = 'cover'",
     ]
     .into_iter()
@@ -157,11 +160,18 @@ fn a_damaged_record_stops_the_list_instead_of_being_guessed() {
         raw.execute_batch(&format!("{damage} WHERE id = '{}'; PRAGMA ignore_check_constraints = OFF;", file.id)).unwrap();
         drop(raw);
         let db = open(dir.path());
-        // 不当成「所有模板」「其他材料」：整个列表报错，单个也报错。
-        assert_eq!(code(db.resume_files().unwrap_err()), "internal_error", "{damage}");
+        // 不当成「所有模板」「其他材料」：不在能用的文件里，单独列出来；单个读也报错。别的文件照常。
+        let listing = db.resume_file_listing().unwrap();
+        assert!(listing.files.iter().all(|f| f.id != file.id), "{damage}");
+        assert_eq!(listing.files.len(), i, "{damage}");
+        assert_eq!(listing.damaged.iter().map(|d| (d.id.as_str(), d.name.as_str())).collect::<Vec<_>>(), vec![(file.id.as_str(), "简历.pdf")]);
+        assert!(db.resume_files().unwrap().iter().all(|f| f.id != file.id));
         assert_eq!(code(db.resume_file(&file.id).unwrap_err()), "internal_error", "{damage}");
-        // 读不出记录时，添加之后的清理什么都不删。
+        assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, 0).unwrap_err()), "internal_error", "{damage}");
+        // 有一条读不出来，清理照样做完，只是不动这条记录的字节。
+        std::fs::write(dir.path().join("archive").join(RESUME_FILES_DIR).join("leftover"), b"x").unwrap();
         db.add_resume_file(ResumeFileKind::Photo, &format!("照片{i}.png"), &[png(), vec![i as u8]].concat()).unwrap();
+        assert!(!dir.path().join("archive").join(RESUME_FILES_DIR).join("leftover").exists(), "{damage}");
         assert!(dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256).is_file(), "{damage}");
         db.close().unwrap();
         let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
@@ -171,16 +181,20 @@ fn a_damaged_record_stops_the_list_instead_of_being_guessed() {
         ))
         .unwrap();
     }
-    // 损坏的记录照样能删。
+    // 读不出来的记录可以删：只删这一行，删的时候不碰文件；它的字节下一次清理时才清掉。
     let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
     raw.execute_batch(&format!("UPDATE resume_files SET template_ids_json = 'not json' WHERE id = '{}'", file.id)).unwrap();
     drop(raw);
     let db = open(dir.path());
+    let bytes = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
     assert!(db.delete_resume_file(&file.id).unwrap());
-    let left = db.resume_files().unwrap();
-    assert_eq!(left.len(), 3);
-    assert!(left.iter().all(|f| f.kind == ResumeFileKind::Photo));
-    assert!(!dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256).exists());
+    assert!(bytes.is_file(), "deleting a damaged record touches no file");
+    let listing = db.resume_file_listing().unwrap();
+    assert!(listing.damaged.is_empty());
+    assert_eq!(listing.files.len(), 5);
+    assert!(listing.files.iter().all(|f| f.kind == ResumeFileKind::Photo));
+    db.add_resume_file(ResumeFileKind::Resume, "新简历.pdf", &pdf(9)).unwrap();
+    assert!(!bytes.exists(), "swept once nothing refers to it");
 }
 
 #[test]
@@ -251,7 +265,7 @@ fn names_labels_and_templates_are_checked_when_changed() {
     assert_eq!(code(patch(ResumeFilePatch { label: Some("password=1".into()), ..Default::default() }).unwrap_err()), "validation_failed");
     assert_eq!(code(patch(ResumeFilePatch { label: Some("很".repeat(31)), ..Default::default() }).unwrap_err()), "validation_failed");
     let other = "11111111-1111-4111-8111-111111111111".to_string();
-    assert_eq!(code(patch(ResumeFilePatch { template_ids: Some(vec![other]), ..Default::default() }).unwrap_err()), "validation_failed");
+    assert_eq!(code(patch(ResumeFilePatch { template_ids: Some(vec![other.clone()]), ..Default::default() }).unwrap_err()), "validation_failed");
     let changed = patch(ResumeFilePatch {
         name: Some(" 测试用户-简历.pdf ".into()),
         label: Some("中文".into()),
@@ -261,9 +275,21 @@ fn names_labels_and_templates_are_checked_when_changed() {
     .unwrap();
     assert_eq!((changed.name.as_str(), changed.label.as_str()), ("测试用户-简历.pdf", "中文"));
     assert_eq!(changed.template_ids, vec![template.id.clone()]);
-    // 模板删掉以后，列表里不再带着它。
+    // 模板删掉以后绑定还带着它的 id：只绑了它的文件不变成空的「所有模板」，列表和单个读都一样。
     db.delete_template(&template.id).unwrap();
-    assert!(db.resume_file(&file.id).unwrap().unwrap().template_ids.is_empty());
+    let only_deleted = vec![template.id.clone()];
+    assert_eq!(db.resume_file(&file.id).unwrap().unwrap().template_ids, only_deleted);
+    assert_eq!(db.resume_files().unwrap()[0].template_ids, only_deleted);
+    assert_eq!(db.resume_file_listing().unwrap().files[0].template_ids, only_deleted);
+    // 改别的时它照样留着；已经绑着的删掉的模板可以留，新选一个不存在的不行。
+    let relabeled = patch(ResumeFilePatch { label: Some("英文".into()), template_ids: Some(only_deleted.clone()), ..Default::default() }).unwrap();
+    assert_eq!(relabeled.template_ids, only_deleted);
+    assert_eq!(patch(ResumeFilePatch { label: Some("中文".into()), ..Default::default() }).unwrap().template_ids, only_deleted);
+    let with_other = ResumeFilePatch { template_ids: Some(vec![template.id.clone(), other]), ..Default::default() };
+    assert_eq!(code(patch(with_other).unwrap_err()), "validation_failed");
+    // 用户自己取消了，才是所有模板；取消以后删掉的模板选不回来。
+    assert!(patch(ResumeFilePatch { template_ids: Some(Vec::new()), ..Default::default() }).unwrap().template_ids.is_empty());
+    assert_eq!(code(patch(ResumeFilePatch { template_ids: Some(only_deleted), ..Default::default() }).unwrap_err()), "validation_failed");
 }
 
 #[test]
@@ -353,4 +379,139 @@ fn a_v8_archive_gains_the_table_and_keeps_its_site_answers() {
     assert_eq!(upgraded.schema_version(), current_schema_version());
     assert_eq!(upgraded.site_answers("campus.example.com").unwrap().len(), 1);
     upgraded.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+}
+
+fn sha_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+#[test]
+fn a_stored_path_anywhere_else_is_damage_and_no_file_is_touched() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    let outside = dir.path().join("outside.pdf");
+    std::fs::write(&outside, pdf(2)).unwrap();
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    for (i, bad) in [
+        outside.to_string_lossy().to_string(),
+        format!("{RESUME_FILES_DIR}/../../outside.pdf"),
+        "attachments/2026/11/outside.pdf".to_string(),
+        format!("{RESUME_FILES_DIR}/{}", file.sha256.to_ascii_uppercase()),
+        // 文件名和附件目录里的一个残留同名：残留照样清掉。
+        dir.path().join("elsewhere").join("leftover").to_string_lossy().to_string(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute("UPDATE resume_files SET stored_rel_path = ?1 WHERE id = ?2", rusqlite::params![bad, file.id]).unwrap();
+        drop(raw);
+        let db = open(dir.path());
+        assert!(db.resume_files().unwrap().iter().all(|f| f.id != file.id), "{bad}");
+        assert_eq!(db.resume_file_listing().unwrap().damaged[0].reason, "存储位置不对", "{bad}");
+        assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, 0).unwrap_err()), "internal_error", "{bad}");
+        assert_eq!(code(db.read_resume_file(&file.id).unwrap_err()), "internal_error", "{bad}");
+        assert_eq!(code(db.replace_resume_file(&file.id, "新简历.pdf", &pdf(3)).unwrap_err()), "internal_error", "{bad}");
+        // 清理不因为这条记录停下，也不碰它指着的那个文件。引用按记录里的哈希认：这条记录的字节留着，
+        // 它记的路径不进引用集合，和路径里的文件名同名的残留照样清掉。
+        std::fs::write(folder.join("leftover"), b"x").unwrap();
+        db.add_resume_file(ResumeFileKind::Other, &format!("材料{i}.pdf"), &pdf(10 + i)).unwrap();
+        assert_eq!(std::fs::read(&outside).unwrap(), pdf(2), "the file outside the folder is untouched: {bad}");
+        assert!(!folder.join("leftover").exists(), "{bad}");
+        assert!(folder.join(&file.sha256).is_file(), "{bad}");
+        // 备份清单不收这条记录，完整性检查把它报成有问题、不按它记的路径去读。
+        let snapshot = dir.path().join(format!("snapshot{i}.db"));
+        db.snapshot_database_to(&snapshot).unwrap();
+        let inventory = ArchiveStore::backup_inventory_from_snapshot(&snapshot).unwrap();
+        assert!(inventory.referenced_files.iter().all(|f| f.path != bad && f.sha256 != file.sha256), "{bad}");
+        assert_eq!(inventory.referenced_files.len(), i + 1, "{bad}");
+        assert!(db.check_attachment_refs().unwrap().invalid_files.contains(&bad), "{bad}");
+        db.close().unwrap();
+    }
+    // 删掉这条记录只删这一行：档案外的文件原样在。
+    let db = open(dir.path());
+    assert!(db.delete_resume_file(&file.id).unwrap());
+    assert!(db.resume_file_listing().unwrap().damaged.is_empty());
+    assert_eq!(std::fs::read(&outside).unwrap(), pdf(2));
+}
+
+#[test]
+fn a_stored_file_of_the_wrong_size_is_not_read_into_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(RESUME_FILE_CHUNK_BYTES + 10)).unwrap();
+    let stored = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
+    std::fs::write(&stored, pdf(RESUME_FILE_CHUNK_BYTES * 3)).unwrap();
+    assert_eq!(code(db.read_resume_file(&file.id).unwrap_err()), "conflict");
+    for index in [0, 1] {
+        assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, index).unwrap_err()), "conflict", "{index}");
+    }
+}
+
+#[test]
+fn a_stale_file_at_the_same_place_is_replaced_and_a_failed_add_still_sweeps() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    std::fs::create_dir_all(&folder).unwrap();
+    // 崩溃留下的、没人引用的一份坏文件，正好占着要添加的文件的位置。
+    let bytes = pdf(40);
+    std::fs::write(folder.join(sha_of(&bytes)), b"broken").unwrap();
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    assert_eq!(db.read_resume_file(&file.id).unwrap().1, bytes);
+    // 添加被拒（同样的内容），残留也照样清掉。
+    std::fs::write(folder.join("leftover"), b"x").unwrap();
+    assert_eq!(code(db.add_resume_file(ResumeFileKind::Other, "副本.pdf", &bytes).unwrap_err()), "validation_failed");
+    assert!(!folder.join("leftover").exists());
+}
+
+#[test]
+fn bytes_left_half_deleted_while_their_record_remains_are_put_back_not_swept() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(50)).unwrap();
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    let tmp = dir.path().join("archive").join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    // 删记录失败、字节又没能挪回去：它还在 tmp/ 里，记录也还在。
+    std::fs::rename(folder.join(&file.sha256), tmp.join(format!("resume-file-{}.deleting", file.sha256))).unwrap();
+    db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
+    assert!(folder.join(&file.sha256).is_file());
+    assert_eq!(db.read_resume_file(&file.id).unwrap().1, pdf(50));
+    assert!(!tmp.join(format!("resume-file-{}.deleting", file.sha256)).exists());
+}
+
+#[test]
+fn a_record_whose_size_or_type_is_wrong_is_damaged_not_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    let too_big = MAX_RESUME_FILE_BYTES as i64 + 1;
+    for (mime, size, reason) in [
+        ("application/zip", file.byte_size, "文件类型不对"),
+        ("image/png", file.byte_size, "文件类型不对"),
+        ("", file.byte_size, "没有文件类型"),
+        ("application/pdf", -5, "文件大小不对"),
+        ("application/pdf", 0, "文件大小不对"),
+        ("application/pdf", too_big, "文件大小不对"),
+    ] {
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute_batch("PRAGMA ignore_check_constraints = ON;").unwrap();
+        raw.execute("UPDATE resume_files SET mime = ?1, byte_size = ?2 WHERE id = ?3", rusqlite::params![mime, size, file.id]).unwrap();
+        drop(raw);
+        let db = open(dir.path());
+        let listing = db.resume_file_listing().unwrap();
+        assert!(listing.files.is_empty(), "{mime} {size}");
+        assert_eq!(listing.damaged[0].reason, reason, "{mime} {size}");
+        let renamed = db.update_resume_file(&file.id, &ResumeFilePatch { name: Some("新.pdf".into()), ..Default::default() });
+        assert_eq!(code(renamed.unwrap_err()), "internal_error", "{mime} {size}");
+        assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, 0).unwrap_err()), "internal_error", "{mime} {size}");
+        db.close().unwrap();
+    }
 }

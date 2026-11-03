@@ -6,7 +6,7 @@
 use std::io::Read;
 use std::path::Path;
 
-use archive_store::{ArchiveStore, ResumeFile, ResumeFileKind, ResumeFilePatch, MAX_RESUME_FILE_BYTES};
+use archive_store::{ArchiveStore, ResumeFileKind, ResumeFileListing, ResumeFilePatch, MAX_RESUME_FILE_BYTES};
 use tauri::AppHandle;
 
 use crate::attachment_commands::AttachmentSummary;
@@ -47,28 +47,29 @@ fn read_picked(path: &Path) -> Result<(String, Vec<u8>), CommandError> {
     Ok((name, bytes))
 }
 
-pub fn list(store: &ArchiveStore) -> Result<Vec<ResumeFile>, CommandError> {
-    store.resume_files().map_err(shown)
+/// 能用的文件和读不出来的记录：后者界面上单独列出来，只能删掉那一行。
+pub fn list(store: &ArchiveStore) -> Result<ResumeFileListing, CommandError> {
+    store.resume_file_listing().map_err(shown)
 }
 
-pub fn add(store: &ArchiveStore, kind: ResumeFileKind, path: &Path) -> Result<Vec<ResumeFile>, CommandError> {
+pub fn add(store: &ArchiveStore, kind: ResumeFileKind, path: &Path) -> Result<ResumeFileListing, CommandError> {
     let (name, bytes) = read_picked(path)?;
     store.add_resume_file(kind, &name, &bytes).map_err(shown)?;
     list(store)
 }
 
-pub fn replace(store: &ArchiveStore, id: &str, path: &Path) -> Result<Vec<ResumeFile>, CommandError> {
+pub fn replace(store: &ArchiveStore, id: &str, path: &Path) -> Result<ResumeFileListing, CommandError> {
     let (name, bytes) = read_picked(path)?;
     store.replace_resume_file(id, &name, &bytes).map_err(shown)?;
     list(store)
 }
 
-pub fn update(store: &ArchiveStore, id: &str, patch: &ResumeFilePatch) -> Result<Vec<ResumeFile>, CommandError> {
+pub fn update(store: &ArchiveStore, id: &str, patch: &ResumeFilePatch) -> Result<ResumeFileListing, CommandError> {
     store.update_resume_file(id, patch).map_err(shown)?;
     list(store)
 }
 
-pub fn delete(store: &ArchiveStore, id: &str) -> Result<Vec<ResumeFile>, CommandError> {
+pub fn delete(store: &ArchiveStore, id: &str) -> Result<ResumeFileListing, CommandError> {
     store.delete_resume_file(id).map_err(shown)?;
     list(store)
 }
@@ -86,27 +87,27 @@ pub fn preview(store: &ArchiveStore, id: &str) -> Result<Option<String>, Command
 }
 
 #[tauri::command]
-pub async fn list_resume_files_cmd(app: AppHandle) -> Result<Vec<ResumeFile>, CommandError> {
+pub async fn list_resume_files_cmd(app: AppHandle) -> Result<ResumeFileListing, CommandError> {
     archive_worker(app, |state| with_store(state, list)).await
 }
 
 #[tauri::command]
-pub async fn add_resume_file_cmd(app: AppHandle, kind: ResumeFileKind, path: String) -> Result<Vec<ResumeFile>, CommandError> {
+pub async fn add_resume_file_cmd(app: AppHandle, kind: ResumeFileKind, path: String) -> Result<ResumeFileListing, CommandError> {
     archive_worker(app, move |state| with_store(state, |store| add(store, kind, Path::new(&path)))).await
 }
 
 #[tauri::command]
-pub async fn replace_resume_file_cmd(app: AppHandle, id: String, path: String) -> Result<Vec<ResumeFile>, CommandError> {
+pub async fn replace_resume_file_cmd(app: AppHandle, id: String, path: String) -> Result<ResumeFileListing, CommandError> {
     archive_worker(app, move |state| with_store(state, |store| replace(store, &id, Path::new(&path)))).await
 }
 
 #[tauri::command]
-pub async fn update_resume_file_cmd(app: AppHandle, id: String, patch: ResumeFilePatch) -> Result<Vec<ResumeFile>, CommandError> {
+pub async fn update_resume_file_cmd(app: AppHandle, id: String, patch: ResumeFilePatch) -> Result<ResumeFileListing, CommandError> {
     archive_worker(app, move |state| with_store(state, |store| update(store, &id, &patch))).await
 }
 
 #[tauri::command]
-pub async fn delete_resume_file_cmd(app: AppHandle, id: String) -> Result<Vec<ResumeFile>, CommandError> {
+pub async fn delete_resume_file_cmd(app: AppHandle, id: String) -> Result<ResumeFileListing, CommandError> {
     archive_worker(app, move |state| with_store(state, |store| delete(store, &id))).await
 }
 
@@ -166,7 +167,7 @@ mod tests {
         let (dir, store) = store();
         let picked = dir.path().join("测试用户_简历.pdf");
         std::fs::write(&picked, b"%PDF-1.7\nbody").unwrap();
-        let files = add(&store, ResumeFileKind::Resume, &picked).unwrap();
+        let files = add(&store, ResumeFileKind::Resume, &picked).unwrap().files;
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].name, "测试用户_简历.pdf");
         // 同一份再加一次：报店里那句话，不带英文前缀。
@@ -188,7 +189,7 @@ mod tests {
         let resume = dir.path().join("简历.pdf");
         std::fs::write(&resume, b"%PDF-1.7\nbody").unwrap();
         add(&store, ResumeFileKind::Photo, &photo).unwrap();
-        let files = add(&store, ResumeFileKind::Resume, &resume).unwrap();
+        let files = add(&store, ResumeFileKind::Resume, &resume).unwrap().files;
         let id_of = |kind: ResumeFileKind| files.iter().find(|f| f.kind == kind).unwrap().id.clone();
         assert!(preview(&store, &id_of(ResumeFileKind::Photo)).unwrap().unwrap().starts_with("data:image/png;base64,"));
         assert_eq!(preview(&store, &id_of(ResumeFileKind::Resume)).unwrap(), None);

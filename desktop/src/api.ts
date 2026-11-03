@@ -504,10 +504,23 @@ export interface ResumeFileView {
   byteSize: number;
   sha256: string;
   isDefault: boolean;
-  /** 用于哪些模板；空数组是所有模板。 */
+  /** 用于哪些模板；空数组是所有模板。绑定的模板删掉后 id 还留着，这样的文件不用于别的模板。 */
   templateIds: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** #429：读不出来的一条附件记录（存储位置不对、种类认不出、模板绑定读不出）。不当文件用，只能删掉。 */
+export interface DamagedResumeFileView {
+  id: string;
+  name: string;
+  reason: string;
+}
+
+/** #429：附件页的内容：能用的文件，和读不出来的记录。 */
+export interface ResumeFileListing {
+  files: ResumeFileView[];
+  damaged: DamagedResumeFileView[];
 }
 
 /** 插件旧数据的一批导入（#130 PR 5）。只有状态与计数，不含任何内容。 */
