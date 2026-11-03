@@ -559,21 +559,20 @@ test("virtual list without search: an option off the first screen is found by sc
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(h.picked, ["北京大学"], "北京大学医学部 on the first screen is not chosen");
   assert.ok(Math.max(...h.scrolls) >= 100 * 32 - 256, "scrolled to the bottom before deciding");
-  // 同一个意思的另一种写法、只有一项包含它的，在整张列表里和画全了的列表一样认。
-  for (const [choices, value, wanted] of [[ETHNIC, "土家族", "土家"], [SCHOOLS.map((text, i) => i === 70 ? "人工智能与大数据" : text), "人工智能", "人工智能与大数据"]]) {
-    const other = scrollingAntd(choices);
-    const found = await other.api.operate(other.target, value);
-    assert.equal(found.ok, true, `${value}: ${JSON.stringify(found)}`);
-    assert.deepEqual(other.picked, [wanted]);
-  }
+  // 同一个意思的另一种写法也认。
+  const other = scrollingAntd(ETHNIC);
+  const found = await other.api.operate(other.target, "土家族");
+  assert.equal(found.ok, true, JSON.stringify(found));
+  assert.deepEqual(other.picked, ["土家"]);
 });
 
-test("virtual list without search: two options off screen that both fit, or none, are not guessed and the list scrolls back", async () => {
-  const campuses = SCHOOLS.map((text, i) => i === 40 ? "南山校区" : i === 80 ? "南山分校" : text);
-  for (const [value, reason] of [["南山", "ambiguous_option"], ["火星大学", "no_option_match"]]) {
+// 滚完了也说不准看全了没有（懒加载的下一页可能还没到）：屏外只有包含它的一项、两项、一项都没有，都不猜，滚回原处。
+test("virtual list without search: off-screen options that merely hold the value, or none, are not guessed and the list scrolls back", async () => {
+  const campuses = SCHOOLS.map((text, i) => i === 40 ? "南山校区" : i === 70 ? "人工智能与大数据" : i === 80 ? "南山分校" : text);
+  for (const value of ["人工智能", "南山", "火星大学"]) {
     const h = scrollingAntd(campuses);
     const result = await h.api.operate(h.target, value);
-    assert.equal(result.reason, reason, `${value}: ${JSON.stringify(result)}`);
+    assert.equal(result.reason, "no_option_match", `${value}: ${JSON.stringify(result)}`);
     assert.deepEqual(h.picked, []);
     assert.equal(h.holder().scrollTop, 0, "scrolled back to where it was");
   }
@@ -612,15 +611,51 @@ test("a list that grew while being scanned only takes an option written the same
   assert.deepEqual(same.picked, ["补充大学15"]);
 });
 
-// #429 滚到最后一屏时 8 秒已经用完：替身在最后一屏画出来以后把页面里的时钟拨快 8 秒。
-// 看全没看全说不准，只认写法相同的「北京大学」；滚回去和点之前再认一次有自己的等待，不占已经用完的时间，照样选上。
+// 下一页 1 秒后才到（比到底以后等的 500ms 还晚）：滚完时列表没变长过，也不当作看全了，已经看到的「人工智能与大数据」不选。
+test("a lazily loaded list whose next page comes after a second is not taken as complete: a longer option holding the value is not chosen", async () => {
+  const h = scrollingAntd(LAZY, { grow: { delay: 1000, more: [PAGE] } });
+  const result = await h.api.operate(h.target, "人工智能");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.equal(h.holder().scrollTop, 0);
+});
+
+// #429 扫描的 8 秒上限。custom-controls.js 用 w.eval 跑在 jsdom 的窗口里，它读的 Date 是 h.w.Date（不是 Node 的 Date），
+// 所以拨 h.w.Date.now 就拨到了它的时钟。替身在列表滚到某一屏、画出来以后把这个时钟拨快 8 秒。
+function skipClock(h, from) {
+  const clock = h.w.Date.now.bind(h.w.Date);
+  h.w.Date.now = () => clock() + (h.scrolls.some((top) => top >= from) ? 8000 : 0);
+}
+
+// 滚到最后一屏时 8 秒已经用完：滚回去和点之前再认一次有自己的等待，不占已经用完的时间，照样选上。
 test("an option matched just as the scan runs out of time is still scrolled back to and chosen", async () => {
   const h = scrollingAntd(SCHOOLS);
-  const clock = h.w.Date.now.bind(h.w.Date);
-  h.w.Date.now = () => clock() + (h.scrolls.some((top) => top >= 100 * 32 - 256) ? 8000 : 0);
+  const end = 100 * 32 - 256;
+  skipClock(h, end);
   const result = await h.api.operate(h.target, "北京大学");
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(h.picked, ["北京大学"]);
+  assert.ok(h.scrolls.slice(h.scrolls.indexOf(end) + 1).some((top) => top > 0 && top < end), "scrolled back to 北京大学 after the time ran out");
+});
+
+// 滚到一半 8 秒就用完了：不再往下滚，按没有匹配的选项报，滚回原处（「北京大学」在后面，没看到）。
+test("a scan that runs out of time halfway stops there, is not guessed and scrolls back", async () => {
+  const h = scrollingAntd(SCHOOLS);
+  skipClock(h, 1000);
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.ok(Math.max(...h.scrolls) < 60 * 32 - 256, "stopped before the screen with 北京大学");
+  assert.equal(h.holder().scrollTop, 0);
+});
+
+// 滚到一半弹层收起了：不再滚，按选项没画出来报。
+test("virtual list without search whose popup closes halfway through the scan stops and reports the options as not rendered", async () => {
+  const h = scrollingAntd(SCHOOLS);
+  h.doc.addEventListener("scroll", ({ target }) => { if (target.scrollTop >= 1000) target.closest(".ant-select-dropdown").hidden = true; }, true);
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.reason, "options_not_rendered", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
 });
 
 // 刚打开时画出来的选项还量不出高度：先等列表停住再量，照样滚着找到。

@@ -596,27 +596,20 @@
   // #429 不能搜索的虚拟列表（antd 4/5/6 的 rc-virtual-list、Element Plus 的 el-select-v2）只画出一屏，屏外的选项不在页面上。
   // 把装着选项的滚动层从头往下一屏一屏地滚（每次少滚一行，前后两屏叠着一行），每滚一次等画出来的选项停住 SCAN_STEADY_MS，
   // 按排版位置记下见过的每一项（文字相同、位置差不到半行的算同一项）。滚到底以后再等 SCAN_TAIL_MS，列表变长了就接着滚。
-  // 看全了（滚的时候列表一直没变长，到底以后也没变长、没有加载中的标记）按整张列表比，和画全了的列表一样：
-  // 对不上、几项都对得上都不选。列表变长过（懒加载）或到底时还显示着加载中，说不准后面还有没有，只认文字相同
-  // （见 sameOption）的一项，「包含」和同一个意思的另一种写法都不认。
+  // 滚完了也说不准看全了没有：懒加载的下一页可能过了 SCAN_TAIL_MS 才接上，到底时也没有靠得住的结束标记
+  // （rc-select、el-select-v2 的选项都没有 aria-setsize，onPopupScroll 懒加载不留痕迹，加载圈也不一定有）。
+  // 所以和列表不全时一样（见 match 的 partial）：只认完全相同、归一化相同或同一个意思的另一种写法的一项，
+  // 不靠「包含」去猜（要「北京大学」，不选先看到的「北京大学医学部」），几项都对得上也不选。
   // 对上的一项滚回它那一屏，按文字和位置认出来交回去；点之前用 again() 按同样的办法再认一次（滚动后重画换了节点也认得出），
   // 当场认不出就等列表停住再认，还认不出报 options_not_rendered、滚回原处。
   // 找到以后这两次等列表停住各自最多等 SCAN_SETTLE_MS，不受 SCAN_MS 限制：扫描可能刚好把时间用完。
   // 一开始量不出行高、找不到滚动层（列表刚画出来），也先等列表停住再量一次。
   // 下面这些都按没有匹配的选项报：滚了以后画出来的选项盖不住看得见的这一段（列表不跟着滚动重画）、滚不动、
   // 滚了 SCAN_SCREENS 屏或 SCAN_MS 还没到底（越滚越长的懒加载、一直在变的列表；等列表停住的时间也算在里面）。
+  // 滚着滚着这个滚动层里没有画出来的选项了（弹层中途收起、换了一个），按 options_not_rendered 报。
   // 没找到、出错时都滚回原处。
   // read 读弹层里当前画出来的选项。
   const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000, SCAN_TAIL_MS = 500, SCAN_SETTLE_MS = 400;
-  // 弹层里显示着加载中：aria-busy、加载圈（类名以 loading 结尾、antd 的 ant-spin-spinning、Element 的 el-loading-mask），
-  // 或一段「加载中」「loading」这样的字。
-  const LOADING_MARKS = '[aria-busy="true"], .ant-spin-spinning, .el-loading-mask, .is-loading, [class*="loading" i]';
-  function loadingShown(layer, h) {
-    return Array.from(layer.querySelectorAll(antd(layer, LOADING_MARKS))).some(node => h.visible(node)
-      && (node.matches(antd(node, '[aria-busy="true"], .ant-spin-spinning, .el-loading-mask, .is-loading'))
-        || String(node.getAttribute('class') || '').split(/\s+/).some(token => LOADING_TOKEN.test(token))))
-      || Array.from(layer.querySelectorAll('*')).some(node => !node.children.length && GENERIC_LOADING.test(trim(node.textContent)) && h.visible(node));
-  }
   async function scanList(ctx, h, read, popup, layer, value) {
     if (!popup?.isConnected) return { reason: 'no_option_match' };
     const started = Date.now();
@@ -644,7 +637,7 @@
       ({ scroller, row } = measure(read()));
       if (!scroller || !row) return { reason: 'no_option_match' };
     }
-    const home = scroller.scrollTop, startHeight = scroller.scrollHeight;
+    const home = scroller.scrollTop;
     // 画出来的选项和它们在滚动内容里的位置。
     const placed = list => {
       const top = layoutTops(scroller), base = top(scroller);
@@ -653,38 +646,38 @@
     let found = null;
     try {
       const seen = [];
-      let previous = -1, grew = false;
+      let previous = -1;
       for (let screen = 0, target = 0; ; screen++) {
         // 剩下的时间不够等列表停住一次，也算滚满了上限。
         if (screen >= SCAN_SCREENS || left() < SCAN_STEADY_MS) return { reason: 'no_option_match' };
         scroller.scrollTop = target;
         const settled = await settle(Math.min(h.timeoutMs ?? 2000, left()));
         if (settled.reason) return { reason: settled.reason === 'verification_timeout' ? 'no_option_match' : settled.reason };
+        // 这个滚动层里没有画出来的选项了：弹层中途收起或换了一个，不再滚。
+        const shown = placed(settled.value);
+        if (!shown.length) return { reason: 'options_not_rendered' };
         const view = scroller.scrollTop, bottom = Math.min(view + scroller.clientHeight, scroller.scrollHeight);
         if (view <= previous) return { reason: 'no_option_match' };
         previous = view;
         // 看得见的这一段从上到下都有画出来的选项（两头各差不到一行，留给分组标题这类不是选项的一行）。
-        const shown = placed(settled.value);
-        if (!shown.length || Math.min(...shown.map(item => item.at)) > view + row
+        if (Math.min(...shown.map(item => item.at)) > view + row
           || Math.max(...shown.map(item => item.at + (item.option.node.offsetHeight || row))) < bottom - row) return { reason: 'no_option_match' };
         for (const { option, at } of shown) {
           if (!seen.some(entry => entry.key === keyOf(option) && Math.abs(entry.at - at) < row / 2)) {
             seen.push({ key: keyOf(option), at, text: option.text, value: option.value, full: option.full, disabled: option.disabled });
           }
         }
-        if (scroller.scrollHeight > startHeight) grew = true;
         target = view + Math.max(scroller.clientHeight - row, row);
         if (bottom < scroller.scrollHeight - 1) continue;
-        // 到底了：再等 SCAN_TAIL_MS 看列表还变不变长。变长了接着往下滚；剩下的时间不够等满的，当作说不准。
-        const height = scroller.scrollHeight, waited = left() >= SCAN_TAIL_MS;
+        // 到底了：再等 SCAN_TAIL_MS 看列表还变不变长（懒加载接上了下一页），变长了接着往下滚。
+        const height = scroller.scrollHeight;
         const tail = await h.waitUntil(ctx, scroller.ownerDocument.documentElement, () => scroller.scrollHeight, now => now > height, Math.max(0, Math.min(SCAN_TAIL_MS, left())));
         if (tail.reason && tail.reason !== 'verification_timeout') return { reason: tail.reason };
-        if (tail.value > height) { grew = true; continue; }
-        if (!waited || loadingShown(listLimit(popup, layer), h)) grew = true;
+        if (tail.value > height) continue;
         break;
       }
       const list = seen.sort((a, b) => a.at - b.at);
-      const matched = grew ? sameOption(list, value, h.helpers) : match(list, value, h.helpers);
+      const matched = match(list, value, h.helpers, true);
       if (!matched.option) return { reason: matched.reason };
       const wanted = matched.option;
       const locate = list => placed(list).find(({ option, at }) => keyOf(option) === wanted.key && Math.abs(at - wanted.at) < row / 2)?.option || null;
@@ -710,8 +703,9 @@
       if (!found) scroller.scrollTop = home;
     }
   }
-  // partial：列表不全（见 partialList）。只认完全相同、归一化相同或同一个意思的另一种写法（#429，ai-helpers.js 的 OPTION_SYNONYMS）的一项，
-  // 不靠「包含」去猜，几项都沾边也按没有匹配，好去搜索或滚着看完整张列表（见 scanList）。联想框的建议不走这里，见 sameOption。
+  // partial：列表不全（见 partialList），或滚着看过、说不准看全了没有（见 scanList）。只认完全相同、归一化相同或同一个意思的
+  // 另一种写法（#429，ai-helpers.js 的 OPTION_SYNONYMS）的一项，不靠「包含」去猜，几项都沾边也按没有匹配，好去搜索或滚着往下找。
+  // 联想框的建议不走这里，见 sameOption。
   function match(list, value, helpers, partial = false) {
     const same = option => [option.value, option.text].some(text => trim(text) === trim(value)
       || (helpers.isSameOptionText ? helpers.isSameOptionText(text, value) : helpers.normalizeText(text) === helpers.normalizeText(value)));
