@@ -355,6 +355,23 @@ test("every long answer box checks that the item is about the same thing, whatev
   assert.equal(result.diagnostics.openUnanswered, 3);
 });
 
+test("a view question takes no item that shares only a common word like 工作 with it", async () => {
+  const resume = [{ group: "实习经历", key: "工作描述", value: "负责虚构数据看板" }, { group: "团队活动", key: "团队合作经历", value: "带队完成虚构项目" },
+    { group: "学习经历", key: "学习能力自评", value: "上手快" }];
+  const env = worker((message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key).ref;
+    return [{ fieldId: "view", ref: ref("工作描述") }, { fieldId: "team", ref: ref("团队合作经历") }, { fieldId: "grow", ref: ref("学习能力自评") }];
+  });
+  const box = (fieldId, label) => ({ fieldId, label, tagName: "textarea", inputType: "textarea" });
+  const result = await env.run({
+    formFields: [box("view", "你对团队工作的看法"), box("team", "你在团队合作中的收获"), box("grow", "谈谈你对个人发展的看法")],
+    resumeFields: resume
+  });
+  // 只靠「工作」「学习」「能力」「发展」这类哪道题都有的词对上的不算；「团队合作」写在资料项自己的字段名里，照填。
+  assert.deepEqual(result.matches.map((match) => match.fieldId), ["team"]);
+  assert.equal(result.diagnostics.openUnanswered, 2);
+});
+
 test("an open question whose answer is held back counts as having no ready answer, not as unwritten", async () => {
   const resume = Array.from({ length: 10 }, (_, i) => ({ group: "自我评价", key: `自我评价${i}`, value: `评价${i}` }));
   const env = worker((message, catalog) => [{ fieldId: "self", refs: catalog.map((entry) => entry.ref) }]);
@@ -782,6 +799,16 @@ test("a slashed address left with only its province goes to no cascade, and a le
   assert.deepEqual(byId.city, { fieldId: "city", value: "", blocked: "region_too_coarse" });
   assert.equal(byId.province.value, "广东省", "a linked province select still takes the province");
   assert.deepEqual(byId.town, { fieldId: "town", value: "", blocked: "region_level_missing" });
+});
+
+test("an address with street, postcode or brackets after it goes to a cascade as its region part only", async () => {
+  const values = ["北京市海淀区中关村大街1号", "广东省 深圳市 南山区 科苑路8号", "深圳市南山区 518000", "广东省深圳市南山区（科技园）"];
+  const env = worker((message, catalog) => catalog.map((entry, at) => ({ fieldId: `c${at}`, ref: entry.ref })));
+  const result = await env.run({
+    formFields: values.map((_, at) => ({ fieldId: `c${at}`, label: "现居住城市", inputType: "select", cascade: true, options: [] })),
+    resumeFields: values.map((value, at) => ({ group: "户籍与地区", key: `地址${at}`, value }))
+  });
+  assert.deepEqual(values.map((_, at) => valueOf(result, `c${at}`)), ["北京市海淀区", "广东省 深圳市 南山区", "深圳市南山区", "广东省深圳市南山区"]);
 });
 
 test("a cascade given only a province is not filled; a city or a municipality is", async () => {

@@ -725,11 +725,13 @@ function settleAnswers(matches) {
 }
 
 // 多行文本框（长回答）和问动机、打算、优缺点、看法的单行题，资料项要和题目说的是同一件事：字段名、分组、别的叫法和题目、
-// 题目所在的分组，去掉「为什么」「你」「公司」「信息」「经历」这类哪道题都有的词以后，还有两个字相同（「获奖」「奖励」「荣誉」这类
-// 当成同一个词，见 TOPIC_SYNONYMS；英文是一个四个字母以上的词相同），或者字段名和题目归一后一模一样。补充字段、本网站回答也一样。
+// 题目所在的分组，去掉「为什么」「你」「公司」「信息」「经历」「工作」「能力」这类哪道题都有的词以后，有相同的词（两个字一段；
+// 「获奖」「奖励」「荣誉」这类当成同一个词，见 TOPIC_SYNONYMS；英文是一个四个字母以上的词）：至少两个不同的词相同，
+// 或者相同的词出现在资料项自己的字段名、别的叫法里（只靠资料项的分组对上一个词不算），或者字段名和题目归一后一模一样。
+// 补充字段、本网站回答也一样。
 // AI 看不到值时会随手挑一项：浏览器验收里「为什么选择我们公司」被填成过最高学历、期望工作地点，评测里被填成自我评价。
 const OPINION_QUESTION = /为什么|为何|动机|原因|理由|规划|打算|优势|劣势|不足|缺点|优点|困难|挑战|看法|理解|认识|谈谈|说说|举例|\b(?:why|plans?|goals?|strengths?|weakness(?:es)?|challenges?|motivat\w*|reasons?)\b/i;
-const COMMON_WORDS = new RegExp(`${OPINION_QUESTION.source}|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下|信息|基本|其他|补充|情况|经历`, "gi");
+const COMMON_WORDS = new RegExp(`${OPINION_QUESTION.source}|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下|信息|基本|其他|补充|情况|经历|工作|发展|能力|学习|经验|方面|相关`, "gi");
 // 意思一样、字不一样的几组词，比的时候当成同一个。
 const TOPIC_SYNONYMS = Object.fromEntries([
   [["获奖", "奖励", "荣誉", "奖项", "得奖"], "奖"], [["简介", "评价", "介绍", "自评"], "评"], [["技能", "特长", "专长"], "技"], [["爱好", "兴趣"], "趣"]
@@ -750,8 +752,10 @@ function answersOnTopic(field, tokens, catalog) {
     if (!item) return false;
     // 题目和字段名一模一样（存过的原题「你的优势和不足」去掉通用词就什么都不剩）直接算。
     const names = [item.key, ...(aliasesOf(item.key) || [])];
-    return names.some(name => ResumeProAIHelpers.looseText(name) === same)
-      || topic([...names, item.group].join(" ")).some(word => asked.includes(word));
+    if (names.some(name => ResumeProAIHelpers.looseText(name) === same)) return true;
+    const own = topic(names.join(" "));
+    const hits = new Set([...own, ...topic(item.group)].filter(word => asked.includes(word)));
+    return hits.size >= 2 || own.some(word => hits.has(word));
   });
 }
 
@@ -785,6 +789,7 @@ function pickerDate(field, value) {
 // 级联题和联动下拉的各级拿到一整段地址（「广东省深圳市南山区科苑路 8 号」）时，只留前面认得出的地区（至少到市）：
 // 街道门牌级联里选不了，联动下拉按「包含」选时也少一些误选。用「/」分开的逐段核对，只留前面认得出的几段
 // （「广东省/深圳市/南山区/科苑路8号」→「广东省/深圳市/南山区」）；一段都认不出的（专业类别这类级联）原样给。
+// 整段都认得出（resolve 要整段都是地名，后面带着街道、门牌、邮编、括号的认不出）时原样给，不会带着街道。
 // 认出来只到省一级的（「广东省」「广东省/科苑路8号」）标 coarse：级联要选到市以下，只交省等于没填对。
 // 直辖市、特别行政区本身就是市（「北京市」「香港」），不算。
 function regionPrefix(value) {
@@ -804,7 +809,7 @@ function regionPrefix(value) {
   }
   for (let end = Math.min(text.length - 1, 40); end >= 4; end -= 1) {
     const head = text.slice(0, end);
-    if (regions.resolve(head)?.path.filter(part => !part.placeholder).length >= 2) return { value: head, coarse: false };
+    if (regions.resolve(head)?.path.filter(part => !part.placeholder).length >= 2) return { value: head.trim(), coarse: false };
   }
   return { value: text, coarse: false };
 }
