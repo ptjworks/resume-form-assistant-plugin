@@ -267,6 +267,13 @@ function makePromptBatches(formFields, entries) {
   return { batches, skippedOversized, skippedNoContext: 0, trimmed: batches.length ? entries.length - shown.size : 0 };
 }
 
+// 一项目录在发出去的文字里占多少字节：JSON 一次，信封里再转义时引号和反斜杠各多一个字节，加上分隔的逗号。
+// 第一项前面没有逗号，所以 n 项正好是 promptBytes(题目, 这 n 项) - promptBytes(题目, []) + 1（测试核对过）。
+function entryBytes(entry) {
+  const json = JSON.stringify(entry);
+  return new TextEncoder().encode(json).length + (json.match(/["\\]/g) || []).length + 1;
+}
+
 // 目录装不下时给一批题目挑资料：先放这批题目 fits 里的项，再放字段名、分组、别的叫法和题目说的是同一件事的项，其余照原来的顺序，
 // 放到装不下为止；估算差一点要再删时，从最不相关的那头删。发出去的仍按目录原来的顺序。
 function relevantEntries(fields, entries) {
@@ -274,13 +281,12 @@ function relevantEntries(fields, entries) {
   const fitted = new Set(fields.flatMap(field => (field.fits || []).map(token => REF_TOKEN.exec(token)?.[1])));
   const rank = entry => fitted.has(entry.ref) ? 0 : topic([entry.key, entry.group, ...(entry.aka || [])].join(" ")).some(word => asked.has(word)) ? 1 : 2;
   const ordered = entries.map((entry, index) => ({ entry, index, rank: rank(entry) })).sort((a, b) => a.rank - b.rank || a.index - b.index);
-  const wire = entry => new TextEncoder().encode(JSON.stringify(JSON.stringify(entry))).length - 1;
   const picked = [];
   let bytes = promptBytes(fields, [], true);
   for (const { entry } of ordered) {
-    if (bytes + wire(entry) > AI_USER_BUDGET) continue;
+    if (bytes + entryBytes(entry) > AI_USER_BUDGET) continue;
     picked.push(entry);
-    bytes += wire(entry);
+    bytes += entryBytes(entry);
   }
   const inOrder = () => {
     const keep = new Set(picked);

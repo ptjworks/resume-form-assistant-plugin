@@ -453,6 +453,19 @@ test('a trimmed catalog takes only its own refs, keeps the fits of each select i
   assert.equal(result.matches.find((match) => match.fieldId === 'politics').value, '共青团员');
 });
 
+test('the bytes counted for each catalog item add up to what the prompt really takes', () => {
+  const env = worker();
+  const fields = [{ fieldId: 'a', label: '题目"引号"\\反斜杠' }];
+  const entries = [{ ref: 'r1', group: '基本信息', key: '姓名' }, { ref: 'r2', group: '补充字段', key: '带"引号"和\\反斜杠的题目', shape: '长文本' },
+    { ref: 'r3', group: 'Other', key: 'English key', aka: ['别名一', '别名二'] }];
+  const promptBytes = vm.runInContext('promptBytes', env.context);
+  const entryBytes = vm.runInContext('entryBytes', env.context);
+  for (const partial of [false, true]) {
+    const sum = entries.reduce((total, entry) => total + entryBytes(entry), 0);
+    assert.equal(promptBytes(fields, entries, partial) - promptBytes(fields, [], partial) + 1, sum);
+  }
+});
+
 test('two different answers to one field in one reply leave it out and say why; the same answer twice does not', async () => {
   const school = (message) => ({ fieldId: 'school', ref: catalogOf(message.user)[0].ref });
   const twice = worker((message) => ({ ok: true, text: JSON.stringify([school(message), school(message)]) }));

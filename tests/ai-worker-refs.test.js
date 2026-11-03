@@ -544,6 +544,17 @@ test("two long saved questions alike in their first 60 characters stay apart in 
   assert.deepEqual(keys.slice(2), ["备注", "备注（2）"]);
 });
 
+test("outside experience groups a key starting with another field's value stays, and a parsed entry of its own is renamed", async () => {
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "q", label: "户口类型" }],
+    resumeFields: [{ group: "基本信息", key: "现居城市", value: "虚构城" }, { group: "基本信息", key: "虚构城户口信息-类型", value: "集体户" },
+      ...helpers.semanticizeParsedFields([{ group: "获奖情况", key: "奖项1名称", value: "虚构奖学金" }, { group: "获奖情况", key: "奖项1级别", value: "校级" }])]
+  });
+  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["现居城市", "虚构城户口信息-类型", "奖项信息1-名称", "奖项信息1-级别"]);
+  assert.ok(!env.calls[0].user.includes("虚构奖学金"));
+});
+
 test("an edited school name written two ways in two keys of one entry still gets one number", async () => {
   const env = worker();
   await env.run({

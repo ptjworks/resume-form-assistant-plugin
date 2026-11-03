@@ -17,7 +17,7 @@
     { type: "pinyin", keywords: ["拼音", "pinyin"] },
     { type: "email", keywords: ["邮箱", "email", "e-mail", "mail"] },
     { type: "phone", keywords: ["手机", "电话", "联系方式", "mobile", "phone", "联系电话"] },
-    { type: "gender", keywords: ["性别", "gender", "sex"] },
+    { type: "gender", keywords: ["性别", "gender"] },
     { type: "birth_date", keywords: ["出生日期", "生日", "birth", "出生年月"] },
     { type: "name", keywords: ["姓名", "name", "realname"] },
     // 证件类型只认下拉和单选（inferFieldSemantic）：号码框的占位文字可能写着「请先选择证件类型」。
@@ -242,7 +242,9 @@
     const choice = field?.inputType === "select" || field?.inputType === "radio";
 
     return SEMANTIC_KEYWORDS.find((item) => (item.type !== "id_type" || choice)
-      && item.keywords.some((keyword) => haystack.includes(keyword)))?.type || "";
+      && item.keywords.some((keyword) => haystack.includes(keyword)))?.type
+      // 英文的「sex」按整词认：Middlesex、Essex 这类校名、地名里也有这几个字母。
+      || (/\bsex\b/i.test([field?.label, field?.placeholder, field?.ariaLabel].filter(Boolean).join(" ")) ? "gender" : "");
   }
 
   // 18 位的号码返回 { valid, kind }：校验码、出生日期和开头都对才 valid，kind 是 ID_TYPE_NAMES 里的一种，不 valid 时为空。
@@ -1033,17 +1035,20 @@
     return String(text ?? "").normalize("NFKC").replace(/[\s\p{P}\p{S}]/gu, "").toLowerCase();
   }
 
-  // 字段名开头有多长一段和这个值 looseText 后相同；不是这样开头的给 0。值至少要有两个字。
-  function looseLength(key, value) {
-    const want = looseText(value);
-    if (want.length < 2) return 0;
-    let found = 0;
-    for (let end = 1; end <= key.length; end += 1) {
-      const got = looseText(key.slice(0, end));
-      if (got === want) found = end;
-      else if (got.length > want.length) break;
+  // 字段名逐字归一一次（looseText）：loose 是归一后的整串，ends[i] 是归一后第 i 个字在原字段名里结束的位置，
+  // 紧跟着的标点、空格（归一后没有字）算进它。前缀比较只对 loose 做 startsWith，不再逐个前缀重新归一。
+  function looseIndex(key) {
+    let loose = "";
+    const ends = [];
+    let at = 0;
+    for (const char of String(key ?? "")) {
+      at += char.length;
+      const part = looseText(char);
+      for (let i = 0; i < part.length; i += 1) ends.push(at);
+      loose += part;
+      if (!part && ends.length) ends[ends.length - 1] = at;
     }
-    return found;
+    return { loose, ends };
   }
 
   // 桌面解析简历时，同一段经历的字段名起成「学校名或公司名 + 教育经历 - 专业」（semanticizeParsedFields），字段名里带着值。
@@ -1060,6 +1065,11 @@
       if (!seen.has(anchor)) seen.set(anchor, seen.size + 1);
       return seen.get(anchor);
     };
+    // 每项资料的值只归一一次：完整的值（最多 80 个字）和截到 18 个字的值。
+    const forms = resumeFields.map((field) => ({
+      id: looseText(String(field?.value ?? "")),
+      texts: [...new Set([looseText(sanitizeAnchor(field?.value)), looseText(String(field?.value ?? "").replace(/\s+/g, " ").trim().slice(0, 80))])]
+    }));
     return resumeFields.map((field) => {
       const key = String(field?.key ?? "");
       const group = String(field?.group ?? "");
@@ -1069,12 +1079,11 @@
       // 编号按这一项的完整值分：前 18 个字一样的两所学校不合成一段。字段名里看不出是哪一项时（只带前 18 个字），
       // 按桌面给重名字段名加的「 (2)」认：第 n 段就是这个前缀下的第 n 个值；同一所学校的两段经历也靠它分开。
       const suffix = Number(/\s\((\d+)\)$/.exec(key)?.[1] || 1);
-      const anchors = resumeFields.filter((other) => other?.group === field?.group)
-        .flatMap((other) => {
-          const id = looseText(String(other?.value ?? ""));
-          return [sanitizeAnchor(other?.value), String(other?.value ?? "").replace(/\s+/g, " ").trim().slice(0, 80)]
-            .map((value) => ({ id, length: looseLength(key, value) }));
-        })
+      const index = looseIndex(key);
+      const anchors = resumeFields.flatMap((other, at) => (other?.group !== field?.group ? [] : forms[at].texts.map((text) => ({
+        id: forms[at].id, owner: String(other?.key ?? ""),
+        length: text.length >= 2 && index.loose.startsWith(text) ? index.ends[text.length - 1] : 0
+      }))))
         .filter((item) => item.length > 0)
         .sort((a, b) => b.length - a.length);
       const entryOf = (length) => {
@@ -1082,10 +1091,14 @@
         return `${ids[Math.min(ids.length, suffix) - 1]}#${suffix}`;
       };
       const tail = (text) => text.replace(/\s\(\d+\)$/, "");
-      for (const { length } of anchors) {
+      for (const { length, owner } of anchors) {
         const rest = key.slice(length);
         const label = labels.find((item) => rest.startsWith(item)) || /^[\u4e00-\u9fa5A-Za-z]+?信息(?=-|$|\s\()/.exec(rest)?.[0];
-        if (label) return `${label}${numberOf(group, label, entryOf(length))}${tail(rest.slice(label.length))}`;
+        if (!label) continue;
+        // 经历类以外的分组只换同一段自己的前缀：给出这个值的那项，字段名也是这个前缀加同一个标签（解析出来的「某奖项名奖项信息」）；
+        // 以别的字段的值开头的字段名原样留着。
+        if (!groupLabel && !owner.startsWith(key.slice(0, length) + label)) continue;
+        return `${label}${numberOf(group, label, entryOf(length))}${tail(rest.slice(label.length))}`;
       }
       if (!groupLabel) return key;
       if (anchors.length) {

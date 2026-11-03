@@ -764,6 +764,18 @@ test("worker: an English gender select takes M or F for 男 or 女", async () =>
   assert.equal(helpers.choiceValue({ label: "T恤尺码", inputType: "select", options: ["S", "M", "L"] }, "男"), "男");
 });
 
+test("sex counts as a gender question only as a whole word, not inside Middlesex or Essex", async () => {
+  assert.equal(helpers.inferFieldSemantic({ label: "Sex", inputType: "radio", options: ["M", "F"] }), "gender");
+  assert.notEqual(helpers.inferFieldSemantic({ label: "Middlesex", inputType: "text" }), "gender");
+  assert.notEqual(helpers.inferFieldSemantic({ label: "Essex campus address", inputType: "text" }), "gender");
+  const result = await loadWorker(() => {}).handleAiFill({
+    formFields: [{ fieldId: "school", label: "Middlesex", inputType: "text" }, { fieldId: "address", label: "Essex campus address", inputType: "text" }],
+    resumeFields: [{ group: "基本信息", key: "性别", value: "男" }]
+  });
+  assert.equal(result.diagnostics.ruleMatches, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), []);
+});
+
 // #429 身份证号自检：校验码、出生日期和开头。号码都是按规则算出来的虚构号码。
 test("idNumberInfo checks the check digit, the birth date and the leading code", () => {
   const info = helpers.idNumberInfo;
