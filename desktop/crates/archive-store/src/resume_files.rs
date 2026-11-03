@@ -659,6 +659,11 @@ impl StoreTx<'_> {
         Ok(self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id])? > 0)
     }
 
+    /// 还有没有记录用着这个哈希（不管记录坏没坏）。
+    fn resume_file_hash_in_use(&self, sha256: &str) -> Result<bool, StoreError> {
+        Ok(self.conn().query_row("SELECT EXISTS(SELECT 1 FROM resume_files WHERE sha256 = ?1)", params![sha256], |r| r.get(0))?)
+    }
+
     /// 清理时要留下的字节：每条记录里写法合法的 sha256 都算，不管这条记录的存储位置、种类坏没坏
     /// （位置坏了只影响读取）。只收 64 位小写十六进制，引用集合里不会混进别的文件名。
     fn referenced_resume_file_hashes(&self) -> Result<std::collections::HashSet<String>, StoreError> {
@@ -746,7 +751,7 @@ impl ArchiveStore {
             }
             registered
         })();
-        let _ = self.sweep_resume_file_leftovers();
+        self.sweep_resume_files_noting_errors();
         added
     }
 
@@ -773,7 +778,7 @@ impl ArchiveStore {
             }
             Ok((swapped?, Some(before)))
         })();
-        let _ = self.sweep_resume_file_leftovers();
+        self.sweep_resume_files_noting_errors();
         let (replaced, before) = replaced?;
         if let Some(old) = before {
             discard(self.archive_dir(), &old, "已换成新文件，但旧文件正被别的程序占用，还没从磁盘上删掉；下次增删附件时会再清一次。")?;
@@ -790,17 +795,17 @@ impl ArchiveStore {
     /// 没删干净照实报错，不报成删除成功。
     /// 读不出来的记录只删这一行，不按它记的路径动文件（存储位置不可信）。删掉以后照样清一次：
     /// 它在附件目录里按哈希留着的字节没人引用了，不清掉的话，备份会因为这份孤立文件停下。
-    /// 那份字节没清掉（被别的程序占着、清理出错）照实报错，不报成干净的成功。
+    /// 结果只看这次删的那个哈希：还有记录引用它就该留着，算成功；没有记录引用、文件却还在磁盘上，
+    /// 才照实报「留下的文件还没删掉」，不报成干净的成功。别的残留清不掉不影响这次的结果。
     pub fn delete_resume_file(&self, id: &str) -> Result<bool, StoreError> {
         let _writes = self.lock_resume_files();
         if let Some(deleted) = self.transaction(|tx| tx.delete_damaged_resume_file(id))? {
             let Some(sha256) = deleted else {
                 return Ok(false);
             };
-            let swept = self.sweep_resume_file_leftovers();
-            // 同样的哈希只登记一次：这条记录删了，附件目录里叫这个名字的文件就没人用了。
-            let left = is_sha256(&sha256) && self.archive_dir().join(RESUME_FILES_DIR).join(&sha256).exists();
-            if swept.is_err() || left {
+            self.sweep_resume_files_noting_errors();
+            let home = self.archive_dir().join(RESUME_FILES_DIR).join(&sha256);
+            if is_sha256(&sha256) && home.exists() && !self.transaction(|tx| tx.resume_file_hash_in_use(&sha256))? {
                 return Err(StoreError::Io(std::io::Error::other(
                     "已删掉这条读不出来的记录，但它留下的文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再清一次。",
                 )));
@@ -828,8 +833,15 @@ impl ArchiveStore {
                 "已从附件里删掉，但文件正被别的程序占用，还没从磁盘上删掉；下次增删附件时会再清一次。",
             )));
         }
-        let _ = self.sweep_resume_file_leftovers();
+        self.sweep_resume_files_noting_errors();
         Ok(deleted)
+    }
+
+    /// 顺手的清理：失败不改变这次增删的结果（下一次增删还会再清），原始错误写进桌面日志。
+    fn sweep_resume_files_noting_errors(&self) {
+        if let Err(error) = self.sweep_resume_file_leftovers() {
+            eprintln!("resume-files: sweep-failed · {error}");
+        }
     }
 
     /// 清掉没人引用的字节：`attachments/resume-files/` 里没有记录引用的文件（崩溃、登记失败留下的），

@@ -202,6 +202,37 @@ fn a_damaged_record_is_listed_apart_never_guessed_and_the_rest_still_work() {
     assert!(folder.join("leftover").is_file());
 }
 
+#[test]
+fn deleting_a_damaged_record_keeps_bytes_another_record_still_uses() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let healthy = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    // 表里 sha256 唯一，两条记录共用一份字节只会出现在改过的库里：重建一张没有这条约束的表来模拟，
+    // 再加一条存储位置不对、哈希相同的坏记录。
+    let damaged = "11111111-1111-4111-8111-111111111199";
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute_batch(&format!(
+        "CREATE TABLE resume_files_copy AS SELECT * FROM resume_files;
+         DROP TABLE resume_files;
+         ALTER TABLE resume_files_copy RENAME TO resume_files;
+         INSERT INTO resume_files SELECT '{damaged}', kind, '旧简历.pdf', label, mime, byte_size, sha256, 'elsewhere/old.pdf', 0,
+           template_ids_json, position + 1, created_at, updated_at FROM resume_files WHERE id = '{}';",
+        healthy.id
+    ))
+    .unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    let listing = db.resume_file_listing().unwrap();
+    assert_eq!(listing.damaged.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), vec![damaged]);
+    // 删掉坏记录：另一条记录还用着这份字节，留着就对，算成功。
+    assert!(db.delete_resume_file(damaged).unwrap());
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    assert!(folder.join(&healthy.sha256).is_file());
+    assert_eq!(db.read_resume_file(&healthy.id).unwrap().1, pdf(1));
+}
+
 #[cfg(windows)]
 #[test]
 fn a_damaged_record_whose_bytes_are_held_is_deleted_but_not_reported_clean() {
@@ -227,6 +258,20 @@ fn a_damaged_record_whose_bytes_are_held_is_deleted_but_not_reported_clean() {
     // 放开以后，下一次增删附件时清掉。
     db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
     assert!(!folder.join(&file.sha256).exists());
+
+    // 被占着删不掉的是一份无关的残留：这次删的那份清掉了，删除照常算成功。
+    let other = db.add_resume_file(ResumeFileKind::Other, "材料.pdf", &pdf(2)).unwrap();
+    db.close().unwrap();
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute_batch(&format!("UPDATE resume_files SET template_ids_json = 'not json' WHERE id = '{}'", other.id)).unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    std::fs::write(folder.join("stray"), b"x").unwrap();
+    let stray = std::fs::OpenOptions::new().read(true).share_mode(0).open(folder.join("stray")).unwrap();
+    assert!(db.delete_resume_file(&other.id).unwrap());
+    assert!(!folder.join(&other.sha256).exists());
+    assert!(folder.join("stray").is_file());
+    drop(stray);
 }
 
 #[test]
