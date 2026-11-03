@@ -490,6 +490,26 @@ export interface SiteAnswerView {
   updatedAt: string;
 }
 
+/** #429：网申时上传的文件的种类。 */
+export type ResumeFileKind = "resume" | "photo" | "transcript" | "other";
+
+/** #429：「简历资料 › 附件」里的一个文件。只有元数据，字节不下发到界面。 */
+export interface ResumeFileView {
+  id: string;
+  kind: ResumeFileKind;
+  /** 上传时用的文件名。 */
+  name: string;
+  label: string;
+  mime: string;
+  byteSize: number;
+  sha256: string;
+  isDefault: boolean;
+  /** 用于哪些模板；空数组是所有模板。 */
+  templateIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** 插件旧数据的一批导入（#130 PR 5）。只有状态与计数，不含任何内容。 */
 export interface LegacyImportPending {
   importId: string;

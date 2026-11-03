@@ -172,7 +172,7 @@ fn opening_a_v6_archive_creates_a_backup_and_preserves_existing_notification_met
     drop(store);
     let path = d.path().join("archive/archive.db");
     let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("DROP TABLE evidence_recycle; DROP TABLE site_answers; DELETE FROM schema_migrations WHERE version>=7; PRAGMA user_version=6; UPDATE archive_meta SET schema_version=6 WHERE id=1;").unwrap();
+    conn.execute_batch("DROP TABLE evidence_recycle; DROP TABLE site_answers; DROP TABLE resume_files; DELETE FROM schema_migrations WHERE version>=7; PRAGMA user_version=6; UPDATE archive_meta SET schema_version=6 WHERE id=1;").unwrap();
     drop(conn);
     let store = open(d.path());
     assert_eq!(store.schema_version(), archive_store::current_schema_version());

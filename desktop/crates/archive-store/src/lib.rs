@@ -25,6 +25,7 @@ pub mod normalize;
 pub mod plugin;
 pub mod receipts;
 pub mod resume;
+pub mod resume_files;
 pub mod resume_secrets;
 pub mod schema;
 pub mod site_answers;
@@ -60,6 +61,10 @@ pub use resume::{
     empty_profile, field_count, groups_sha256, normalize_groups, reject_profile_secrets, reject_template_secrets, validate_profile, ProfileRecord, ResumeOverview,
     ResumeTemplate, SavedTemplate, TemplateField, TemplateGroup, TemplateSummary, MAX_CUSTOM_FIELDS,
     MAX_PROFILE_BYTES, MAX_TEMPLATES, MAX_TEMPLATE_BYTES, MAX_TEMPLATE_NAME_CHARS,
+};
+pub use resume_files::{
+    sniff_resume_file, ResumeFile, ResumeFileChunk, ResumeFileKind, ResumeFilePatch, MAX_RESUME_FILES, MAX_RESUME_FILE_BYTES,
+    MAX_RESUME_FILE_LABEL_CHARS, MAX_RESUME_FILE_NAME_CHARS, RESUME_FILES_DIR, RESUME_FILE_CHUNK_BYTES,
 };
 pub use resume_secrets::{is_secret_label, is_secret_value};
 pub use site_answers::{

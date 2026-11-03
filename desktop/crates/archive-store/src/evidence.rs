@@ -627,7 +627,7 @@ impl StoreTx<'_> {
             }
         }
         let mut invalid_files = Vec::new();
-        let mut stmt = self.conn().prepare("SELECT stored_rel_path, size_bytes, sha256 FROM attachment_blobs UNION ALL SELECT stored_rel_path, byte_size, sha256 FROM resume_snapshots")?;
+        let mut stmt = self.conn().prepare("SELECT stored_rel_path, size_bytes, sha256 FROM attachment_blobs UNION ALL SELECT stored_rel_path, byte_size, sha256 FROM resume_snapshots UNION ALL SELECT stored_rel_path, byte_size, sha256 FROM resume_files")?;
         for row in stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,

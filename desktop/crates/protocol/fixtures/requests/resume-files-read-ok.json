@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 6,
+  "messageId": "66666666-6666-4666-8666-666666666614",
+  "clientInstanceId": "11111111-1111-4111-8111-111111111111",
+  "messageType": "resumeFiles.read",
+  "occurredAt": "2026-11-03T12:00:00.000Z",
+  "payload": {
+    "fileId": "66666666-6666-4666-8666-666666666601",
+    "sha256": "c644f26a0d71bd3bbb2ef5e90ba41b6f10a19ca99934fb9e784edfafd3b2620c",
+    "chunkIndex": 0
+  },
+  "archiveId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "restoreEpoch": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+}

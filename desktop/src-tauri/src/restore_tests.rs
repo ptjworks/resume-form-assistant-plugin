@@ -93,6 +93,37 @@ fn an_exported_archive_restores_with_the_same_counts() {
 }
 
 #[test]
+fn resume_files_travel_in_a_backup_and_come_back_whole() {
+    // #429: the files kept for upload live under attachments/ and must survive a backup the
+    // way evidence does — same bytes, same name, same default, still readable in chunks.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let resume = [b"%PDF-1.7\n".as_slice(), &vec![7u8; archive_store::RESUME_FILE_CHUNK_BYTES + 100]].concat();
+    let photo = [&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A][..], b"photo bytes"].concat();
+    let kept = store.add_resume_file(archive_store::ResumeFileKind::Resume, "测试用户_简历.pdf", &resume).unwrap();
+    store.add_resume_file(archive_store::ResumeFileKind::Photo, "证件照.png", &photo).unwrap();
+    let package = export_to(&store, &source.paths, "backup.zip");
+    store.close().unwrap();
+
+    let target = layout();
+    let report = restore_archive(&target.paths, &package, NOW, || Ok(())).unwrap();
+    let restored = ArchiveStore::open(ArchiveConfig::new(
+        std::path::PathBuf::from(&report.archive_dir),
+        target.paths.current_pointer.clone(),
+    ))
+    .unwrap();
+    let files = restored.resume_files().unwrap();
+    assert_eq!(files.iter().map(|f| (f.name.as_str(), f.is_default)).collect::<Vec<_>>(), vec![("测试用户_简历.pdf", true), ("证件照.png", true)]);
+    assert_eq!(restored.read_resume_file(&kept.id).unwrap().1, resume);
+    let mut joined = Vec::new();
+    for index in 0..2 {
+        joined.extend(restored.read_resume_file_chunk(&kept.id, &kept.sha256, index).unwrap().bytes);
+    }
+    assert_eq!(joined, resume);
+    assert!(restored.check_attachment_refs().unwrap().invalid_files.is_empty());
+}
+
+#[test]
 fn restoring_the_same_backup_twice_mints_two_different_epochs() {
     let source = layout();
     let (store, _app) = seeded(&source.paths);

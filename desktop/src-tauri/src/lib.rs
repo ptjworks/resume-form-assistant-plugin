@@ -31,6 +31,7 @@ mod bridge_services;
 mod recycle_commands;
 mod restore;
 mod resume_commands;
+mod resume_file_commands;
 mod todo_commands;
 #[cfg(test)]
 mod commands_regression;
@@ -2198,6 +2199,13 @@ pub fn run() {
             save_profile_cmd,
             list_site_answers_cmd,
             delete_site_answers_cmd,
+            resume_file_commands::list_resume_files_cmd,
+            resume_file_commands::add_resume_file_cmd,
+            resume_file_commands::replace_resume_file_cmd,
+            resume_file_commands::update_resume_file_cmd,
+            resume_file_commands::delete_resume_file_cmd,
+            resume_file_commands::preview_resume_file_cmd,
+            resume_file_commands::open_resume_file_cmd,
             list_legacy_imports_cmd,
             legacy_import_preview_cmd,
             confirm_legacy_import_cmd,

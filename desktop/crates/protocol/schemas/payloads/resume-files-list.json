@@ -1,0 +1,7 @@
+{
+  "$id": "https://resumepro.local/protocol/payloads/resume-files-list.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {}
+}

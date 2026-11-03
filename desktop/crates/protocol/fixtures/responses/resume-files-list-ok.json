@@ -1,0 +1,35 @@
+{
+  "protocolVersion": 6,
+  "correlationId": "66666666-6666-4666-8666-666666666611",
+  "ok": true,
+  "payload": {
+    "files": [
+      {
+        "fileId": "66666666-6666-4666-8666-666666666601",
+        "kind": "resume",
+        "name": "测试用户_简历.pdf",
+        "label": "中文",
+        "mime": "application/pdf",
+        "byteSize": 15,
+        "sha256": "c644f26a0d71bd3bbb2ef5e90ba41b6f10a19ca99934fb9e784edfafd3b2620c",
+        "isDefault": true,
+        "templateIds": [
+          "77777777-7777-4777-8777-777777777701"
+        ],
+        "updatedAt": "2026-11-03T08:00:00Z"
+      },
+      {
+        "fileId": "66666666-6666-4666-8666-666666666602",
+        "kind": "photo",
+        "name": "证件照.jpg",
+        "label": "",
+        "mime": "image/jpeg",
+        "byteSize": 5,
+        "sha256": "55c64d0fcd6f9d5f7c828093857e3fdfda68478bb4e9bd24d481ef391c7804e8",
+        "isDefault": true,
+        "templateIds": [],
+        "updatedAt": "2026-11-03T08:00:00Z"
+      }
+    ]
+  }
+}

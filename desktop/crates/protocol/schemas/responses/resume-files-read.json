@@ -1,0 +1,49 @@
+{
+  "$id": "https://resumepro.local/protocol/responses/resume-files-read.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fileId",
+    "sha256",
+    "byteSize",
+    "chunkIndex",
+    "chunkCount",
+    "chunkSha256",
+    "bytesBase64"
+  ],
+  "properties": {
+    "fileId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "byteSize": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10485760
+    },
+    "chunkIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 232
+    },
+    "chunkCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 233
+    },
+    "chunkSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "bytesBase64": {
+      "description": "这一块的字节，标准 base64；45054 字节是 60072 个字符",
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 60072
+    }
+  }
+}
