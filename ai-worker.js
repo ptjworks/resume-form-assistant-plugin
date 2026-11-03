@@ -458,7 +458,7 @@ async function handleAiFill(message, controller = new AbortController()) {
   }
   const seenMatchIds = new Set();
   // 开放题（多行文本框、问动机的单行题）的回答被拦下时（资料项太多、几批对不上），和没有现成回答一样算开放题，不报成没写上。
-  const opinion = field => isOpenQuestion(field) || (isTextAnswer(field) && asksOpinion(field));
+  const opinion = isOpinionField;
   const opinionIds = new Set(formFields.filter(opinion).map(field => field.fieldId));
   const answers = settleAnswers(aiMatches).filter(match => !(match.blocked && opinionIds.has(match.fieldId)));
   const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...answers])
@@ -897,6 +897,11 @@ function isDateControl(field) {
 // 填文字的题：单行、多行文本框（下拉、单选、日期控件不算）。
 function isTextAnswer(field) {
   return !["select", "radio"].includes(field?.inputType) && !isDateControl(field) && field?.cascade !== true;
+}
+
+// 开放题：多行文本框，和问动机、打算、优缺点、看法的单行题。AI 不能现写回答，只能原样用一项说的是同一件事的资料（answersOnTopic）。
+function isOpinionField(field) {
+  return isOpenQuestion(field) || (isTextAnswer(field) && asksOpinion(field));
 }
 
 function isOpenQuestion(field) {

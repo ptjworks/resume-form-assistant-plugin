@@ -574,6 +574,29 @@ test("every script the worker imports is packed, the region data included", asyn
   for (const file of imported) assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes(file), `${file} is packed`);
 });
 
+test("with resume values sent, an open question still takes only a resume answer on the same topic, copied as it is", async () => {
+  const resume = [{ group: "自我评价", key: "自我评价", value: "踏实认真，  做事有条理" }, { group: "求职意向", key: "期望工作地点", value: "虚构城" }];
+  const env = worker(() => [
+    { fieldId: "why", value: "I love your products and want to grow with your team." },
+    { fieldId: "self", value: "踏实认真， 做事有条理" },
+    { fieldId: "whyUs", value: "虚构城" },
+    { fieldId: "city", value: "虚构城" }
+  ]);
+  const box = (fieldId, label) => ({ fieldId, label, tagName: "textarea", inputType: "textarea" });
+  const result = await env.run({
+    formFields: [box("why", "Why do you want to join us?"), box("self", "自我评价"), box("whyUs", "为什么选择我们公司"), { fieldId: "city", label: "意向城市" }],
+    resumeFields: resume, sendValues: true
+  });
+  // 提示词里写明开放题不要现写；就算 AI 写了，本地也丢掉。
+  assert.match(env.calls[0].system, /不要自己写/);
+  // 现写的一段、和题目说的不是一件事的资料不填；原样能答的照抄资料原文；不是开放题的照旧。
+  assert.equal(valueOf(result, "why"), undefined);
+  assert.equal(valueOf(result, "whyUs"), undefined);
+  assert.equal(valueOf(result, "self"), "踏实认真，  做事有条理");
+  assert.equal(valueOf(result, "city"), "虚构城");
+  assert.equal(result.diagnostics.openUnanswered, 2);
+});
+
 test("the value prompt sits in its own packed file, and the worker hands over to it only on the switch", async () => {
   // 发资料原文的提示词只在 ai-worker-values.js 里；ai-worker.js 只在 sendValues === true 时交给它，没有别的全局开关。
   assert.doesNotMatch(source, /VALUES_SYSTEM_PROMPT|buildValuesUserPrompt|应该填写什么值|ResumeProEvalValuePrompt/);

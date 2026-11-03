@@ -19,7 +19,8 @@ const VALUES_SYSTEM_PROMPT = [
   "10. 籍贯、高考生源地、户口所在地是三个不同的问题，不能拿一个的数据填另一个；省、市、县要填对应层级",
   "11. 带 multiple 的字段可以多选：简历里有几项就给几项，用「、」隔开，每一项都按第 5 条取 options 里的原文",
   "12. 带 cascade 的字段是逐级选择（省 → 市 → 区县这类）：从最上面一级写到简历里有的最细一级，用「/」隔开，例如「广东省/深圳市/南山区」",
-  "13. 带 maxLength 的字段，value 不能超过这个字数（lengthUnit 为 byte 时按字节算，汉字算 2）；长回答写不下就精简，学校、公司、专业这类名称写不下时跳过，不要截断"
+  "13. 带 maxLength 的字段，value 不能超过这个字数（lengthUnit 为 byte 时按字节算，汉字算 2）；长回答写不下就精简，学校、公司、专业这类名称写不下时跳过，不要截断",
+  "14. 多行文本框和问动机、打算、优缺点、看法的题，只能原样用简历字段列表里说的是同一件事的那一项的值，不要自己写、不要改写或拼接；没有这样的一项就跳过"
 ].join("\n");
 
 // Keep complete groups (including every repeated experience). Unknown or
@@ -144,6 +145,7 @@ async function handleValuesFill(message, controller = new AbortController()) {
     ...(maxCalls === undefined ? {} : { calls: 0 })
   };
   const aiMatches = [];
+  const answeredFields = [];
   const warnings = [];
   let openView;
 
@@ -192,6 +194,7 @@ async function handleValuesFill(message, controller = new AbortController()) {
       if (controller.signal.aborted) break;
       try {
         aiMatches.push(...ResumeProAIHelpers.filterValidMatches(batch.fields, normalizeValueMatches(parseJsonContent(result.text))));
+        answeredFields.push(...batch.fields);
       } catch {
         if (SKIP_CODES.has(diagnostics.errorCode)) diagnostics.errorCode = "bad_response";
         warnings.push(aiFailureMessage({ reason: "bad_response" }));
@@ -204,16 +207,35 @@ async function handleValuesFill(message, controller = new AbortController()) {
     warnings.push(aiFailureMessage({ reason: "cancelled" }));
   }
   const seenMatchIds = new Set();
-  const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...aiMatches])
+  const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...copiedAnswers(formFields, aiMatches, resumeFields)])
     .filter(match => {
       if (seenMatchIds.has(match.fieldId)) return false;
       seenMatchIds.add(match.fieldId);
       return true;
     });
   diagnostics.aiMatches = matches.filter(match => !matchedFieldIds.has(match.fieldId)).length;
+  // 开放题 AI 看过、资料里没有现成的回答（AI 现写的也算）：和只发字段名时一样，诊断里单独记一个原因。
+  diagnostics.openUnanswered = new Set(answeredFields.filter(field => isOpinionField(field) && !seenMatchIds.has(field.fieldId))
+    .map(field => field.fieldId)).size;
   const warning = [...new Set(warnings)].join(" ");
   return { success: !warning || matches.length > 0, matches, warning, error: warning, diagnostics,
     ...(openView ? { openView } : {}) };
+}
+
+// 开放题不让 AI 现写（和只发字段名时同一道闸门）：AI 回的值要和一项资料的原文一样（空白不算），那项资料还要和题目说的是
+// 同一件事（ai-worker.js 的 answersOnTopic），照抄那项资料的原文；对不上的（AI 自己写的、改写的、拼起来的）不填。别的题照旧。
+function copiedAnswers(formFields, aiMatches, resumeFields) {
+  const byId = new Map(formFields.map(field => [field.fieldId, field]));
+  const plain = text => String(text ?? "").replace(/\s+/g, " ").trim();
+  let catalog = null;
+  return aiMatches.flatMap(match => {
+    const field = byId.get(match.fieldId);
+    if (!field || !isOpinionField(field)) return [match];
+    catalog ||= buildCatalog(resumeFields);
+    const ref = catalog.entries.map(entry => entry.ref)
+      .find(candidate => plain(catalog.values.get(candidate)) === plain(match.value) && answersOnTopic(field, [candidate], catalog));
+    return ref ? [{ fieldId: match.fieldId, value: catalog.values.get(ref) }] : [];
+  });
 }
 
 function buildValuesUserPrompt(formFields, resumeFields) {
