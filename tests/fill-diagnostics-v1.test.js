@@ -238,6 +238,9 @@ test("fields the AI never saw are not counted as AI misses", () => {
     promptBytes: 300, aiMatches: 1, skippedNoContext: 0, openUnanswered: 1 } }), [["ai_unmatched", 1], ["open_question", 1]]);
   assert.deepEqual(core.fillDrops({ ...base, diagnostics: { errorCode: "timeout", ruleMatches: 0, aiFields: 3,
     promptBytes: 300, aiMatches: 0, skippedNoContext: 0, openUnanswered: 2 } }), [["no_result", 3]]);
+  // AI 的回答被拦下、只报原因的（aiBlocked）：网页记作没写上，不再算 AI 未匹配。
+  assert.deepEqual(core.fillDrops({ ...base, unfilledCount: 1, diagnostics: { errorCode: "none", ruleMatches: 0, aiFields: 3,
+    promptBytes: 300, aiMatches: 1, aiBlocked: 1, skippedNoContext: 0 } }), [["ai_unmatched", 1], ["not_written", 1]]);
 });
 
 test("the longest valid lines still pass the allowlist instead of being dropped whole", () => {

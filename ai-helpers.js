@@ -208,7 +208,8 @@
     hasRealOptions,
     valueShape,
     datePart,
-    catalogKeys
+    catalogKeys,
+    looseText
   };
 
   globalScope.ResumeProAIHelpers = helpers;
@@ -1015,6 +1016,24 @@
     return forms.find((form) => written.includes(normalizeText(form))) || "";
   }
 
+  // 比较字段名前缀和值时用：全角转半角（NFKC），去掉标点、符号和空格，英文不分大小写。
+  function looseText(text) {
+    return String(text ?? "").normalize("NFKC").replace(/[\s\p{P}\p{S}]/gu, "").toLowerCase();
+  }
+
+  // 字段名开头有多长一段和这个值 looseText 后相同；不是这样开头的给 0。值至少要有两个字。
+  function looseLength(key, value) {
+    const want = looseText(value);
+    if (want.length < 2) return 0;
+    let found = 0;
+    for (let end = 1; end <= key.length; end += 1) {
+      const got = looseText(key.slice(0, end));
+      if (got === want) found = end;
+      else if (got.length > want.length) break;
+    }
+    return found;
+  }
+
   // 桌面解析简历时，同一段经历的字段名起成「学校名或公司名 + 教育经历 - 专业」（semanticizeParsedFields），字段名里带着值。
   // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。
   // 经历类分组里，字段名以这一组的某个值开头的，后面不管是什么，前缀都换成编号（「某校社团经历-职位」→「校园经历1-社团经历-职位」）；
@@ -1033,19 +1052,25 @@
       const key = String(field?.key ?? "");
       const group = String(field?.group ?? "");
       const groupLabel = ENTITY_LABEL_BY_GROUP.find((item) => item.pattern.test(group))?.label;
+      // 前缀和值按 looseText 比：全角半角、标点、空格不同（「（南校区）」对「(南校区)」）也算同一个值。
+      // 解析时字段名只带值的前 18 个字（sanitizeAnchor），改过的可能带着全名：两种都比，取对得上的最长一段。
       const anchors = resumeFields.filter((other) => other?.group === field?.group)
-        .map((other) => sanitizeAnchor(other?.value))
-        .filter((anchor) => anchor.length >= 2 && key.startsWith(anchor))
+        .flatMap((other) => {
+          const anchor = looseText(sanitizeAnchor(other?.value));
+          return [sanitizeAnchor(other?.value), String(other?.value ?? "").replace(/\s+/g, " ").trim().slice(0, 80)]
+            .map((value) => ({ anchor, length: looseLength(key, value) }));
+        })
+        .filter((item) => item.length > 0)
         .sort((a, b) => b.length - a.length);
-      for (const anchor of anchors) {
-        const rest = key.slice(anchor.length);
+      for (const { anchor, length } of anchors) {
+        const rest = key.slice(length);
         const label = labels.find((item) => rest.startsWith(item)) || /^[\u4e00-\u9fa5A-Za-z]+?信息(?=-|$|\s\()/.exec(rest)?.[0];
         if (label) return `${label}${numberOf(group, label, anchor)}${rest.slice(label.length)}`;
       }
       if (!groupLabel) return key;
       if (anchors.length) {
         const rest = key.slice(anchors[0].length).replace(/^[\s\-_:：]+/, "");
-        return `${groupLabel}${numberOf(group, groupLabel, anchors[0])}${rest ? `-${rest}` : ""}`;
+        return `${groupLabel}${numberOf(group, groupLabel, anchors[0].anchor)}${rest ? `-${rest}` : ""}`;
       }
       for (const label of labels) {
         const at = key.indexOf(label);

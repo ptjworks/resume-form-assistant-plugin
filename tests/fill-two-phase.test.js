@@ -861,6 +861,24 @@ test("a remembered answer read for a question revealed later is hidden in field 
   assert.equal(p.ui.diag.value.includes("财务部"), false);
 });
 
+// #429 第 11 项：日期框只收写得成日期的资料。AI 给它挑了一项不是日期的，worker 拦下（blocked）、不带原文，
+// 网页不往框里写，记作没填上、报日期不对。
+test("a date box the AI gives a non-date item to stays empty and is reported as a bad date", async (t) => {
+  const p = page(t, input("name", "姓名") + input("start", "入职时间", { type: "date" }) + input("school", "毕业院校"));
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  assert.deepEqual(p.worker.calls[0].labels, ["入职时间", "毕业院校"]);
+  p.worker.calls[0].reply({ 入职时间: "示例大学", 毕业院校: "示例大学" });
+  const result = await running;
+  assert.deepEqual(["name", "start", "school"].map(p.value), ["测试用户", "", "示例大学"]);
+  assert.equal(result.filledCount, 2);
+  assert.match(p.ui.status.textContent, /入职时间（日期格式或范围不符）/);
+  const report = (await p.report()).diagnosticsReport;
+  assert.match(report, /^- .*: input\[date\].* reason=invalid_date$/m);
+  assert.equal(lineOf(report, "ai_matches"), "1");
+  assert.doesNotMatch(lineOf(report, "drop_reasons"), /ai_unmatched/, report);
+});
+
 // #429 证件类型按资料和号码本地填；资料写的和号码对不上的不填，报「和证件号码对不上」，也不交给 AI。
 const ID_PAGE = (selected = "") => input("name", "姓名") + item("idType", "证件类型", `<select id="idType" name="idType"><option value="">请选择</option>`
   + [["1", "居民身份证"], ["2", "港澳台居民居住证"], ["3", "护照"]].map(([value, text]) => `<option value="${value}"${value === selected ? " selected" : ""}>${text}</option>`).join("")

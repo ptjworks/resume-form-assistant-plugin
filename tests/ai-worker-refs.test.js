@@ -166,7 +166,7 @@ test("a date picker gets the end the question asks for, written the way pickers 
   });
   assert.equal(valueOf(result, "start"), "2019-09");
   // 题目看不出取哪一头的一段起止不交给控件，记作没填上、报日期不对。
-  assert.deepEqual(result.matches.find((match) => match.fieldId === "span"), { fieldId: "span", value: "2019.09-2023.06", blocked: "invalid_date" });
+  assert.deepEqual(result.matches.find((match) => match.fieldId === "span"), { fieldId: "span", value: "", blocked: "invalid_date" });
   assert.equal(valueOf(result, "birth"), "2026-07-01");
   assert.equal(valueOf(result, "birthMonth"), "2026-07");
   assert.equal(valueOf(result, "until"), "至今");
@@ -178,7 +178,30 @@ test("a date picker given an item that is not a date reports a bad date instead 
     formFields: [{ fieldId: "start", label: "入职时间", inputType: "date-picker", options: [] }],
     resumeFields: [{ group: "实习经历", key: "实习经历1-公司", value: "虚构科技" }]
   });
-  assert.deepEqual(result.matches, [{ fieldId: "start", value: "虚构科技", blocked: "invalid_date" }]);
+  // 拦下的不带原文，不算 AI 填上的，也不算这次成功（另记 aiBlocked，网页记作没写上）。
+  assert.deepEqual(result.matches, [{ fieldId: "start", value: "", blocked: "invalid_date" }]);
+  assert.equal(result.diagnostics.aiMatches, 0);
+  assert.equal(result.diagnostics.aiBlocked, 1);
+  assert.equal(result.success, true, "nothing went wrong, nothing was filled");
+  // 有警告时（另一题太长没发出去），只有拦下的不算成功。
+  const warned = await worker((message, catalog) => [{ fieldId: "start", ref: catalog[0].ref }]).run({
+    formFields: [{ fieldId: "start", label: "入职时间", inputType: "date-picker", options: [] }, { fieldId: "huge", label: "说明", placeholder: "甲".repeat(17_000) }],
+    resumeFields: [{ group: "实习经历", key: "实习经历1-公司", value: "虚构科技" }]
+  });
+  assert.match(warned.warning, /内容太多/);
+  assert.equal(warned.success, false);
+});
+
+test("a text box takes no year, month or day of an item; questions about them and selects with fits do", async () => {
+  const env = worker((message, catalog) => [
+    { fieldId: "school", ref: catalog[0].ref, part: "year" }, { fieldId: "year", ref: catalog[0].ref, part: "year" }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }, { fieldId: "year", label: "毕业年份" }],
+    resumeFields: [{ group: "教育经历", key: "教育经历1-时间", value: "2019.09-2023.06" }]
+  });
+  assert.equal(valueOf(result, "school"), undefined);
+  assert.equal(valueOf(result, "year"), "2023");
 });
 
 test("a question about motives or plans takes only an item about the same thing, saved answers included", async () => {
@@ -204,6 +227,17 @@ test("a question about motives or plans takes only an item about the same thing,
   assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["intro", "leave", "plan", "saved"]);
   assert.equal(valueOf(result, "saved"), "认同虚构公司的产品");
   assert.equal(result.diagnostics.openUnanswered, 4);
+});
+
+test("a saved answer to the very same question passes even when the question is all common words", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "both", ref: catalog[0].ref }, { fieldId: "other", ref: catalog[0].ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "both", label: "你的优势和不足", tagName: "textarea", inputType: "textarea" },
+      { fieldId: "other", label: "你的缺点和优点", tagName: "textarea", inputType: "textarea" }],
+    resumeFields: [{ group: "补充字段", key: "你的优势和不足？", value: "认真，但有时过于追求细节" }]
+  });
+  assert.equal(valueOf(result, "both"), "认真，但有时过于追求细节");
+  assert.equal(valueOf(result, "other"), undefined, "only the same question, not one made of the same common words");
 });
 
 test("a text question joins several items only when it asks for several things", async () => {
@@ -341,6 +375,17 @@ test("an edited English school name longer than 18 characters is left out of the
   });
   assert.ok(!env.calls[0].user.includes("Massachusetts"));
   assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "教育经历1-专业"]);
+});
+
+test("a school name written with other punctuation or spaces in the key is still left out", async () => {
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }],
+    resumeFields: [{ group: "教育经历", key: "虚构理工大学（南校区） 教育经历-学校", value: "虚构理工大学(南校区)" },
+      { group: "实习经历", key: "Fictional Ltd., Shenzhen实习经历-公司", value: "fictional ltd shenzhen" }]
+  });
+  assert.ok(!/虚构理工|南校区|Fictional/i.test(env.calls[0].user));
+  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "实习经历1-公司"]);
 });
 
 test("a key in an experience group that starts with a school name is renamed whatever label follows", async () => {

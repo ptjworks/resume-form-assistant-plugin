@@ -230,9 +230,12 @@
     // otherwise they were never sent (e.g. too large). A request with no answer at all leaves
     // every field without a result.
     const failed = Boolean(d) && requestFailed(d.errorCode);
-    const rest = d ? Math.max(0, firstRound - secret - n(d.ruleMatches) - noMapping - n(d.aiMatches))
+    // AI answers held back with a reason (aiBlocked, #429: a bad date, batches that disagree) are matches the page
+    // reports as not written, like the local ones; they are not AI misses.
+    const answered = n(d?.aiMatches) + n(d?.aiBlocked);
+    const rest = d ? Math.max(0, firstRound - secret - n(d.ruleMatches) - noMapping - answered)
       : input.requested ? firstRound : 0;
-    const sent = d && aiCalled(input) ? Math.min(rest, Math.max(0, n(d.aiFields) - noMapping - n(d.aiMatches))) : 0;
+    const sent = d && aiCalled(input) ? Math.min(rest, Math.max(0, n(d.aiFields) - noMapping - answered)) : 0;
     // Of those, open questions with no ready answer in the resume (#429): the AI no longer writes one, so they get their own reason.
     const open = Math.min(sent, n(d?.openUnanswered));
     const counts = {

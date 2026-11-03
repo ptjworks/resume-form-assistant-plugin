@@ -421,12 +421,15 @@ async function handleAiFill(message, controller = new AbortController()) {
       seenMatchIds.add(match.fieldId);
       return true;
     });
-  diagnostics.aiMatches = matches.filter(match => !matchedFieldIds.has(match.fieldId)).length;
+  // 拦下不填、只报原因的（blocked：日期不对、几批回答对不上）不算 AI 填上的，另记 aiBlocked：网页把它们记作没写上。
+  const aiAnswered = matches.filter(match => !matchedFieldIds.has(match.fieldId));
+  diagnostics.aiMatches = aiAnswered.filter(match => !match.blocked).length;
+  diagnostics.aiBlocked = aiAnswered.length - diagnostics.aiMatches;
   // 开放题 AI 看过、资料里没有现成的回答：不让 AI 现写，诊断里单独记一个原因。字段被拆成几批时只数一次。
   diagnostics.openUnanswered = new Set(answeredFields.filter(field => isOpenQuestion(field) && !seenMatchIds.has(field.fieldId))
     .map(field => field.fieldId)).size;
   const warning = [...new Set(warnings)].join(" ");
-  return { success: !warning || matches.length > 0, matches, warning, error: warning, diagnostics,
+  return { success: !warning || matches.some(match => !match.blocked), matches, warning, error: warning, diagnostics,
     ...(openView ? { openView } : {}) };
 }
 
@@ -562,6 +565,9 @@ function refMatches(payload, fields, catalog) {
       if (whole) return token.replace(/\.(?:year|month|day)$/, "");
       return part && !token.includes(".") ? `${token}.${part}` : token;
     });
+    // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框收到的整条不要。
+    const parted = tokens.some(token => REF_TOKEN.exec(token)?.[2]);
+    if (parted && !field.fits && !DATE_PART_FIELD.test([field.label, field.placeholder, field.name, field.idAttr].filter(Boolean).join(" "))) return [];
     if (field.fits && tokens.some(token => !field.fits.includes(token))) return [];
     if (isTextAnswer(field) && !answersOpinion(field, tokens, catalog)) return [];
     const values = tokens.map(token => refValue(token, field, catalog));
@@ -570,7 +576,7 @@ function refMatches(payload, fields, catalog) {
     // 日期控件只收写得成「2019-09」「2000-03-17」或「至今」的：别的不交给控件，记作没填上、报日期不对。
     if (isDateControl(field)) {
       const date = pickerDate(field, joined);
-      return [date ? { fieldId: field.fieldId, value: date } : { fieldId: field.fieldId, value: joined, blocked: "invalid_date" }];
+      return [date ? { fieldId: field.fieldId, value: date } : { fieldId: field.fieldId, value: "", blocked: "invalid_date" }];
     }
     const value = field.cascadeGroup !== undefined ? levelRegion(field, joined) : field.cascade === true ? regionPrefix(joined) : joined;
     return value ? [{ fieldId: field.fieldId, value }] : [];
@@ -591,7 +597,7 @@ function settleAnswers(matches) {
 }
 
 // 问动机、打算、优缺点、看法的题（多行、单行文本框都算），资料项的字段名要和题目说的是同一件事：去掉「为什么」「优势」
-// 「你」「公司」这类哪道题都有的词以后，还有两个字相同（英文是一个四个字母以上的词相同）。补充字段、本网站回答也一样。
+// 「你」「公司」这类哪道题都有的词以后，还有两个字相同（英文是一个四个字母以上的词相同），或者归一后一模一样。补充字段、本网站回答也一样。
 // AI 看不到值时会随手挑一项：浏览器验收里「为什么选择我们公司」被填成过最高学历、期望工作地点，评测里被填成自我评价。
 const OPINION_QUESTION = /为什么|为何|动机|原因|理由|规划|打算|优势|劣势|不足|缺点|优点|困难|挑战|看法|理解|认识|谈谈|说说|举例|\b(?:why|plans?|goals?|strengths?|weakness(?:es)?|challenges?|motivat\w*|reasons?)\b/i;
 const COMMON_WORDS = new RegExp(`${OPINION_QUESTION.source}|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下`, "gi");
@@ -600,9 +606,14 @@ function answersOpinion(field, tokens, catalog) {
   const question = [field.label, field.placeholder].filter(Boolean).join(" ");
   if (!OPINION_QUESTION.test(question)) return true;
   const asked = topicWords(question);
+  const same = ResumeProAIHelpers.looseText(question);
   return tokens.every(token => {
     const item = catalog.items.get(REF_TOKEN.exec(token)?.[1]);
-    return Boolean(item) && topicWords([item.key, ...(aliasesOf(item.key) || [])].join(" ")).some(word => asked.includes(word));
+    if (!item) return false;
+    // 题目和字段名一模一样（存过的原题「你的优势和不足」去掉通用词就什么都不剩）直接算。
+    const names = [item.key, ...(aliasesOf(item.key) || [])];
+    return names.some(name => ResumeProAIHelpers.looseText(name) === same)
+      || topicWords(names.join(" ")).some(word => asked.includes(word));
   });
 }
 

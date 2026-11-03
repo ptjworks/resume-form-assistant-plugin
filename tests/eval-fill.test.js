@@ -59,3 +59,12 @@ test("with a mock model that answers nothing both prompts leave only the local m
   assert.ok(keys.promptBytes < values.promptBytes, "the keys prompt carries no values");
   assert.ok(result.fields.every((field) => field.keys.join() === field.values.join()));
 });
+
+test("the key goes only to https unless http is asked for by name", async () => {
+  const { baseUrlAllowed } = await load();
+  assert.equal(baseUrlAllowed("https://api.example.test/v1"), true);
+  assert.equal(baseUrlAllowed("http://api.example.test/v1"), false);
+  assert.equal(baseUrlAllowed("http://127.0.0.1:8080/v1", true), true);
+  assert.equal(baseUrlAllowed("ftp://api.example.test"), false);
+  assert.equal(baseUrlAllowed("not a url"), false);
+});

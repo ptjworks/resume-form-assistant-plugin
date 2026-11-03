@@ -10,6 +10,7 @@
 // 真实模型（会产生费用，不进 CI）：Key 只从环境变量读，用 1Password 注入，不出现在命令行和结果里：
 //   op-dev run --env-file <只写 RESUME_PRO_EVAL_API_KEY=op://… 的文件> -- node scripts/eval-fill.mjs \
 //     --base-url https://host/v1 --model name --confirm-paid [--runs 3] [--modes keys,values] [--out result.json]
+//   --base-url 只收 https；本机调试的 http 服务另加 --allow-http。
 // 结果文件只有每题的结论（对、错、没填）、计数、耗时和字节数；不含模型原文。
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -191,6 +192,12 @@ export function mockModel(kind) {
   return async () => ({ ok: true, text: "[]" });
 }
 
+export function baseUrlAllowed(baseUrl, allowHttp = false) {
+  let url;
+  try { url = new URL(baseUrl); } catch { return false; }
+  return url.protocol === "https:" || (allowHttp && url.protocol === "http:");
+}
+
 // OpenAI 兼容接口，和桌面发的同形：system + user，temperature 0，非流式。OpenCode 要带稳定的 x-opencode-session。
 export function realModel({ baseUrl, model, apiKey, fetchImpl = fetch }) {
   const session = randomUUID();
@@ -228,6 +235,11 @@ async function main(argv) {
     const apiKey = process.env.RESUME_PRO_EVAL_API_KEY || "";
     if (!baseUrl || !name || !apiKey) {
       console.error("真实模型评测需要 --base-url、--model 和环境变量 RESUME_PRO_EVAL_API_KEY；只想检查流程请用 --mock empty。");
+      process.exit(2);
+    }
+    // Key 放在请求头里：只发到 https。本机调试的 http 服务另加 --allow-http。
+    if (!baseUrlAllowed(baseUrl, argv.includes("--allow-http"))) {
+      console.error("--base-url 要用 https（本机调试的 http 服务加 --allow-http）。");
       process.exit(2);
     }
     if (!argv.includes("--confirm-paid")) {
