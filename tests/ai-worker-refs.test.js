@@ -170,25 +170,40 @@ test("a date picker gets the end the question asks for, written the way pickers 
   assert.equal(valueOf(result, "until"), "至今");
 });
 
-test("an open question about motives or plans takes only a saved answer or an item named like it", async () => {
+test("a question about motives or plans takes only an item about the same thing, saved answers included", async () => {
   const resume = [{ group: "求职补充", key: "期望工作地点", value: "虚构城" }, { group: "自我评价", key: "自我评价", value: "踏实认真" },
-    { group: "补充字段", key: "为什么想加入我们", value: "认同虚构公司的产品" }, { group: "工作经历", key: "工作经历1-离职原因", value: "合同到期" }];
+    { group: "补充字段", key: "为什么想加入我们", value: "认同虚构公司的产品" }, { group: "工作经历", key: "工作经历1-离职原因", value: "合同到期" },
+    { group: "补充字段", key: "期望薪资", value: "面议" }, { group: "补充字段", key: "职业规划", value: "三年内成为数据分析师" }];
   const env = worker((message, catalog) => {
     const ref = (key) => catalog.find((entry) => entry.key === key).ref;
     return [
       { fieldId: "why", ref: ref("期望工作地点") }, { fieldId: "whyEn", ref: ref("自我评价") }, { fieldId: "strength", ref: ref("自我评价") },
-      { fieldId: "saved", ref: ref("为什么想加入我们") }, { fieldId: "leave", ref: ref("工作经历1-离职原因") }, { fieldId: "intro", ref: ref("自我评价") }
+      { fieldId: "saved", ref: ref("为什么想加入我们") }, { fieldId: "leave", ref: ref("工作经历1-离职原因") }, { fieldId: "intro", ref: ref("自我评价") },
+      { fieldId: "salary", ref: ref("期望薪资") }, { fieldId: "plan", ref: ref("职业规划") }, { fieldId: "lineWhy", ref: ref("自我评价") }
     ];
   });
   const textarea = (fieldId, label) => ({ fieldId, label, tagName: "textarea", inputType: "textarea" });
   const result = await env.run({
     formFields: [textarea("why", "为什么选择我们公司"), textarea("whyEn", "Why do you want to join us?"), textarea("strength", "你的优势和不足"),
-      textarea("saved", "你为什么想加入本公司"), textarea("leave", "离职原因"), textarea("intro", "个人简介")],
+      textarea("saved", "你为什么想加入本公司"), textarea("leave", "离职原因"), textarea("intro", "个人简介"),
+      // 存过的回答也要说的是同一件事；单行文本框一样。
+      textarea("salary", "为什么选择本岗位"), textarea("plan", "未来三到五年的职业规划"), { fieldId: "lineWhy", label: "请简述你为什么投递", inputType: "text" }],
     resumeFields: resume
   });
-  assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["intro", "leave", "saved"]);
+  assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["intro", "leave", "plan", "saved"]);
   assert.equal(valueOf(result, "saved"), "认同虚构公司的产品");
-  assert.equal(result.diagnostics.openUnanswered, 3);
+  assert.equal(result.diagnostics.openUnanswered, 4);
+});
+
+test("a text question joins several items only when it asks for several things", async () => {
+  const resume = [{ group: "实习经历", key: "实习经历1-公司", value: "虚构科技" }, { group: "实习经历", key: "实习经历1-职位", value: "分析实习生" }];
+  const env = worker((message, catalog) => ["company", "both"].map((fieldId) => ({ fieldId, refs: [catalog[0].ref, catalog[1].ref] })));
+  const result = await env.run({
+    formFields: [{ fieldId: "company", label: "实习单位" }, { fieldId: "both", label: "实习单位和岗位" }],
+    resumeFields: resume
+  });
+  assert.equal(valueOf(result, "company"), undefined);
+  assert.equal(valueOf(result, "both"), "虚构科技 分析实习生");
 });
 
 test("an answer that writes its own value, names an unknown ref or another batch's field is dropped", async () => {
@@ -284,6 +299,17 @@ test("the old value prompt is still there for the eval script, behind a global t
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8"), /ResumeProEvalValuePrompt/);
 });
 
+test("a parsed key whose school name was edited afterwards still leaves the old name out", async () => {
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }],
+    resumeFields: [{ group: "教育经历", key: "旧虚构学院教育经历-学校", value: "新虚构学院" }, { group: "教育经历", key: "旧虚构学院教育经历-专业", value: "虚构专业" },
+      { group: "补充字段", key: "请描述你的实习经历-收获", value: "收获很多" }]
+  });
+  assert.ok(!env.calls[0].user.includes("旧虚构学院"));
+  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "教育经历1-专业", "请描述你的实习经历-收获"]);
+});
+
 test("the catalog names the latest of several spans in a group and the other names of a profile field", async () => {
   const env = worker();
   await env.run({
@@ -337,12 +363,13 @@ test("computer levels and English yes or no are the same option in other words",
   assert.equal(helpers.findSelectOptionIndex(["Yes", "No"], "否"), 1);
 });
 
-test("a select of bare numbers takes only items equal to an option, not numbers hidden in an ID or a phone", async () => {
+test("a select of bare numbers takes only items with the same number, not numbers hidden in an ID or a phone", async () => {
   const env = worker();
   await env.run({
     formFields: [
       { fieldId: "year", label: "出生年份", inputType: "select", options: ["请选择", "1999", "2000", "2001"] },
-      { fieldId: "days", label: "每周实习天数", inputType: "select", options: ["3", "4", "5"] }
+      { fieldId: "days", label: "每周实习天数", inputType: "select", options: ["3", "4", "5"] },
+      { fieldId: "unit", label: "每周到岗天数", inputType: "select", options: ["3天", "4天", "5天"] }
     ],
     resumeFields: [{ group: "基本信息", key: "出生日期", value: "2000-03-17" }, { group: "基本信息", key: "证件号码", value: "430181200003170022" },
       { group: "补充字段", key: "微信号", value: "lin_2000" }, { group: "补充字段", key: "每周可实习天数", value: "5" }]
@@ -352,4 +379,5 @@ test("a select of bare numbers takes only items equal to an option, not numbers 
   const ref = (key) => refs.find((entry) => entry.key === key).ref;
   assert.deepEqual(fields.find((field) => field.fieldId === "year").fits, [`${ref("出生日期")}.year`]);
   assert.deepEqual(fields.find((field) => field.fieldId === "days").fits, [ref("每周可实习天数")]);
+  assert.deepEqual(fields.find((field) => field.fieldId === "unit").fits, [ref("每周可实习天数")], "a unit after the number does not count");
 });

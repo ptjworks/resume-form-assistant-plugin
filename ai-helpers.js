@@ -1051,10 +1051,18 @@
   }
 
   // 桌面解析简历时，同一段经历的字段名起成「学校名或公司名 + 教育经历 - 专业」（semanticizeParsedFields），字段名里带着值。
-  // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。别的字段名原样。
+  // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。
+  // 前缀对不上现在的值（解析以后改过学校名）时，经历类分组里「某某 + 教育经历」这样的字段名也换掉。别的字段名原样。
   function catalogKeys(resumeFields) {
     const labels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
     const numbers = new Map();
+    const renamed = (group, anchor, label, rest) => {
+      const slot = `${group}\u0000${label}`;
+      if (!numbers.has(slot)) numbers.set(slot, new Map());
+      const seen = numbers.get(slot);
+      if (!seen.has(anchor)) seen.set(anchor, seen.size + 1);
+      return `${label}${seen.get(anchor)}${rest.slice(label.length)}`;
+    };
     return resumeFields.map((field) => {
       const key = String(field?.key ?? "");
       const anchors = resumeFields.filter((other) => other?.group === field?.group)
@@ -1064,12 +1072,13 @@
       for (const anchor of anchors) {
         const rest = key.slice(anchor.length);
         const label = labels.find((item) => rest.startsWith(item)) || /^[\u4e00-\u9fa5A-Za-z]+?信息(?=-|$|\s\()/.exec(rest)?.[0];
-        if (!label) continue;
-        const slot = `${field.group}\u0000${label}`;
-        if (!numbers.has(slot)) numbers.set(slot, new Map());
-        const seen = numbers.get(slot);
-        if (!seen.has(anchor)) seen.set(anchor, seen.size + 1);
-        return `${label}${seen.get(anchor)}${rest.slice(label.length)}`;
+        if (label) return renamed(field.group, anchor, label, rest);
+      }
+      if (ENTITY_LABEL_BY_GROUP.some((item) => item.pattern.test(String(field?.group ?? "")))) {
+        for (const label of labels) {
+          const at = key.indexOf(label);
+          if (at >= 1 && at <= 18 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) return renamed(field.group, key.slice(0, at), label, key.slice(at));
+        }
       }
       return key;
     });

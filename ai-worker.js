@@ -554,15 +554,17 @@ function promptFields(fields, catalog) {
       && field.cascade !== true && helpers.hasRealOptions(field);
     if (!choice) { sent.push(field); continue; }
     const parts = DATE_PART_FIELD.test([field.label, field.placeholder, field.name, field.idAttr].filter(Boolean).join(" ")) ? DATE_PARTS : [];
-    // 选项全是数字（年份、月份、几天）时只认和选项一模一样的整项：靠「包含」会把证件号里的「2000」、手机号里的「12」也算进来。
+    // 选项全是数字（年份、月份、几天）时只认数字相同的整项（单位不算，「5」对「5天」）：靠「包含」会把证件号里的「2000」、
+    // 手机号里的「12」也算进来。页面上也要选得上（isValueValidForField）。
     const texts = field.options.filter(option => !helpers.isPlaceholderOption(option))
       .map(option => helpers.normalizeText(typeof option === "object" && option !== null ? option.text ?? option.value : option)).filter(Boolean);
-    const numeric = texts.length > 0 && texts.every(text => /^\d{1,4}[年月日号天]?$/.test(text));
+    const bare = text => /^0*(\d{1,4})[年月日号天]?$/.exec(text)?.[1];
+    const numbers = texts.length > 0 && texts.every(bare) ? new Set(texts.map(bare)) : null;
     const fits = catalog.entries.flatMap(({ ref }) => {
       const value = catalog.values.get(ref);
       // 长段文字落不到选项上，不必一项一项比。
       if (value.length > 100) return [];
-      const whole = numeric ? texts.includes(helpers.normalizeText(value)) : helpers.isValueValidForField(field, value);
+      const whole = (!numbers || numbers.has(bare(helpers.normalizeText(value)))) && helpers.isValueValidForField(field, value);
       const list = whole ? [ref] : [];
       for (const part of parts) {
         const piece = helpers.datePart(value, part, field);
@@ -595,7 +597,7 @@ function refMatches(payload, fields, catalog) {
       return part && !token.includes(".") ? `${token}.${part}` : token;
     });
     if (field.fits && tokens.some(token => !field.fits.includes(token))) return [];
-    if (isOpenQuestion(field) && !answersOpenQuestion(field, tokens, catalog)) return [];
+    if (isTextAnswer(field) && !answersOpinion(field, tokens, catalog)) return [];
     const values = tokens.map(token => refValue(token, field, catalog));
     const joined = values.every(Boolean) ? joinRefValues(field, values) : "";
     const region = field.cascade === true || field.cascadeGroup !== undefined;
@@ -604,21 +606,29 @@ function refMatches(payload, fields, catalog) {
   });
 }
 
-// 问动机、打算、优缺点、看法的开放题，只收用户答过的原题（补充字段、本网站回答），或字段名和题目有一段三个字相同的资料。
+// 问动机、打算、优缺点、看法的题（多行、单行文本框都算），资料项的字段名要和题目说的是同一件事：去掉「为什么」「优势」
+// 「你」「公司」这类哪道题都有的词以后，还有两个字相同（英文是一个四个字母以上的词相同）。补充字段、本网站回答也一样。
 // AI 看不到值时会随手挑一项：浏览器验收里「为什么选择我们公司」被填成过最高学历、期望工作地点，评测里被填成自我评价。
-const OPINION_QUESTION = /为什么|为何|动机|原因|理由|规划|打算|计划|目标|优势|劣势|不足|缺点|优点|困难|挑战|看法|理解|认识|谈谈|说说|举例|\b(?:why|plans?|goals?|strengths?|weakness(?:es)?|challenges?|motivat\w*|reasons?)\b/i;
-function answersOpenQuestion(field, tokens, catalog) {
-  if (!OPINION_QUESTION.test([field.label, field.placeholder].filter(Boolean).join(" "))) return true;
-  const question = ResumeProAIHelpers.normalizeText([field.label, field.placeholder].filter(Boolean).join(" "));
-  const saved = new Set([ResumeProProfile.CUSTOM_GROUP, ResumeProProfile.SITE_GROUP].filter(Boolean));
+const OPINION_QUESTION = /为什么|为何|动机|原因|理由|规划|打算|优势|劣势|不足|缺点|优点|困难|挑战|看法|理解|认识|谈谈|说说|举例|\b(?:why|plans?|goals?|strengths?|weakness(?:es)?|challenges?|motivat\w*|reasons?)\b/i;
+const COMMON_WORDS = new RegExp(`${OPINION_QUESTION.source}|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下`, "gi");
+const COMMON_ENGLISH = new Set(["want", "join", "your", "with", "this", "that", "from", "what", "have", "would", "about", "company"]);
+function answersOpinion(field, tokens, catalog) {
+  const question = [field.label, field.placeholder].filter(Boolean).join(" ");
+  if (!OPINION_QUESTION.test(question)) return true;
+  const asked = topicWords(question);
   return tokens.every(token => {
     const item = catalog.items.get(REF_TOKEN.exec(token)?.[1]);
-    if (!item) return false;
-    if (saved.has(item.group)) return true;
-    const key = ResumeProAIHelpers.normalizeText(item.key);
-    for (let i = 0; i + 3 <= key.length; i += 1) if (question.includes(key.slice(i, i + 3))) return true;
-    return false;
+    return Boolean(item) && topicWords([item.key, ...(aliasesOf(item.key) || [])].join(" ")).some(word => asked.includes(word));
   });
+}
+
+// 一段文字里能拿来比的词：中文去掉通用词后按两个字一段，英文取四个字母以上的词。
+function topicWords(text) {
+  const source = String(text ?? "").toLowerCase();
+  const han = source.replace(COMMON_WORDS, " ").replace(/[^\u4e00-\u9fa5]+/g, " ").split(" ").filter(Boolean)
+    .flatMap(part => Array.from({ length: Math.max(0, part.length - 1) }, (_, i) => part.slice(i, i + 2)));
+  const english = (source.match(/[a-z]{4,}/g) || []).filter(word => !COMMON_ENGLISH.has(word) && !OPINION_QUESTION.test(word));
+  return [...han, ...english];
 }
 
 // 日期控件：一段起止先按题目取开始或结束，再写成「2019-09」「2000-03-17」。资料原文的「2019.09」有的控件不认（Element 的月份框）。
@@ -654,19 +664,25 @@ function refValue(token, field, catalog) {
   return part ? ResumeProAIHelpers.datePart(value, part, field) : value;
 }
 
-// 几项资料拼成一个值：多选用「、」，级联用「/」，一段起止的开始和结束用「-」，文本题的两三项用空格。下拉、单选、日期控件别的不拼。
+// 几项资料拼成一个值：多选用「、」，级联用「/」，一段起止的开始和结束用「-」，问几样东西的文本题的两三项用空格。别的不拼。
 function joinRefValues(field, values) {
   if (values.length === 1) return values[0];
   if (field.multiple === true) return values.join("、");
   if (field.cascade === true) return values.join("/");
   const range = values.length === 2 ? `${values[0].trim()}-${values[1].trim()}` : "";
   if (range && ResumeProAIHelpers.rangeDateParts(range)) return range;
-  const text = !["select", "radio"].includes(field.inputType) && !isDateControl(field);
-  return text && values.length <= 3 ? values.map(value => value.trim()).join(" ") : "";
+  // 文本题只在题目本身问的是几样东西（「工作单位及职务」「姓名和电话」）时拼。
+  const several = /[及和与、/＋+]|以及|\band\b/i.test([field.label, field.placeholder].filter(Boolean).join(" "));
+  return isTextAnswer(field) && several && values.length <= 3 ? values.map(value => value.trim()).join(" ") : "";
 }
 
 function isDateControl(field) {
   return ["date-picker", "date", "month", "datetime-local"].includes(field?.inputType);
+}
+
+// 填文字的题：单行、多行文本框（下拉、单选、日期控件不算）。
+function isTextAnswer(field) {
+  return !["select", "radio"].includes(field?.inputType) && !isDateControl(field) && field?.cascade !== true;
 }
 
 function isOpenQuestion(field) {
