@@ -424,6 +424,32 @@ test('a catalog over the budget is cut once per batch of questions, with the ite
   assert.ok(more >= 2 && more <= 6, `one request per batch of questions, got ${more}`);
 });
 
+test('a trimmed catalog takes only its own refs, keeps the fits of each select in it and says it is a part', async () => {
+  let sent = null;
+  const env = worker((message) => {
+    sent = message;
+    // 一项被裁掉的编号（目录里最后一项和题目无关），一项本批有的。
+    const refs = new Set(catalogOf(message.user).map((entry) => entry.ref));
+    const missing = Array.from({ length: 302 }, (_, i) => `r${i + 1}`).find((ref) => !refs.has(ref));
+    return { ok: true, text: JSON.stringify([{ fieldId: 'q0', ref: missing }, { fieldId: 'politics', ref: catalogOf(message.user).find((entry) => entry.key === '身份').ref }]) };
+  });
+  const result = await env.run({
+    formFields: [{ fieldId: 'q0', label: '问题0' }, { fieldId: 'politics', label: '政治面貌', inputType: 'select', options: ['共青团员', '群众'] }],
+    // 「身份」和题目说的不是一件事，排在最后；它是这道下拉唯一填得进的一项。
+    resumeFields: [...BIG_CATALOG, { group: '基本信息', key: '身份', value: '共青团员' }]
+  });
+  const catalog = catalogOf(sent.user);
+  const refs = new Set(catalog.map((entry) => entry.ref));
+  const fields = JSON.parse(sent.user.split('\n')[1]);
+  const politics = fields.find((field) => field.fieldId === 'politics');
+  assert.ok(politics.fits.length > 0 && politics.fits.every((token) => refs.has(token.split('.')[0])), JSON.stringify(politics.fits));
+  assert.match(sent.user, /只列了和这批题目有关的一部分/);
+  assert.ok(result.diagnostics.catalogTrimmed > 0);
+  // 不在本批目录里的编号不用，哪怕整份目录里有。
+  assert.equal(result.matches.some((match) => match.fieldId === 'q0'), false);
+  assert.equal(result.matches.find((match) => match.fieldId === 'politics').value, '共青团员');
+});
+
 test('two different answers to one field in one reply leave it out and say why; the same answer twice does not', async () => {
   const school = (message) => ({ fieldId: 'school', ref: catalogOf(message.user)[0].ref });
   const twice = worker((message) => ({ ok: true, text: JSON.stringify([school(message), school(message)]) }));

@@ -71,3 +71,12 @@ test("the key goes only to https unless http is asked for by name", async () => 
   assert.equal(baseUrlAllowed("ftp://api.example.test"), false);
   assert.equal(baseUrlAllowed("not a url"), false);
 });
+
+test("padding the resume with unrelated saved questions makes the catalog too big for one request", async () => {
+  const { loadCorpus, evaluate, mockModel, padding } = await load();
+  const corpus = loadCorpus();
+  corpus.resumeFields.push(...padding(300));
+  const result = await evaluate(corpus, { modes: ["keys"], runs: 1, complete: mockModel("empty") });
+  assert.equal(result.byMode.keys.requests, corpus.pages.length, "one request per page, the catalog trimmed for each");
+  assert.ok(result.rows.every((row) => row.requests.every((request) => request.bytes <= 50_000)));
+});

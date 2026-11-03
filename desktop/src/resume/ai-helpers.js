@@ -1054,28 +1054,36 @@
       const groupLabel = ENTITY_LABEL_BY_GROUP.find((item) => item.pattern.test(group))?.label;
       // 前缀和值按 looseText 比：全角半角、标点、空格不同（「（南校区）」对「(南校区)」）也算同一个值。
       // 解析时字段名只带值的前 18 个字（sanitizeAnchor），改过的可能带着全名：两种都比，取对得上的最长一段。
+      // 编号按这一项的完整值分：前 18 个字一样的两所学校不合成一段。字段名里看不出是哪一项时（只带前 18 个字），
+      // 按桌面给重名字段名加的「 (2)」认：第 n 段就是这个前缀下的第 n 个值；同一所学校的两段经历也靠它分开。
+      const suffix = Number(/\s\((\d+)\)$/.exec(key)?.[1] || 1);
       const anchors = resumeFields.filter((other) => other?.group === field?.group)
         .flatMap((other) => {
-          const anchor = looseText(sanitizeAnchor(other?.value));
+          const id = looseText(String(other?.value ?? ""));
           return [sanitizeAnchor(other?.value), String(other?.value ?? "").replace(/\s+/g, " ").trim().slice(0, 80)]
-            .map((value) => ({ anchor, length: looseLength(key, value) }));
+            .map((value) => ({ id, length: looseLength(key, value) }));
         })
         .filter((item) => item.length > 0)
         .sort((a, b) => b.length - a.length);
-      for (const { anchor, length } of anchors) {
+      const entryOf = (length) => {
+        const ids = [...new Set(anchors.filter((item) => item.length === length).map((item) => item.id))];
+        return `${ids[Math.min(ids.length, suffix) - 1]}#${suffix}`;
+      };
+      const tail = (text) => text.replace(/\s\(\d+\)$/, "");
+      for (const { length } of anchors) {
         const rest = key.slice(length);
         const label = labels.find((item) => rest.startsWith(item)) || /^[\u4e00-\u9fa5A-Za-z]+?信息(?=-|$|\s\()/.exec(rest)?.[0];
-        if (label) return `${label}${numberOf(group, label, anchor)}${rest.slice(label.length)}`;
+        if (label) return `${label}${numberOf(group, label, entryOf(length))}${tail(rest.slice(label.length))}`;
       }
       if (!groupLabel) return key;
       if (anchors.length) {
-        const rest = key.slice(anchors[0].length).replace(/^[\s\-_:：]+/, "");
-        return `${groupLabel}${numberOf(group, groupLabel, anchors[0].anchor)}${rest ? `-${rest}` : ""}`;
+        const rest = tail(key.slice(anchors[0].length)).replace(/^[\s\-_:：]+/, "");
+        return `${groupLabel}${numberOf(group, groupLabel, entryOf(anchors[0].length))}${rest ? `-${rest}` : ""}`;
       }
       for (const label of labels) {
         const at = key.indexOf(label);
         if (at >= 1 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) {
-          return `${label}${numberOf(group, label, looseText(key.slice(0, at)))}${key.slice(at + label.length)}`;
+          return `${label}${numberOf(group, label, `${looseText(key.slice(0, at))}#${suffix}`)}${tail(key.slice(at + label.length))}`;
         }
       }
       return key;

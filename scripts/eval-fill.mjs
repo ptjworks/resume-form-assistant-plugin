@@ -11,6 +11,7 @@
 //   op-dev run --env-file <只写 RESUME_PRO_EVAL_API_KEY=op://… 的文件> -- node scripts/eval-fill.mjs \
 //     --base-url https://host/v1 --model name --confirm-paid [--runs 3] [--modes keys,values] [--out result.json]
 //   --base-url 只收 https；本机（localhost、127.0.0.1、::1）调试的 http 服务另加 --allow-http。
+//   --pad N 往资料里补 N 道无关的长题目，测整份目录装不下时的分批。
 // 结果文件只有每题的结论（对、错、没填）、计数、耗时和字节数；不含模型原文。
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -68,6 +69,13 @@ export function formField(spec) {
     default:
       return { ...base, controlKind: "text", tagName: "input", inputType: "text", options: [], dynamicOptions: false };
   }
+}
+
+// 和语料里的题都无关的虚构存档题，字段名截到 60 字后也有五十多个字。
+export function padding(count) {
+  return Array.from({ length: Math.max(0, Math.min(1000, count)) }, (_, i) => ({ group: SITE_GROUP,
+    key: `存档题${i + 1}：请结合第${i + 1}个虚构场景，谈谈你会如何安排一次跨城市的志愿者物资调配，并估算所需的车辆和人手`,
+    value: `虚构存档回答${i + 1}` }));
 }
 
 // 题型，按它分开数。
@@ -251,6 +259,8 @@ async function main(argv) {
     complete = realModel({ baseUrl, model: name, apiKey });
     label = `${new URL(baseUrl).host} / ${name}`;
   }
+  // --pad N：资料里补 N 道和这些表无关的长题目（本网站回答，虚构），凑出整份目录装不下的情形。
+  if (option("--pad")) corpus.resumeFields.push(...padding(Number(option("--pad")) || 0));
   const only = option("--pages") ? new Set(option("--pages").split(",")) : null;
   if (only) corpus.pages = corpus.pages.filter((page) => only.has(page.name));
   const result = await evaluate(corpus, { modes, runs, complete });

@@ -174,14 +174,21 @@ test("a date picker gets the end the question asks for, written the way pickers 
 });
 
 test("a native date box takes only a whole day; a date picker takes a month and leaves the day to the page", async () => {
-  const env = worker((message, catalog) => [{ fieldId: "native", ref: catalog[0].ref }, { fieldId: "picker", ref: catalog[0].ref }]);
+  const env = worker((message, catalog) => [{ fieldId: "native", ref: catalog[0].ref }, { fieldId: "picker", ref: catalog[0].ref },
+    { fieldId: "nativeNow", ref: catalog[1].ref }, { fieldId: "pickerNow", ref: catalog[1].ref }]);
   const result = await env.run({
     formFields: [{ fieldId: "native", label: "入学日期", inputType: "date", options: [] },
-      { fieldId: "picker", label: "入学日期", inputType: "date-picker", pickerInputType: "date", options: [] }],
-    resumeFields: [{ group: "教育经历", key: "入学时间", value: "2019.09" }]
+      { fieldId: "picker", label: "入学日期", inputType: "date-picker", pickerInputType: "date", options: [] },
+      { fieldId: "nativeNow", label: "离职日期", inputType: "date", options: [] },
+      { fieldId: "pickerNow", label: "离职日期", inputType: "date-picker", pickerInputType: "date", options: [] }],
+    resumeFields: [{ group: "教育经历", key: "入学时间", value: "2019.09" }, { group: "实习经历", key: "离职时间", value: "至今" }]
   });
-  assert.deepEqual(JSON.parse(JSON.stringify(result.matches.find((match) => match.fieldId === "native"))), { fieldId: "native", value: "", blocked: "invalid_date" });
-  assert.equal(valueOf(result, "picker"), "2019-09");
+  const byId = Object.fromEntries(JSON.parse(JSON.stringify(result.matches)).map((match) => [match.fieldId, match]));
+  assert.deepEqual(byId.native, { fieldId: "native", value: "", blocked: "invalid_date" });
+  assert.equal(byId.picker.value, "2019-09");
+  // 原生 date 框写不进「至今」；日期控件里有「至今」的由页面去点。
+  assert.deepEqual(byId.nativeNow, { fieldId: "nativeNow", value: "", blocked: "invalid_date" });
+  assert.equal(byId.pickerNow.value, "至今");
 });
 
 test("a start or end named in the answer takes that side of a span, written either way", async () => {
@@ -270,7 +277,42 @@ test("a question about motives or plans takes only an item about the same thing,
   });
   assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["intro", "leave", "plan", "saved"]);
   assert.equal(valueOf(result, "saved"), "认同虚构公司的产品");
-  assert.equal(result.diagnostics.openUnanswered, 4);
+  // 拦下的单行动机题（lineWhy）也记作开放题没有现成回答。
+  assert.equal(result.diagnostics.openUnanswered, 5);
+});
+
+test("every long answer box checks that the item is about the same thing, whatever the question says", async () => {
+  const resume = [{ group: "自我评价", key: "自我评价", value: "踏实认真" }, { group: "实习经历", key: "实习经历1-内容", value: "负责虚构数据看板" },
+    { group: "求职补充", key: "奖励荣誉", value: "虚构奖学金" }, { group: "户籍与地区", key: "家庭住址", value: "虚构省虚构市" }];
+  const env = worker((message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key).ref;
+    return [
+      { fieldId: "best", ref: ref("自我评价") }, { fieldId: "about", ref: ref("自我评价") }, { fieldId: "work", ref: ref("实习经历1-内容") },
+      { fieldId: "awards", ref: ref("奖励荣誉") }, { fieldId: "intro", ref: ref("自我评价") }, { fieldId: "self", ref: ref("家庭住址") }
+    ];
+  });
+  const box = (fieldId, label, group = "") => ({ fieldId, label, group, tagName: "textarea", inputType: "textarea" });
+  const result = await env.run({
+    formFields: [box("best", "Describe your greatest accomplishment"), box("about", "Tell us about yourself"), box("work", "工作描述", "实习经历"),
+      box("awards", "获奖情况", "其他信息"), box("intro", "个人简介", "补充信息"), box("self", "自我评价", "基本信息")],
+    resumeFields: resume
+  });
+  // 英文题和中文字段名对不上，「家庭住址」答不了「自我评价」；分组、同义词（获奖=奖励、简介=评价）对得上的照填。
+  assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["awards", "intro", "work"]);
+  assert.equal(result.diagnostics.openUnanswered, 3);
+});
+
+test("a multi-select keeps the items that fit its options and joins them; a single select drops the answer", async () => {
+  const env = worker((message, catalog) => [
+    { fieldId: "cities", refs: catalog.map((entry) => entry.ref) }, { fieldId: "city", ref: catalog[2].ref }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "cities", label: "期望工作城市", inputType: "select", multiple: true, options: ["北京", "上海", "深圳"] },
+      { fieldId: "city", label: "工作城市", inputType: "select", options: ["北京", "上海", "深圳"] }],
+    resumeFields: [{ group: "求职", key: "期望城市1", value: "深圳" }, { group: "求职", key: "期望城市2", value: "上海" }, { group: "求职", key: "备注", value: "可出差" }]
+  });
+  assert.equal(valueOf(result, "cities"), "深圳、上海");
+  assert.equal(valueOf(result, "city"), undefined);
 });
 
 test("a saved answer to the very same question passes even when the question is all common words", async () => {
@@ -437,6 +479,35 @@ test("a school name written with other punctuation or spaces in the key is still
   });
   assert.ok(!/虚构理工|南校区|Fictional/i.test(env.calls[0].user));
   assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "实习经历1-公司"]);
+});
+
+test("two entries at one school, or two schools alike in their first 18 characters, get their own numbers", async () => {
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }],
+    resumeFields: helpers.semanticizeParsedFields([
+      { group: "教育经历", key: "教育1学校", value: "虚构理工大学" }, { group: "教育经历", key: "教育1学历", value: "本科" },
+      { group: "教育经历", key: "教育2学校", value: "虚构理工大学" }, { group: "教育经历", key: "教育2学历", value: "硕士" },
+      { group: "教育经历", key: "教育3学校", value: "Fictional Institute of Technology" }, { group: "教育经历", key: "教育3专业", value: "CS" },
+      { group: "教育经历", key: "教育4学校", value: "Fictional Institute of Teaching" }, { group: "教育经历", key: "教育4专业", value: "Ed" }])
+  });
+  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key),
+    ["教育经历1-学校", "教育经历1-学历", "教育经历2-学校", "教育经历2-学历", "教育经历3-学校", "教育经历3-专业", "教育经历4-学校", "教育经历4-专业"]);
+});
+
+test("two long saved questions alike in their first 60 characters stay apart in the catalog", async () => {
+  const head = "请结合你过去的实习或项目经历，详细说明你在团队合作中遇到分歧时是如何沟通、协调并最终推动问题解决的，并说明你在其中承担的具体角色，";
+  assert.ok(head.length > 60);
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "q", label: "团队合作" }],
+    resumeFields: [{ group: "本网站回答", key: `${head}请举一个具体例子说明结果`, value: "回答一" },
+      { group: "本网站回答", key: `${head}以及你从中学到了什么`, value: "回答二" }, { group: "补充字段", key: "备注", value: "无" }, { group: "补充字段", key: "备注", value: "有" }]
+  });
+  const keys = catalogOf(env.calls[0].user).map((entry) => entry.key);
+  assert.equal(new Set(keys).size, keys.length, keys.join(" | "));
+  assert.ok(keys[0].endsWith("请举一个具体例子说明结果") && keys[1].endsWith("以及你从中学到了什么"), keys.join(" | "));
+  assert.deepEqual(keys.slice(2), ["备注", "备注（2）"]);
 });
 
 test("an edited school name written two ways in two keys of one entry still gets one number", async () => {

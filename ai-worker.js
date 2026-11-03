@@ -220,26 +220,42 @@ function safeResumeField(field) {
   return ResumeProAIHelpers.isSafeResumeField(field, ResumeProProfile);
 }
 
-function promptBytes(fields, candidates) {
+function promptBytes(fields, candidates, partial = false) {
   // The user text is JSON-escaped again inside the Native Messaging envelope.
-  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates))).length;
+  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates, partial))).length;
 }
 
 // 整份资料目录装得下时，按题目分批，每批带整份目录。装不下时（资料项太多），每批题目最多占一半预算，
-// 目录先放和这批题目相关的项、放到装不下为止（relevantEntries）：一批只问一次，请求数只随题目的批数增长。编号仍是整份目录里的。
+// 目录先放这批题目 fits 里的项、再放和题目相关的项，放到装不下为止（relevantEntries）：一批只问一次，请求数只随题目的批数增长。
+// 编号仍是整份目录里的；fits 只留这一批目录里有的，留不下一项的题不发。trimmed 是各批没发出去的资料项数。
 function makePromptBatches(formFields, entries) {
   const batches = [];
   let skippedOversized = 0;
-  if (!entries.length) return { batches, skippedOversized, skippedNoContext: formFields.length };
+  let trimmed = 0;
+  if (!entries.length) return { batches, skippedOversized, skippedNoContext: formFields.length, trimmed };
   const whole = promptBytes([], entries) <= AI_USER_BUDGET;
-  const roomy = fields => (whole ? promptBytes(fields, entries) <= AI_USER_BUDGET : promptBytes(fields, []) <= AI_USER_BUDGET / 2);
+  const roomy = fields => (whole ? promptBytes(fields, entries) <= AI_USER_BUDGET : promptBytes(fields, [], true) <= AI_USER_BUDGET / 2);
   let current = [];
   const flush = () => {
     if (!current.length) return;
+    if (promptBytes(current, entries) <= AI_USER_BUDGET) {
+      batches.push({ fields: current, candidates: entries, partial: false });
+      current = [];
+      return;
+    }
+    const candidates = relevantEntries(current, entries);
+    const sent = new Set(candidates.map(entry => entry.ref));
+    const fields = current.flatMap(field => {
+      if (!field.fits) return [field];
+      const fits = field.fits.filter(token => sent.has(REF_TOKEN.exec(token)?.[1]));
+      return fits.length ? [{ ...field, fits }] : [];
+    });
+    skippedOversized += current.length - fields.length;
     // 一题本身太大、连一项资料都放不下的，不发。
-    const candidates = promptBytes(current, entries) <= AI_USER_BUDGET ? entries : relevantEntries(current, entries);
-    if (candidates.length) batches.push({ fields: current, candidates });
-    else skippedOversized += current.length;
+    if (candidates.length && fields.length) {
+      batches.push({ fields, candidates, partial: true });
+      trimmed += entries.length - candidates.length;
+    } else skippedOversized += fields.length;
     current = [];
   };
   for (const field of formFields) {
@@ -247,24 +263,33 @@ function makePromptBatches(formFields, entries) {
     current.push(field);
   }
   flush();
-  return { batches, skippedOversized, skippedNoContext: 0 };
+  return { batches, skippedOversized, skippedNoContext: 0, trimmed };
 }
 
-// 目录装不下时给一批题目挑资料：字段名、分组、别的叫法和题目有两个字（英文一个词）相同的先放，其余照原来的顺序，放到装不下为止。
-// 发出去的仍按目录原来的顺序。
+// 目录装不下时给一批题目挑资料：先放这批题目 fits 里的项，再放字段名、分组、别的叫法和题目说的是同一件事的项，其余照原来的顺序，
+// 放到装不下为止；估算差一点要再删时，从最不相关的那头删。发出去的仍按目录原来的顺序。
 function relevantEntries(fields, entries) {
-  const asked = new Set(topicWords(fields.map(field => [field.label, field.placeholder, field.group].filter(Boolean).join(" ")).join(" ")));
-  const related = entry => topicWords([entry.key, entry.group, ...(entry.aka || [])].join(" ")).some(word => asked.has(word));
+  const asked = new Set(topic(fields.map(field => [field.label, field.placeholder, field.group].filter(Boolean).join(" ")).join(" ")));
+  const fitted = new Set(fields.flatMap(field => (field.fits || []).map(token => REF_TOKEN.exec(token)?.[1])));
+  const rank = entry => fitted.has(entry.ref) ? 0 : topic([entry.key, entry.group, ...(entry.aka || [])].join(" ")).some(word => asked.has(word)) ? 1 : 2;
+  const ordered = entries.map((entry, index) => ({ entry, index, rank: rank(entry) })).sort((a, b) => a.rank - b.rank || a.index - b.index);
   const wire = entry => new TextEncoder().encode(JSON.stringify(JSON.stringify(entry))).length - 1;
-  const picked = new Set();
-  let bytes = promptBytes(fields, []);
-  for (const entry of [...entries.filter(related), ...entries.filter(entry => !related(entry))]) {
+  const picked = [];
+  let bytes = promptBytes(fields, [], true);
+  for (const { entry } of ordered) {
     if (bytes + wire(entry) > AI_USER_BUDGET) continue;
-    picked.add(entry);
+    picked.push(entry);
     bytes += wire(entry);
   }
-  const chosen = entries.filter(entry => picked.has(entry));
-  while (chosen.length && promptBytes(fields, chosen) > AI_USER_BUDGET) chosen.pop();
+  const inOrder = () => {
+    const keep = new Set(picked);
+    return entries.filter(entry => keep.has(entry));
+  };
+  let chosen = inOrder();
+  while (picked.length && promptBytes(fields, chosen, true) > AI_USER_BUDGET) {
+    picked.pop();
+    chosen = inOrder();
+  }
   return chosen;
 }
 
@@ -354,7 +379,8 @@ async function handleAiFill(message, controller = new AbortController()) {
     const apiStart = performance.now();
     // 选项读得到、却没有一项资料填得进去的下拉不发，记作没有对应的资料，不算 AI 没匹配上。
     const prompt = promptFields(remainingFormFields, catalog);
-    const { batches, skippedOversized, skippedNoContext } = makePromptBatches(prompt.fields, catalog.entries);
+    const { batches, skippedOversized, skippedNoContext, trimmed } = makePromptBatches(prompt.fields, catalog.entries);
+    diagnostics.catalogTrimmed = trimmed;
     diagnostics.skippedOversized = skippedOversized;
     diagnostics.skippedNoContext = skippedNoContext + prompt.noFit;
     if (skippedOversized) {
@@ -374,7 +400,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       }
       if (maxCalls !== undefined) diagnostics.calls += 1;
       diagnostics.requests += 1;
-      const user = buildUserPrompt(batch.fields, batch.candidates);
+      const user = buildUserPrompt(batch.fields, batch.candidates, batch.partial);
       diagnostics.promptBytes += new TextEncoder().encode(user).length;
       const result = await sendToDesktop({ purpose: "fill", tier, system: AI_SYSTEM_PROMPT, user, signal: controller.signal });
       if (tier && (result?.tier === "strong" || result?.tier === "default")) diagnostics.tierUsed = result.tier;
@@ -397,7 +423,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       }
       if (controller.signal.aborted) break;
       try {
-        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog);
+        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)));
         aiMatches.push(...ResumeProAIHelpers.filterValidMatches(batch.fields, found));
         answeredFields.push(...batch.fields);
       } catch {
@@ -422,21 +448,23 @@ async function handleAiFill(message, controller = new AbortController()) {
   const aiAnswered = matches.filter(match => !matchedFieldIds.has(match.fieldId));
   diagnostics.aiMatches = aiAnswered.filter(match => !match.blocked).length;
   diagnostics.aiBlocked = aiAnswered.length - diagnostics.aiMatches;
-  // 开放题 AI 看过、资料里没有现成的回答：不让 AI 现写，诊断里单独记一个原因。字段被拆成几批时只数一次。
-  diagnostics.openUnanswered = new Set(answeredFields.filter(field => isOpenQuestion(field) && !seenMatchIds.has(field.fieldId))
+  // 开放题（多行文本框、问动机的单行题）AI 看过、资料里没有现成的回答：不让 AI 现写，诊断里单独记一个原因。
+  const opinion = field => isOpenQuestion(field) || (isTextAnswer(field) && asksOpinion(field));
+  diagnostics.openUnanswered = new Set(answeredFields.filter(field => opinion(field) && !seenMatchIds.has(field.fieldId))
     .map(field => field.fieldId)).size;
   const warning = [...new Set(warnings)].join(" ");
   return { success: !warning || matches.some(match => !match.blocked), matches, warning, error: warning, diagnostics,
     ...(openView ? { openView } : {}) };
 }
 
-// 第一行之后是字段列表（测试按行取），之后是资料目录。
-function buildUserPrompt(formFields, entries) {
+// 第一行之后是字段列表（测试按行取），之后是资料目录。目录装不下、只发了和这批题目有关的一部分时（partial）说明一句。
+function buildUserPrompt(formFields, entries, partial = false) {
   return [
     "表单字段列表：",
     JSON.stringify(formFields),
     "",
-    "简历资料目录（只有编号、分组和字段名，不含值）：",
+    partial ? "简历资料目录（只有编号、分组和字段名，不含值；资料项太多，这里只列了和这批题目有关的一部分，没列出的不等于没有，只能用列出的编号）："
+      : "简历资料目录（只有编号、分组和字段名，不含值）：",
     JSON.stringify(entries),
     "",
     "填写原则：基本信息优先对应基本信息分组；教育背景不要给邮箱、电话、出生日期、籍贯等基础字段；低置信度时跳过。"
@@ -463,6 +491,7 @@ function buildCatalog(resumeFields) {
   const helpers = ResumeProAIHelpers;
   const filled = resumeFields.filter(field => String(field?.value ?? "").trim());
   const keys = helpers.catalogKeys(filled);
+  const shortKeys = distinctKeys(keys, filled.map(field => String(field.group ?? "")));
   const latest = latestSpans(filled);
   const values = new Map();
   const items = new Map();
@@ -473,7 +502,7 @@ function buildCatalog(resumeFields) {
     const aka = aliasesOf(field.key);
     const shape = helpers.valueShape(field.value);
     const mark = latest.has(index) ? `${shape}，本组最近一段` : shape;
-    return { ref, group: String(field.group ?? ""), key: shortKey(keys[index]), ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}) };
+    return { ref, group: String(field.group ?? ""), key: shortKeys[index], ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}) };
   });
   return { entries, values, items };
 }
@@ -483,6 +512,22 @@ const CATALOG_KEY_LIMIT = 60;
 function shortKey(key) {
   const text = String(key ?? "");
   return text.length > CATALOG_KEY_LIMIT ? `${text.slice(0, CATALOG_KEY_LIMIT)}…` : text;
+}
+
+// 同一组里截短后撞成一样的字段名（前 60 个字相同的两道长题目）：留开头 44 个字和结尾 15 个字；还一样（或本来就重名）加序号。
+function distinctKeys(keys, groups) {
+  const slot = (index, key) => JSON.stringify([groups[index], key]);
+  const counted = new Map();
+  const short = keys.map(key => shortKey(key));
+  short.forEach((key, index) => counted.set(slot(index, key), (counted.get(slot(index, key)) || 0) + 1));
+  const tailed = short.map((key, index) => (counted.get(slot(index, key)) > 1 && String(keys[index]).length > CATALOG_KEY_LIMIT
+    ? `${String(keys[index]).slice(0, 44)}…${String(keys[index]).slice(-15)}` : key));
+  const seen = new Map();
+  return tailed.map((key, index) => {
+    const count = (seen.get(slot(index, key)) || 0) + 1;
+    seen.set(slot(index, key), count);
+    return count > 1 ? `${key}（${count}）` : key;
+  });
 }
 
 // 同一组里有几段起止日期（几段实习）时，结束得最晚的一段（「至今」最晚）：AI 看不到时间，问「最近一段」时靠它。并列的不标。
@@ -554,8 +599,9 @@ function promptFields(fields, catalog) {
   return { fields: sent, noFit };
 }
 
-// AI 回的「字段 → 资料编号」换成资料原文。编号不在目录里、字段不在这一批、带 fits 却挑了 fits 以外的、条目里自己写了值的，整条不要。
-function refMatches(payload, fields, catalog) {
+// AI 回的「字段 → 资料编号」换成资料原文。编号不在这一批发出去的目录里（allowed）、字段不在这一批、带 fits 却挑了 fits 以外的、
+// 条目里自己写了值的，整条不要；多选只去掉这样的几项，剩下的照拼。
+function refMatches(payload, fields, catalog, allowed) {
   const source = Array.isArray(payload) ? payload : payload?.matches;
   if (!Array.isArray(source)) throw new Error("结果不是 JSON 数组。");
   const byId = new Map(fields.map(field => [field.fieldId, field]));
@@ -577,8 +623,11 @@ function refMatches(payload, fields, catalog) {
     // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框（「期望年薪」）收到的整条不要。
     const parted = tokens.some(token => DATE_PARTS.includes(REF_TOKEN.exec(token)?.[2]));
     if (parted && !field.fits && !asksDatePart(field)) return [];
-    if (field.fits && tokens.some(token => !field.fits.includes(token))) return [];
-    if (isTextAnswer(field) && !answersOpinion(field, tokens, catalog)) return [];
+    const usable = token => (!allowed || allowed.has(REF_TOKEN.exec(token)?.[1])) && (!field.fits || field.fits.includes(token));
+    if (field.multiple === true) tokens.splice(0, tokens.length, ...tokens.filter(usable));
+    else if (tokens.some(token => !usable(token))) return [];
+    if (!tokens.length) return [];
+    if (isTextAnswer(field) && !answersOnTopic(field, tokens, catalog)) return [];
     const values = tokens.map(token => refValue(token, field, catalog));
     const joined = values.every(Boolean) ? joinRefValues(field, values) : "";
     if (!joined) return [];
@@ -608,16 +657,26 @@ function settleAnswers(matches) {
   return [...settled.values()];
 }
 
-// 问动机、打算、优缺点、看法的题（多行、单行文本框都算），资料项的字段名要和题目说的是同一件事：去掉「为什么」「优势」
-// 「你」「公司」这类哪道题都有的词以后，还有两个字相同（英文是一个四个字母以上的词相同），或者归一后一模一样。补充字段、本网站回答也一样。
+// 多行文本框（长回答）和问动机、打算、优缺点、看法的单行题，资料项要和题目说的是同一件事：字段名、分组、别的叫法和题目、
+// 题目所在的分组，去掉「为什么」「你」「公司」「信息」「经历」这类哪道题都有的词以后，还有两个字相同（「获奖」「奖励」「荣誉」这类
+// 当成同一个词，见 TOPIC_SYNONYMS；英文是一个四个字母以上的词相同），或者字段名和题目归一后一模一样。补充字段、本网站回答也一样。
 // AI 看不到值时会随手挑一项：浏览器验收里「为什么选择我们公司」被填成过最高学历、期望工作地点，评测里被填成自我评价。
 const OPINION_QUESTION = /为什么|为何|动机|原因|理由|规划|打算|优势|劣势|不足|缺点|优点|困难|挑战|看法|理解|认识|谈谈|说说|举例|\b(?:why|plans?|goals?|strengths?|weakness(?:es)?|challenges?|motivat\w*|reasons?)\b/i;
-const COMMON_WORDS = new RegExp(`${OPINION_QUESTION.source}|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下`, "gi");
+const COMMON_WORDS = new RegExp(`${OPINION_QUESTION.source}|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下|信息|基本|其他|补充|情况|经历`, "gi");
+// 意思一样、字不一样的几组词，比的时候当成同一个。
+const TOPIC_SYNONYMS = Object.fromEntries([
+  [["获奖", "奖励", "荣誉", "奖项", "得奖"], "奖"], [["简介", "评价", "介绍", "自评"], "评"], [["技能", "特长", "专长"], "技"], [["爱好", "兴趣"], "趣"]
+].flatMap(([words, same]) => words.map(word => [word, same])));
+const topic = text => topicWords(text).map(word => TOPIC_SYNONYMS[word] || word);
 const COMMON_ENGLISH = new Set(["want", "join", "your", "with", "this", "that", "from", "what", "have", "would", "about", "company"]);
-function answersOpinion(field, tokens, catalog) {
+function asksOpinion(field) {
+  return OPINION_QUESTION.test([field.label, field.placeholder].filter(Boolean).join(" "));
+}
+
+function answersOnTopic(field, tokens, catalog) {
+  if (!isOpenQuestion(field) && !asksOpinion(field)) return true;
   const question = [field.label, field.placeholder].filter(Boolean).join(" ");
-  if (!OPINION_QUESTION.test(question)) return true;
-  const asked = topicWords(question);
+  const asked = topic([question, field.group].filter(Boolean).join(" "));
   const same = ResumeProAIHelpers.looseText(question);
   return tokens.every(token => {
     const item = catalog.items.get(REF_TOKEN.exec(token)?.[1]);
@@ -625,7 +684,7 @@ function answersOpinion(field, tokens, catalog) {
     // 题目和字段名一模一样（存过的原题「你的优势和不足」去掉通用词就什么都不剩）直接算。
     const names = [item.key, ...(aliasesOf(item.key) || [])];
     return names.some(name => ResumeProAIHelpers.looseText(name) === same)
-      || topicWords(names.join(" ")).some(word => asked.includes(word));
+      || topic([...names, item.group].join(" ")).some(word => asked.includes(word));
   });
 }
 
@@ -644,7 +703,8 @@ function pickerDate(field, value) {
   const helpers = ResumeProAIHelpers;
   const picked = helpers.rangeDateValue(value, [field.label, field.placeholder, field.ariaLabel].filter(Boolean).join(" "));
   if (helpers.rangeDateParts(picked)) return "";
-  if (helpers.isPresentDate(picked)) return picked;
+  // 原生 date 框写不进「至今」。
+  if (helpers.isPresentDate(picked)) return field.inputType === "date" ? "" : picked;
   const day = field.pickerInputType === "month" ? "" : helpers.normalizeDateValue(picked, "date");
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
   // 原生的 date 框只收到日的，只到月的浏览器不收，不交给它。日期控件（Element、antd 这类）收到年月时由填写层补成 1 日。
