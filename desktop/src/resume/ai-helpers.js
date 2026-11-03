@@ -29,9 +29,12 @@
   ];
   // 关键词先 normalize 好：本地匹配里每一对网页字段和简历字段都要查这张表。
   const SEMANTIC_KEYWORDS = FIELD_SEMANTICS.map((item) => ({ type: item.type, keywords: item.keywords.map(normalizeText) }));
+  // 「联系方式」是泛称，可能要电话也可能要邮箱：只靠它认成电话的不作数，往后看（inferFieldSemantic）。
+  const CONTACT_WORD = normalizeText("联系方式");
+  const PHONE_WORDS = SEMANTIC_KEYWORDS.find((item) => item.type === "phone").keywords.filter((word) => word !== CONTACT_WORD);
   // 表里没有、但看得出是别的号码的简历字段名：不是手机也不是证件号，不按值去猜。
   const OTHER_NUMBER_KEY = /微信|wechat|qq|学号|学生证|工号|准考证|考生号|报名号|学籍|证书|编号|卡号|账号|帐号|邮编|邮政编码/;
-  // 字段名认不出、只能按值猜手机和证件号时用（isResumeFieldMatch）。
+  // 字段名认不出、只能按值猜手机和证件号时用（isResumeFieldMatch）；核对手机和证件号的值时也拿来互相排除（isValueValidForField）。
   const MOBILE_VALUE = /^(\+?86)?1[3-9]\d{9}$/;
   const CN_ID_VALUE = /^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dxX]$/;
 
@@ -194,16 +197,24 @@
 
   // 只看字段自己的文字：group 是所属区块（「联系方式」「家庭成员」），会把「地址」「QQ」也带成电话。
   // 区块只用来分清是谁的字段（personScope）。
+  // 以题目为准：先只看 label，认不出再依次看 aria-label、placeholder、name、id，哪一样认得出就用哪一样。
+  // 几样拼在一起按 FIELD_SEMANTICS 的顺序找，题目写「身份证号码」、name 是 mobile 的框会认成电话（排在前面）。
+  // 只靠「联系方式」认成电话的（CONTACT_WORD），后面几样认得出是电话还是邮箱就照那样认，都认不出才按电话；
+  // 后面认出别的类不算，「联系方式」的框 name 是 contactName 也不是姓名。同一样文字里写了邮箱的（「联系方式（邮箱）」），
+  // 表里邮箱排在电话前面，先认成邮箱，轮不到这一步。
   function inferFieldSemantic(field) {
-    const haystack = normalizeText([
-      field?.label,
-      field?.placeholder,
-      field?.name,
-      field?.idAttr,
-      field?.ariaLabel
-    ].filter(Boolean).join(" "));
-
-    return SEMANTIC_KEYWORDS.find((item) => item.keywords.some((keyword) => haystack.includes(keyword)))?.type || "";
+    let contact = false;
+    for (const part of [field?.label, field?.ariaLabel, field?.placeholder, field?.name, field?.idAttr]) {
+      const haystack = normalizeText(part);
+      const type = haystack && SEMANTIC_KEYWORDS.find((item) => item.keywords.some((keyword) => haystack.includes(keyword)))?.type;
+      if (!type || (contact && type !== "phone" && type !== "email")) continue;
+      if (type === "phone" && !PHONE_WORDS.some((word) => haystack.includes(word))) {
+        contact = true;
+        continue;
+      }
+      return type;
+    }
+    return contact ? "phone" : "";
   }
 
   // 简历字段名是哪一类：先查 FIELD_SEMANTICS，再认 DOB 这类缩写（整个名字才算，Adobe 不算）和别的号码。
@@ -705,19 +716,25 @@
       }
     }
 
+    // 手机号和纯数字的身份证号光看位数分不开，本地认错了框、AI 把两个值对调了都在这里拦下：
+    // 手机框去掉空格和短横以后，不收像 18 位身份证号的值（带短横的身份证号也拦得下）；
+    // 证件号码框只去空格，格式核对和排除像大陆手机号的值用同一个写法。带短横的不当证件号，
+    // 去掉短横的话「010-12345678」「2001-05-07」都成了 8 到 18 位数字。
+    const unspaced = text.replace(/\s/g, "");
+
     switch (semantic) {
       case "pinyin":
         return /^[A-Za-z\s]+$/.test(text);
       case "email":
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
       case "phone":
-        return /^[+\d][\d\s-]{6,}$/.test(text);
+        return /^[+\d][\d\s-]{6,}$/.test(text) && !CN_ID_VALUE.test(unspaced.replace(/-/g, ""));
       case "birth_date":
         return /(\d{4}[-/.年]\d{1,2}([-/.\月]\d{1,2}日?)?)/.test(text);
       case "gender":
         return /(男|女|male|female)/i.test(text);
       case "id_number":
-        return /^[0-9xX]{8,18}$/.test(text.replace(/\s/g, ""));
+        return /^[0-9xX]{8,18}$/.test(unspaced) && !MOBILE_VALUE.test(unspaced);
       case "name":
         return text.length <= 20 && !/@/.test(text) && !/\d{5,}/.test(text);
       case "hometown":
