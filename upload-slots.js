@@ -508,7 +508,9 @@
         const value = squash(node.data);
         if (!value || value.length > 30 || !BUSY_WORDS.test(value)) continue;
         const parent = node.parentElement;
-        if (parent && !exclude(parent) && isVisible(parent)) prints.push(`text\u0001${value}`);
+        // 脚本、样式里的字不是网页上显示的话（和 visibleText 一样跳过）。
+        if (!parent || ["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"].includes(parent.tagName)) continue;
+        if (!exclude(parent) && isVisible(parent)) prints.push(`text\u0001${value}`);
       }
     }
     return prints;

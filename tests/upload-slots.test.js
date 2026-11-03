@@ -509,3 +509,12 @@ test("after the file's item goes, only an error close in time counts as its fail
   toast.innerHTML = `<div class="ant-message-notice"><span>文件大小不能超过 2MB</span></div>`;
   assert.deepEqual(slots.state(slot, name, again, docs, isVisible, { now: 7200 }), { state: "error", message: "文件大小不能超过 2MB" });
 });
+
+test("words in scripts, styles and noscript are not a 'parsing' line", () => {
+  const doc = page(`<div id="x"></div>`);
+  const baseline = slots.busyBaseline([doc], isVisible);
+  doc.getElementById("x").innerHTML = `<script>window.state = "正在解析";</script><style>.uploading::after { content: "上传中"; }</style><noscript>简历解析中</noscript>`;
+  assert.equal(slots.busy([doc], isVisible, () => false, baseline), false);
+  doc.getElementById("x").insertAdjacentHTML("beforeend", "<p>简历解析中</p>");
+  assert.equal(slots.busy([doc], isVisible, () => false, baseline), true, "the same words shown on the page count");
+});

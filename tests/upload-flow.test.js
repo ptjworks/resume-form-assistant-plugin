@@ -115,7 +115,7 @@ const elementPhoto = (id, title) => `
     <div class="el-upload el-upload--picture-card"><i class="el-icon-plus"></i><input id="${id}" type="file" accept="image/*" class="el-upload__input" style="display:none"></div>
     <ul class="el-upload-list el-upload-list--picture-card"></ul></div></div>`;
 
-async function page(t, body, { url = "https://app.mokahr.com/campus_apply/example/1", answers = {}, files = [RESUME_FILE, PHOTO_FILE], listStatus = "ok", hold = null, silent = [], gate = null } = {}) {
+async function page(t, body, { url = "https://app.mokahr.com/campus_apply/example/1", answers = {}, files = [RESUME_FILE, PHOTO_FILE], listStatus = "ok", hold = null, silent = [], gate = null, replies = {}, skip = [] } = {}) {
   const { createUploadGrants, handleUploadMessage } = await import("../link/upload-grants.mjs");
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url });
@@ -157,6 +157,8 @@ async function page(t, body, { url = "https://app.mokahr.com/campus_apply/exampl
         if (message.type === "AI_FILL" || message.type === "CANCEL_AI_FILL") return ai(message);
         // silent 里的消息后台一直不回（桌面卡住）。
         if (silent.includes(message.type)) return new Promise(() => {});
+        // replies 里的消息后台照这里给的回。
+        if (replies[message.type]) return replies[message.type];
         if (String(message.type).startsWith("DESKTOP_RESUME_FILE")) {
           // gate：后台算好了回答，先压着，等测试放行再交给页面（看晚到的回答怎么处理）。
           const reply = await background(message);
@@ -168,7 +170,8 @@ async function page(t, body, { url = "https://app.mokahr.com/campus_apply/exampl
     storage: { local: { get: async () => ({}), set: async (value) => { seen.stored.push(JSON.stringify(value)); } },
       session: { get: async () => ({}), set: async (value) => { seen.stored.push(JSON.stringify(value)); } }, onChanged: { addListener() {} } }
   };
-  for (const file of SCRIPTS) w.eval(fs.readFileSync(path.join(ROOT, file), "utf8"));
+  // skip 里的内容脚本不加载（看它没加载上时会怎样）。
+  for (const file of SCRIPTS.filter((name) => !skip.includes(name))) w.eval(fs.readFileSync(path.join(ROOT, file), "utf8"));
   const ui = { status: { textContent: "", className: "" }, diag: { value: "" }, cancel: { hidden: true, disabled: false, onclick: null },
     hint: { hidden: true, textContent: "" }, fill: { disabled: false, textContent: "一键 AI 填写" } };
   ui.status.classList = { contains: (name) => String(ui.status.className).split(/\s+/).includes(name) };
@@ -1019,4 +1022,28 @@ test("when the worker refuses the plan request, the result says the box was not 
   const now = await p.status();
   assert.deepEqual(now.upload.lines, ["简历附件：插件没能处理这个上传框，没有上传，请自己上传。"]);
   assert.match(p.ui.diag.value, /上传：框 resume 1；结果 skipped 1；没传的原因 plan_invalid 1/);
+});
+
+test("without the upload helper only uploading is off: one-click fill fills as before and the diagnostics say why nothing was uploaded", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" }, skip: ["upload-slots.js"] });
+  fakeSite(p);
+  assert.equal(p.w.ResumeProUploadSlots, undefined);
+  assert.deepEqual(await p.send({ type: "RESUME_PANEL_FILL" }), { ok: true });
+  await Promise.all(p.fills);
+  assert.equal(p.value("school"), "示例大学");
+  assert.equal(p.w.document.getElementById("resume").files.length, 0);
+  assert.match(p.ui.diag.value, /上传：框 无；结果 无；没传的原因 upload_helper_missing 1/);
+  // 平台提示用原来那句：不会说一键填写能先传简历。
+  assert.equal((await p.status()).siteHint, "Moka 上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。");
+});
+
+test("a plan the worker turns down for this sender is not called a desktop that is down, and the diagnostics keep its status", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" }, replies: { DESKTOP_RESUME_FILES_PLAN: { status: "forbidden" } } });
+  fakeSite(p);
+  assert.deepEqual(await p.send({ type: "RESUME_PANEL_FILL" }), { ok: true });
+  await Promise.all(p.fills);
+  const now = await p.status();
+  assert.deepEqual(now.upload.lines.slice(0, 2), ["简历附件：插件没能处理这个上传框，没有上传，请自己上传。", "证件照：插件没能处理这个上传框，没有上传，请自己上传。"]);
+  assert.equal(now.upload.lines.some((line) => line.includes("连不上")), false);
+  assert.match(p.ui.diag.value, /没传的原因 plan_forbidden 3；问桌面 forbidden；/);
 });

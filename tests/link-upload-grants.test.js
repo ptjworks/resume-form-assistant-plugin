@@ -199,3 +199,21 @@ test('a file bound to other templates is not handed over, whatever the panel pic
   assert.deepEqual(await fetch('r2'), { status: 'wrong_template' }, 'no template in use: only files bound to none');
   assert.equal(grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }], 7), false, 'a template id that is not one');
 });
+
+test('a desktop that fails for a moment does not use up the yes: the next try gets the file, and still only once', async () => {
+  const mod = await load();
+  const grants = mod.createUploadGrants();
+  const files = desk();
+  let lists = 0;
+  const flaky = { ...files, list: async () => ((lists += 1) === 1 ? { status: 'unavailable' } : files.list()) };
+  const deps = { api, grants, files: flaky };
+  const fetch = () => call(mod, deps, { type: mod.RESUME_FILE_FETCH, fileId: 'r1', card: CARD }, page(4, 'https://jobs.example.test/apply'));
+  grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }]);
+  assert.deepEqual(await fetch(), { status: 'unavailable' });
+  assert.equal((await fetch()).status, 'ok', 'no new yes needed after the desktop came back');
+  assert.deepEqual(await fetch(), { status: 'not_confirmed' }, 'still once per yes');
+  // 两个请求同时进来：只给一份。
+  grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }]);
+  const both = await Promise.all([fetch(), fetch()]);
+  assert.deepEqual(both.map((reply) => reply.status).sort(), ['not_confirmed', 'ok']);
+});

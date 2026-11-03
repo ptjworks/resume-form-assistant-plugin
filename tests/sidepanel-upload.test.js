@@ -295,7 +295,9 @@ test("a card that only puts values back needs no file list: nothing is read and 
 
 test("a box the worker could not plan for says the plugin did not handle it and offers no file", async (t) => {
   const restore = { count: 1, labels: ["兴趣爱好"], pending: true, laterCount: 0, later: [] };
-  const p = await openPanel(t, { upload: { ...OFFER, slots: [{ ...OFFER.slots[0], reason: "plan_invalid", fileId: "" }], restore } });
+  const p = await openPanel(t, { upload: { ...OFFER, restore,
+    slots: [{ ...OFFER.slots[0], reason: "plan_invalid", fileId: "" }, { ...OFFER.slots[1], reason: "plan_forbidden", fileId: "" }] } });
   await p.poll();
-  assert.deepEqual(p.rows(), [{ title: "简历附件", chosen: null, options: [], note: "插件没能处理这个上传框，不能上传。" }]);
+  assert.deepEqual(p.rows(), [{ title: "简历附件", chosen: null, options: [], note: "插件没能处理这个上传框，不能上传。" },
+    { title: "证件照", chosen: null, options: [], note: "插件没能处理这个上传框，不能上传。" }]);
 });

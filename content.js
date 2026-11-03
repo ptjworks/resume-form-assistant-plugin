@@ -141,7 +141,9 @@
     result: null,
     report: null,
     // 没出卡片时的诊断（report）还没写进这次填写的诊断：下一次侧栏开始的填写带上它。
-    reportForFill: false
+    reportForFill: false,
+    // 后台对「每个框放哪份文件」的回答（PLAN 的 status），诊断用。
+    planStatus: "none"
   };
   // 网站解析填上的框：控件 → 解析后的值。照常填写时它们不算用户已有的内容，有资料就填，不问要不要覆盖。
   let uploadParsed = new WeakMap();
@@ -565,10 +567,12 @@
     }
     // Every helper this script calls must have loaded. A page element or frame named "module"
     // once kept one from loading (#275), and the page then must not show as connected.
+    // Upload boxes (ResumeProUploadSlots, #429) are not on the list: without them only uploading
+    // is off (see prepareUpload) and filling works as before.
     const helpers = ["ResumeProFeedback", "ResumeProAIClient", "ResumeProAIHelpers", "ResumeProAntdPrefix", "ResumeProRegions", "ResumeProCustomControls",
       "ResumeProControls", "ResumeProProfile", "ResumeProResumeData", "ResumeProFormAgent", "ResumeProFillProbe",
       "ResumeProFieldScan", "ResumeProPageOutline", "ResumeProDeepAnalysis", "ResumeProPageActions",
-      "ResumeProPageRecipe", "ResumeProSiteKnowledge", "ResumeProUploadSlots", "ResumeProSidebarState"];
+      "ResumeProPageRecipe", "ResumeProSiteKnowledge", "ResumeProSidebarState"];
     const missing = helpers.find((name) => !self[name]);
     if (missing) throw new TypeError(`${missing} is not loaded`);
 
@@ -2251,6 +2255,8 @@
   }
 
   const UPLOAD_PLANNED = ["resume", "photo", "transcript"];
+  // 后台对「每个框放哪份文件」不是 ok 时，框不传的原因。别的 status（unavailable、超时、没装、没配对）算桌面连不上。
+  const PLAN_REASONS = { unsupported: "desktop_old", invalid_payload: "plan_invalid", forbidden: "plan_forbidden", stopped: "plan_stopped" };
   // 问后台每个框放哪份文件、取一份文件，各最多等多久：桌面卡住时一键填写和平台提示不能一直挂着。
   const UPLOAD_ASK_MS = 5000;
   const UPLOAD_FETCH_MS = 60000;
@@ -2477,15 +2483,22 @@
     upload.result = null;
     upload.report = null;
     upload.reportForFill = false;
+    upload.planStatus = "none";
     upload.phase = "idle";
     upload.plan = [];
     upload.pendingNotes = [];
-    if (!api) return false;
+    // 上传框的辅助脚本没加载（它不是内容脚本的必需依赖）：只关掉上传，照常填写，诊断里记一笔。
+    if (!api) {
+      upload.report = { ...uploadReport([], null, null, []), reasons: { upload_helper_missing: 1 } };
+      upload.reportForFill = true;
+      return false;
+    }
     const slots = findUploadSlots();
     const pending = pendingRestore();
     if (!slots.length && !pending) return false;
     const templateId = getActiveTemplate(store)?.id || "";
     const planned = await planDesktopFiles(slots, templateId);
+    upload.planStatus = /^[a-z_]{1,32}$/.test(planned.status) ? planned.status : "unavailable";
     const answers = new Map(planned.slots.filter((item) => typeof item?.id === "string").map((item) => [item.id, item]));
     // 点一键填写时问到的回答也更新平台提示：桌面里的附件刚换过的话，提示跟着变，不用等缓存过期。
     const resumeSlots = slots.filter((slot) => slot.kind === "resume" && !slot.hasFile);
@@ -2503,11 +2516,9 @@
     }
     const plan = slots.map((slot) => {
       if (slot.hasFile) return { slot, fileId: null, reason: slot.fileUnsure ? "file_unsure" : "has_file" };
-      // 后台说请求不对（invalid_payload，页面上的框超出它收的范围）：不是桌面连不上，单独记一个原因，诊断里看得到。
-      if (planned.status !== "ok") {
-        return { slot, fileId: null, reason: planned.status === "unsupported" ? "desktop_old"
-          : planned.status === "invalid_payload" ? "plan_invalid" : "desktop_unavailable" };
-      }
+      // 后台的回答不是 ok：按原因分开（桌面太旧、请求不对、后台不认这个发件人、停下了），只有连不上和超时才算桌面连不上。
+      // 原来的 status 另外记进诊断（upload.planStatus）。
+      if (planned.status !== "ok") return { slot, fileId: null, reason: PLAN_REASONS[planned.status] || "desktop_unavailable" };
       if (!UPLOAD_PLANNED.includes(slot.kind)) return { slot, fileId: null, reason: slot.reason || "unknown_kind" };
       const answer = answers.get(slot.id);
       const fileId = typeof answer?.fileId === "string" && /^[\w-]{1,64}$/.test(answer.fileId) ? answer.fileId : null;
@@ -2605,7 +2616,7 @@
       case "file_unsure": return `${name}：框里像是已经有文件了，没有上传，请看一下网页。`;
       case "desktop_old": return `${name}：桌面程序版本较旧，不能上传文件；更新桌面程序，或者自己上传。`;
       case "desktop_unavailable": return `${name}：桌面暂时连不上，没有上传。`;
-      case "plan_invalid": return `${name}：插件没能处理这个上传框，没有上传，请自己上传。`;
+      case "plan_invalid": case "plan_forbidden": case "plan_stopped": return `${name}：插件没能处理这个上传框，没有上传，请自己上传。`;
       case "no_file": return `这页要${kinds[item.slot.kind] || "文件"}，桌面里还没有。到桌面「简历资料 › 附件」添加，或者自己上传。`;
       case "too_large": return item.slot.siteLimit
         ? `${name}：网站要求不超过 ${uploadSize(item.slot.limit)}，桌面里的文件 ${uploadSize(item.byteSize || 0)}，没有上传。`
@@ -2672,7 +2683,7 @@
       return { ...item, file: fileId ? { fileId } : null, reason: fileId ? "" : item.reason === "choose" || (item.fileId && !fileId) ? "not_chosen" : item.reason };
     });
     // 选了文件的框要是这张卡片上的、框里还没有文件、桌面连得上。文件放不放得进这个框（类型、大小），取到文件时按它本身再核对。
-    const blocked = ["has_file", "file_unsure", "desktop_old", "desktop_unavailable", "plan_invalid"];
+    const blocked = ["has_file", "file_unsure", "desktop_old", "desktop_unavailable", "plan_invalid", "plan_forbidden", "plan_stopped"];
     if ([...picked].some(([slotId, fileId]) => {
       const planned = upload.plan.find((item) => item.slot.id === slotId);
       return !planned || !/^[\w-]{1,64}$/.test(fileId) || planned.slot.hasFile || blocked.includes(planned.reason);
@@ -3187,7 +3198,9 @@
       later: restored?.later.length || 0,
       edited: restored?.edited.length || 0,
       left: restored?.left.length || 0,
-      parsed: parsedLeft.length
+      parsed: parsedLeft.length,
+      // 后台对「每个框放哪份文件」的回答：不是 ok 时留着原来的 status，不和「桌面连不上」混在一起。
+      plan: upload.planStatus || "none"
     };
   }
 
@@ -3196,7 +3209,8 @@
       .map(([key, value]) => `${key} ${Number.isInteger(value) ? value : 0}`).join("、") || "无";
     const parse = /^[a-z_]{1,32}$/.test(report.parse || "") ? report.parse : "none";
     const waited = Number.isFinite(report.waitMs) ? `，${(report.waitMs / 1000).toFixed(1)} s` : "";
-    return `上传：框 ${words(report.kinds)}；结果 ${words(report.results)}；没传的原因 ${words(report.reasons)}；解析等待 ${parse}${waited}；`
+    const plan = /^[a-z_]{1,32}$/.test(report.plan || "") && !["ok", "none"].includes(report.plan) ? `；问桌面 ${report.plan}` : "";
+    return `上传：框 ${words(report.kinds)}；结果 ${words(report.results)}；没传的原因 ${words(report.reasons)}${plan}；解析等待 ${parse}${waited}；`
       + `改回 ${report.restored || 0}，没改回 ${report.missed || 0}，停下后又变过 ${report.later || 0}，等解析时用户改过 ${report.edited || 0}，`
       + `停下没处理 ${report.left || 0}，网站填的 ${report.parsed || 0}`;
   }

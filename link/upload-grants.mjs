@@ -77,26 +77,38 @@ export function createUploadGrants({ now = () => Date.now() } = {}) {
   }
 
   /**
-   * One file for the card `card` shown by the frame at `url` in `tabId`: { sha256, templateId }
-   * of the yes, at most once per granted file, or null when there is no such yes.
+   * The yes for one file for the card `card` shown by the frame at `url` in `tabId`:
+   * { sha256, templateId }, or null when there is no such yes. Looking does not use it up.
    */
-  function take(tabId, url, fileId, card) {
+  function peek(tabId, url, fileId, card) {
     const held = grants.get(tabId);
     if (!held) return null;
     if (now() > held.expires) { grants.delete(tabId); return null; }
     if (originOf(url) !== held.origin || card !== held.card) return null;
     const sha256 = typeof fileId === 'string' ? held.files.get(fileId) : undefined;
-    if (!sha256) return null;
+    return sha256 ? { sha256, templateId: held.templateId } : null;
+  }
+
+  /** Use up the yes for one file once it is handed over; false when it is already gone. */
+  function consume(tabId, fileId, card) {
+    const held = grants.get(tabId);
+    if (!held || held.card !== card || !held.files.has(fileId)) return false;
     held.files.delete(fileId);
     if (!held.files.size) grants.delete(tabId);
-    return { sha256, templateId: held.templateId };
+    return true;
+  }
+
+  /** peek and consume at once: the yes for one file, at most once. */
+  function take(tabId, url, fileId, card) {
+    const held = peek(tabId, url, fileId, card);
+    return held && consume(tabId, fileId, card) ? held : null;
   }
 
   function revoke(tabId) {
     grants.delete(tabId);
   }
 
-  return { grant, take, revoke };
+  return { grant, peek, consume, take, revoke };
 }
 
 /** A tab that closes or moves to another address (a single-page app's too) loses its yes. */
@@ -174,7 +186,9 @@ export function handleUploadMessage({ api, grants, files, slots }, message, send
   }
   if (type === RESUME_FILE_FETCH) {
     if (!fromTopFrame(sender, api)) { sendResponse({ status: 'forbidden' }); return false; }
-    const held = grants.take(sender.tab.id, sender.url, message.fileId, message.card);
+    // Only look at the yes here: a desktop that fails for a moment must not use it up. It is used
+    // up when the file is handed over below.
+    const held = grants.peek(sender.tab.id, sender.url, message.fileId, message.card);
     if (!held) { sendResponse({ status: 'not_confirmed' }); return false; }
     (async () => {
       // The version the user confirmed must still be the one on the desktop, and still be for
@@ -186,6 +200,8 @@ export function handleUploadMessage({ api, grants, files, slots }, message, send
       if (!usableFor(row, held.templateId)) return { status: 'wrong_template' };
       const read = await files.fetch(row);
       if (read.status !== 'ok') return { status: read.status };
+      // Once per yes: two requests that raced past the look above get one file between them.
+      if (!grants.consume(sender.tab.id, message.fileId, message.card)) return { status: 'not_confirmed' };
       return { status: 'ok', name: row.name, mime: row.mime, kind: row.kind, byteSize: row.byteSize, updatedAt: row.updatedAt,
         bytesBase64: read.bytesBase64 };
     })().then(sendResponse, () => sendResponse({ status: 'unavailable' }));

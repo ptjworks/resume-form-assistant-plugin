@@ -250,7 +250,7 @@
   const UPLOAD_LIST_MS = 5000;
   let uploadFilesDown = "";
   // 框自己带着不能传的原因（已经有文件、桌面旧、连不上、插件没能处理）：不给它选文件。
-  const UPLOAD_BLOCKED = ["has_file", "file_unsure", "desktop_old", "desktop_unavailable", "plan_invalid"];
+  const UPLOAD_BLOCKED = ["has_file", "file_unsure", "desktop_old", "desktop_unavailable", "plan_invalid", "plan_forbidden", "plan_stopped"];
   let uploadChoices = new Map();
   let uploadPending = false;
   let pageHostWithPort = "";
@@ -1013,7 +1013,7 @@
       case "file_unsure": return "框里像是已经有文件了，不替换。";
       case "desktop_old": return "桌面程序版本较旧，不能上传。";
       case "desktop_unavailable": return "桌面暂时连不上，不能上传。";
-      case "plan_invalid": return "插件没能处理这个上传框，不能上传。";
+      case "plan_invalid": case "plan_forbidden": case "plan_stopped": return "插件没能处理这个上传框，不能上传。";
       case "no_file": return `桌面里还没有${kind}。`;
       case "too_large": return slot.siteLimit ? `网站要求不超过 ${uploadSize(slot.limit)}，桌面里的文件更大。` : "桌面里的文件太大。";
       case "not_accepted": return "网站不收桌面里这类文件的格式。";
