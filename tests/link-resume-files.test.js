@@ -39,7 +39,7 @@ function desktop(bytes, { patch = () => ({}), fail = () => null } = {}) {
   return { sent, reply };
 }
 
-async function client(bytes, { capabilities = CAPABILITIES, send, openChannel, closeFails = false, ...desk } = {}) {
+async function client(bytes, { capabilities = CAPABILITIES, send, openChannel, port, closeFails = false, ...desk } = {}) {
   const { createResumeFiles } = await import('../link/resume-files.mjs');
   const { validateRequest } = await import('../link/protocol/validate.mjs');
   const fake = desktop(bytes, desk);
@@ -56,7 +56,7 @@ async function client(bytes, { capabilities = CAPABILITIES, send, openChannel, c
     now: () => new Date('2026-11-03T00:00:00Z'),
     sleep: async () => {},
     sendNative: answer,
-    openChannel: openChannel ?? (() => {
+    openChannel: openChannel ?? (port && (() => port(answer))) ?? (() => {
       const channel = { closed: false, sends: 0, send: async (host, message) => { channel.sends += 1; return answer(host, message); }, close() { channel.closed = true; if (closeFails) throw new Error('Attempting to use a disconnected port object'); } };
       channels.push(channel);
       return channel;
@@ -118,7 +118,8 @@ test('only the first chunk is retried; a failure later ends the read and closes 
   assert.deepEqual(await c.files.fetch(listing), { status: 'unavailable' });
   assert.deepEqual(c.sent.map((m) => m.payload.chunkIndex), [0, 0, 1, 2], 'chunk 0 retried once, chunk 2 not retried');
   assert.equal(c.channels[0].closed, true);
-  for (const bad of [null, {}, { ...listing, byteSize: 0 }, { ...listing, byteSize: 10 * 1024 * 1024 + 1 }]) {
+  for (const bad of [null, {}, { ...listing, byteSize: 0 }, { ...listing, byteSize: 10 * 1024 * 1024 + 1 },
+    { ...listing, fileId: 'file-1' }, { ...listing, sha256: listing.sha256.toUpperCase() }, { ...listing, sha256: 'a'.repeat(63) }]) {
     assert.deepEqual(await c.files.fetch(bad), { status: 'invalid_payload' });
   }
 });
@@ -191,6 +192,54 @@ test('a port the browser refuses to open is unavailable, not a rejected promise'
   const c = await client(bytes, { openChannel: () => { throw new Error('Specified native messaging host not found.'); } });
   assert.deepEqual(await c.files.fetch({ fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: 'a.pdf', mime: 'application/pdf' }),
     { status: 'unavailable' });
+});
+
+test('a port that drops while the desktop starts is replaced for the retry of the first chunk', async () => {
+  const { nativeChannel } = await import('../link/chrome.mjs');
+  const bytes = pdf(CHUNK + 10);
+  const listing = { fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: 'a.pdf', mime: 'application/pdf' };
+  let connects = 0;
+  // The real nativeChannel over a fake runtime: the first host exits before answering (onDisconnect), the next one answers.
+  const c = await client(bytes, { port: (answer) => {
+    const api = { runtime: { lastError: null, connectNative: () => {
+      connects += 1;
+      const drops = connects === 1;
+      const listeners = {};
+      return {
+        onMessage: { addListener: (l) => { listeners.message = l; } },
+        onDisconnect: { addListener: (l) => { listeners.disconnect = l; } },
+        postMessage: (m) => setTimeout(async () => {
+          if (drops) {
+            api.runtime.lastError = { message: 'Native host has exited.' };
+            listeners.disconnect();
+            api.runtime.lastError = null;
+          } else {
+            listeners.message((await answer('com.resumepro.desktop', m)).response);
+          }
+        }, 0),
+        disconnect() {}
+      };
+    } } };
+    return nativeChannel(api)('com.resumepro.desktop');
+  } });
+  const fetched = await c.files.fetch(listing);
+  assert.equal(fetched.status, 'ok');
+  assert.equal(fetched.bytesBase64, bytes.toString('base64'));
+  assert.equal(connects, 2, 'one new port for the retry, kept for the rest of the file');
+  assert.deepEqual(c.sent.map((m) => m.payload.chunkIndex), [0, 1]);
+});
+
+test('a chunk for another file, version or position is never used', async () => {
+  // One chunk whose bytes are right: only the echo shows the reply was meant for something else.
+  const bytes = pdf(1000);
+  const listing = { fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: '简历.pdf', mime: 'application/pdf' };
+  // A transport that does not run the validator: the client compares the echo itself.
+  for (const wrong of [{ fileId: '66666666-6666-4666-8666-666666666602' }, { sha256: 'e'.repeat(64) }, { chunkIndex: 1 }]) {
+    const raw = await client(bytes, { send: async (message) => ({ status: 'ok', response: { payload: {
+      fileId: FILE, sha256: listing.sha256, byteSize: bytes.length, chunkIndex: message.payload.chunkIndex, chunkCount: 1,
+      chunkSha256: sha(bytes), bytesBase64: bytes.toString('base64'), ...wrong } } }) });
+    assert.deepEqual(await raw.files.fetch(listing), { status: 'corrupt' }, JSON.stringify(wrong));
+  }
 });
 
 test('a port that throws while closing does not turn the answer into a rejected promise', async () => {

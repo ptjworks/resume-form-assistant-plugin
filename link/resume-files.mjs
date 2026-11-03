@@ -16,6 +16,9 @@ import { decodeStandardBase64, MAX_RESUME_FILE_BYTES, RESUME_FILE_CHUNK_BYTES, s
  *   corrupt      a chunk or the assembled file did not match its digest
  *   invalid_payload, unavailable, or a session mode (not_installed, not_paired, ...)
  */
+const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+
 export function createResumeFiles({ session, store, sendNative, openChannel, sleep, uuid, now, send = sendOnce }) {
   async function ready(messageType) {
     const probe = await session.probe();
@@ -65,7 +68,8 @@ export function createResumeFiles({ session, store, sendNative, openChannel, sle
   async function fetch(file) {
     const gate = await ready('resumeFiles.read');
     if (!gate.probe) return gate;
-    if (!file || typeof file.fileId !== 'string' || typeof file.sha256 !== 'string'
+    if (!file || !(typeof file.fileId === 'string' && UUID.test(file.fileId))
+        || !(typeof file.sha256 === 'string' && SHA256.test(file.sha256))
         || !Number.isInteger(file.byteSize) || file.byteSize < 1 || file.byteSize > MAX_RESUME_FILE_BYTES) {
       return { status: 'invalid_payload' };
     }
@@ -79,15 +83,33 @@ export function createResumeFiles({ session, store, sendNative, openChannel, sle
       // The browser refused the port: the same as a desktop that cannot be reached.
       return { status: 'unavailable' };
     }
+    const drop = () => {
+      const current = channel;
+      channel = null;
+      // A port that fails to close changes nothing about what was read; fetch still answers with a status.
+      try {
+        current?.close();
+      } catch {}
+    };
+    // A port that reported an error (the host exited, or never came up) is not used again: the
+    // next request, the retry of the first chunk, goes out on a new one.
+    const sendNative = async (host, message) => {
+      channel ??= openChannel();
+      const reply = await channel.send(host, message);
+      if (reply?.lastError) drop();
+      return reply;
+    };
     try {
       for (let index = 0; index < count; index += 1) {
         const message = await envelope('resumeFiles.read', { fileId: file.fileId, sha256: file.sha256, chunkIndex: index }, gate.probe);
         // Only the first chunk can meet a desktop that is still starting; a failure later ends the read.
-        const result = await send(message, { sendNative: channel.send, sleep, retry: index === 0 });
+        const result = await send(message, { sendNative, sleep, retry: index === 0 });
         // A reply the validator refused (a chunk of the wrong length, say) is the desktop's data being wrong, not the desktop being away.
         if (result.status === 'retryable' && result.code === 'invalid_payload') return { status: 'corrupt' };
         if (result.status !== 'ok') return failure(result);
         const chunk = result.response.payload;
+        // The transport's validator checks the echo as well; a reply for another file or chunk is never used.
+        if (chunk.fileId !== file.fileId || chunk.sha256 !== file.sha256 || chunk.chunkIndex !== index) return { status: 'corrupt' };
         if (chunk.byteSize !== file.byteSize || chunk.chunkCount !== count) return { status: 'conflict' };
         let piece;
         try {
@@ -106,10 +128,7 @@ export function createResumeFiles({ session, store, sendNative, openChannel, sle
     } catch {
       return { status: 'unavailable' };
     } finally {
-      // A port that fails to close changes nothing about what was read; fetch still answers with a status.
-      try {
-        channel.close();
-      } catch {}
+      drop();
     }
   }
 

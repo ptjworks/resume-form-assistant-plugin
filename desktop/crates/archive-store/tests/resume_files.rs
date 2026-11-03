@@ -416,13 +416,20 @@ fn a_stored_path_anywhere_else_is_damage_and_no_file_is_touched() {
         assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, 0).unwrap_err()), "internal_error", "{bad}");
         assert_eq!(code(db.read_resume_file(&file.id).unwrap_err()), "internal_error", "{bad}");
         assert_eq!(code(db.replace_resume_file(&file.id, "新简历.pdf", &pdf(3)).unwrap_err()), "internal_error", "{bad}");
-        // 清理不因为这条记录停下，也不碰它指着的那个文件。位置不对的记录不算引用：附件目录里没有别的记录
-        // 引用的字节（包括这条记录的哈希对应的那份）当残留清掉。
+        // 清理不因为这条记录停下，也不碰它指着的那个文件。引用按记录里的哈希认：这条记录的字节留着，
+        // 它记的路径不进引用集合，和路径里的文件名同名的残留照样清掉。
         std::fs::write(folder.join("leftover"), b"x").unwrap();
         db.add_resume_file(ResumeFileKind::Other, &format!("材料{i}.pdf"), &pdf(10 + i)).unwrap();
         assert_eq!(std::fs::read(&outside).unwrap(), pdf(2), "the file outside the folder is untouched: {bad}");
         assert!(!folder.join("leftover").exists(), "{bad}");
-        assert!(!folder.join(&file.sha256).exists(), "{bad}");
+        assert!(folder.join(&file.sha256).is_file(), "{bad}");
+        // 备份清单不收这条记录，完整性检查把它报成有问题、不按它记的路径去读。
+        let snapshot = dir.path().join(format!("snapshot{i}.db"));
+        db.snapshot_database_to(&snapshot).unwrap();
+        let inventory = ArchiveStore::backup_inventory_from_snapshot(&snapshot).unwrap();
+        assert!(inventory.referenced_files.iter().all(|f| f.path != bad && f.sha256 != file.sha256), "{bad}");
+        assert_eq!(inventory.referenced_files.len(), i + 1, "{bad}");
+        assert!(db.check_attachment_refs().unwrap().invalid_files.contains(&bad), "{bad}");
         db.close().unwrap();
     }
     // 删掉这条记录只删这一行：档案外的文件原样在。
