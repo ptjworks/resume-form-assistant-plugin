@@ -527,20 +527,23 @@ test("rules: an ID number listed before the mobile does not fill the phone field
 });
 
 // 群里反映的手机号和身份证号填反：题目写着证件号码，name、id 或占位文字里却带着 mobile、phone、手机。
-// 几样拼在一起找时电话排在证件号前面，这种框被认成了电话。以题目为准，题目认不出才看占位文字，最后看 name 和 id。
-test("field kind goes by the question before the placeholder, name and id", () => {
+// 几样拼在一起找时电话排在证件号前面，这种框被认成了电话。以题目为准，题目认不出再依次看 aria-label、占位文字、name、id。
+test("field kind goes by the question before the aria-label, placeholder, name and id", () => {
   const kind = (field) => helpers.inferFieldSemantic(field);
   assert.equal(kind({ label: "身份证号码", name: "mobile" }), "id_number");
   assert.equal(kind({ label: "证件号码", placeholder: "请输入手机号码" }), "id_number");
   assert.equal(kind({ label: "证件号码", idAttr: "contactPhone" }), "id_number");
   assert.equal(kind({ label: "证件号码", placeholder: "请输入手机号码", name: "mobile", idAttr: "contactPhone" }), "id_number");
+  assert.equal(kind({ label: "身份证号码", ariaLabel: "请输入手机号码" }), "id_number");
   assert.equal(kind({ ariaLabel: "身份证号码", name: "mobile" }), "id_number");
   assert.equal(kind({ label: "手机号码", name: "idNumber", placeholder: "请输入身份证号" }), "phone");
-  // 题目认不出时，占位文字在 name 和 id 前面。
+  // 题目认不出时，依次看后面几样。
+  assert.equal(kind({ label: "号码", ariaLabel: "身份证号", placeholder: "请输入手机号" }), "id_number");
   assert.equal(kind({ label: "号码", placeholder: "请输入身份证号", name: "mobile" }), "id_number");
   assert.equal(kind({ label: "号码", placeholder: "请输入手机号", name: "idNumber" }), "phone");
-  assert.equal(kind({ label: "请填写", placeholder: "请输入", name: "idNumber" }), "id_number");
-  assert.equal(kind({ name: "mobile" }), "phone");
+  assert.equal(kind({ label: "请填写", placeholder: "请输入", name: "idNumber", idAttr: "mobile" }), "id_number");
+  assert.equal(kind({ name: "mobile", idAttr: "idNumber" }), "phone");
+  assert.equal(kind({ idAttr: "mobile" }), "phone");
   assert.equal(kind({ label: "备注", placeholder: "选填" }), "");
 });
 
@@ -565,6 +568,9 @@ test("value validation keeps mobiles out of ID fields and 18-digit ID numbers ou
   assert.deepEqual(kept([{ fieldId: "phone", value: ID_18 }, { fieldId: "id", value: MOBILE }]), []);
   assert.deepEqual(kept([{ fieldId: "phone", value: "110101 19900307 1233" }, { fieldId: "id", value: "138 1234 5678" }]), []);
   assert.deepEqual(kept([{ fieldId: "id", value: "8613812345678" }]), []);
+  // AI 回的值不是字符串时照样核对，不抛错。
+  assert.deepEqual(kept([{ fieldId: "id", value: 13812345678 }, { fieldId: "phone", value: null }, { fieldId: "id", value: undefined }]), []);
+  assert.deepEqual(kept([{ fieldId: "phone", value: 13812345678 }]), [{ fieldId: "phone", value: 13812345678 }]);
   // 对的照旧收下：手机、座机、带 X 的身份证号，别的证件的 8 位号码。
   const right = [
     { fieldId: "phone", value: MOBILE }, { fieldId: "phone", value: "+86 138 1234 5678" }, { fieldId: "phone", value: "010-12345678" },

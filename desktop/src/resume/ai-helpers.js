@@ -194,11 +194,11 @@
 
   // 只看字段自己的文字：group 是所属区块（「联系方式」「家庭成员」），会把「地址」「QQ」也带成电话。
   // 区块只用来分清是谁的字段（personScope）。
-  // 以题目为准：先只看 label 和 ariaLabel，认不出再看 placeholder，最后才看 name 和 id。
+  // 以题目为准：先只看 label，认不出再依次看 aria-label、placeholder、name、id，哪一样认得出就用哪一样。
   // 几样拼在一起按 FIELD_SEMANTICS 的顺序找，题目写「身份证号码」、name 是 mobile 的框会认成电话（排在前面）。
   function inferFieldSemantic(field) {
-    for (const parts of [[field?.label, field?.ariaLabel], [field?.placeholder], [field?.name, field?.idAttr]]) {
-      const haystack = normalizeText(parts.filter(Boolean).join(" "));
+    for (const part of [field?.label, field?.ariaLabel, field?.placeholder, field?.name, field?.idAttr]) {
+      const haystack = normalizeText(part);
       const type = haystack && SEMANTIC_KEYWORDS.find((item) => item.keywords.some((keyword) => haystack.includes(keyword)))?.type;
       if (type) return type;
     }
