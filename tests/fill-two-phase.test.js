@@ -52,7 +52,7 @@ function aiWorker(clock, resume = RESUME) {
       if (message.kind === "desktop-cancel") { cancels.push(message.callId); return; }
       if (message.kind !== "desktop-complete") return;
       const fields = JSON.parse(message.user.split("\n")[1]);
-      const call = { fields, labels: fields.map((field) => field.label) };
+      const call = { fields, labels: fields.map((field) => field.label), prompt: message.user };
       const answer = (reply) => context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId, reply } });
       // 按题目名回答；不传就只回这几项里资料有的。
       // AI 只回资料编号（#429 第 11 项）：按值写的回答照这次发出去的目录换成编号。
@@ -80,8 +80,9 @@ const item = (id, label, control) => `<div class="form-item" id="${id}-item"><la
 const input = (id, label, { type = "text", value = "" } = {}) => item(id, label, `<input id="${id}" name="${id}" type="${type}" value="${value}">`);
 
 // body 是表单内容；confirm 返回 true/false；onGender：选了性别后页面要做的事（新出现字段之类）；resume 是简历资料；
-// custom 是「我的信息」里的补充字段。
-function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [] } = {}) {
+// custom 是「我的信息」里的补充字段；site 是桌面里这个网站记住的回答（#429），null 表示桌面不支持；
+// 也可以是函数：拿第几次读取，回答案数组，回 null 表示这次桌面没连上；字符串是后台回的状态（forbidden 之类）。
+function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [], site = null, siteKey = "jobs.example.test" } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
   const w = dom.window;
@@ -107,6 +108,12 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME,
       sendMessage: async (message) => {
         sent.push(message.type);
         if (message.type === "DESKTOP_RESUME_READ") return { status: "ok", data };
+        if (message.type === "DESKTOP_SITE_ANSWERS_READ") {
+          if (typeof site === "string") return { status: site };
+          const answers = typeof site === "function" ? site(sent.filter((type) => type === message.type).length) : site;
+          if (answers) return { status: "ok", site: siteKey, answers };
+          return { status: typeof site === "function" ? "unavailable" : "unsupported" };
+        }
         if (["ENSURE_AI_HOST", "AI_HOST_READY"].includes(message.type)) return { ready: true };
         if (message.type === "AI_FILL" || message.type === "CANCEL_AI_FILL") return worker.dispatch(message);
         return {};
@@ -713,6 +720,140 @@ test("an assisted fill counts same questions across the whole page, not just the
   p.worker.calls[0].reply({ 每周可实习天数: "5天", 毕业院校: "示例大学" });
   await running;
   assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "5天", "示例大学"]);
+});
+
+// #429 第五项第 2 点：问到对方公司的题，用这个网站记住的回答在 AI 回来之前填；补充字段里同名的不用。
+const SITE = [{ key: "是否有亲属在本公司工作", value: "否" }];
+const COMPANY = radios("relative", "是否有亲属在本公司工作", ["是", "否"]);
+
+test("a company question takes this site's remembered answer with the local matches, not the custom field's", async (t) => {
+  const p = page(t, input("name", "姓名") + COMPANY + input("salary", "期望薪资"),
+    { custom: [{ key: "是否有亲属在本公司工作", value: "是" }], site: SITE });
+  const checked = () => p.w.document.querySelector("input[name=relative]:checked")?.value || "";
+  const running = p.run();
+  assert.ok(await p.until(() => checked() && p.worker.calls.length === 1), `the site answer waits for the AI: ${checked()}`);
+  assert.equal(checked(), "否");
+  assert.deepEqual(p.worker.calls[0].labels, ["期望薪资"]);
+  assert.equal(p.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1);
+  p.worker.calls[0].reply({ 期望薪资: "面议" });
+  const result = await running;
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+  assert.equal(lineOf((await p.report()).diagnosticsReport, "local_matches"), "2");
+});
+
+test("without a remembered answer, or with a desktop that has none, the company question goes to the AI", async (t) => {
+  for (const site of [null, []]) {
+    const p = page(t, input("name", "姓名") + COMPANY, { site });
+    const running = p.run();
+    assert.ok(await p.until(() => p.worker.calls.length === 1));
+    assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作"]);
+    p.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+    assert.equal((await running).outcome, "success");
+  }
+});
+
+test("a page with no question about the company never asks the desktop for site answers", async (t) => {
+  const p = page(t, BASIC, { site: SITE });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  p.worker.calls[0].reply();
+  await running;
+  assert.equal(p.sent.includes("DESKTOP_SITE_ANSWERS_READ"), false);
+});
+
+test("a company question revealed later reads the site answers then, and is filled without the AI", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const p = page(t, input("name", "姓名") + GENDER + input("school", "毕业院校"), {
+    site: SITE,
+    onGender: (doc) => {
+      if (doc.getElementById("relative-item")) return;
+      const holder = doc.createElement("div");
+      holder.innerHTML = COMPANY;
+      doc.getElementById("apply").append(holder.firstChild);
+    }
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
+  assert.equal(p.sent.includes("DESKTOP_SITE_ANSWERS_READ"), false, "nothing about the company on the page yet");
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.equal(p.w.document.querySelector("input[name=relative]:checked")?.value, "否");
+  assert.equal(p.worker.calls.length, 1, "the revealed company question did not go to the AI");
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+});
+
+// 第一次读网站回答时桌面没连上：后来冒出的公司题再读一次；桌面明确不支持就不再读。
+test("a company question revealed later reads the site answers again after a failed read, but not from a desktop that lacks them", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const reveal = (doc) => {
+    if (doc.getElementById("intern")) return;
+    const holder = doc.createElement("div");
+    holder.innerHTML = input("intern", "是否曾在本行实习");
+    doc.getElementById("apply").append(holder.firstChild);
+  };
+  const retried = page(t, input("name", "姓名") + GENDER + COMPANY, {
+    site: (read) => (read === 1 ? null : [{ key: "是否曾在本行实习", value: "否" }]), onGender: reveal
+  });
+  let running = retried.run();
+  assert.ok(await retried.until(() => retried.value("gender") === "m" && retried.worker.calls.length === 1));
+  retried.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+  await running;
+  assert.equal(retried.value("intern"), "否", "filled from the second read");
+  assert.equal(retried.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 2);
+  assert.equal(retried.worker.calls.length, 1, "the revealed question did not go to the AI");
+
+  // 桌面不支持，或者后台不认这个发送方：再读结果也一样，只读一次。
+  for (const site of [null, "forbidden"]) {
+    const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site, onGender: reveal });
+    running = old.run();
+    assert.ok(await old.until(() => old.value("gender") === "m" && old.worker.calls.length === 1));
+    old.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+    assert.ok(await old.until(() => old.worker.calls.length === 2), "the revealed question goes to the AI");
+    old.worker.calls[1].reply({ 是否曾在本行实习: "否" });
+    await running;
+    assert.equal(old.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1, `asked once (${site})`);
+  }
+});
+
+// 公司题本地填不了（页面上同名的有两道）时交给 AI：资料里可以有这个网站自己记住的回答，别的网站的不会有。
+test("a company question left to the AI may see this site's remembered answer, never another site's", async (t) => {
+  const twice = input("r1", "是否有亲属在本公司工作") + input("r2", "是否有亲属在本公司工作");
+  const answer = [{ key: "是否有亲属在本公司工作", value: "父亲在本公司财务部任职" }];
+  for (const [siteKey, expected] of [["jobs.example.test", true], ["other.example.test", false]]) {
+    const p = page(t, input("name", "姓名") + twice, { site: answer, siteKey });
+    const running = p.run();
+    assert.ok(await p.until(() => p.worker.calls.length === 1));
+    assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作", "是否有亲属在本公司工作"]);
+    assert.equal(p.worker.calls[0].prompt.includes("财务部"), expected, siteKey);
+    p.worker.calls[0].reply({});
+    await running;
+  }
+});
+
+// 后来冒出公司题时才读到的网站回答，和一开始就有的资料一样：诊断里带着它的字段名要藏起来。
+test("a remembered answer read for a question revealed later is hidden in field names of the diagnostics too", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const p = page(t, input("name", "姓名") + GENDER + input("school", "毕业院校"), {
+    site: [{ key: "是否有亲属在本公司工作", value: "父亲在本公司财务部任职" }],
+    onGender: (doc) => {
+      if (doc.getElementById("relative")) return;
+      const holder = doc.createElement("div");
+      holder.innerHTML = input("relative", "是否有亲属在本公司工作") + input("echo", "父亲在本公司财务部任职情况说明");
+      doc.getElementById("apply").append(...holder.children);
+      const echo = doc.getElementById("echo");
+      for (const type of ["input", "change", "blur"]) echo.addEventListener(type, () => { echo.value = ""; });
+    }
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
+  p.worker.calls[0].reply();
+  assert.ok(await p.until(() => p.worker.calls.length === 2), "the echoing field goes to the AI");
+  p.worker.calls[1].reply({ 父亲在本公司财务部任职情况说明: "无" });
+  const result = await running;
+  assert.equal(p.value("relative"), "父亲在本公司财务部任职");
+  assert.equal(result.unfilledCount, 1, "the echoing field is reported as not filled");
+  assert.match(p.ui.diag.value, /- （字段名已隐藏）：input\[text\]/);
+  assert.equal(p.ui.diag.value.includes("财务部"), false);
 });
 
 // #429 证件类型按资料和号码本地填；资料写的和号码对不上的不填，报「和证件号码对不上」，也不交给 AI。

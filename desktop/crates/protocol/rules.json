@@ -1,7 +1,7 @@
 {
   "protocolVersion": 2,
   "minProtocolVersion": 1,
-  "maxProtocolVersion": 4,
+  "maxProtocolVersion": 5,
   "maxEnvelopeBytes": 65536,
   "suggestedRawChunkBytes": 32768,
   "maxSnapshotBytes": 2097152,
@@ -27,7 +27,9 @@
     "resume.read",
     "resume.update",
     "legacy.import",
-    "mail.import"
+    "mail.import",
+    "siteAnswers.read",
+    "siteAnswers.save"
   ],
   "writeTypes": [
     "job.save",
@@ -51,7 +53,9 @@
     "legacy.import",
     "usage.touch",
     "usage.settings",
-    "mail.import"
+    "mail.import",
+    "siteAnswers.read",
+    "siteAnswers.save"
   ],
   "v2MessageTypes": [
     "resume.read",
@@ -117,5 +121,9 @@
   ],
   "v4MessageTypes": [
     "mail.import"
+  ],
+  "v5MessageTypes": [
+    "siteAnswers.read",
+    "siteAnswers.save"
   ]
 }

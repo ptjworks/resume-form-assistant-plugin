@@ -61,10 +61,19 @@ pub struct TemplateChanged {
     pub source: &'static str,
 }
 
+/// The extension saved answers for one site (#429). The 「网站回答」 list re-reads; only the
+/// site travels here, never a question or an answer.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteAnswersChanged {
+    pub site: String,
+    pub source: &'static str,
+}
+
 /// The highest protocol version the desktop actually serves right now.
 ///
 /// The desktop advertises v2 only after all five bridge handlers are wired.
-pub const SERVED_MAX_PROTOCOL_VERSION: u32 = 4;
+pub const SERVED_MAX_PROTOCOL_VERSION: u32 = 5;
 
 /// The application as a caller can see it: who it is, and what it will commit.
 ///
@@ -97,6 +106,9 @@ pub trait Application: Send + Sync + 'static {
 
     /// The extension's template write is durable. The default has no window to tell.
     fn on_template_changed(&self, _notice: &TemplateChanged) {}
+
+    /// The extension's site answers are durable. The default has no window to tell.
+    fn on_site_answers_changed(&self, _notice: &SiteAnswersChanged) {}
 }
 
 /// The archive this process currently has open.
@@ -110,6 +122,7 @@ pub struct OpenArchive {
     legacy_notify: Option<Arc<dyn Fn(LegacyImportChanged) + Send + Sync>>,
     profile_notify: Option<Arc<dyn Fn(ProfileChanged) + Send + Sync>>,
     template_notify: Option<Arc<dyn Fn(TemplateChanged) + Send + Sync>>,
+    site_answers_notify: Option<Arc<dyn Fn(SiteAnswersChanged) + Send + Sync>>,
     services: Arc<dyn crate::bridge_services::BridgeServices>,
 }
 
@@ -130,6 +143,7 @@ impl OpenArchive {
             legacy_notify: None,
             profile_notify: None,
             template_notify: None,
+            site_answers_notify: None,
         }
     }
 
@@ -154,6 +168,12 @@ impl OpenArchive {
     /// Calls `notify` after each committed extension template write (#273).
     pub fn notifying_template(mut self, notify: Arc<dyn Fn(TemplateChanged) + Send + Sync>) -> Self {
         self.template_notify = Some(notify);
+        self
+    }
+
+    /// Calls `notify` after each committed extension site answers write (#429).
+    pub fn notifying_site_answers(mut self, notify: Arc<dyn Fn(SiteAnswersChanged) + Send + Sync>) -> Self {
+        self.site_answers_notify = Some(notify);
         self
     }
 }
@@ -211,6 +231,12 @@ impl Application for OpenArchive {
 
     fn on_template_changed(&self, notice: &TemplateChanged) {
         if let Some(notify) = &self.template_notify {
+            notify(notice.clone());
+        }
+    }
+
+    fn on_site_answers_changed(&self, notice: &SiteAnswersChanged) {
+        if let Some(notify) = &self.site_answers_notify {
             notify(notice.clone());
         }
     }
@@ -333,6 +359,15 @@ fn template_notice(request: &Request, _answer: &Answer) -> Option<TemplateChange
         op,
         source: "plugin",
     })
+}
+
+/// Answers the extension saved for one site (#429). Like [profile_notice], only reached
+/// after a commit; a read changes nothing and says nothing.
+fn site_answers_notice(request: &Request, answer: &Answer) -> Option<SiteAnswersChanged> {
+    if request.message_type != MessageType::SiteAnswersSave {
+        return None;
+    }
+    Some(SiteAnswersChanged { site: answer.payload["site"].as_str()?.to_string(), source: "plugin" })
 }
 
 fn list_notice(request: &Request, answer: &Answer) -> Option<ApplicationsChanged> {
@@ -484,6 +519,13 @@ fn answer_watched<A: Application + ?Sized>(frame: &[u8], application: &A, peer_g
             if request.protocol_version >= 2 && client_max >= 4 {
                 payload["capabilities"].as_array_mut()?.push(serde_json::json!("mail.import"));
             }
+            // #429: a plugin offering v4 or less validates capabilities against an enum
+            // without these names, and would refuse the whole handshake over them.
+            if request.protocol_version >= 2 && client_max >= 5 {
+                let rules: serde_json::Value = serde_json::from_str(resume_pro_protocol::RULES_JSON).ok()?;
+                let v5 = rules["v5MessageTypes"].as_array()?;
+                payload["capabilities"].as_array_mut()?.extend(v5.iter().cloned());
+            }
             serde_json::to_vec(&serde_json::json!({
                 "protocolVersion": request.protocol_version,
                 "correlationId": request.message_id,
@@ -518,6 +560,9 @@ fn answer_watched<A: Application + ?Sized>(frame: &[u8], application: &A, peer_g
                 }
                 if let Some(notice) = template_notice(&request, &answer) {
                     application.on_template_changed(&notice);
+                }
+                if let Some(notice) = site_answers_notice(&request, &answer) {
+                    application.on_site_answers_changed(&notice);
                 }
                 let mut response = serde_json::json!({
                     "protocolVersion": request.protocol_version,
@@ -791,7 +836,7 @@ mod tests {
         );
         assert_eq!(value["payload"]["minProtocolVersion"], 1);
         assert_eq!(value["payload"]["maxProtocolVersion"], SERVED_MAX_PROTOCOL_VERSION);
-        assert_eq!(SERVED_MAX_PROTOCOL_VERSION, 4);
+        assert_eq!(SERVED_MAX_PROTOCOL_VERSION, 5);
         assert!(
             value["payload"]["capabilities"]
                 .as_array()
@@ -827,13 +872,31 @@ mod tests {
     }
 
     #[test]
+    fn site_answer_capabilities_are_only_announced_to_clients_offering_v5() {
+        // #429: an installed plugin offering v4 validates capabilities against an enum without
+        // these names; announcing them to it would fail its whole handshake.
+        let app = open_archive();
+        for (max, expected) in [(2, false), (4, false), (5, true)] {
+            let frame = serde_json::to_vec(&serde_json::json!({"protocolVersion":2,"messageId":"11111111-1111-4111-8111-111111111111","clientInstanceId":"22222222-2222-4222-8222-222222222222","messageType":"handshake","occurredAt":"2026-11-02T00:00:00Z","payload":{"pluginVersion":"0.5.1","minProtocolVersion":2,"maxProtocolVersion":max}})).unwrap();
+            let result = answer(&frame, app.as_ref()).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&result).unwrap();
+            let capabilities = value["payload"]["capabilities"].as_array().unwrap();
+            assert_eq!(capabilities.iter().any(|item| item == "siteAnswers.read"), expected);
+            assert_eq!(capabilities.iter().any(|item| item == "siteAnswers.save"), expected);
+            assert!(capabilities.len() <= if expected { 32 } else { 16 }, "an older plugin's schema caps the list at 16");
+            let request = resume_pro_protocol::validate_request_bytes(&frame).unwrap();
+            resume_pro_protocol::validate_response_for_request(&value, &request).unwrap();
+        }
+    }
+
+    #[test]
     fn a_v2_only_client_can_handshake_after_the_bridge_is_wired() {
         const HANDSHAKE_V2_ONLY: &str = r#"{"protocolVersion":2,"messageId":"33333333-3333-4333-8333-333333333333","clientInstanceId":"11111111-1111-4111-8111-111111111111","messageType":"handshake","occurredAt":"2026-09-06T12:00:00.000Z","payload":{"pluginVersion":"0.4.0","minProtocolVersion":2,"maxProtocolVersion":2}}"#;
         let reply = answer(HANDSHAKE_V2_ONLY.as_bytes(), open_archive().as_ref()).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&reply).unwrap();
         assert_eq!(value["ok"], true);
         assert_eq!(value["protocolVersion"], 2);
-        assert_eq!(value["payload"]["maxProtocolVersion"], 4);
+        assert_eq!(value["payload"]["maxProtocolVersion"], 5);
         assert!(value["payload"]["capabilities"].as_array().unwrap().iter().any(|c| c == "legacy.import"));
         let request = resume_pro_protocol::validate_request_bytes(HANDSHAKE_V2_ONLY.as_bytes()).unwrap();
         resume_pro_protocol::validate_response_for_request(&value, &request).unwrap();
@@ -1109,6 +1172,35 @@ mod tests {
             "payload": payload
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_committed_site_answers_write_notifies_with_only_the_site() {
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, identity) = open_store(dir.path());
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&notices);
+        let app = OpenArchive::new(Arc::clone(&shared))
+            .notifying_site_answers(Arc::new(move |notice| seen.lock().unwrap().push(notice)));
+        let frame = |message_id: &str, message_type: &str, payload: serde_json::Value| serde_json::to_vec(&serde_json::json!({
+            "protocolVersion": 5, "messageId": message_id, "clientInstanceId": "11111111-1111-4111-8111-111111111111",
+            "messageType": message_type, "occurredAt": "2026-11-02T12:00:00.000Z",
+            "archiveId": identity.archive_id, "restoreEpoch": identity.restore_epoch, "payload": payload
+        })).unwrap();
+        let save = frame("77777777-7777-4777-8777-777777777777", "siteAnswers.save",
+            serde_json::json!({"site": "campus.example.com", "answers": [{"key": "是否有亲属在本公司工作", "value": "否"}]}));
+        let reply: serde_json::Value = serde_json::from_slice(&answer(&save, &app).unwrap()).unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["protocolVersion"], 5);
+        let serialized = serde_json::to_value(&notices.lock().unwrap()[0]).unwrap();
+        assert_eq!(serialized, serde_json::json!({"site": "campus.example.com", "source": "plugin"}));
+        // A read, and a save refused as a conflict, change nothing and say nothing.
+        let read = frame("88888888-8888-4888-8888-888888888888", "siteAnswers.read", serde_json::json!({"site": "campus.example.com"}));
+        let reply: serde_json::Value = serde_json::from_slice(&answer(&read, &app).unwrap()).unwrap();
+        assert_eq!(reply["payload"]["answers"][0]["value"], "否");
+        let reply: serde_json::Value = serde_json::from_slice(&answer(&save, &app).unwrap()).unwrap();
+        assert_eq!(reply["error"]["code"], "conflict");
+        assert_eq!(notices.lock().unwrap().len(), 1);
     }
 
     #[test]

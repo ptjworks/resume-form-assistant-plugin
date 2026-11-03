@@ -27,6 +27,7 @@ pub mod receipts;
 pub mod resume;
 pub mod resume_secrets;
 pub mod schema;
+pub mod site_answers;
 mod snapshot_file;
 /// 快照文件在档案目录里的相对路径。D12 永久删除时要按它去删文件。
 pub use snapshot_file::rel_path_for as snapshot_rel_path;
@@ -61,6 +62,10 @@ pub use resume::{
     MAX_PROFILE_BYTES, MAX_TEMPLATES, MAX_TEMPLATE_BYTES, MAX_TEMPLATE_NAME_CHARS,
 };
 pub use resume_secrets::{is_secret_label, is_secret_value};
+pub use site_answers::{
+    looks_like_identifier, question_key, site_question_allowed, SiteAnswer, SiteAnswerInput, MAX_SITE_ANSWERS, MAX_SITE_ANSWERS_PER_SITE, MAX_SITE_ANSWER_CHARS,
+    MAX_SITE_QUESTION_CHARS,
+};
 pub use store::{ArchiveConfig, ArchiveStore};
 pub use suggestions::{ConfirmOutcome, ConfirmSuggestionInput};
 pub use todos::TodoPatch;
