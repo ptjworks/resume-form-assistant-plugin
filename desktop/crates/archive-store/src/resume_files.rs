@@ -796,17 +796,31 @@ fn entries_of(dir: &Path, failure: &mut Option<std::io::Error>) -> Vec<std::fs::
     found
 }
 
-/// 文件在不在：确定不在是 `false`；查的时候出错（没有权限之类）照实报错，不当成不在。
-fn present(path: &Path) -> std::io::Result<bool> {
+/// 一个位置上现在是什么。删除和清理用同一个判断：只有普通文件才算「这份文件在」，目录、链接这些是别的东西。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spot {
+    Empty,
+    File,
+    Other,
+}
+
+/// 查一个位置：确定是空的、是普通文件、是别的东西；查的时候出错（没有权限之类）照实报错，不当成空的。
+fn spot(path: &Path) -> std::io::Result<Spot> {
     #[cfg(test)]
     if HOME_CHECKS_FAIL.with(|fail| fail.get()) && path.parent().and_then(Path::file_name) == Some("resume-files".as_ref()) {
         return Err(std::io::Error::other("check failed for the test"));
     }
     match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Ok(meta) if meta.is_file() => Ok(Spot::File),
+        Ok(_) => Ok(Spot::Other),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Spot::Empty),
         Err(error) => Err(error),
     }
+}
+
+/// 这个位置上有没有东西：确定是空的才是 `false`；查的时候出错照实报错。
+fn present(path: &Path) -> std::io::Result<bool> {
+    spot(path).map(|found| found != Spot::Empty)
 }
 
 /// 把不再引用的字节挪进 `tmp/` 再删掉，核对原位置和临时位置都没了；没删干净就报 `message`。
@@ -903,8 +917,9 @@ impl ArchiveStore {
 
     /// 删一个附件。能用的记录和读不出来的记录走同一条路，要删的字节只认附件目录里按哈希放的那份
     /// （读不出来的记录记的路径不可信，不拿来动文件；别的记录还用着这个哈希就不动）：
-    /// - 在事务外先把字节挪进 `tmp/`（不进备份）。挪不动（被别的程序占着、没有权限）、查不清它在不在，
-    ///   就什么都不删、照实报错；查过以后它已经没了，当作已经不在，接着删记录。
+    /// - 在事务外先把字节挪进 `tmp/`（不进备份）。挪不动（被别的程序占着、没有权限）、查不清它在不在、
+    ///   原位置上不是普通文件（比如一个目录），就什么都不删、照实报错；查过以后它已经没了，当作已经不在，
+    ///   接着删记录。
     /// - 再用一个短事务删记录，同一个事务里看删完以后还有没有记录用着这个哈希。
     /// - 记录没删掉、没删到、还有记录用着，或者提交以后再看一次又有了引用（查不清也算有），就把字节挪回去，
     ///   不清；否则删掉挪走的字节。最后再清一次残留。
@@ -919,7 +934,11 @@ impl ArchiveStore {
         let mut moved = None;
         if let Some(rel) = rel {
             let target = self.archive_dir().join(&rel);
-            if present(&target)? {
+            let found = spot(&target)?;
+            if found == Spot::Other {
+                return Err(invalid("附件目录里这个附件的位置上不是文件（可能是一个文件夹），没有删除。"));
+            }
+            if found == Spot::File {
                 #[cfg(test)]
                 self.between_steps("checked");
                 let trash = trash_for(self.archive_dir(), &rel);
@@ -1074,8 +1093,8 @@ impl ArchiveStore {
             }
             if let Some(sha256) = name.strip_prefix("resume-file-").and_then(|rest| rest.strip_suffix(".deleting")) {
                 if referenced.contains(sha256) {
-                    match present(&folder.join(sha256)) {
-                        Ok(false) => {
+                    match spot(&folder.join(sha256)) {
+                        Ok(Spot::Empty) => {
                             let back = std::fs::create_dir_all(&folder).and_then(|_| std::fs::rename(entry.path(), folder.join(sha256)));
                             if let Err(error) = back {
                                 eprintln!("resume-files: put-back-failed · {error}");
@@ -1083,9 +1102,9 @@ impl ArchiveStore {
                             continue;
                         }
                         // 原位置有这份文件：这一份是多出来的，照常删。
-                        Ok(true) if folder.join(sha256).is_file() => {}
+                        Ok(Spot::File) => {}
                         // 原位置是别的东西（比如一个目录）：不能当成已经复原，不删。
-                        Ok(true) => {
+                        Ok(Spot::Other) => {
                             eprintln!("resume-files: deleting-kept · its home is not a file");
                             continue;
                         }

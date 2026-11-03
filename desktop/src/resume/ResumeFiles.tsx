@@ -37,8 +37,8 @@ function describe(error: unknown): Notice {
  * 备份停下的文件、没能核对）说出来，不说成已经清干净。
  */
 function deletionNotice(result: ResumeFileDeleted, done: string, name: string): Notice {
-  if (!result.deleted) return { tone: "warn", text: `没有找到「${name}」，可能已经删掉了。` };
-  const notes: string[] = [];
+  // 没删到也照样把没清干净的地方接在后面：这一步动过的文件、附件目录里的残留都可能有。
+  const notes: string[] = result.deleted ? [] : [`没有找到「${name}」，可能已经删掉了。`];
   if (result.stuckInTmp === "not_removed") notes.push("附件文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再删一次。");
   if (result.stuckInTmp === "not_restored") notes.push("还有附件在用的一份文件没能复原，暂时读不了；下次增删附件时会再试着挪回去。");
   const leftovers = result.leftovers ?? [];
@@ -47,6 +47,7 @@ function deletionNotice(result: ResumeFileDeleted, done: string, name: string): 
   if (inSubfolders.length) notes.push(`附件目录的子目录里有 ${inSubfolders.length} 个文件不归任何附件，不进备份，也不会自动清理：${inSubfolders.join("、")}。`);
   if (result.unchecked) notes.push(`附件目录没能核对完（${result.unchecked}），可能还有没列出来的残留，备份可能仍会被挡住。`);
   if (!result.listing) notes.push("附件列表没能刷新，稍后重新打开这一页。");
+  if (!result.deleted) return { tone: "warn", text: notes.join("") };
   return notes.length ? { tone: "warn", text: done + notes.join("") } : { tone: "ok", text: done };
 }
 

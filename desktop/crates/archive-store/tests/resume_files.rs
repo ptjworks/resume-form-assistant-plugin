@@ -333,6 +333,23 @@ fn a_damaged_record_whose_bytes_are_held_is_not_deleted_and_a_held_stray_is_repo
 }
 
 #[test]
+fn a_home_that_is_not_a_file_is_reported_and_nothing_is_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    let home = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
+    // 原位置上不是文件，是一个目录：不挪进 tmp/，不删记录，照实报错。
+    std::fs::remove_file(&home).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(home.join("inside"), b"x").unwrap();
+    let error = db.delete_resume_file(&file.id).unwrap_err();
+    assert_eq!(code(error), "validation_failed");
+    assert!(db.resume_file(&file.id).unwrap().is_some());
+    assert!(home.join("inside").is_file());
+    assert!(!dir.path().join("archive").join("tmp").join(format!("resume-file-{}.deleting", file.sha256)).exists());
+}
+
+#[test]
 fn leftovers_in_tmp_are_swept_and_a_locked_file_is_not_reported_deleted() {
     let dir = tempfile::tempdir().unwrap();
     let db = open(dir.path());

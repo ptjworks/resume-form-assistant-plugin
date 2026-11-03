@@ -266,7 +266,7 @@ test("读不出来的记录单独列出，可以删掉", async () => {
 });
 
 test("删完没清干净的照实提示：文件没删掉、没能复原、还会挡住备份、在子目录里、没能核对、列表没刷新；没删到的不说已删除", async () => {
-  const names = ["旧简历.pdf", "旧照片.png", "旧成绩单.pdf", "旧证书.pdf", "旧作品.pdf", "旧材料.pdf"];
+  const names = ["旧简历.pdf", "旧照片.png", "旧成绩单.pdf", "旧证书.pdf", "旧作品.pdf", "旧材料.pdf", "旧奖状.pdf"];
   let listing = {
     files: [file("a1", "resume", "简历.pdf", "application/pdf", { isDefault: true })],
     damaged: names.map((name, i) => ({ id: `x${i + 1}`, name, reason: "存储位置不对" })),
@@ -282,7 +282,9 @@ test("删完没清干净的照实提示：文件没删掉、没能复原、还�
       if (id === "x4") return { ...listing, stuckInTmp: "not_restored" };
       // 删除已经提交以后读列表失败：删除的结果照样有，列表留着原来的。
       if (id === "x5") return { deleted: true };
-      return { ...listing, deleted: false };
+      if (id === "x6") return { ...listing, deleted: false };
+      // 没删到，但这一步挪过的文件没能复原：没找到之外，照样说出来。
+      return { ...listing, deleted: false, stuckInTmp: "not_restored", leftovers: ["attachments/resume-files/stray"] };
     }
     return null;
   });
@@ -320,6 +322,12 @@ test("删完没清干净的照实提示：文件没删掉、没能复原、还�
   // 桌面说没删到（已经不在了）：不说「已删除」。
   status = await deleteRecord("旧材料.pdf");
   expect(status.textContent).toBe("没有找到「旧材料.pdf」，可能已经删掉了。");
+  expect(status.className).toContain("warn");
+  status = await deleteRecord("旧奖状.pdf");
+  expect(status.textContent).toBe(
+    "没有找到「旧奖状.pdf」，可能已经删掉了。还有附件在用的一份文件没能复原，暂时读不了；下次增删附件时会再试着挪回去。"
+      + "附件目录里还有 1 个文件没清掉，备份可能仍会被这些残留挡住：attachments/resume-files/stray。",
+  );
   expect(status.className).toContain("warn");
 });
 
