@@ -30,6 +30,19 @@ function harness(options = {}) {
   return { ...operator, Input, Select, Element, api: scope.ResumeProControls };
 }
 
+// #429 英文表单的性别下拉只写 M、F，选项填写时才读到：worker 给的是「男」，按这时的选项换成 M。尺码下拉里的 M 不算。
+test('a gender select read only at fill time takes 男 as M, and a size select does not', async () => {
+  const h = harness();
+  const select = new h.Select(); select.tagName = 'SELECT';
+  select.options = [{value:'',text:'请选择'}, {value:'M',text:'M'}, {value:'F',text:'F'}]; select.selectedIndex = 0;
+  const result = await h.operate({ kind: 'element', element: select, binding: { label: 'Sex' } }, '男');
+  assert.equal(result.ok, true, result.reason); assert.equal(select.selectedIndex, 1);
+  const size = new h.Select(); size.tagName = 'SELECT';
+  size.options = [{value:'',text:'请选择'}, {value:'S',text:'S'}, {value:'M',text:'M'}]; size.selectedIndex = 0;
+  assert.equal((await h.operate({ kind: 'element', element: size, binding: { label: 'T恤尺码' } }, '男')).reason, 'no_option_match');
+  assert.equal(size.selectedIndex, 0);
+});
+
 test('native date rollback after blur fails without retry or leaking the requested value', async () => {
   const h = harness(); const input = new h.Input(); input.type = 'month';
   let writes = 0;

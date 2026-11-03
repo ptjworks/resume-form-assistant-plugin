@@ -33,6 +33,13 @@
 
   function create(deps = {}) {
     const helpers = deps.helpers || scope.ResumeProAIHelpers;
+    // #429 问性别的题，英文表单的选项只写 M、F：选项要等页面加载、点开才看得到时，worker 拿不到选项，给的是「男」「女」。
+    // 按这时读到的选项再换一次（ai-helpers.js 的 choiceValue，只在问性别的字段上换；字段名取扫描时的对应关系 binding）。
+    const choiceIn = (ctx, options, value) => {
+      const binding = ctx.entry?.binding;
+      return binding && helpers?.choiceValue
+        ? helpers.choiceValue({ label: binding.label, placeholder: binding.placeholder, inputType: 'select', options }, value) : value;
+    };
     const now = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
     const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     const settleMs = () => deps.getSettleMs ? deps.getSettleMs() : deps.settleMs ?? 250;
@@ -435,14 +442,16 @@
           const text = node => String(node.textContent || '').replace(/\s+/g, ' ').trim();
           const disabled = node => node.getAttribute('aria-disabled') === 'true' || /(?:^|[-_])disabled$/i.test(String(node.className || ''))
             || Boolean(node.querySelector('[aria-disabled="true"]'));
-          const index = helpers?.findSelectOptionIndex?.(nodes.map(node => ({ value: text(node), text: text(node), disabled: disabled(node) })), desiredValue) ?? -1;
+          const list = nodes.map(node => ({ value: text(node), text: text(node), disabled: disabled(node) }));
+          const index = helpers?.findSelectOptionIndex?.(list, choiceIn(ctx, list, desiredValue)) ?? -1;
           const chosen = nodes[index];
           if (!chosen) return result(false, 'no_option_match', ctx);
           if (!custom.isChecked(chosen)) { const reason = click(custom.optionTarget(chosen), ctx, true); if (reason) return result(false, reason, ctx); }
           // 只认组件自己标出的选中状态（--checked、aria-checked），并且组里只有这一项选中。
           accepted = () => chosen.isConnected && custom.isChecked(chosen) && nodes.every(node => node === chosen || !custom.isChecked(node));
         } else if (ctx.kind === 'radio') {
-          const index = helpers?.findSelectOptionIndex?.(nodes.map(node => ({value:node.value,text:deps.radioLabel?.(node) || node.value,disabled:node.disabled})), desiredValue) ?? -1;
+          const list = nodes.map(node => ({value:node.value,text:deps.radioLabel?.(node) || node.value,disabled:node.disabled}));
+          const index = helpers?.findSelectOptionIndex?.(list, choiceIn(ctx, list, desiredValue)) ?? -1;
           const chosen = nodes[index];
           if (!chosen) return result(false, 'no_option_match', ctx);
           const reason = click(chosen, ctx, true); if (reason) return result(false, reason, ctx);
@@ -469,7 +478,8 @@
           accepted = () => Array.from(ctx.el.options).every((option, index) => option.selected === wanted.has(index))
             && Array.from(wanted).every((index, at) => ctx.el.options[index]?.text === texts[at]);
         } else if (ctx.kind === 'native-select') {
-          const index = helpers?.findSelectOptionIndex?.(Array.from(ctx.el.options).map(option => ({value:option.value,text:option.text,disabled:option.disabled})), desiredValue) ?? -1;
+          const list = Array.from(ctx.el.options).map(option => ({value:option.value,text:option.text,disabled:option.disabled}));
+          const index = helpers?.findSelectOptionIndex?.(list, choiceIn(ctx, list, desiredValue)) ?? -1;
           if (index < 0) return result(false, 'no_option_match', ctx);
           const chosenValue = ctx.el.options[index].value;
           const chosenText = ctx.el.options[index].text;

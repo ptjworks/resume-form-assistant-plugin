@@ -993,6 +993,13 @@
     // 选项文字和要填的值算不算同一项：归一化后相同，或是同一个意思的另一种写法（#429）。
     const sameText = (text, value) => h.helpers.isSameOptionText ? h.helpers.isSameOptionText(text, value)
       : h.helpers.normalizeText(text) === h.helpers.normalizeText(value);
+    // #429 问性别的题，英文表单的选项只写 M、F，要点开才看得到：worker 拿不到选项，给的是「男」「女」。按点开的列表再换一次
+    // （ai-helpers.js 的 choiceValue，只在问性别的字段上换；字段名取扫描时的对应关系 binding）。级联不换。
+    const wantedIn = (list, level) => {
+      const binding = ctx.entry?.binding;
+      return info.cascade || !binding || !h.helpers.choiceValue ? desired[level]
+        : h.helpers.choiceValue({ label: binding.label, placeholder: binding.placeholder, inputType: 'select', options: list }, desired[level]);
+    };
     if (!desired.length || desired.length > 8 || desired.some(value => !value)) return { reason: 'no_option_match' };
     const safeSearch = input => input?.tagName === 'INPUT' && !input.readOnly && !input.disabled
       && ['text', 'search', 'email', 'tel', 'url'].includes(input.type);
@@ -1412,13 +1419,13 @@
       // AntD 先输入了要找的值：先到的列表可能是输入前的请求晚到的结果。列表里有同名的一项才马上选，否则等满再用最后的列表。
       const typedAntd = typedFirst && !generic;
       const sameName = list => list.some(option => !option.disabled && [option.text, option.value]
-        .some(text => sameText(text, desired[level])));
+        .some(text => sameText(text, wantedIn(list, level))));
       // 联想框打字后的建议里没有同名的一项：停住一阵再算没有（见 FREE_TEXT_STEADY_MS），不用等满。
       const typedSettled = since => info.freeText && Date.now() - since >= FREE_TEXT_STEADY_MS && Date.now() - typedAt >= FREE_TEXT_SETTLE_MS;
       // 列表不全时只认同名的一项（见 partialList），没有就先搜索，搜完照样看列表全不全。
       const partial = current => partialList(current, popup, ctx.popup);
       // 联想框只选同名的一项（见 sameOption）：网页先给出的建议里没有，就打字再找；打字后还没有，交宿主按文本框写。
-      const pick = items => info.freeText ? sameOption(items, desired[level], h.helpers) : match(items, desired[level], h.helpers, partial(items));
+      const pick = items => info.freeText ? sameOption(items, desired[level], h.helpers) : match(items, wantedIn(items, level), h.helpers, partial(items));
       const listReady = list => (!loading() && list.length > 0 && (!generic || Date.now() - steadySince >= 300) && (!typedAntd || sameName(list) || typedSettled(steadySince)))
         || (eagerSearch && list.length === 0) || (typedAntd && noSuggestions(list));
       const waitedFrom = Date.now();

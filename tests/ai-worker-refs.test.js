@@ -37,7 +37,7 @@ function worker(respond = () => [], { legacy = false, withRegions = true } = {})
   if (!withRegions) delete context.ResumeProRegions;
   vm.runInContext(source, context);
   if (legacy) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js"), "utf8"), context);
-  return { calls, run: async (input) => JSON.parse(JSON.stringify(await context.handleAiFill(input))) };
+  return { calls, context, run: async (input) => JSON.parse(JSON.stringify(await context.handleAiFill(input))) };
 }
 
 const fieldsOf = (call) => JSON.parse(call.user.split("\n")[1]);
@@ -63,7 +63,12 @@ test("the request carries the questions and the resume keys, and no resume value
     { group: "家庭主要成员", key: "父亲工作单位", value: "虚构机械厂" },
     { group: "补充字段", key: "号码1", value: "13800001111" },
     { group: "补充字段", key: "为什么选择我们", value: "因为虚构公司的产品让我印象深刻" },
-    { group: "本网站回答", key: "期望工作城市", value: "虚构城" }
+    { group: "本网站回答", key: "期望工作城市", value: "虚构城" },
+    // 别的分组里以别项的值开头、或在中间带着别项的值的字段名（A30）。
+    { group: "户籍信息", key: "虚构城户口信息-类型", value: "集体户" },
+    { group: "获奖情况", key: "奖项名称", value: "虚构杯一等奖" },
+    { group: "获奖情况", key: "虚构杯一等奖-获奖时间", value: "2022.05" },
+    { group: "本网站回答", key: "在虚构理工学院期间最有成就感的事", value: "带队拿了奖" }
   ]);
   const env = worker();
   await env.run({
@@ -93,6 +98,8 @@ test("the request carries the questions and the resume keys, and no resume value
   assert.equal(catalog.find((entry) => entry.key === "教育经历1-时间").shape, "起止日期");
   assert.equal(catalog.find((entry) => entry.key === "姓名").shape, undefined);
   assert.ok(catalog.every((entry) => !("value" in entry)));
+  assert.ok(keys.includes("〔期望工作城市〕户口信息-类型") && keys.includes("〔奖项名称〕-获奖时间"), keys.join(" | "));
+  assert.ok(keys.includes("在〔教育经历1-学校〕期间最有成就感的事"), keys.join(" | "));
 });
 
 test("refs become resume values: one item, a multi-select, a cascade and a span split in two", async () => {
@@ -189,6 +196,27 @@ test("a native date box takes only a whole day; a date picker takes a month and 
   // 原生 date 框写不进「至今」；日期控件里有「至今」的由页面去点。
   assert.deepEqual(byId.nativeNow, { fieldId: "nativeNow", value: "", blocked: "invalid_date" });
   assert.equal(byId.pickerNow.value, "至今");
+});
+
+test("native month and datetime-local boxes block a present date and a value they cannot take, like a date box", async () => {
+  const env = worker((message, catalog) => [
+    { fieldId: "monthNow", ref: catalog[1].ref }, { fieldId: "monthBad", ref: catalog[2].ref }, { fieldId: "month", ref: catalog[0].ref },
+    { fieldId: "localNow", ref: catalog[1].ref }, { fieldId: "localMonth", ref: catalog[0].ref }, { fieldId: "local", ref: catalog[3].ref }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "monthNow", label: "离职年月", inputType: "month", options: [] },
+      { fieldId: "monthBad", label: "到岗年月", inputType: "month", options: [] },
+      { fieldId: "month", label: "入学年月", inputType: "month", options: [] },
+      { fieldId: "localNow", label: "离职日期", inputType: "datetime-local", options: [] },
+      { fieldId: "localMonth", label: "入学日期", inputType: "datetime-local", options: [] },
+      { fieldId: "local", label: "面试日期", inputType: "datetime-local", options: [] }],
+    resumeFields: [{ group: "教育经历", key: "入学时间", value: "2019.09" }, { group: "实习经历", key: "离职时间", value: "至今" },
+      { group: "补充字段", key: "到岗时间", value: "随时" }, { group: "补充字段", key: "可面试日期", value: "2026.07.15" }]
+  });
+  const byId = Object.fromEntries(JSON.parse(JSON.stringify(result.matches)).map((match) => [match.fieldId, match]));
+  for (const id of ["monthNow", "monthBad", "localNow", "localMonth"]) assert.deepEqual(byId[id], { fieldId: id, value: "", blocked: "invalid_date" });
+  assert.equal(byId.month.value, "2019-09");
+  assert.equal(byId.local.value, "2026-07-15");
 });
 
 test("a size select with an M option does not take the gender, and an AI answer to it is dropped", async () => {
@@ -544,15 +572,32 @@ test("two long saved questions alike in their first 60 characters stay apart in 
   assert.deepEqual(keys.slice(2), ["备注", "备注（2）"]);
 });
 
-test("outside experience groups a key starting with another field's value stays, and a parsed entry of its own is renamed", async () => {
+test("outside experience groups another field's value in a key becomes a placeholder, and a parsed entry of its own is renamed", async () => {
   const env = worker();
   await env.run({
     formFields: [{ fieldId: "q", label: "户口类型" }],
     resumeFields: [{ group: "基本信息", key: "现居城市", value: "虚构城" }, { group: "基本信息", key: "虚构城户口信息-类型", value: "集体户" },
       ...helpers.semanticizeParsedFields([{ group: "获奖情况", key: "奖项1名称", value: "虚构奖学金" }, { group: "获奖情况", key: "奖项1级别", value: "校级" }])]
   });
-  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["现居城市", "虚构城户口信息-类型", "奖项信息1-名称", "奖项信息1-级别"]);
-  assert.ok(!env.calls[0].user.includes("虚构奖学金"));
+  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["现居城市", "〔现居城市〕户口信息-类型", "奖项信息1-名称", "奖项信息1-级别"]);
+  assert.ok(!/虚构城|虚构奖学金/.test(env.calls[0].user));
+});
+
+test("words a question echoes, short numbers and letters inside a word are not taken for resume values", () => {
+  const keys = helpers.catalogKeys([
+    { group: "家庭主要成员", key: "父亲关系", value: "父亲" }, { group: "家庭主要成员", key: "父亲姓名", value: "欧阳虚父" },
+    { group: "基本信息", key: "健康状况", value: "健康" }, { group: "本网站回答", key: "是否愿意接受轮岗", value: "愿意" },
+    { group: "教育经历", key: "毕业年份", value: "2023" }, { group: "本网站回答", key: "2023届校招意向城市", value: "虚构城" },
+    { group: "教育经历", key: "专业简称", value: "CS" }, { group: "补充字段", key: "physics 成绩", value: "优" },
+    { group: "基本信息", key: "姓名", value: "欧阳虚构" }, { group: "本网站回答", key: "欧阳虚构的推荐人（姓名）", value: "无" },
+    { group: "本网站回答", key: "请写下你最想去的城市以及原因，越详细越好，至少写二十个字", value: "虚构港" },
+    { group: "本网站回答", key: "虚构港附近的网点", value: "无" },
+    { group: "本网站回答", key: "调剂意向", value: "服从" }, { group: "本网站回答", key: "是否服从分配", value: "是" }
+  ]);
+  assert.deepEqual(keys.slice(0, 8), ["父亲关系", "父亲姓名", "健康状况", "是否愿意接受轮岗", "毕业年份", "2023届校招意向城市", "专业简称", "physics 成绩"]);
+  assert.equal(keys[9], "〔姓名〕的推荐人（姓名）");
+  assert.equal(keys[11], "〔资料值〕附近的网点", "a long owner name is not used as the placeholder");
+  assert.equal(keys[13], "是否服从分配", "a yes-or-no answer is a word of the question");
 });
 
 test("an edited school name written two ways in two keys of one entry still gets one number", async () => {
@@ -592,6 +637,10 @@ test("the catalog names the latest of several spans in a group and the other nam
   assert.equal(entry("实习经历1-时间").shape, "起止日期");
   assert.equal(entry("教育经历1-时间").shape, "起止日期", "a single span is not marked");
   assert.deepEqual(entry("现居住地").aka, ["现住址", "居住地址", "通讯地址"]);
+  // 别的叫法按这一份 PROFILE_SCHEMA 建：换了一份就按新的给，不留旧的。
+  env.context.ResumeProProfile = { ...env.context.ResumeProProfile, PROFILE_SCHEMA: [{ fields: [{ key: "现居住地", label: "常住地址" }] }] };
+  await env.run({ formFields: [{ fieldId: "home", label: "常住地址" }], resumeFields: [{ group: "户籍与地区", key: "现居住地", value: "虚构省虚构市" }] });
+  assert.deepEqual(catalogOf(env.calls[1].user).find((item) => item.key === "现居住地").aka, ["常住地址"]);
 });
 
 test("a cascade without the region data in the worker reports it instead of taking a whole address", async () => {
@@ -685,4 +734,20 @@ test("a select of bare numbers takes only items with the same number, not number
   assert.deepEqual(fields.find((field) => field.fieldId === "year").fits, [`${ref("出生日期")}.year`]);
   assert.deepEqual(fields.find((field) => field.fieldId === "days").fits, [ref("每周可实习天数")]);
   assert.deepEqual(fields.find((field) => field.fieldId === "unit").fits, [ref("每周可实习天数")], "a unit after the number does not count");
+});
+
+test("a value over 100 characters is matched against long options, and skipped only when every option is short", async () => {
+  const pledge = "本人承诺所填写的全部信息真实、准确、完整，如有虚假，愿意承担由此产生的一切后果，并同意招聘单位在录用前对所填信息进行核实，核实发现不实的，招聘单位可以取消录用资格且不承担任何责任；入职以后发现的，可以解除劳动合同，本人不提出任何异议。";
+  assert.ok(pledge.length > 100);
+  const env = worker();
+  await env.run({
+    formFields: [
+      { fieldId: "pledge", label: "诚信承诺", inputType: "radio", options: [pledge, "不同意"] },
+      { fieldId: "short", label: "承诺", inputType: "select", options: ["同意", "不同意"] }
+    ],
+    resumeFields: [{ group: "本网站回答", key: "诚信承诺", value: pledge }]
+  });
+  const fields = fieldsOf(env.calls[0]);
+  assert.deepEqual(fields.find((field) => field.fieldId === "pledge").fits, [refOf(env.calls[0].user, "诚信承诺")]);
+  assert.equal(fields.some((field) => field.fieldId === "short"), false, "a long value lands on no short option");
 });

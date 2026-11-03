@@ -227,12 +227,15 @@ function promptBytes(fields, candidates, partial = false) {
 
 // 整份资料目录装得下时，按题目分批，每批带整份目录。装不下时（资料项太多），每批题目最多占一半预算，
 // 目录先放这批题目 fits 里的项、再放和题目相关的项，放到装不下为止（relevantEntries）：一批只问一次，请求数只随题目的批数增长。
-// 编号仍是整份目录里的；fits 只留这一批目录里有的，留不下一项的题不发。trimmed 是哪一批都没发出去的资料项数。
+// 编号仍是整份目录里的；fits 只留这一批目录里有的，留不下一项的题不发：是资料被裁掉了，不是题目太大，
+// 记进 trimmedOut（诊断算作 trimmedUnanswered），不算 skippedOversized。trimmed 是哪一批都没发出去的资料项数。
 function makePromptBatches(formFields, entries) {
   const batches = [];
   let skippedOversized = 0;
+  let partial = false;
+  const trimmedOut = [];
   const shown = new Set();
-  if (!entries.length) return { batches, skippedOversized, skippedNoContext: formFields.length, trimmed: 0 };
+  if (!entries.length) return { batches, skippedOversized, skippedNoContext: formFields.length, trimmed: 0, trimmedOut };
   const whole = promptBytes([], entries) <= AI_USER_BUDGET;
   const roomy = fields => (whole ? promptBytes(fields, entries) <= AI_USER_BUDGET : promptBytes(fields, [], true) <= AI_USER_BUDGET / 2);
   let current = [];
@@ -244,14 +247,15 @@ function makePromptBatches(formFields, entries) {
       current = [];
       return;
     }
+    partial = true;
     const candidates = relevantEntries(current, entries);
     const sent = new Set(candidates.map(entry => entry.ref));
     const fields = current.flatMap(field => {
       if (!field.fits) return [field];
       const fits = field.fits.filter(token => sent.has(REF_TOKEN.exec(token)?.[1]));
+      if (!fits.length) trimmedOut.push(field.fieldId);
       return fits.length ? [{ ...field, fits }] : [];
     });
-    skippedOversized += current.length - fields.length;
     // 一题本身太大、连一项资料都放不下的，不发。
     if (candidates.length && fields.length) {
       batches.push({ fields, candidates, partial: true });
@@ -264,7 +268,7 @@ function makePromptBatches(formFields, entries) {
     current.push(field);
   }
   flush();
-  return { batches, skippedOversized, skippedNoContext: 0, trimmed: batches.length ? entries.length - shown.size : 0 };
+  return { batches, skippedOversized, skippedNoContext: 0, trimmed: partial ? entries.length - shown.size : 0, trimmedOut };
 }
 
 // 一项目录在发出去的文字里占多少字节：JSON 一次，信封里再转义时引号和反斜杠各多一个字节，加上分隔的逗号。
@@ -388,7 +392,8 @@ async function handleAiFill(message, controller = new AbortController()) {
     const apiStart = performance.now();
     // 选项读得到、却没有一项资料填得进去的下拉不发，记作没有对应的资料，不算 AI 没匹配上。
     const prompt = promptFields(remainingFormFields, catalog);
-    const { batches, skippedOversized, skippedNoContext, trimmed } = makePromptBatches(prompt.fields, catalog.entries);
+    const { batches, skippedOversized, skippedNoContext, trimmed, trimmedOut } = makePromptBatches(prompt.fields, catalog.entries);
+    trimmedOut.forEach(fieldId => trimmedFields.add(fieldId));
     diagnostics.catalogTrimmed = trimmed;
     diagnostics.skippedOversized = skippedOversized;
     diagnostics.skippedNoContext = skippedNoContext + prompt.noFit;
@@ -487,11 +492,15 @@ function buildUserPrompt(formFields, entries, partial = false) {
 }
 
 // 「我的信息」预置字段的别的叫法（「现居住地」也叫「通讯地址」）：AI 看不到值，靠它认出换了说法的题。
+// 按 PROFILE_SCHEMA 这个数组建一次；换了一份（重新加载了 profile-fields.js）就重建，不留着旧的。
 let profileAliases = null;
+let aliasSchema = null;
 function aliasesOf(key) {
-  if (!profileAliases) {
+  const schema = ResumeProProfile.PROFILE_SCHEMA || [];
+  if (schema !== aliasSchema) {
+    aliasSchema = schema;
     profileAliases = new Map();
-    for (const group of ResumeProProfile.PROFILE_SCHEMA || []) {
+    for (const group of schema) {
       for (const field of group.fields || []) {
         const names = [field.label, ...(field.aliases || [])].filter(name => name && name !== field.key);
         if (names.length) profileAliases.set(field.key, names);
@@ -593,13 +602,14 @@ function promptFields(fields, catalog) {
       .map(option => helpers.normalizeText(typeof option === "object" && option !== null ? option.text ?? option.value : option)).filter(Boolean);
     const bare = text => /^0*(\d{1,4})[年月日号天]?$/.exec(text)?.[1];
     const numbers = texts.length > 0 && texts.every(bare) ? new Set(texts.map(bare)) : null;
+    // 选项都是短文本（不超过 30 个字）时，长段文字落不到选项上，超过 100 个字的值不必一项一项比；有长选项（一句声明）的照比。
+    const shortOptions = texts.every(text => text.length <= 30);
     // 年、月、日只给问它们的题，和题目说的是时间、选项全是数字的下拉（「毕业时间」下面列的是年份）；「每周实习天数」这类不算。
     const timeish = /时间|年度|\b(?:date|time)\b/i.test([field.label, field.placeholder, field.name, field.idAttr].filter(Boolean).join(" "));
     const parts = asksDatePart(field) || (numbers && timeish) ? DATE_PARTS : [];
     const fits = catalog.entries.flatMap(({ ref }) => {
       const value = catalog.values.get(ref);
-      // 长段文字落不到选项上，不必一项一项比。
-      if (value.length > 100) return [];
+      if (shortOptions && value.length > 100) return [];
       const whole = (!numbers || numbers.has(bare(helpers.normalizeText(value)))) && helpers.isValueValidForField(field, value);
       const list = whole ? [ref] : [];
       for (const part of parts) {
@@ -723,13 +733,14 @@ function pickerDate(field, value) {
   const helpers = ResumeProAIHelpers;
   const picked = helpers.rangeDateValue(value, [field.label, field.placeholder, field.ariaLabel].filter(Boolean).join(" "));
   if (helpers.rangeDateParts(picked)) return "";
-  // 原生 date 框写不进「至今」。
-  if (helpers.isPresentDate(picked)) return field.inputType === "date" ? "" : picked;
+  // 原生的 date、month、datetime-local 框写不进「至今」。
+  if (helpers.isPresentDate(picked)) return ["date", "month", "datetime-local"].includes(field.inputType) ? "" : picked;
   // 原生 month 框和认出是选月的日期控件只给年月。
   const day = field.pickerInputType === "month" || field.inputType === "month" ? "" : helpers.normalizeDateValue(picked, "date");
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
-  // 原生的 date 框只收到日的，只到月的浏览器不收，不交给它。日期控件（Element、antd 这类）收到年月时由填写层补成 1 日。
-  if (field.inputType === "date") return "";
+  // 原生的 date、datetime-local 框只收到日的（datetime-local 由填写层补上 00:00），只到月的浏览器不收，不交给它。
+  // 日期控件（Element、antd 这类）收到年月时由填写层补成 1 日。
+  if (field.inputType === "date" || field.inputType === "datetime-local") return "";
   const month = helpers.normalizeDateValue(picked, "month");
   return /^\d{4}-\d{2}$/.test(month) ? month : "";
 }

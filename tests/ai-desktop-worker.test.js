@@ -453,6 +453,28 @@ test('a trimmed catalog takes only its own refs, keeps the fits of each select i
   assert.equal(result.matches.find((match) => match.fieldId === 'politics').value, '共青团员');
 });
 
+test('a select whose fitting items were all trimmed away is counted as trimmed, not as too much content', async () => {
+  let sent = null;
+  const env = worker((message) => {
+    sent = message;
+    const politics = JSON.parse(message.user.split('\n')[1]).find((field) => field.fieldId === 'politics');
+    return { ok: true, text: JSON.stringify([{ fieldId: 'politics', ref: politics.fits[0] }]) };
+  });
+  // 300 项都填得进「政治面貌」，排在前面占满了预算；「方案」唯一填得进的一项排在最后，被裁掉了。
+  const result = await env.run({
+    formFields: [{ fieldId: 'politics', label: '政治面貌', inputType: 'select', options: ['共青团员', '群众'] },
+      { fieldId: 'plan', label: '方案', inputType: 'select', options: ['乙方案', '丙方案'] }],
+    resumeFields: [...BIG_CATALOG.map((entry) => ({ ...entry, value: '共青团员' })), { group: '自定义', key: '方案', value: '乙方案' }]
+  });
+  assert.deepEqual(JSON.parse(sent.user.split('\n')[1]).map((field) => field.fieldId), ['politics']);
+  assert.equal(result.matches.find((match) => match.fieldId === 'politics').value, '共青团员');
+  assert.equal(result.diagnostics.skippedOversized, 0);
+  assert.equal(result.diagnostics.errorCode, 'none');
+  assert.doesNotMatch(result.warning, /内容太多/);
+  assert.equal(result.diagnostics.trimmedUnanswered, 1);
+  assert.ok(result.diagnostics.catalogTrimmed >= 1);
+});
+
 test('the bytes counted for each catalog item add up to what the prompt really takes', () => {
   const env = worker();
   const fields = [{ fieldId: 'a', label: '题目"引号"\\反斜杠' }];

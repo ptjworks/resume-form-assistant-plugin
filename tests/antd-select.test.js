@@ -19,7 +19,7 @@ function load(label, control) {
   const found = scanner.scanPage(w.document, { isVisible: visible }).controls.find(item => item.label === label);
   assert.ok(found, `scanned ${label}`);
   const target = { kind: 'element', element: found.element, elements: found.elements, root: found.root, controlKind: found.controlKind, hints: {} };
-  return { w, doc: w.document, api, target };
+  return { w, doc: w.document, api, target, found };
 }
 
 // AntD 3（rc-select 9）/ ant-design-vue 1.x：点组件根展开，弹层挂在 body 下；选中后占位隐藏，出现 selection-selected-value。
@@ -175,6 +175,20 @@ test('an ID type from the profile selects the site option that is another name f
     assert.equal(result.ok, true, `${value}: ${result.reason}`);
     assert.deepEqual(h.picked, [wanted]);
   }
+});
+
+// #429 英文表单的性别下拉只写 M、F，点开过一会儿才有选项：worker 拿不到选项，给的是「男」，按点开的列表换成 M。
+// 只在问性别的字段上换：尺码下拉里的 M 不算。
+test('a gender select whose M and F options appear only when opened takes 男 as M', async () => {
+  const h = antd3(['M', 'F'], { label: 'Gender', loadAfter: 20 });
+  h.target.binding = h.found;
+  const result = await h.api.operate(h.target, '男');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.picked, ['M']);
+  const size = antd3(['S', 'M', 'L'], { label: '尺码', loadAfter: 20 });
+  size.target.binding = size.found;
+  assert.equal((await size.api.operate(size.target, '男')).reason, 'no_option_match');
+  assert.deepEqual(size.picked, []);
 });
 
 test('AntD 3 existing selection is read as the displayed choice', () => {
