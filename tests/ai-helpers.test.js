@@ -557,7 +557,10 @@ test("a 联系方式 question is a phone unless what follows says email", () => 
   assert.equal(kind({ label: "联系方式", ariaLabel: "联系方式", name: "email" }), "email");
   assert.equal(kind({ label: "联系方式", name: "contactName" }), "phone");
   assert.equal(kind({ label: "联系方式", name: "contactName", idAttr: "contactEmail" }), "email");
+  // 同一样文字里泛称和明确的词都有，按明确的算。
   assert.equal(kind({ label: "联系方式（邮箱）", placeholder: "请输入手机号" }), "email");
+  assert.equal(kind({ label: "联系方式/Email" }), "email");
+  assert.equal(kind({ label: "联系方式（手机）", placeholder: "请输入邮箱" }), "phone");
   assert.equal(kind({ label: "联系电话", placeholder: "请输入邮箱" }), "phone");
 
   assert.deepEqual(ruleValues(
@@ -587,6 +590,11 @@ test("value validation keeps mobiles out of ID fields and 18-digit ID numbers ou
   assert.deepEqual(kept([{ fieldId: "phone", value: ID_18 }, { fieldId: "id", value: MOBILE }]), []);
   assert.deepEqual(kept([{ fieldId: "phone", value: "110101 19900307 1233" }, { fieldId: "id", value: "138 1234 5678" }]), []);
   assert.deepEqual(kept([{ fieldId: "id", value: "8613812345678" }]), []);
+  // 带短横的不当证件号：去掉短横就成了 8 到 18 位数字的座机、日期也不收；带短横的身份证号进不了手机框。
+  assert.deepEqual(kept([
+    { fieldId: "id", value: "010-12345678" }, { fieldId: "id", value: "2001-05-07" }, { fieldId: "id", value: "138-1234-5678" },
+    { fieldId: "phone", value: "110101-19900307-1233" }
+  ]), []);
   // AI 回的值不是字符串时照样核对，不抛错。
   assert.deepEqual(kept([{ fieldId: "id", value: 13812345678 }, { fieldId: "phone", value: null }, { fieldId: "id", value: undefined }]), []);
   assert.deepEqual(kept([{ fieldId: "phone", value: 13812345678 }]), [{ fieldId: "phone", value: 13812345678 }]);

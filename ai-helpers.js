@@ -200,7 +200,8 @@
   // 以题目为准：先只看 label，认不出再依次看 aria-label、placeholder、name、id，哪一样认得出就用哪一样。
   // 几样拼在一起按 FIELD_SEMANTICS 的顺序找，题目写「身份证号码」、name 是 mobile 的框会认成电话（排在前面）。
   // 只靠「联系方式」认成电话的（CONTACT_WORD），后面几样认得出是电话还是邮箱就照那样认，都认不出才按电话；
-  // 后面认出别的类不算，「联系方式」的框 name 是 contactName 也不是姓名。
+  // 后面认出别的类不算，「联系方式」的框 name 是 contactName 也不是姓名。同一样文字里写了邮箱的（「联系方式（邮箱）」），
+  // 表里邮箱排在电话前面，先认成邮箱，轮不到这一步。
   function inferFieldSemantic(field) {
     let contact = false;
     for (const part of [field?.label, field?.ariaLabel, field?.placeholder, field?.name, field?.idAttr]) {
@@ -716,8 +717,9 @@
     }
 
     // 手机号和纯数字的身份证号光看位数分不开：手机框不收像 18 位身份证号的，证件号码框不收像大陆手机号的，
-    // 本地认错了框、AI 把两个值对调了都在这里拦下。
-    const compact = text.replace(/[\s-]/g, "");
+    // 本地认错了框、AI 把两个值对调了都在这里拦下。证件号的格式和手机号排除都只去空格再比：
+    // 带短横的不当证件号，去掉短横的话「010-12345678」「2001-05-07」都成了 8 到 18 位数字。
+    const unspaced = text.replace(/\s/g, "");
 
     switch (semantic) {
       case "pinyin":
@@ -725,13 +727,13 @@
       case "email":
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
       case "phone":
-        return /^[+\d][\d\s-]{6,}$/.test(text) && !CN_ID_VALUE.test(compact);
+        return /^[+\d][\d\s-]{6,}$/.test(text) && !CN_ID_VALUE.test(unspaced.replace(/-/g, ""));
       case "birth_date":
         return /(\d{4}[-/.年]\d{1,2}([-/.\月]\d{1,2}日?)?)/.test(text);
       case "gender":
         return /(男|女|male|female)/i.test(text);
       case "id_number":
-        return /^[0-9xX]{8,18}$/.test(text.replace(/\s/g, "")) && !MOBILE_VALUE.test(compact);
+        return /^[0-9xX]{8,18}$/.test(unspaced) && !MOBILE_VALUE.test(unspaced);
       case "name":
         return text.length <= 20 && !/@/.test(text) && !/\d{5,}/.test(text);
       case "hometown":
