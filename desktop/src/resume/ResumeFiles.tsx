@@ -98,6 +98,10 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
       return true;
     } catch (error) {
       setNotice(describe(error));
+      // 有的失败发生在改动之后（新文件换上了、旧文件没删掉）：列表按桌面现在的样子重读。
+      if (invoke) {
+        void invoke<ResumeFileView[]>("list_resume_files_cmd").then(setFiles, () => {});
+      }
       return false;
     } finally {
       setBusy(false);

@@ -39,7 +39,7 @@ function desktop(bytes, { patch = () => ({}), fail = () => null } = {}) {
   return { sent, reply };
 }
 
-async function client(bytes, { capabilities = CAPABILITIES, ...desk } = {}) {
+async function client(bytes, { capabilities = CAPABILITIES, send, ...desk } = {}) {
   const { createResumeFiles } = await import('../link/resume-files.mjs');
   const { validateRequest } = await import('../link/protocol/validate.mjs');
   const fake = desktop(bytes, desk);
@@ -49,6 +49,7 @@ async function client(bytes, { capabilities = CAPABILITIES, ...desk } = {}) {
     return { response: fake.reply(message) };
   };
   const files = createResumeFiles({
+    ...(send ? { send } : {}),
     session: { probe: async () => ({ mode: 'ready', identity, capabilities }) },
     store: { clientInstanceId: async () => ID },
     uuid: () => crypto.randomUUID(),
@@ -168,4 +169,19 @@ test('reading a file writes nothing to the console and nothing to extension stor
   assert.deepEqual(logged, []);
   // The store handed to the client has nothing but the client id: any attempt to keep the bytes
   // there would throw and turn the read above into 'unavailable'.
+});
+
+test('a chunk of the wrong length is corrupt, whether the validator or the client catches it', async () => {
+  const bytes = pdf(CHUNK + 50);
+  const listing = { fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: '简历.pdf', mime: 'application/pdf' };
+  // The last chunk comes back three bytes longer, with a digest that matches what was sent.
+  const longer = Buffer.concat([bytes.subarray(CHUNK), Buffer.from('xyz')]);
+  const padded = await client(bytes, { patch: (_m, index) => (index === 1 ? { bytesBase64: longer.toString('base64'), chunkSha256: sha(longer) } : {}) });
+  assert.deepEqual(await padded.files.fetch(listing), { status: 'corrupt' });
+  assert.equal(padded.channels[0].closed, true);
+  // A transport that does not run the validator: the client checks the length itself before using the bytes.
+  const raw = await client(bytes, { send: async (message) => ({ status: 'ok', response: { payload: {
+    fileId: FILE, sha256: listing.sha256, byteSize: bytes.length, chunkIndex: message.payload.chunkIndex, chunkCount: 2,
+    chunkSha256: sha(longer), bytesBase64: longer.toString('base64') } } }) });
+  assert.deepEqual(await raw.files.fetch(listing), { status: 'corrupt' });
 });
