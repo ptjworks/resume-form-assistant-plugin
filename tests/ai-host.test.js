@@ -119,6 +119,7 @@ test('client cancellation waits for startup and original dispatch rather than ra
   const calls = [];
   const context = vm.createContext({ chrome: { runtime: { sendMessage: message => {
     calls.push(message.type);
+    if (message.type === 'AI_SEND_VALUES_STATUS') return Promise.resolve({ ok: true, enabled: false });
     if (message.type === 'ENSURE_AI_HOST') return new Promise(resolve => { ready = resolve; });
     if (message.type === 'AI_HOST_READY') return Promise.resolve({ ready: true });
     if (message.type === 'AI_FILL') return new Promise(resolve => { complete = resolve; });
@@ -128,11 +129,12 @@ test('client cancellation waits for startup and original dispatch rather than ra
   vm.runInContext(source('ai-client.js'), context);
   const result = context.ResumeProAIClient.send({ type: 'AI_FILL', requestId: 'a' });
   const cancelled = context.ResumeProAIClient.cancel('a');
-  assert.deepEqual(calls, ['ENSURE_AI_HOST']);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['AI_SEND_VALUES_STATUS', 'ENSURE_AI_HOST']);
   ready({ ready: true });
   assert.equal((await cancelled).cancelled, true);
   assert.equal((await result).success, false);
-  assert.deepEqual(calls, ['ENSURE_AI_HOST', 'AI_HOST_READY', 'AI_FILL', 'CANCEL_AI_FILL']);
+  assert.deepEqual(calls, ['AI_SEND_VALUES_STATUS', 'ENSURE_AI_HOST', 'AI_HOST_READY', 'AI_FILL', 'CANCEL_AI_FILL']);
   assert.equal((await context.ResumeProAIClient.cancel('a')).cancelled, false);
 });
 
@@ -144,7 +146,66 @@ test('failed startup sends no AI request and does not leave cancellation hanging
   const cancel = context.ResumeProAIClient.cancel('a');
   await assert.rejects(result, /启动/);
   assert.equal((await cancel).cancelled, false);
-  assert.deepEqual(calls, ['ENSURE_AI_HOST']);
+  assert.deepEqual(calls, ['AI_SEND_VALUES_STATUS', 'ENSURE_AI_HOST']);
+});
+
+// #429「AI 填写时发送资料原文」：一键填写只按后台存的设置带 sendValues，调用方带的不算，问不到按关着。
+test('a fill request carries sendValues only from the stored switch, never from the caller', async () => {
+  const run = async (status, message) => {
+    const sent = [];
+    const context = vm.createContext({ chrome: { runtime: { sendMessage: async request => {
+      if (request.type === 'AI_SEND_VALUES_STATUS') {
+        if (status instanceof Error) throw status;
+        return status;
+      }
+      if (request.type === 'ENSURE_AI_HOST' || request.type === 'AI_HOST_READY') return { ready: true };
+      sent.push(JSON.parse(JSON.stringify(request)));
+      return { success: true };
+    } } } });
+    vm.runInContext(source('ai-client.js'), context);
+    await context.ResumeProAIClient.send(message);
+    return sent[0];
+  };
+  const fill = { type: 'AI_FILL', requestId: 'a', formFields: [], resumeFields: [] };
+  assert.equal((await run({ ok: true, enabled: true }, fill)).sendValues, true);
+  assert.equal((await run({ ok: true, enabled: false }, { ...fill, sendValues: true })).sendValues, false, 'the caller cannot turn it on');
+  for (const status of [undefined, { ok: false, enabled: true }, { ok: true, enabled: 'true' }, new Error('gone')]) {
+    assert.equal((await run(status, { ...fill, sendValues: true })).sendValues, false, String(status?.message || JSON.stringify(status)));
+  }
+  // 别的请求不问开关，原样发。
+  const repeat = await run({ ok: true, enabled: true }, { type: 'AI_PLAN_REPEAT', requestId: 'b' });
+  assert.equal('sendValues' in repeat, false);
+});
+
+test('the service worker keeps the send-values switch, off unless set, and only extension pages change it', async () => {
+  const listeners = [];
+  let stored = {};
+  let failing = false;
+  const context = vm.createContext({ chrome: {
+    action: { onClicked: { addListener() {} } },
+    sidePanel: { setPanelBehavior: async () => {} },
+    runtime: { id: 'test', getURL: name => `chrome-extension://test/${name}`, getContexts: async () => [], onMessage: { addListener(fn) { listeners.push(fn); } } },
+    offscreen: { createDocument: async () => {} },
+    storage: { local: {
+      get: async key => { if (failing) throw new Error('storage'); return key in stored ? { [key]: stored[key] } : {}; },
+      set: async values => { if (failing) throw new Error('storage'); Object.assign(stored, values); }
+    } }
+  } });
+  vm.runInContext(asClassicScript(source('background.js')), context);
+  const dispatch = (message, sender) => new Promise(resolve => {
+    for (const listener of listeners) if (listener(message, sender, resolve) === true) return;
+  }).then(reply => JSON.parse(JSON.stringify(reply)));
+  const page = { id: 'test', url: 'chrome-extension://test/popup.html' };
+  const tab = { id: 'test', url: 'https://jobs.example.test/apply', tab: { id: 1 } };
+  assert.deepEqual(await dispatch({ type: 'AI_SEND_VALUES_STATUS' }, tab), { ok: true, enabled: false });
+  assert.deepEqual(await dispatch({ type: 'AI_SEND_VALUES_SET', enabled: true }, tab), { ok: false, error: 'forbidden' });
+  assert.deepEqual(stored, {});
+  assert.deepEqual(await dispatch({ type: 'AI_SEND_VALUES_SET', enabled: true }, page), { ok: true, enabled: true });
+  assert.deepEqual(await dispatch({ type: 'AI_SEND_VALUES_STATUS' }, tab), { ok: true, enabled: true });
+  assert.deepEqual(await dispatch({ type: 'AI_SEND_VALUES_SET', enabled: 'yes' }, page), { ok: true, enabled: false });
+  assert.deepEqual(stored, { aiSendResumeValues: false });
+  failing = true;
+  assert.deepEqual(await dispatch({ type: 'AI_SEND_VALUES_STATUS' }, page), { ok: false, enabled: false });
 });
 
 test('the content script loads the client and packaged host dependencies exist', () => {

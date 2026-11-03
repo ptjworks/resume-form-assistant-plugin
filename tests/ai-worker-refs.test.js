@@ -16,8 +16,9 @@ const regions = (() => {
   return scope.ResumeProRegions;
 })();
 
-// respond(message, catalog) 返回 AI 的回答（数组或文字）；legacy 接着跑评测用的旧发值方式（scripts/eval-fill-legacy.js）。
-function worker(respond = () => [], { legacy = false, withRegions = true } = {}) {
+// respond(message, catalog) 返回 AI 的回答（数组或文字）。和浏览器里一样，先跑 ai-worker.js 引的 ai-worker-values.js（发资料原文的那套）。
+const valuesSource = fs.readFileSync(path.join(__dirname, "..", "ai-worker-values.js"), "utf8");
+function worker(respond = () => [], { withRegions = true } = {}) {
   const calls = [];
   let sequence = 0;
   const context = vm.createContext({
@@ -35,8 +36,8 @@ function worker(respond = () => [], { legacy = false, withRegions = true } = {})
     }
   };
   if (!withRegions) delete context.ResumeProRegions;
+  vm.runInContext(valuesSource, context);
   vm.runInContext(source, context);
-  if (legacy) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js"), "utf8"), context);
   return { calls, context, run: async (input) => JSON.parse(JSON.stringify(await context.handleAiFill(input))) };
 }
 
@@ -544,14 +545,26 @@ test("an open question the resume has no answer to is counted on its own", async
   assert.equal(result.diagnostics.aiMatches, 1);
 });
 
-test("the old value prompt lives only in the eval script, which replaces handleAiFill after the worker", async () => {
-  const resume = [{ group: "教育经历", key: "学校", value: "虚构理工学院" }];
-  const env = worker(() => [{ fieldId: "school", value: "虚构理工学院" }], { legacy: true });
-  const result = await env.run({ formFields: [{ fieldId: "school", label: "毕业院校" }], resumeFields: resume });
-  assert.match(env.calls[0].user, /虚构理工学院/);
-  assert.match(env.calls[0].system, /应该填写什么值/);
+test("resume values go out only when sendValues is exactly true; anything else sends keys alone", async () => {
+  const resume = [{ group: "教育经历", key: "学校", value: "虚构理工学院" }, { group: "基本信息", key: "手机号码", value: "13912345678" }];
+  const form = [{ fieldId: "school", label: "毕业院校" }, { fieldId: "contact", label: "备用联系电话" }];
+  // 开关关着：没带、false、字符串 "true"、1、对象都按关着，发出的文字里查不到资料值，只有目录。
+  for (const sendValues of [undefined, false, "true", 1, {}]) {
+    const off = worker((message, catalog) => [{ fieldId: "school", ref: catalog[0].ref }]);
+    const result = await off.run({ formFields: form, resumeFields: resume, ...(sendValues === undefined ? {} : { sendValues }) });
+    const sent = off.calls.map((call) => `${call.system}\n${call.user}`).join("\n");
+    for (const field of resume) assert.ok(!sent.includes(field.value), `${JSON.stringify(sendValues)}: ${field.key}`);
+    assert.doesNotMatch(sent, /应该填写什么值/);
+    assert.ok(refOf(off.calls[0].user, "学校"), "the catalog of keys goes out");
+    assert.equal(valueOf(result, "school"), "虚构理工学院");
+  }
+  // 开关打开：资料连值一起发，AI 回值（ai-worker-values.js）。
+  const on = worker(() => [{ fieldId: "school", value: "虚构理工学院" }]);
+  const result = await on.run({ formFields: form, resumeFields: resume, sendValues: true });
+  assert.match(on.calls[0].user, /虚构理工学院/);
+  assert.match(on.calls[0].system, /应该填写什么值/);
   assert.equal(valueOf(result, "school"), "虚构理工学院");
-  assert.equal(refOf(env.calls[0].user, "学校"), undefined, "no catalog in the old prompt");
+  assert.equal(refOf(on.calls[0].user, "学校"), undefined, "no catalog when values are sent");
 });
 
 test("every script the worker imports is packed, the region data included", async () => {
@@ -561,16 +574,22 @@ test("every script the worker imports is packed, the region data included", asyn
   for (const file of imported) assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes(file), `${file} is packed`);
 });
 
-test("the shipped worker has no old value prompt and no switch, and the eval script is not packed", async () => {
-  assert.doesNotMatch(source, /ResumeProEvalValuePrompt|LEGACY_SYSTEM_PROMPT|buildLegacyUserPrompt|应该填写什么值/);
+test("the value prompt sits in its own packed file, and the worker hands over to it only on the switch", async () => {
+  // 发资料原文的提示词只在 ai-worker-values.js 里；ai-worker.js 只在 sendValues === true 时交给它，没有别的全局开关。
+  assert.doesNotMatch(source, /VALUES_SYSTEM_PROMPT|buildValuesUserPrompt|应该填写什么值|ResumeProEvalValuePrompt/);
+  assert.match(valuesSource, /应该填写什么值/);
+  assert.equal((source.match(/handleValuesFill\(/g) || []).length, 1);
+  assert.match(source, /if \(message\?\.sendValues === true\) return handleValuesFill\(message, controller\);/);
+  assert.doesNotMatch(valuesSource, /handleAiFill\s*=/, "the value file replaces no global");
   assert.equal("selectResumeCandidates" in helpers, false);
+  assert.equal(fs.existsSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js")), false);
   const { PLUGIN_ARCHIVE_OPERANDS } = await import(pathToFileURL(path.join(__dirname, "..", "desktop", "scripts", "pack-plugin.js")).href);
-  assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes("ai-worker.js"));
+  assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes("ai-worker.js") && PLUGIN_ARCHIVE_OPERANDS.includes("ai-worker-values.js"));
   assert.equal(PLUGIN_ARCHIVE_OPERANDS.some((entry) => entry === "scripts" || entry.startsWith("scripts/")), false);
   const { assertPluginOnlyArchive } = await import(pathToFileURL(path.join(__dirname, "..", "desktop", "scripts", "check-plugin-release-allowlist.js")).href);
-  const packed = ["manifest.json", "background.js", "content.js", "content.css", "LICENSE", "ai-worker.js"];
+  const packed = ["manifest.json", "background.js", "content.js", "content.css", "LICENSE", "ai-worker.js", "ai-worker-values.js"];
   assert.doesNotThrow(() => assertPluginOnlyArchive(packed));
-  assert.throws(() => assertPluginOnlyArchive([...packed, "scripts/eval-fill-legacy.js"]), /scripts\/eval-fill-legacy\.js/);
+  assert.throws(() => assertPluginOnlyArchive([...packed, "scripts/eval-fill.mjs"]), /scripts\/eval-fill\.mjs/);
 });
 
 test("a parsed key whose school name was edited afterwards still leaves the old name out", async () => {

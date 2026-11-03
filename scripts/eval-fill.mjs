@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // #429 第 11 项：一键填写里 AI 那一步的手动评测，比较两种发法填对、填错、没填的题数。
-//   keys：现在的发法，资料只发编号、分组和字段名，AI 回编号，值在本地取（ai-worker.js）。
-//   values：之前的发法，资料连值一起发，AI 回值。代码在 scripts/eval-fill-legacy.js，不进插件包，下个版本删掉。
+//   keys：默认的发法，资料只发编号、分组和字段名，AI 回编号，值在本地取（ai-worker.js）。
+//   values：插件状态页打开「AI 填写时发送资料原文」时的发法，资料连值一起发，AI 回值（ai-worker-values.js）。
+//   两种都在插件里，和插件一样按请求里的 sendValues 走哪条路。
 // 资料（tests/fixtures/fill-eval/resume.json）和网页字段（pages.json）都是虚构的，每题人工标了该填的值。
 // 跑的是真实的 ai-worker.js（本地规则 + AI + 本地核对），只把桌面换成直接请求服务商；打分按 content.js 填写时的规矩：
 // 下拉要落到选项上，日期按题目取开始或结束，级联要认得出地区。
@@ -29,9 +30,8 @@ const regions = (() => {
   vm.runInNewContext(readFileSync(join(ROOT, "region-data.js"), "utf8"), { self: scope });
   return scope.ResumeProRegions;
 })();
-const WORKER = readFileSync(join(ROOT, "ai-worker.js"), "utf8");
-// 之前的发法：在同一个 vm 里接着 ai-worker.js 跑，把 handleAiFill 换掉。
-const LEGACY = readFileSync(join(ROOT, "scripts", "eval-fill-legacy.js"), "utf8");
+// ai-worker.js 用 importScripts 引的 ai-worker-values.js，vm 里先跑它（importScripts 是空的）。
+const WORKER = [readFileSync(join(ROOT, "ai-worker-values.js"), "utf8"), readFileSync(join(ROOT, "ai-worker.js"), "utf8")];
 const SITE_GROUP = profileApi.SITE_GROUP;
 
 // 和 content.js 一样拼资料：模板（桌面解析的字段按 semanticizeParsedFields 改过名）在前，「我的信息」里没重名的在后；
@@ -146,9 +146,8 @@ export async function runPage(page, resumeFields, { mode, complete }) {
         });
     }
   };
-  vm.runInContext(WORKER, context);
-  if (mode === "values") vm.runInContext(LEGACY, context);
-  const result = JSON.parse(JSON.stringify(await context.handleAiFill({ formFields: page.formFields, resumeFields })));
+  for (const source of WORKER) vm.runInContext(source, context);
+  const result = JSON.parse(JSON.stringify(await context.handleAiFill({ formFields: page.formFields, resumeFields, sendValues: mode === "values" })));
   const values = new Map(result.matches.filter((match) => !match.blocked).map((match) => [match.fieldId, match.value]));
   // value 只给 --verbose 在控制台看（资料是虚构的），不写进结果文件。
   const fields = page.fields.map((spec) => ({ id: spec.id, label: spec.label, type: fieldType(spec), outcome: scoreField(spec, values.get(spec.id)),

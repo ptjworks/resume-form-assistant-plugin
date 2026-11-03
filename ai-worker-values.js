@@ -1,10 +1,10 @@
-// #429 第 11 项之前的发值方式：资料连值一起发给 AI，AI 回值。只给 scripts/eval-fill.mjs 对比准确率用，下个版本删掉。
-// 不进插件包（desktop/scripts/pack-plugin.js 的清单里没有 scripts/），线上的 ai-worker.js 里也没有这条路。
-// 用法：在同一个 vm 里先跑 ai-worker.js，再跑这个文件，它把 handleAiFill 换成下面这份。
-// 下面是 #429 第 11 项合并前 next（55bd2b4）上 ai-worker.js 的原样代码，只改了名字，免得和新的撞上；
-// selectResumeCandidates 原来在 ai-helpers.js 里，只剩这里在用，一起搬过来。
+// 发资料原文的填写方式（#429）：资料连值一起发给 AI，AI 回值。只在插件状态页打开「AI 填写时发送资料原文」时用；
+// 默认关着，走 ai-worker.js 的 handleAiFill，只发编号、分组和字段名。ai-worker.js 用 importScripts 引进来，
+// handleAiFill 见到 message.sendValues === true（ai-client.js 按后台存的设置带上）才交给这里的 handleValuesFill。
+// 下面是 #429 第 11 项合并前 next（55bd2b4）上 ai-worker.js 的原样代码，只改了名字，免得和只发字段名的那套撞上；
+// selectResumeCandidates 原来在 ai-helpers.js 里，只有这里在用，一起放在这里。scripts/eval-fill.mjs 用它比两种方式的准确率。
 
-const LEGACY_SYSTEM_PROMPT = [
+const VALUES_SYSTEM_PROMPT = [
   "你是一个网页表单填写助手。根据简历字段数据，判断表单中每个输入框应该填写什么值。",
   "规则：",
   "1. 仅返回 JSON 数组，不含任何解释或 markdown 代码块",
@@ -56,12 +56,12 @@ function selectResumeCandidates(formFields, resumeFields) {
   return resumeFields.filter((item) => selected.has(item));
 }
 
-function legacyPromptBytes(fields, candidates) {
+function valuesPromptBytes(fields, candidates) {
   // The user text is JSON-escaped again inside the Native Messaging envelope.
-  return new TextEncoder().encode(JSON.stringify(buildLegacyUserPrompt(fields, candidates))).length;
+  return new TextEncoder().encode(JSON.stringify(buildValuesUserPrompt(fields, candidates))).length;
 }
 
-function makeLegacyBatches(formFields, resumeFields) {
+function makeValuesBatches(formFields, resumeFields) {
   const batches = [];
   let skippedOversized = 0;
   let skippedNoContext = 0;
@@ -70,7 +70,7 @@ function makeLegacyBatches(formFields, resumeFields) {
     if (!fields.length) return;
     const candidates = selectResumeCandidates(fields, resumeFields);
     if (!candidates.length) { skippedNoContext += fields.length; return; }
-    if (legacyPromptBytes(fields, candidates) <= AI_USER_BUDGET) {
+    if (valuesPromptBytes(fields, candidates) <= AI_USER_BUDGET) {
       batches.push({ fields, candidates });
       return;
     }
@@ -80,12 +80,12 @@ function makeLegacyBatches(formFields, resumeFields) {
     let emitted = false;
     const skippedBefore = skippedOversized;
     for (const candidate of candidates) {
-      if (legacyPromptBytes(fields, [...subset, candidate]) <= AI_USER_BUDGET) {
+      if (valuesPromptBytes(fields, [...subset, candidate]) <= AI_USER_BUDGET) {
         subset.push(candidate);
       } else {
         if (subset.length) { batches.push({ fields, candidates: subset }); emitted = true; }
         subset = [];
-        if (legacyPromptBytes(fields, [candidate]) <= AI_USER_BUDGET) subset.push(candidate);
+        if (valuesPromptBytes(fields, [candidate]) <= AI_USER_BUDGET) subset.push(candidate);
         else skippedOversized += 1;
       }
     }
@@ -95,7 +95,7 @@ function makeLegacyBatches(formFields, resumeFields) {
   for (const field of formFields) {
     const next = [...current, field];
     const candidates = selectResumeCandidates(next, resumeFields);
-    if (legacyPromptBytes(next, candidates) <= AI_USER_BUDGET) {
+    if (valuesPromptBytes(next, candidates) <= AI_USER_BUDGET) {
       current = next;
     } else {
       emit(current);
@@ -107,7 +107,7 @@ function makeLegacyBatches(formFields, resumeFields) {
   return { batches, skippedOversized, skippedNoContext };
 }
 
-async function legacyHandleAiFill(message, controller = new AbortController()) {
+async function handleValuesFill(message, controller = new AbortController()) {
   // #223: a caller may ask for a tier (the strong model for a re-match). Without one the
   // request stays exactly what every desktop understands.
   const tier = message.tier === "strong" || message.tier === "default" ? message.tier : undefined;
@@ -149,7 +149,7 @@ async function legacyHandleAiFill(message, controller = new AbortController()) {
 
   if (remainingFormFields.length) {
     const apiStart = performance.now();
-    const { batches, skippedOversized, skippedNoContext } = makeLegacyBatches(remainingFormFields, resumeFields);
+    const { batches, skippedOversized, skippedNoContext } = makeValuesBatches(remainingFormFields, resumeFields);
     diagnostics.skippedOversized = skippedOversized;
     diagnostics.skippedNoContext = skippedNoContext;
     if (skippedOversized) {
@@ -168,9 +168,9 @@ async function legacyHandleAiFill(message, controller = new AbortController()) {
         break;
       }
       if (maxCalls !== undefined) diagnostics.calls += 1;
-      const prompt = buildLegacyUserPrompt(batch.fields, batch.candidates);
+      const prompt = buildValuesUserPrompt(batch.fields, batch.candidates);
       diagnostics.promptBytes += new TextEncoder().encode(prompt).length;
-      const result = await sendToDesktop({ purpose: "fill", tier, system: LEGACY_SYSTEM_PROMPT, user: prompt, signal: controller.signal });
+      const result = await sendToDesktop({ purpose: "fill", tier, system: VALUES_SYSTEM_PROMPT, user: prompt, signal: controller.signal });
       if (tier && (result?.tier === "strong" || result?.tier === "default")) diagnostics.tierUsed = result.tier;
       // #299：服务商多久回了响应头（几批取最慢的），超时停在哪一步。旧桌面不给就不记。
       if (Number.isInteger(result?.firstByteMs) && result.firstByteMs >= 0) {
@@ -191,7 +191,7 @@ async function legacyHandleAiFill(message, controller = new AbortController()) {
       }
       if (controller.signal.aborted) break;
       try {
-        aiMatches.push(...ResumeProAIHelpers.filterValidMatches(batch.fields, normalizeLegacyMatches(parseJsonContent(result.text))));
+        aiMatches.push(...ResumeProAIHelpers.filterValidMatches(batch.fields, normalizeValueMatches(parseJsonContent(result.text))));
       } catch {
         if (SKIP_CODES.has(diagnostics.errorCode)) diagnostics.errorCode = "bad_response";
         warnings.push(aiFailureMessage({ reason: "bad_response" }));
@@ -216,7 +216,7 @@ async function legacyHandleAiFill(message, controller = new AbortController()) {
     ...(openView ? { openView } : {}) };
 }
 
-function buildLegacyUserPrompt(formFields, resumeFields) {
+function buildValuesUserPrompt(formFields, resumeFields) {
   return [
     "表单字段列表：",
     JSON.stringify(formFields),
@@ -228,7 +228,7 @@ function buildLegacyUserPrompt(formFields, resumeFields) {
   ].join("\n");
 }
 
-function normalizeLegacyMatches(payload) {
+function normalizeValueMatches(payload) {
   const source = Array.isArray(payload) ? payload : payload?.matches;
 
   if (!Array.isArray(source)) {
@@ -252,5 +252,3 @@ function normalizeLegacyMatches(payload) {
     })
     .filter(Boolean);
 }
-
-handleAiFill = legacyHandleAiFill;

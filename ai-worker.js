@@ -1,4 +1,5 @@
-importScripts("feedback-core.js", "ai-helpers.js", "profile-fields.js", "region-data.js", "resume-utils.js", "form-agent.js", "deep-analysis.js");
+importScripts("feedback-core.js", "ai-helpers.js", "profile-fields.js", "region-data.js", "resume-utils.js", "form-agent.js", "deep-analysis.js",
+  "ai-worker-values.js");
 // Uncaught worker errors are reported by ai-host worker.onerror, which also fails
 // pending calls. Here report only rejections, avoiding two reports for one crash.
 self.ResumeProFeedback?.install(report => self.postMessage({ kind: "feedback-error", report }), { captureErrors: false, origin: self.location.href.slice(0, self.location.href.lastIndexOf("/") + 1) });
@@ -346,6 +347,9 @@ async function handleAnalyzePage(message, controller) {
 }
 
 async function handleAiFill(message, controller = new AbortController()) {
+  // 插件状态页打开了「AI 填写时发送资料原文」：资料连值一起发（ai-worker-values.js）。只认 true 本身，
+  // 别的（没带、false、"true"）都按默认的只发编号、分组和字段名。
+  if (message?.sendValues === true) return handleValuesFill(message, controller);
   // #223: a caller may ask for a tier (the strong model for a re-match). Without one the
   // request stays exactly what every desktop understands.
   const tier = message.tier === "strong" || message.tier === "default" ? message.tier : undefined;

@@ -42,6 +42,18 @@
         <p id="desktop-result" class="result" role="status" aria-live="polite" hidden></p>
       </section>
 
+      <section class="card" id="send-values" aria-labelledby="send-values-title">
+        <div class="card-head card-head--split">
+          <span class="card-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M4 12 20 4l-4 16-4-6-8-2Z"/><path d="m12 14 8-10"/></svg></span>
+          <div class="card-heading">
+            <h2 id="send-values-title">AI 填写时发送资料原文</h2>
+            <p class="card-sub">默认关闭</p>
+          </div>
+          <label class="feedback-switch"><input type="checkbox" id="send-values-toggle" disabled>发送资料原文</label>
+        </div>
+        <p class="info-box">关闭时，AI 只收到网页上的题目和你资料的字段名，资料内容留在本机，由插件按 AI 选的字段填进去。打开后，一键填写时会把资料原文一起发给你在桌面配置的模型服务商，更容易填上；像密码、验证码的字段照旧不发。</p>
+        <p id="send-values-result" class="result" role="status" aria-live="polite" hidden></p>
+      </section>
       <section class="card" id="migration" aria-labelledby="migration-title" hidden>
         <div class="card-head card-head--split">
           <span class="card-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M4 12h12"/><path d="m12 6 6 6-6 6"/><path d="M20 4v16"/></svg></span>
