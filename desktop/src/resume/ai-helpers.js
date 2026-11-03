@@ -210,6 +210,7 @@
     valueShape,
     datePart,
     catalogKeys,
+    maskResumeValues,
     looseText
   };
 
@@ -1113,23 +1114,28 @@
       }
       return key;
     });
-    return maskValues(renamed, resumeFields, forms, labels);
+    return maskResumeValues(renamed, resumeFields, { labels: renamed, groups: resumeFields.map((field) => field?.group) });
   }
 
-  // 改完名以后，不管哪个分组，字段名里还带着某项资料的值（「虚构城户口信息-类型」里的「虚构城」是现居城市的值），
-  // 那一段换成占位「〔现居城市〕」：占位是给出这个值的那项资料改完名的字段名；那个字段名自己也带着值或超过 20 个字时用「〔资料值〕」。
-  // 值按 looseText 比，归一后至少 2 个字，只有数字的至少 5 位（年份、名次、年龄在题目原文里常见，不算资料值）；
-  // 以字母、数字开头或结尾的值，在字段名里前后不能紧挨着字母、数字（「CS」不算「physics」里的）。
-  // 值也出现在它自己改完名的字段名里的（「父亲关系」是「父亲」，「健康状况」是「健康」，「是否愿意接受轮岗」是「愿意」）是题目里的词，
-  // 哪个字段名里都不换；是否类的回答（接受、不愿意、服从、不限）也一样。几项资料的值都对得上时先换最长的；同样长的先认同一分组的那项。
-  // 开头的「实习经历1」是这里起的名，不在里面找。
-  const ANSWER_WORDS = /^(?:不?(?:接受|愿意|同意|服从|可以|需要|方便)|暂无|没有|不限|均可|都可以)$/;
-  function maskValues(keys, resumeFields, forms, labels) {
-    const texts = forms.map((form) => [...new Set([form.id, ...form.texts])]
-      .filter((text) => text.length >= 2 && (!/^\d+$/.test(text) || text.length >= 5) && !ANSWER_WORDS.test(text)));
-    const words = new Set(texts.flatMap((list, owner) => list.filter((text) => looseText(keys[owner]).includes(text))));
-    const values = texts.flatMap((list, owner) => list.filter((text) => !words.has(text))
-      .map((text) => ({ text, owner, group: resumeFields[owner]?.group })));
+  // 学校、公司、城市、地址、人名、证件、联系方式这类字段（按字段名认）：值再短也能认出人。
+  const IDENTIFYING_KEY = /姓名|名字|学校|院校|大学|学院|公司|单位|企业|雇主|城市|省份|地区|所在地|居住|籍贯|户籍|户口所在|生源地|地址|住址|证件|身份证|护照|手机|电话|邮箱|微信|qq|联系方式|联系人(?!.*关系)|\b(?:name|school|university|college|company|employer|city|address|phone|mobile|email|wechat)\b/i;
+  const PLACEHOLDER_LIMIT = 20;
+  // #429 第 11 项：发给 AI 的目录文字（字段名、分组名）里能认出人的资料值，一律换成占位「〔那项资料的字段名〕」；
+  // 那项资料的字段名自己带着资料值或超过 20 个字时用「〔资料值〕」。不按字段豁免，同样的字在哪段文字里都换。
+  // 能认出人的值：带数字的、归一后 4 个字及以上的，或学校、公司、城市、地址、人名、证件、联系方式这类字段的值（IDENTIFYING_KEY）。
+  // 别的是短常用词（是、否、男、本科、汉族、父亲、服从），留在题目里，「是否服从调剂」「父亲姓名」不会被弄坏。
+  // 值按 looseText 比，至少 2 个字；只有数字、不到 5 位的（年龄、名次、年份）不算更长一串数字里的一段（「22」不算「2022届」里的）。
+  // 几项资料的值都对得上时先换最长的；同样长的先认同一分组的那项（groups[i] 是第 i 段文字所在的分组）。
+  // 开头的「实习经历1」是这里起的名，不在里面找。labels[i] 是第 i 项资料在目录里的字段名，做占位用。
+  function maskResumeValues(texts, resumeFields, { labels = [], groups = [] } = {}) {
+    const generated = new RegExp(`^(?:${[...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))].join("|")})\\d+`);
+    const values = resumeFields.flatMap((field, owner) => {
+      const value = String(field?.value ?? "");
+      const named = IDENTIFYING_KEY.test(String(field?.key ?? ""));
+      return [...new Set([looseText(value), looseText(sanitizeAnchor(value)), looseText(value.replace(/\s+/g, " ").trim().slice(0, 80))])]
+        .filter((text) => text.length >= 2 && (named || /\d/.test(text) || text.length >= 4))
+        .map((text) => ({ text, owner, group: field?.group, number: /^\d{2,4}$/.test(text) }));
+    });
     const byGroup = new Map();
     const rankedFor = (group) => {
       if (!byGroup.has(group)) {
@@ -1137,35 +1143,46 @@
       }
       return byGroup.get(group);
     };
-    const generated = new RegExp(`^(?:${labels.join("|")})\\d+`);
-    const wordy = (char) => /^[a-z0-9]/.test(looseText(char ?? ""));
-    const found = keys.map((key, at) => {
-      const from = generated.exec(key)?.[0].length || 0;
+    const hitsIn = (text, group) => {
+      const from = generated.exec(text)?.[0].length || 0;
       const chars = [];
       let loose = "";
       let offset = 0;
-      for (const char of key) {
+      for (const char of text) {
         const part = looseText(char);
         for (let i = 0; i < part.length; i += 1) chars.push([offset, offset + char.length]);
         loose += part;
         offset += char.length;
       }
       const taken = [];
-      for (const { text, owner } of rankedFor(resumeFields[at]?.group)) {
-        for (let hit = loose.indexOf(text); hit >= 0; hit = loose.indexOf(text, hit + 1)) {
+      for (const { text: value, owner, number } of rankedFor(group)) {
+        for (let hit = loose.indexOf(value); hit >= 0; hit = loose.indexOf(value, hit + 1)) {
           const start = chars[hit][0];
-          const end = chars[hit + text.length - 1][1];
+          const end = chars[hit + value.length - 1][1];
           if (start < from || taken.some((span) => start < span.end && span.start < end)) continue;
-          if ((/^[a-z0-9]/.test(text) && wordy(key[start - 1])) || (/[a-z0-9]$/.test(text) && wordy(key[end]))) continue;
+          if (number && /\d/.test((loose[hit - 1] ?? "") + (loose[hit + value.length] ?? ""))) continue;
           taken.push({ start, end, owner });
         }
       }
       return taken.sort((a, b) => b.start - a.start);
+    };
+    const names = new Map();
+    const nameOf = (owner) => {
+      if (!names.has(owner)) {
+        const label = String(labels[owner] ?? "");
+        const clean = label && label.length <= PLACEHOLDER_LIMIT && !label.includes("〔") && !hitsIn(label, resumeFields[owner]?.group).length;
+        names.set(owner, clean ? label : "资料值");
+      }
+      return names.get(owner);
+    };
+    const done = new Map();
+    return texts.map((text, at) => {
+      const slot = JSON.stringify([String(text ?? ""), groups[at] ?? null]);
+      if (!done.has(slot)) {
+        done.set(slot, hitsIn(String(text ?? ""), groups[at])
+          .reduce((out, { start, end, owner }) => `${out.slice(0, start)}〔${nameOf(owner)}〕${out.slice(end)}`, String(text ?? "")));
+      }
+      return done.get(slot);
     });
-    return keys.map((key, at) => found[at].reduce((text, { start, end, owner }) => {
-      const label = keys[owner];
-      const name = found[owner].length || label.length > 20 ? "资料值" : label;
-      return `${text.slice(0, start)}〔${name}〕${text.slice(end)}`;
-    }, key));
   }
 })(typeof self !== "undefined" ? self : globalThis);

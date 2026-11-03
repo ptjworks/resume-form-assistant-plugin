@@ -492,30 +492,39 @@ function buildUserPrompt(formFields, entries, partial = false) {
 }
 
 // 「我的信息」预置字段的别的叫法（「现居住地」也叫「通讯地址」）：AI 看不到值，靠它认出换了说法的题。
-// 按 PROFILE_SCHEMA 这个数组建一次；换了一份（重新加载了 profile-fields.js）就重建，不留着旧的。
-let profileAliases = null;
-let aliasSchema = null;
-function aliasesOf(key) {
+// 每次建目录时按 PROFILE_SCHEMA 的内容（字段名、标签、别的叫法）算一个指纹，变了就重建：换了一份、原地改了都认得出。
+let profileAliases = new Map();
+let aliasPrint = null;
+function refreshAliases() {
   const schema = ResumeProProfile.PROFILE_SCHEMA || [];
-  if (schema !== aliasSchema) {
-    aliasSchema = schema;
-    profileAliases = new Map();
-    for (const group of schema) {
-      for (const field of group.fields || []) {
-        const names = [field.label, ...(field.aliases || [])].filter(name => name && name !== field.key);
-        if (names.length) profileAliases.set(field.key, names);
-      }
+  const print = JSON.stringify(schema.map(group => (group.fields || []).map(field => [field.key, field.label, field.aliases || []])));
+  if (print === aliasPrint) return;
+  aliasPrint = print;
+  profileAliases = new Map();
+  for (const group of schema) {
+    for (const field of group.fields || []) {
+      const names = [field.label, ...(field.aliases || [])].filter(name => name && name !== field.key);
+      if (names.length) profileAliases.set(field.key, names);
     }
   }
+}
+function aliasesOf(key) {
   return profileAliases.get(key);
 }
 
 // 资料目录：编号、分组、字段名、别的叫法和值的形态。值留在 values 里，只在本地按编号取。空值的资料不进目录。
+// 字段名改名、遮值（catalogKeys）、截短以后，要发出去的字段名和分组名再统一查一遍资料值（maskResumeValues）：
+// 截短、加序号以后也不会带出值；分组名可能是用户自己起的（公司名），也一样换成占位。
 function buildCatalog(resumeFields) {
   const helpers = ResumeProAIHelpers;
+  refreshAliases();
   const filled = resumeFields.filter(field => String(field?.value ?? "").trim());
   const keys = helpers.catalogKeys(filled);
-  const shortKeys = distinctKeys(keys, filled.map(field => String(field.group ?? "")));
+  const rawGroups = filled.map(field => String(field.group ?? ""));
+  const masked = helpers.maskResumeValues([...distinctKeys(keys, rawGroups), ...rawGroups], filled,
+    { labels: keys, groups: [...rawGroups, ...rawGroups] });
+  const shortKeys = masked.slice(0, filled.length);
+  const groupNames = masked.slice(filled.length);
   const latest = latestSpans(filled);
   const values = new Map();
   const items = new Map();
@@ -526,7 +535,7 @@ function buildCatalog(resumeFields) {
     const aka = aliasesOf(field.key);
     const shape = helpers.valueShape(field.value);
     const mark = latest.has(index) ? `${shape}，本组最近一段` : shape;
-    return { ref, group: String(field.group ?? ""), key: shortKeys[index], ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}) };
+    return { ref, group: groupNames[index], key: shortKeys[index], ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}) };
   });
   return { entries, values, items };
 }
@@ -666,25 +675,34 @@ function refMatches(payload, fields, catalog, allowed) {
       return [date ? { fieldId: field.fieldId, value: date } : { fieldId: field.fieldId, value: "", blocked: "invalid_date" }];
     }
     // 级联、联动下拉要靠地区数据截地址；worker 没加载到它时不交整段地址，报原因。
+    // 截完只剩省一级的级联（region_too_coarse）、资料里没有这一级的联动下拉（region_level_missing）也不交给控件，报原因。
     const region = field.cascadeGroup !== undefined || field.cascade === true;
     if (region && !globalThis.ResumeProRegions?.resolve) return [{ fieldId: field.fieldId, value: "", blocked: "region_unavailable" }];
-    const value = field.cascadeGroup !== undefined ? levelRegion(field, joined) : field.cascade === true ? regionPrefix(joined)
-      : ResumeProAIHelpers.choiceValue(field, joined);
+    if (field.cascadeGroup !== undefined) {
+      const value = levelRegion(field, joined);
+      return [value ? { fieldId: field.fieldId, value } : { fieldId: field.fieldId, value: "", blocked: "region_level_missing" }];
+    }
+    if (field.cascade === true) {
+      const { value, coarse } = regionPrefix(joined);
+      return [coarse ? { fieldId: field.fieldId, value: "", blocked: "region_too_coarse" } : { fieldId: field.fieldId, value }];
+    }
+    const value = ResumeProAIHelpers.choiceValue(field, joined);
     return value ? [{ fieldId: field.fieldId, value }] : [];
   });
 }
 
-// 目录太大、同一题分几批问时，几批给的值不一样（同一批里给了两个不同的值也算）：这一题不填，报原因。
+// 目录太大、同一题分几批问时，几批给的不一样（同一批里给了两个不同的值也算）：这一题不填，报原因。
+// 其中有拦下的（日期不对、资料项太多、地区这类）报第一个拦下的原因；都是填得进的值、只是不一样时报 ai_conflict。
 function settleAnswers(matches) {
-  const settled = new Map();
+  const byField = new Map();
   for (const match of matches) {
-    const seen = settled.get(match.fieldId);
-    if (!seen) settled.set(match.fieldId, match);
-    else if (seen.value !== match.value || seen.blocked !== match.blocked) {
-      settled.set(match.fieldId, { fieldId: match.fieldId, value: "", blocked: "ai_conflict" });
-    }
+    if (!byField.has(match.fieldId)) byField.set(match.fieldId, []);
+    byField.get(match.fieldId).push(match);
   }
-  return [...settled.values()];
+  return [...byField.entries()].map(([fieldId, list]) => {
+    if (list.every(match => match.value === list[0].value && match.blocked === list[0].blocked)) return list[0];
+    return list.find(match => match.blocked) || { fieldId, value: "", blocked: "ai_conflict" };
+  });
 }
 
 // 多行文本框（长回答）和问动机、打算、优缺点、看法的单行题，资料项要和题目说的是同一件事：字段名、分组、别的叫法和题目、
@@ -748,30 +766,33 @@ function pickerDate(field, value) {
 // 级联题和联动下拉的各级拿到一整段地址（「广东省深圳市南山区科苑路 8 号」）时，只留前面认得出的地区（至少到市）：
 // 街道门牌级联里选不了，联动下拉按「包含」选时也少一些误选。用「/」分开的逐段核对，只留前面认得出的几段
 // （「广东省/深圳市/南山区/科苑路8号」→「广东省/深圳市/南山区」）；一段都认不出的（专业类别这类级联）原样给。
+// 按「/」截完只剩省一级的（「广东省/科苑路8号」）标 coarse：级联要选到市以下，只交省等于没填对。
 function regionPrefix(value) {
   const regions = globalThis.ResumeProRegions;
   const text = String(value).trim();
-  if (!regions?.resolve || regions.resolve(text)) return text;
+  if (!regions?.resolve || regions.resolve(text)) return { value: text, coarse: false };
   if (text.includes("/")) {
     const segments = text.split(/\s*\/\s*/);
     for (let count = segments.length - 1; count >= 1; count -= 1) {
       const head = segments.slice(0, count).join("/");
-      if (regions.resolve(head)) return head;
+      const found = regions.resolve(head);
+      if (found) return { value: head, coarse: found.path.filter(part => !part.placeholder).length < 2 };
     }
-    return text;
+    return { value: text, coarse: false };
   }
   for (let end = Math.min(text.length - 1, 40); end >= 4; end -= 1) {
     const head = text.slice(0, end);
-    if (regions.resolve(head)?.path.filter(part => !part.placeholder).length >= 2) return head;
+    if (regions.resolve(head)?.path.filter(part => !part.placeholder).length >= 2) return { value: head, coarse: false };
   }
-  return text;
+  return { value: text, coarse: false };
 }
 
 // 联动下拉的一级只要这一级的地名（省、市或区县）：题目里只写了一级的按题目，没写或写了几级的按 cascadeLevel。
-// 认不出是地区的照旧给整段（学院、专业这类联动下拉）；直辖市占位的那一级给整段，页面按「包含」选；值里没有这一级的不填。
+// 认不出是地区的照旧给整段（学院、专业这类联动下拉）；直辖市占位的那一级给整段，页面按「包含」选；
+// 值里没有这一级的给空串，refMatches 报 region_level_missing。
 const LEVEL_WORDS = [[0, /省|自治区|province/i], [1, /市|city/i], [2, /县|区|county|district/i]];
 function levelRegion(field, value) {
-  const head = regionPrefix(value);
+  const head = regionPrefix(value).value;
   const path = globalThis.ResumeProRegions?.resolve?.(head)?.path;
   if (!path) return head;
   const own = [field.label, field.placeholder, field.name, field.idAttr, field.ariaLabel].filter(Boolean).join(" ")

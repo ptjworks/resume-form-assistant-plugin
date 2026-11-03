@@ -583,21 +583,58 @@ test("outside experience groups another field's value in a key becomes a placeho
   assert.ok(!/虚构城|虚构奖学金/.test(env.calls[0].user));
 });
 
-test("words a question echoes, short numbers and letters inside a word are not taken for resume values", () => {
+test("short common words stay in the questions; a value with digits, of four or more characters or of a name, school or city is masked", () => {
   const keys = helpers.catalogKeys([
     { group: "家庭主要成员", key: "父亲关系", value: "父亲" }, { group: "家庭主要成员", key: "父亲姓名", value: "欧阳虚父" },
     { group: "基本信息", key: "健康状况", value: "健康" }, { group: "本网站回答", key: "是否愿意接受轮岗", value: "愿意" },
-    { group: "教育经历", key: "毕业年份", value: "2023" }, { group: "本网站回答", key: "2023届校招意向城市", value: "虚构城" },
+    { group: "本网站回答", key: "调剂意向", value: "服从" }, { group: "本网站回答", key: "是否服从分配", value: "是" },
     { group: "教育经历", key: "专业简称", value: "CS" }, { group: "补充字段", key: "physics 成绩", value: "优" },
+    { group: "教育经历", key: "毕业年份", value: "2023" }, { group: "本网站回答", key: "2023届校招意向城市", value: "虚构城" },
+    { group: "基本信息", key: "年龄", value: "22" }, { group: "本网站回答", key: "2022届生源地", value: "无" },
     { group: "基本信息", key: "姓名", value: "欧阳虚构" }, { group: "本网站回答", key: "欧阳虚构的推荐人（姓名）", value: "无" },
     { group: "本网站回答", key: "请写下你最想去的城市以及原因，越详细越好，至少写二十个字", value: "虚构港" },
     { group: "本网站回答", key: "虚构港附近的网点", value: "无" },
-    { group: "本网站回答", key: "调剂意向", value: "服从" }, { group: "本网站回答", key: "是否服从分配", value: "是" }
+    { group: "基本信息", key: "现居城市", value: "深城" }, { group: "本网站回答", key: "深城户口", value: "否" }
   ]);
-  assert.deepEqual(keys.slice(0, 8), ["父亲关系", "父亲姓名", "健康状况", "是否愿意接受轮岗", "毕业年份", "2023届校招意向城市", "专业简称", "physics 成绩"]);
-  assert.equal(keys[9], "〔姓名〕的推荐人（姓名）");
-  assert.equal(keys[11], "〔资料值〕附近的网点", "a long owner name is not used as the placeholder");
-  assert.equal(keys[13], "是否服从分配", "a yes-or-no answer is a word of the question");
+  // 短常用词（父亲、健康、愿意、服从、CS）留在题目里。
+  assert.deepEqual(keys.slice(0, 8), ["父亲关系", "父亲姓名", "健康状况", "是否愿意接受轮岗", "调剂意向", "是否服从分配", "专业简称", "physics 成绩"]);
+  // 带数字的要换；不到 5 位的数字不算更长一串数字里的一段。
+  assert.equal(keys[9], "〔毕业年份〕届校招意向城市");
+  assert.equal(keys[11], "2022届生源地");
+  // 人名、城市再短也换；给出值的那项字段名太长时用「资料值」。
+  assert.equal(keys[13], "〔姓名〕的推荐人（姓名）");
+  assert.equal(keys[15], "〔资料值〕附近的网点", "a long owner name is not used as the placeholder");
+  assert.equal(keys[17], "〔现居城市〕户口");
+});
+
+test("the catalog sent out has no identifying value in any key or group name, wherever it sits", async () => {
+  const resume = [
+    // 两项资料是同样的字，一项写在自己的字段名里：那一处和别处都换。
+    { group: "补充字段", key: "现居城市（虚构港）", value: "虚构港" }, { group: "本网站回答", key: "期望城市", value: "虚构港" },
+    { group: "本网站回答", key: "在虚构港的住处", value: "租房" },
+    // 用户自己起的分组名是公司名。
+    { group: "工作经历", key: "工作经历1-公司", value: "虚构星辰科技" }, { group: "虚构星辰科技", key: "职位", value: "管培岗位" },
+    // 短英文值紧挨着字母、数字。
+    { group: "实习经历", key: "实习经历1-公司", value: "IBM" }, { group: "本网站回答", key: "IBMer推荐码2024", value: "暂未获得" }
+  ];
+  const env = worker();
+  await env.run({ formFields: [{ fieldId: "city", label: "期望城市" }], resumeFields: resume });
+  const catalog = catalogOf(env.calls[0].user);
+  assert.ok(!/虚构港|虚构星辰科技|IBM/i.test(JSON.stringify(catalog)), JSON.stringify(catalog));
+  const key = (at) => catalog[at].key;
+  assert.deepEqual([key(0), key(2), key(6)], ["现居城市（〔资料值〕）", "在〔期望城市〕的住处", "〔实习经历1-公司〕er推荐码2024"]);
+  assert.equal(catalog[4].group, "〔工作经历1-公司〕");
+});
+
+test("no value of the eval resume is in its catalog but a few short common words", async () => {
+  const { loadCorpus } = await import(pathToFileURL(path.join(__dirname, "..", "scripts", "eval-fill.mjs")).href);
+  const corpus = loadCorpus();
+  const env = worker();
+  await env.run({ formFields: [{ fieldId: "intro", label: "自我评价", tagName: "textarea", inputType: "textarea" }], resumeFields: corpus.resumeFields });
+  const text = JSON.stringify(catalogOf(env.calls[0].user));
+  const values = [...new Set(corpus.resumeFields.map((field) => String(field.value ?? "").trim()).filter(Boolean))];
+  const left = values.filter((value) => text.includes(value)).sort();
+  assert.deepEqual(left, ["健康", "否", "是", "愿意", "母亲", "父亲"].sort());
 });
 
 test("an edited school name written two ways in two keys of one entry still gets one number", async () => {
@@ -637,10 +674,13 @@ test("the catalog names the latest of several spans in a group and the other nam
   assert.equal(entry("实习经历1-时间").shape, "起止日期");
   assert.equal(entry("教育经历1-时间").shape, "起止日期", "a single span is not marked");
   assert.deepEqual(entry("现居住地").aka, ["现住址", "居住地址", "通讯地址"]);
-  // 别的叫法按这一份 PROFILE_SCHEMA 建：换了一份就按新的给，不留旧的。
+  // 别的叫法按 PROFILE_SCHEMA 的内容建：换了一份、原地改了，都按新的给，不留旧的。
   env.context.ResumeProProfile = { ...env.context.ResumeProProfile, PROFILE_SCHEMA: [{ fields: [{ key: "现居住地", label: "常住地址" }] }] };
   await env.run({ formFields: [{ fieldId: "home", label: "常住地址" }], resumeFields: [{ group: "户籍与地区", key: "现居住地", value: "虚构省虚构市" }] });
   assert.deepEqual(catalogOf(env.calls[1].user).find((item) => item.key === "现居住地").aka, ["常住地址"]);
+  env.context.ResumeProProfile.PROFILE_SCHEMA[0].fields[0].aliases = ["暂住地址"];
+  await env.run({ formFields: [{ fieldId: "home", label: "暂住地址" }], resumeFields: [{ group: "户籍与地区", key: "现居住地", value: "虚构省虚构市" }] });
+  assert.deepEqual(catalogOf(env.calls[2].user).find((item) => item.key === "现居住地").aka, ["常住地址", "暂住地址"]);
 });
 
 test("a cascade without the region data in the worker reports it instead of taking a whole address", async () => {
@@ -661,6 +701,29 @@ test("a path split by slashes keeps only the places it can read, and other paths
   });
   assert.equal(valueOf(result, "city"), "广东省/深圳市/南山区");
   assert.equal(valueOf(result, "major"), "工学/计算机类/软件工程");
+});
+
+test("a slashed address left with only its province goes to no cascade, and a level missing from it is reported", async () => {
+  const env = worker((message, catalog) => ["city", "province", "town"].map((fieldId) => ({ fieldId, ref: catalog[0].ref })));
+  const result = await env.run({
+    formFields: [{ fieldId: "city", label: "现居住城市", inputType: "select", cascade: true, options: [] },
+      { fieldId: "province", label: "现居住地", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 0, options: ["请选择", "广东省", "湖南省"] },
+      { fieldId: "town", label: "现居住地", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 1, options: ["请选择"] }],
+    resumeFields: [{ group: "户籍与地区", key: "现居住地", value: "广东省/科苑路8号" }]
+  });
+  const byId = Object.fromEntries(JSON.parse(JSON.stringify(result.matches)).map((match) => [match.fieldId, match]));
+  assert.deepEqual(byId.city, { fieldId: "city", value: "", blocked: "region_too_coarse" });
+  assert.equal(byId.province.value, "广东省", "a linked province select still takes the province");
+  assert.deepEqual(byId.town, { fieldId: "town", value: "", blocked: "region_level_missing" });
+});
+
+test("answers that disagree keep the first reason one of them was stopped for", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "start", ref: catalog[0].ref }, { fieldId: "start", ref: catalog[1].ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "start", label: "到岗日期", inputType: "date", options: [] }],
+    resumeFields: [{ group: "补充字段", key: "到岗时间", value: "2026.07.01" }, { group: "补充字段", key: "最早到岗", value: "随时" }]
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "start", value: "", blocked: "invalid_date" }]);
 });
 
 test("more items than a field can take are not filled and the reason is kept", async () => {
