@@ -1079,6 +1079,28 @@ fn save_profile_cmd(
     with_store(&state, move |store| resume_commands::save_profile(store, profile, revision))
 }
 
+/// #429：按网站记住的回答。插件在用户确认后写进来，这里只看和删。
+#[tauri::command]
+fn list_site_answers_cmd(state: State<AppState>) -> Result<Vec<archive_store::SiteAnswer>, CommandError> {
+    with_store(&state, |store| store.all_site_answers().map_err(CommandError::from))
+}
+
+/// 删一道题；不带 `question` 删掉这个网站的全部回答。返回删完后的全部列表。
+#[tauri::command]
+fn delete_site_answers_cmd(
+    state: State<AppState>,
+    site: String,
+    question: Option<String>,
+) -> Result<Vec<archive_store::SiteAnswer>, CommandError> {
+    with_store(&state, |store| {
+        match question {
+            Some(question) => store.delete_site_answer(&site, &question)?,
+            None => store.delete_site(&site)?,
+        };
+        store.all_site_answers().map_err(CommandError::from)
+    })
+}
+
 #[tauri::command]
 fn list_legacy_imports_cmd(state: State<AppState>) -> Result<Vec<archive_store::LegacyImportPending>, CommandError> {
     with_store(&state, |store| store.list_pending_legacy_imports().map_err(CommandError::from))
@@ -2025,6 +2047,7 @@ pub fn run() {
                     let legacy_handle = app.handle().clone();
                     let profile_handle = app.handle().clone();
                     let template_handle = app.handle().clone();
+                    let site_answers_handle = app.handle().clone();
                     let application = Arc::new(ipc_server::OpenArchive::with_services(
                         Arc::clone(&app.state::<AppState>().store), services,
                     ).notifying(Arc::new(move |notice| {
@@ -2043,6 +2066,9 @@ pub fn run() {
                         // 插件改了模板字段或切换了当前模板（#273）：模板列表重新读，打开着的
                         // 编辑器自己判断草稿要不要保护。
                         let _ = template_handle.emit("resume-template-changed", &notice);
+                    })).notifying_site_answers(Arc::new(move |notice| {
+                        // 插件记住了某个网站的回答（#429）：「我的信息」里的网站回答列表重新读。
+                        let _ = site_answers_handle.emit("site-answers-changed", &notice);
                     })));
                     match ipc_server::start(&host.paths().data_root, application) {
                         Ok(service) => {
@@ -2170,6 +2196,8 @@ pub fn run() {
             set_active_resume_template_cmd,
             get_profile_cmd,
             save_profile_cmd,
+            list_site_answers_cmd,
+            delete_site_answers_cmd,
             list_legacy_imports_cmd,
             legacy_import_preview_cmd,
             confirm_legacy_import_cmd,

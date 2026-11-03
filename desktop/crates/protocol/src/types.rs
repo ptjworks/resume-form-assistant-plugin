@@ -5,7 +5,7 @@ use crate::error::{ErrorCode, Layer, ProtocolError};
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const MIN_PROTOCOL_VERSION: u32 = 1;
-pub const MAX_PROTOCOL_VERSION: u32 = 4;
+pub const MAX_PROTOCOL_VERSION: u32 = 5;
 pub const MAX_ENVELOPE_BYTES: usize = 65536;
 pub const SUGGESTED_RAW_CHUNK_BYTES: usize = 32768;
 pub const MAX_SNAPSHOT_BYTES: usize = 2 * 1024 * 1024;
@@ -46,6 +46,10 @@ pub enum MessageType {
     LegacyImport,
     #[serde(rename = "mail.import")]
     MailImport,
+    #[serde(rename = "siteAnswers.read")]
+    SiteAnswersRead,
+    #[serde(rename = "siteAnswers.save")]
+    SiteAnswersSave,
 }
 
 impl MessageType {
@@ -65,6 +69,8 @@ impl MessageType {
             Self::UiOpen => "ui.open",
             Self::LegacyImport => "legacy.import",
             Self::MailImport => "mail.import",
+            Self::SiteAnswersRead => "siteAnswers.read",
+            Self::SiteAnswersSave => "siteAnswers.save",
             Self::UsageTouch => "usage.touch",
             Self::UsageSettings => "usage.settings",
         }
@@ -86,6 +92,8 @@ impl MessageType {
             "ui.open" => Ok(Self::UiOpen),
             "legacy.import" => Ok(Self::LegacyImport),
             "mail.import" => Ok(Self::MailImport),
+            "siteAnswers.read" => Ok(Self::SiteAnswersRead),
+            "siteAnswers.save" => Ok(Self::SiteAnswersSave),
             "usage.touch" => Ok(Self::UsageTouch),
             "usage.settings" => Ok(Self::UsageSettings),
             "SaveIntent" | "saveIntent" | "save.intent" => Err(ProtocolError::new(
@@ -122,6 +130,7 @@ impl MessageType {
 
     pub fn min_envelope_version(self) -> u32 {
         match self {
+            Self::SiteAnswersRead | Self::SiteAnswersSave => 5,
             Self::MailImport => 4,
             Self::UsageTouch | Self::UsageSettings => 3,
             Self::ResumeRead | Self::ResumeUpdate | Self::AiComplete | Self::UiOpen | Self::LegacyImport => 2,

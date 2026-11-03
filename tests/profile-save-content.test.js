@@ -31,18 +31,39 @@ function control(element, overrides = {}) {
 const TEMPLATE = { id: "t", name: "模板", groups: [{ name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }] }] };
 
 // 一个带桌面的页面：桌面档案和 revision 在 desktop 里，写入成功才落地；update 可以换成任意回复。
-function page({ profile = { values: {}, family: [], custom: [] }, update = null, desktopRead = null, matches = [], customControls } = {}) {
+// site：桌面里这个网站记住的回答（#429，{ answers }），null 是桌面不支持；siteSave 可以换掉桌面对保存的回复。
+// siteKey 是后台回的网站（按发消息时的页面地址算）；页面在 https://jobs.example.test/apply。
+// siteRead 可以换掉桌面对读取的回复（可以晚些回），不回就按 site 回。
+function page({ profile = { values: {}, family: [], custom: [] }, update = null, desktopRead = null, matches = [], customControls, site = null, siteSave = null, siteRead = null, siteKey = "jobs.example.test", location } = {}) {
   const late = lateScanner();
   const desktop = { profile, revision: 0 };
   const updates = [];
+  const siteSaves = [];
   let reads = 0;
   let ctx;
   const persist = () => ctx.helpers.setCurrentStore({ templates: [TEMPLATE], activeTemplateId: "t", profile: desktop.profile, profileRevision: desktop.revision });
   ctx = loadHighlightHelpers({
-    formElements: [], fieldScan: late.proxy, customControls,
+    formElements: [], fieldScan: late.proxy, customControls, location,
     desktopRead: desktopRead && (() => desktopRead(desktop)) || (() => { reads += 1; return { status: "ok", data: {
       templates: [{ id: "t", name: "模板", fieldCount: 1 }], activeTemplate: TEMPLATE, profile: desktop.profile, profileRevision: desktop.revision } }; }),
     sendMessage: async (message) => {
+      const key = typeof siteKey === "function" ? siteKey() : siteKey;
+      if (message.type === "DESKTOP_SITE_ANSWERS_READ") {
+        const reply = siteRead ? await siteRead() : null;
+        if (reply) return reply;
+        return !site ? { status: "unsupported" } : !key ? { status: "no_site" } : { status: "ok", site: key, answers: plain(site.answers) };
+      }
+      if (message.type === "DESKTOP_SITE_ANSWERS_SAVE") {
+        // Like the service worker: the site the page reviewed must still be the page's site.
+        if (message.site !== key) return { status: "stale" };
+        siteSaves.push(plain(message));
+        const reply = siteSave ? await siteSave(message, site) : { status: "ok" };
+        if (reply.status !== "ok") return reply;
+        for (const answer of message.answers) {
+          site.answers = [...site.answers.filter((item) => item.key !== answer.key), { key: answer.key, value: answer.value }];
+        }
+        return { status: "ok", site: "jobs.example.test", answers: plain(site.answers) };
+      }
       if (message.type !== "DESKTOP_RESUME_UPDATE") return { success: true, matches };
       updates.push(plain(message));
       const reply = update ? await update(message, desktop) : { status: "ok" };
@@ -53,7 +74,7 @@ function page({ profile = { values: {}, family: [], custom: [] }, update = null,
   persist();
   const ui = shadow();
   ctx.helpers.setShadowRoot(ui.root);
-  return { ctx, late, desktop, updates, ui, reads: () => reads, persist,
+  return { ctx, late, desktop, updates, siteSaves, ui, reads: () => reads, persist,
     snapshot: () => plain(ctx.helpers.panelProfileSnapshot()),
     scan(controls, stale = new Set()) {
       late.holder.current = { ...fakeFieldScan(),
@@ -63,7 +84,7 @@ function page({ profile = { values: {}, family: [], custom: [] }, update = null,
     fill: () => ctx.helpers.handleAiFillClick({ currentTarget: { disabled: false, textContent: "" } }),
     save: (selected, extra = {}) => {
       const offer = ctx.helpers.panelProfileSnapshot();
-      const shown = new Map([...(offer?.filled || []), ...(offer?.pending || []), ...(offer?.conflicts || [])]
+      const shown = new Map([...(offer?.filled || []), ...(offer?.pending || []), ...(offer?.conflicts || []), ...(offer?.site || [])]
         .map((item) => [item.id, item.value ?? ""]));
       return ctx.helpers.addUnansweredToProfile({
         selected: selected.map((item) => ({ ...item, reviewedValue: item.reviewedValue ?? shown.get(item.id) ?? "" })),
@@ -455,4 +476,229 @@ test("a new fill replaces the previous offer and its result", async () => {
   assert.equal(next.result, null);
   assert.ok(next.version > firstVersion, "a save request made for the old offer would now be refused");
   assert.deepEqual(next.filled.map((item) => item.key), ["特长"]);
+});
+
+// #429 第五项第 2 点：问到对方公司的题，回答按网站存。补充字段和网站回答在同一张卡片里勾选，一次保存，分开写桌面。
+const siteItem = (key, extra = {}) => ({ id: `site:${key}`, key, kind: "site", ...extra });
+
+test("a company question is offered for this site only and saved there; the other answers still go to 我的信息", async () => {
+  const p = page({ site: { answers: [] } });
+  const [relative, hobby] = Array.from({ length: 2 }, () => new p.ctx.HTMLInputElement());
+  relative.value = "否";
+  hobby.value = "摄影";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" }),
+    control(hobby, { label: "兴趣爱好", offerLabel: "兴趣爱好" })]);
+  await p.fill();
+
+  const offer = p.snapshot();
+  assert.equal(offer.siteName, "jobs.example.test");
+  assert.deepEqual(offer.site, [{ id: "site:是否有亲属在本公司工作", key: "是否有亲属在本公司工作", value: "否", existing: "", defaultSelected: true }]);
+  assert.deepEqual(offer.filled.map((item) => item.key), ["兴趣爱好"]);
+  assert.match(offer.summary, /1 项只在这个网站使用/);
+
+  const reply = await p.save([filled("兴趣爱好"), siteItem("是否有亲属在本公司工作")], { version: p.ctx.helpers.getProfileOfferVersion() });
+  assert.equal(reply.ok, true);
+  assert.deepEqual(p.desktop.profile.custom, [{ key: "兴趣爱好", value: "摄影" }], "the company question is not a custom field");
+  assert.deepEqual(p.siteSaves.map((message) => message.answers), [[{ key: "是否有亲属在本公司工作", value: "否" }]]);
+  assert.equal(reply.profileOffer.result.text, "已保存 2 项，下次填写可用。");
+  assert.deepEqual(plain(reply.profileOffer.result.savedItems).map((item) => item.kind), ["filled", "site"]);
+  assert.deepEqual(reply.profileOffer.site, [], "saved answers are no longer offered");
+});
+
+test("a desktop without site answers keeps the old offer: the company question is a custom field, not ticked", async () => {
+  const p = page();
+  const relative = new p.ctx.HTMLInputElement();
+  relative.value = "否";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  const offer = p.snapshot();
+  assert.deepEqual(offer.site, []);
+  assert.deepEqual(offer.filled.map((item) => [item.key, item.defaultSelected]), [["是否有亲属在本公司工作", false]]);
+});
+
+test("a different answer this site already has is replaced only when asked; a changed one on the desktop is retried, then reported", async () => {
+  const site = { answers: [{ key: "是否有亲属在本公司工作", value: "否" }] };
+  let refusals = 0;
+  const p = page({ site, siteSave: async () => (refusals > 0 ? (refusals -= 1, { status: "conflict" }) : { status: "ok" }) });
+  const relative = new p.ctx.HTMLInputElement();
+  relative.value = "是";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  const offer = p.snapshot();
+  assert.deepEqual(offer.site.map((item) => [item.value, item.existing, item.defaultSelected]), [["是", "否", false]]);
+
+  // 没勾「替换」：什么都不写。
+  let reply = await p.save([siteItem("是否有亲属在本公司工作")]);
+  assert.equal(reply.ok, false);
+  assert.equal(p.siteSaves.length, 0);
+  assert.match(reply.profileOffer.result.details.join(" "), /需要勾选「替换」/);
+
+  // 桌面两次都说刚改过：重读一次再试，还是不行就照实说，候选还在。
+  refusals = 2;
+  reply = await p.save([siteItem("是否有亲属在本公司工作", { replaceOf: "否" })]);
+  assert.equal(reply.ok, false);
+  assert.equal(p.siteSaves.length, 2);
+  assert.match(reply.profileOffer.result.text, /网站回答这次没有保存/);
+  assert.equal(reply.profileOffer.site.length, 1);
+
+  // 替换成功，带着用户看到的旧回答。
+  reply = await p.save([siteItem("是否有亲属在本公司工作", { replaceOf: "否" })]);
+  assert.equal(reply.ok, true);
+  assert.deepEqual(p.siteSaves.at(-1).answers, [{ key: "是否有亲属在本公司工作", value: "是", previous: "否" }]);
+  assert.deepEqual(site.answers, [{ key: "是否有亲属在本公司工作", value: "是" }]);
+});
+
+test("when the site answers fail but 我的信息 is saved, the result says both", async () => {
+  const p = page({ site: { answers: [] }, siteSave: async () => ({ status: "unavailable" }) });
+  const [relative, hobby] = Array.from({ length: 2 }, () => new p.ctx.HTMLInputElement());
+  relative.value = "否";
+  hobby.value = "摄影";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" }),
+    control(hobby, { label: "兴趣爱好", offerLabel: "兴趣爱好" })]);
+  await p.fill();
+  const reply = await p.save([filled("兴趣爱好"), siteItem("是否有亲属在本公司工作")]);
+  assert.equal(reply.ok, true);
+  const result = reply.profileOffer.result;
+  assert.equal(result.kind, "partial");
+  assert.equal(result.saved, 1);
+  assert.match(result.details[0], /网站回答没有保存/);
+  assert.deepEqual(p.desktop.profile.custom, [{ key: "兴趣爱好", value: "摄影" }]);
+  assert.equal(reply.profileOffer.site.length, 1, "the unsaved site answer is still offered");
+
+  // 两边都没存成（兴趣爱好桌面里已经有了，网站回答还是存不进去）：两边的原因都说出来。
+  const neither = await p.save([{ ...filled("兴趣爱好"), reviewedValue: "摄影" }, siteItem("是否有亲属在本公司工作")]);
+  assert.equal(neither.ok, false);
+  assert.equal(neither.profileOffer.result.kind, "error");
+  assert.match(neither.profileOffer.result.text, /网站回答没有保存/);
+  assert.match(neither.profileOffer.result.details.join(" "), /「兴趣爱好」桌面里已经有相同内容/);
+});
+
+test("a company question still empty after the fill keeps the offer waiting; once answered on the page it is offered for this site", async () => {
+  const p = page({ site: { answers: [] } });
+  const relative = new p.ctx.HTMLInputElement();
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  assert.equal(p.snapshot(), null, "nothing to save yet");
+  assert.equal(p.ui.parts["#resume-pro-profile-offer"].hidden, true, "the in-page card stays hidden too");
+  relative.value = "否";
+  const offer = p.snapshot();
+  assert.deepEqual(offer.site.map((item) => [item.key, item.value, item.defaultSelected]), [["是否有亲属在本公司工作", "否", true]]);
+  const reply = await p.save([siteItem("是否有亲属在本公司工作")]);
+  assert.equal(reply.ok, true);
+  assert.deepEqual(p.siteSaves.map((message) => message.answers), [[{ key: "是否有亲属在本公司工作", value: "否" }]]);
+});
+
+// 填写时读网站回答没连上，给出候选时再读一次；这一次什么时候回、回什么由测试决定。
+function slowSitePage() {
+  let calls = 0;
+  const waiting = [];
+  const p = page({ site: { answers: [] }, siteRead: () => {
+    calls += 1;
+    if (calls === 1) return { status: "unavailable" };
+    return calls === 2 ? new Promise((resolve) => waiting.push(resolve)) : null;
+  } });
+  const [relative, hobby] = Array.from({ length: 2 }, () => new p.ctx.HTMLInputElement());
+  relative.value = "否";
+  hobby.value = "摄影";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" }),
+    control(hobby, { label: "兴趣爱好", offerLabel: "兴趣爱好" })]);
+  return { ...p, reads: () => calls, answer: async (reply = null) => {
+    waiting.shift()(reply);
+    for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  } };
+}
+
+test("while this site's answers are still being read, a company question is not offered, so it cannot be saved to 我的信息", async () => {
+  const p = slowSitePage();
+  await p.fill();
+  assert.equal(p.reads(), 2, "read again when the offer is made");
+  const offer = p.snapshot();
+  assert.deepEqual(offer.filled.map((item) => item.key), ["兴趣爱好"]);
+  assert.deepEqual([offer.pending, offer.conflicts, offer.site], [[], [], []]);
+  assert.equal(JSON.stringify(offer).includes("本公司"), false);
+  // 这时点保存：等读完再按结果分，公司题存到这个网站，不进补充字段。
+  const saving = p.ctx.helpers.addUnansweredToProfile(null);
+  await p.answer();
+  const reply = await saving;
+  assert.equal(reply.ok, true);
+  assert.deepEqual(p.desktop.profile.custom, [{ key: "兴趣爱好", value: "摄影" }]);
+  assert.deepEqual(p.siteSaves.map((message) => message.answers), [[{ key: "是否有亲属在本公司工作", value: "否" }]]);
+});
+
+test("once this site's answers are read, the held company question is offered for this site", async () => {
+  const p = slowSitePage();
+  await p.fill();
+  const before = p.snapshot().version;
+  await p.answer();
+  const offer = p.snapshot();
+  assert.ok(offer.version > before, "a save request made for the offer before the read is refused");
+  assert.equal(offer.siteName, "jobs.example.test");
+  assert.deepEqual(offer.site.map((item) => [item.key, item.value, item.defaultSelected]), [["是否有亲属在本公司工作", "否", true]]);
+  assert.deepEqual(offer.filled.map((item) => item.key), ["兴趣爱好"]);
+});
+
+test("when reading this site's answers fails again, the company question falls back to an unticked custom field", async () => {
+  const p = slowSitePage();
+  await p.fill();
+  await p.answer({ status: "unavailable" });
+  const offer = p.snapshot();
+  assert.deepEqual(offer.site, []);
+  assert.deepEqual(offer.filled.map((item) => [item.key, item.defaultSelected]), [["是否有亲属在本公司工作", false], ["兴趣爱好", true]]);
+  assert.equal(p.ui.parts["#resume-pro-profile-offer"].hidden, false);
+});
+
+test("site answers that arrive for another site (the page moved on) neither replace this site's nor get saved", async () => {
+  let siteKey = "jobs.example.test";
+  const p = page({ site: { answers: [] }, siteKey: () => siteKey });
+  const relative = new p.ctx.HTMLInputElement();
+  relative.value = "否";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  assert.deepEqual(p.snapshot().site.map((item) => item.key), ["是否有亲属在本公司工作"]);
+  // The reply to the read at save time names another site: nothing is written, the offer is kept as it was.
+  siteKey = "other.example.test";
+  const reply = await p.save([siteItem("是否有亲属在本公司工作")]);
+  assert.equal(reply.ok, false);
+  assert.match(reply.profileOffer.result.text, /页面已经换到别的网站/);
+  assert.equal(p.siteSaves.length, 0);
+  assert.deepEqual(reply.profileOffer.site.map((item) => item.key), ["是否有亲属在本公司工作"]);
+});
+
+test("answers reviewed on one site are not saved after the page moves to another site", async () => {
+  const location = { href: "https://jobs.example.test/apply", pathname: "/apply" };
+  let siteKey = "jobs.example.test";
+  const p = page({ site: { answers: [] }, siteKey: () => siteKey, location });
+  const relative = new p.ctx.HTMLInputElement();
+  relative.value = "否";
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  const offer = p.snapshot();
+  assert.equal(offer.siteName, "jobs.example.test");
+  // A single-page app moves to another company's site before the user clicks save.
+  location.href = "https://other.example.test/apply";
+  siteKey = "other.example.test";
+  const reply = await p.ctx.helpers.addUnansweredToProfile({ version: offer.version,
+    selected: [{ ...siteItem("是否有亲属在本公司工作"), reviewedValue: "否" }] });
+  assert.equal(reply.ok, false);
+  assert.match(reply.profileOffer.result.text, /页面已经换到别的网站/);
+  assert.equal(p.siteSaves.length, 0, "nothing is written under the new site");
+});
+
+test("moving from a site with answers to a shared recruiting site records that, so later questions are not read again and again", async () => {
+  const location = { href: "https://jobs.example.test/apply", pathname: "/apply" };
+  let siteKey = "jobs.example.test";
+  const p = page({ site: { answers: [{ key: "是否有亲属在本公司工作", value: "否" }] }, siteKey: () => siteKey, location });
+  const relative = new p.ctx.HTMLInputElement();
+  p.scan([control(relative, { label: "是否有亲属在本公司工作", offerLabel: "是否有亲属在本公司工作" })]);
+  await p.fill();
+  assert.equal(p.ctx.helpers.getSiteAnswers().site, "jobs.example.test");
+  location.href = "https://xiaoyuan.zhaopin.com/apply";
+  siteKey = "";
+  relative.value = "是";
+  // Saving re-reads without clearing what was read for the old site.
+  const reply = await p.ctx.helpers.addUnansweredToProfile({ version: p.ctx.helpers.getProfileOfferVersion(),
+    selected: [{ ...siteItem("是否有亲属在本公司工作"), reviewedValue: "是", replaceOf: "否" }] });
+  assert.equal(reply.ok, false);
+  assert.deepEqual(plain(p.ctx.helpers.getSiteAnswers()), { status: "no_site" });
+  assert.equal(p.siteSaves.length, 0);
 });

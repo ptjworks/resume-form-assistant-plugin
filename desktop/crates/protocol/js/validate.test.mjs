@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   checkCurrentIdentity,
+  isSiteKey,
   MAX_ENVELOPE_BYTES,
   payloadBodySha256,
   validateRequest,
@@ -224,4 +225,11 @@ test("a schema-valid response still cannot exceed the envelope limit", async () 
   const small = okResponse(MSG, { exact: [entry(0)], sameCompany: [] });
   delete small.resultId;
   validateResponse(small, "application.queryCandidates");
+});
+
+test("a site key is a host, a port from 1 to 65535 and at most one company segment (#429)", () => {
+  for (const ok of ["campus.example.com", "127.0.0.1:8080", "a.com:65535/acme", "app.mokahr.com/example-co"]) assert.equal(isSiteKey(ok), true, ok);
+  for (const bad of ["", "https://campus.example.com", "Campus.example.com", "a.com/b/c", "a.com:", "a.com:0", "a.com:65536", "a.com:99999", "a.com:123456", "[::1]", null]) {
+    assert.equal(isSiteKey(bad), false, String(bad));
+  }
 });
