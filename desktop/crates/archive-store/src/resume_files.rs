@@ -147,9 +147,10 @@ pub struct ResumeFilePatch {
 const CFB_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
 
-/// 按文件头认类型。只认五种：PDF；Word 97-2003（OLE 复合文档里有 WordDocument 流）；
-/// Word 2007 起的 DOCX（ZIP 里有 `[Content_Types].xml` 和 `word/document.xml`）；JPEG；PNG。
-/// Excel、PPT、Outlook 邮件这些同样是 OLE 或 ZIP，但不是这几种，不收。
+/// 按文件头认类型。只认五种：PDF；Word 97-2003（OLE 复合文档的目录里有 WordDocument 流）；
+/// Word 2007 起的 DOCX（ZIP 目录里有 `[Content_Types].xml` 和 `word/document.xml` 两个条目）；JPEG；PNG。
+/// Excel、PPT、Outlook 邮件这些同样是 OLE 或 ZIP，但不是这几种，不收；带宏的 Word（改了扩展名的
+/// DOCM）也不收。只看文件结构里的条目名，不看内容里有没有这几个字。
 pub fn sniff_resume_file(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"%PDF-") {
         return Some(PDF);
@@ -161,17 +162,51 @@ pub fn sniff_resume_file(bytes: &[u8]) -> Option<&'static str> {
         return Some(JPEG);
     }
     if bytes.starts_with(&CFB_MAGIC) {
-        let stream: Vec<u8> = "WordDocument".encode_utf16().flat_map(u16::to_le_bytes).collect();
-        return contains(bytes, &stream).then_some(DOC);
+        return has_word_stream(bytes).then_some(DOC);
     }
     if bytes.starts_with(b"PK\x03\x04") {
-        return (contains(bytes, b"[Content_Types].xml") && contains(bytes, b"word/document.xml")).then_some(DOCX);
+        let names = zip_entry_names(bytes)?;
+        let has = |name: &[u8]| names.contains(&name);
+        return (has(b"[Content_Types].xml") && has(b"word/document.xml") && !has(b"word/vbaProject.bin")).then_some(DOCX);
     }
     None
 }
 
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|window| window == needle)
+/// OLE 复合文档的目录项是 128 字节一个，在文件里按 128 字节对齐（扇区从 512 起）：开头是 UTF-16 的名字
+/// （带结尾的 0），第 64 字节是名字的字节数（含结尾），第 66 字节是类型（2 是流）。
+fn has_word_stream(bytes: &[u8]) -> bool {
+    let name: Vec<u8> = "WordDocument\0".encode_utf16().flat_map(u16::to_le_bytes).collect();
+    (512..bytes.len()).step_by(128).any(|at| {
+        bytes.get(at..at + name.len()) == Some(&name[..])
+            && bytes.get(at + 64..at + 66) == Some(&[name.len() as u8, 0][..])
+            && bytes.get(at + 66) == Some(&2)
+    })
+}
+
+/// ZIP 中央目录里的全部条目名。目录读不全（截断、ZIP64 之类）时返回 None：认不出就不收。
+fn zip_entry_names(bytes: &[u8]) -> Option<Vec<&[u8]>> {
+    const END: [u8; 4] = [b'P', b'K', 5, 6];
+    const ENTRY: [u8; 4] = [b'P', b'K', 1, 2];
+    let u16_at = |at: usize| bytes.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize);
+    let u32_at = |at: usize| bytes.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    // 目录结尾记录 22 字节，后面最多跟 65535 字节的注释。
+    let last = bytes.len().checked_sub(22)?;
+    let end = (last.saturating_sub(65535)..=last).rev().find(|&at| bytes[at..at + 4] == END)?;
+    let (count, offset) = (u16_at(end + 10)?, u32_at(end + 16)?);
+    if count == 0xFFFF || offset == 0xFFFF_FFFF {
+        return None;
+    }
+    let mut names = Vec::with_capacity(count);
+    let mut at = offset;
+    for _ in 0..count {
+        if bytes.get(at..at + 4)? != ENTRY {
+            return None;
+        }
+        let (name, extra, comment) = (u16_at(at + 28)?, u16_at(at + 30)?, u16_at(at + 32)?);
+        names.push(bytes.get(at + 46..at + 46 + name)?);
+        at += 46 + name + extra + comment;
+    }
+    Some(names)
 }
 
 fn extensions(mime: &str) -> &'static [&'static str] {

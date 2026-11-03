@@ -34,6 +34,7 @@
   "link/save-flow.mjs",
   "link/secret-fields.mjs",
   "link/session.mjs",
+  "link/resume-files.mjs",
   "link/site-answers.mjs",
   "link/snapshot.mjs",
   "link/staging.mjs",

@@ -88,14 +88,17 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
     }
   }, [files, invoke, previews]);
 
-  const run = async (work: () => Promise<ResumeFileView[]>, done: string) => {
-    if (!invoke || busy) return;
+  /** 成功返回 true；失败时原因在 notice 里，打开着的对话框不关，用户填的东西还在。 */
+  const run = async (work: () => Promise<ResumeFileView[]>, done: string): Promise<boolean> => {
+    if (!invoke || busy) return false;
     setBusy(true);
     try {
       setFiles(await work());
       setNotice({ tone: "ok", text: done });
+      return true;
     } catch (error) {
       setNotice(describe(error));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -116,18 +119,26 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   const save = async () => {
     if (!draft || !invoke) return;
     const { file, name, label, isDefault, templateIds } = draft;
-    await run(
+    const saved = await run(
       () => invoke<ResumeFileView[]>("update_resume_file_cmd", { id: file.id, patch: { name, label, isDefault, templateIds } }),
       `已保存「${name.trim()}」。`,
     );
-    setDraft(null);
+    if (saved) setDraft(null);
   };
 
   const remove = async (file: ResumeFileView) => {
     if (!invoke) return;
-    await run(() => invoke<ResumeFileView[]>("delete_resume_file_cmd", { id: file.id }), `已删除「${file.name}」。`);
-    setConfirmDelete(null);
+    if (await run(() => invoke<ResumeFileView[]>("delete_resume_file_cmd", { id: file.id }), `已删除「${file.name}」。`)) {
+      setConfirmDelete(null);
+    }
   };
+
+  const openDialog = (open: () => void) => {
+    setNotice(null);
+    open();
+  };
+  // 对话框开着时报错显示在对话框里：页面上的提示被对话框挡着。
+  const dialogError = notice?.tone === "error" ? <p className="note error" role="alert">{notice.text}</p> : null;
 
   const open = async (file: ResumeFileView) => {
     if (!invoke) return;
@@ -189,11 +200,11 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
                         <button
                           type="button"
                           disabled={busy}
-                          onClick={() => setDraft({ file, name: file.name, label: file.label, isDefault: file.isDefault, templateIds: file.templateIds })}
+                          onClick={() => openDialog(() => setDraft({ file, name: file.name, label: file.label, isDefault: file.isDefault, templateIds: file.templateIds }))}
                         >
                           编辑
                         </button>
-                        <button type="button" disabled={busy} onClick={() => setConfirmDelete(file)}>删除</button>
+                        <button type="button" disabled={busy} onClick={() => openDialog(() => setConfirmDelete(file))}>删除</button>
                       </div>
                     </li>
                   ))}
@@ -205,7 +216,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
           );
         })}
       </div>
-      {notice ? <p className={`note ${notice.tone} resume-files-note`} role="status">{notice.text}</p> : null}
+      {notice && !draft && !confirmDelete ? <p className={`note ${notice.tone} resume-files-note`} role="status">{notice.text}</p> : null}
       <ResumeDialog
         open={draft !== null}
         title="编辑附件"
@@ -219,6 +230,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
       >
         {draft ? (
           <div className="resume-files-form">
+            {dialogError}
             <label>
               文件名
               <input data-autofocus value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
@@ -270,6 +282,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
         }
       >
         <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
+        {dialogError}
       </ResumeDialog>
     </section>
   );
