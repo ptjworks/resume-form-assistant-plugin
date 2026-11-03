@@ -414,9 +414,269 @@ test("virtual list with search: a value written another way off screen is found 
   assert.deepEqual(h.picked, ["土家"]);
 });
 
-test("virtual list without search: a value written another way off screen is still not guessed", async () => {
+// 这个替身滚了也不重画（scrollTop 变了，画出来的还是第一屏）：滚着找（#429，见下面）看不全整张列表，照旧不猜。
+test("virtual list without search that does not redraw on scrolling: a value written another way off screen is still not guessed", async () => {
   const h = antd(ETHNIC, { layout: true });
   const result = await h.api.operate(h.target, "土家族");
   assert.equal(result.reason, "no_option_match", JSON.stringify(result));
   assert.deepEqual(h.picked, []);
+});
+
+// #429 跟着滚动重画的虚拟列表：真 rc-virtual-list、el-select-v2 在滚动层设了 scrollTop 以后，下一帧按新位置重画
+// （2026-11-03 在 antd 4.24.16、5.21.6、6.6.8 和 Element Plus 2.8.8 上看到）。jsdom 不派发 scroll，设 scrollTop 时补一个。
+function followScroll(scroller, total, view, redraw) {
+  let top = 0;
+  Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => top,
+    set: (value) => { top = Math.max(0, Math.min(Number(value) || 0, total() - view)); setTimeout(() => scroller.dispatchEvent(new scroller.ownerDocument.defaultView.Event("scroll")), 0); } });
+  scroller.addEventListener("scroll", redraw);
+}
+
+// antd 4/5 结构，不能搜索：一屏 256px、每项 32px，画 10 项，整屏用 translateY 挪到位置上。
+// multiple：多选，点一项切换、弹层开着，标签放在 overflow 里，输入框失焦才收起。
+// grow：越滚越长的懒加载。true 是每次滚到最后一屏都马上再接 20 项（一直到不了底）；
+// { delay, more } 是滚到最后一屏后过 delay 毫秒接上 more 里的下一页，接完为止。
+// laidOutAfter：打开以后过这么多毫秒，选项才量得出高度（刚画出来、还没排好）。
+function scrollingAntd(choices, { multiple = false, grow = false, laidOutAfter = 0 } = {}) {
+  const field = '<input type="search" autocomplete="off" class="ant-select-selection-search-input" role="combobox" aria-haspopup="listbox" aria-owns="rc_select_0_list"'
+    + ' aria-autocomplete="list" aria-controls="rc_select_0_list" aria-expanded="false" readonly>';
+  const h = load(`<div class="ant-select ${multiple ? "ant-select-multiple" : "ant-select-single"}"><div class="ant-select-selector">${multiple
+    ? `<div class="ant-select-selection-overflow"><div class="ant-select-selection-overflow-item ant-select-selection-overflow-item-suffix"><div class="ant-select-selection-search">${field}</div></div></div>`
+    : `<span class="ant-select-selection-search">${field}</span>`}<span class="ant-select-selection-placeholder">请选择</span></div></div>`);
+  const { doc } = h;
+  const root = doc.querySelector(".ant-select"), input = root.querySelector("input");
+  const picked = [], values = [], scrolls = [];
+  let dropdown = null, holder = null, start = 0, loading = false, openedAt = 0;
+  const pages = grow && grow !== true ? [...grow.more] : [];
+  const append = (items) => { choices.push(...items); dropdown.querySelector(".filler").style.height = `${total()}px`; };
+  choices = [...choices];
+  const total = () => choices.length * 32;
+  const redraw = () => {
+    scrolls.push(holder.scrollTop);
+    if (grow && holder.scrollTop + 256 >= total() - 32) {
+      if (grow === true) append(Array.from({ length: 20 }, (_, i) => `加载${String(choices.length + i).padStart(4, "0")}`));
+      else if (pages.length && !loading) { loading = true; setTimeout(() => { loading = false; append(pages.shift()); redraw(); }, grow.delay); }
+    }
+    start = Math.floor(holder.scrollTop / 32);
+    const inner = dropdown.querySelector(".rc-virtual-list-holder-inner");
+    inner.style.transform = `matrix(1, 0, 0, 1, 0, ${start * 32})`;
+    inner.innerHTML = choices.slice(start, start + 10).map((text, i) => `<div class="ant-select-item ant-select-item-option${values.includes(text) ? " ant-select-item-option-selected" : ""}"`
+      + ` aria-selected="${values.includes(text)}" title="${text}" data-index="${start + i}"><div class="ant-select-item-option-content">${text}</div></div>`).join("");
+    inner.querySelectorAll(".ant-select-item-option").forEach((node) => node.addEventListener("click", () => choose(node.title)));
+  };
+  const choose = (text) => {
+    picked.push(text);
+    root.querySelector(".ant-select-selection-placeholder")?.remove();
+    if (multiple) {
+      if (values.includes(text)) values.splice(values.indexOf(text), 1); else values.push(text);
+      root.querySelectorAll(".ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix)").forEach((node) => node.remove());
+      for (const value of values) {
+        root.querySelector(".ant-select-selection-overflow-item-suffix").insertAdjacentHTML("beforebegin", `<div class="ant-select-selection-overflow-item"><span class="ant-select-selection-item" title="${value}">`
+          + `<span class="ant-select-selection-item-content">${value}</span><span class="ant-select-selection-item-remove"></span></span></div>`);
+      }
+      redraw();
+      return;
+    }
+    const item = doc.createElement("span"); item.className = "ant-select-selection-item"; item.title = text; item.textContent = text;
+    root.querySelector(".ant-select-selector").append(item);
+    dropdown.hidden = true; input.setAttribute("aria-expanded", "false");
+  };
+  root.querySelector(".ant-select-selector").addEventListener("click", () => {
+    if (!dropdown) {
+      dropdown = doc.createElement("div"); dropdown.className = "ant-select-dropdown ant-select-dropdown-placement-bottomLeft";
+      dropdown.innerHTML = `<div><div role="listbox" id="rc_select_0_list" style="height: 0px; width: 0px; overflow: hidden;"></div>
+        <div class="rc-virtual-list" style="position: relative;"><div class="rc-virtual-list-holder" style="max-height: 256px; overflow-y: hidden;">
+        <div class="filler" style="height: ${total()}px; position: relative; overflow: hidden;"><div class="rc-virtual-list-holder-inner"></div></div></div>
+        <div class="rc-virtual-list-scrollbar rc-virtual-list-scrollbar-vertical"><div class="rc-virtual-list-scrollbar-thumb"></div></div></div></div>`;
+      doc.body.append(dropdown);
+      holder = dropdown.querySelector(".rc-virtual-list-holder");
+      followScroll(holder, total, 256, redraw);
+      openedAt = Date.now();
+    }
+    dropdown.hidden = false; input.setAttribute("aria-expanded", "true");
+    redraw();
+  });
+  input.addEventListener("blur", () => { if (dropdown) dropdown.hidden = true; input.setAttribute("aria-expanded", "false"); });
+  stubLayout(h.w, (el) => {
+    const item = el.closest?.(".ant-select-item-option");
+    if (item) return { top: (Number(item.dataset.index) - start) * 32, height: Date.now() - openedAt >= laidOutAfter ? 32 : 0 };
+    if (el === holder) return { top: 0, height: 256, scrollHeight: total(), clientHeight: 256 };
+    if (el.matches?.(".filler")) return { top: 0, height: total() };
+    if (el.matches?.(".rc-virtual-list-holder-inner")) return { top: 0, height: el.children.length * 32 };
+    return null;
+  });
+  const target = { kind: "element", element: input, elements: [input], root, controlKind: "custom-select", hints: {} };
+  return { ...h, target, picked, values, scrolls, holder: () => holder };
+}
+
+// Element Plus el-select-v2，不能搜索：.el-vl__window 高 274、自己滚动，每项 34px 绝对定位，画 11 项。
+function scrollingSelectV2(choices) {
+  const h = load(`<div class="el-select"><div class="el-select__wrapper"><div class="el-select__selection">
+    <div class="el-select__selected-item el-select__input-wrapper is-hidden"><input aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false"
+      class="el-select__input" role="combobox" readonly type="text"></div>
+    <div class="el-select__selected-item el-select__placeholder is-transparent"><span>请选择</span></div></div></div></div>`);
+  const { doc } = h;
+  const root = doc.querySelector(".el-select"), input = root.querySelector("input");
+  const picked = [];
+  let popper = null, list = null;
+  const total = choices.length * 34;
+  const redraw = () => {
+    const start = Math.floor(list.scrollTop / 34);
+    list.firstElementChild.innerHTML = choices.slice(start, start + 11).map((text, i) => `<li class="el-select-dropdown__item" data-index="${start + i}"`
+      + ` style="position: absolute; top: ${(start + i) * 34}px; height: 34px;"><span>${text}</span></li>`).join("");
+    list.querySelectorAll("li").forEach((li) => li.addEventListener("click", () => {
+      picked.push(li.textContent);
+      const shown = root.querySelector(".el-select__placeholder");
+      shown.classList.remove("is-transparent"); shown.innerHTML = `<span>${li.textContent}</span>`;
+      popper.hidden = true; input.setAttribute("aria-expanded", "false");
+    }));
+  };
+  root.querySelector(".el-select__wrapper").addEventListener("click", () => {
+    if (!popper) {
+      popper = doc.createElement("div"); popper.className = "el-popper is-pure is-light el-select__popper";
+      popper.innerHTML = `<div class="el-select-dropdown"><div class="el-vl__wrapper"><div class="el-vl__window el-select-dropdown__list" style="position: relative; overflow-y: scroll; height: 274px;">
+        <div style="height: ${total}px; width: 100%;"></div></div><div role="presentation" class="el-virtual-scrollbar"><div class="el-scrollbar__thumb"></div></div></div></div>`;
+      doc.body.append(popper);
+      list = popper.querySelector(".el-vl__window");
+      followScroll(list, () => total, 274, redraw);
+    }
+    popper.hidden = false; input.setAttribute("aria-expanded", "true");
+    redraw();
+  });
+  stubLayout(h.w, (el) => {
+    const item = el.closest?.(".el-select-dropdown__item");
+    if (item) return { top: Number(item.dataset.index) * 34, height: 34 };
+    if (el === list) return { top: 0, height: 274, scrollHeight: total, clientHeight: 274 };
+    if (el.parentElement && el.parentElement === list) return { top: 0, height: total };
+    return null;
+  });
+  const target = { kind: "element", element: input, elements: [input], root, controlKind: "custom-select", hints: {} };
+  return { ...h, target, picked };
+}
+
+test("virtual list without search: an option off the first screen is found by scrolling through the list", async () => {
+  const h = scrollingAntd(SCHOOLS);
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.picked, ["北京大学"], "北京大学医学部 on the first screen is not chosen");
+  assert.ok(Math.max(...h.scrolls) >= 100 * 32 - 256, "scrolled to the bottom before deciding");
+  // 同一个意思的另一种写法也认。
+  const other = scrollingAntd(ETHNIC);
+  const found = await other.api.operate(other.target, "土家族");
+  assert.equal(found.ok, true, JSON.stringify(found));
+  assert.deepEqual(other.picked, ["土家"]);
+});
+
+// 滚完了也说不准看全了没有（懒加载的下一页可能还没到）：屏外只有包含它的一项、两项、一项都没有，都不猜，滚回原处。
+test("virtual list without search: off-screen options that merely hold the value, or none, are not guessed and the list scrolls back", async () => {
+  const campuses = SCHOOLS.map((text, i) => i === 40 ? "南山校区" : i === 70 ? "人工智能与大数据" : i === 80 ? "南山分校" : text);
+  for (const value of ["人工智能", "南山", "火星大学"]) {
+    const h = scrollingAntd(campuses);
+    const result = await h.api.operate(h.target, value);
+    assert.equal(result.reason, "no_option_match", `${value}: ${JSON.stringify(result)}`);
+    assert.deepEqual(h.picked, []);
+    assert.equal(h.holder().scrollTop, 0, "scrolled back to where it was");
+  }
+});
+
+// 越滚越长、一直到不了底的列表：滚满上限就停下，按没有匹配报，滚回原处，不按看到的一部分去猜。
+test("virtual list without search that keeps loading more at the bottom stops scrolling, is not guessed and scrolls back", async () => {
+  const h = scrollingAntd(SCHOOLS.map((text, i) => i === 60 ? "北京大学（本部）" : text), { grow: true });
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.equal(h.holder().scrollTop, 0);
+});
+
+// #429 懒加载的列表：滚到底以后过 200ms 才接上下一页（比等列表停住的 80ms 晚）。
+const LAZY = Array.from({ length: 30 }, (_, i) => i === 20 ? "北京大学医学部" : i === 25 ? "人工智能与大数据" : `示例大学${String(i).padStart(3, "0")}`);
+const PAGE = Array.from({ length: 20 }, (_, i) => `补充大学${String(i).padStart(2, "0")}`);
+
+test("a lazily loaded list whose next page comes late is scanned to its real end: the same name there is chosen, not a longer one seen first", async () => {
+  const h = scrollingAntd(LAZY, { grow: { delay: 200, more: [[...PAGE.slice(0, 10), "北京大学", ...PAGE.slice(10)]] } });
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.picked, ["北京大学"]);
+});
+
+test("a list that grew while being scanned only takes an option written the same; one that merely holds the value is not guessed", async () => {
+  const h = scrollingAntd(LAZY, { grow: { delay: 200, more: [PAGE] } });
+  const result = await h.api.operate(h.target, "人工智能");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.equal(h.holder().scrollTop, 0);
+  // 写法相同的照样选上。
+  const same = scrollingAntd(LAZY, { grow: { delay: 200, more: [PAGE] } });
+  const found = await same.api.operate(same.target, "补充大学15");
+  assert.equal(found.ok, true, JSON.stringify(found));
+  assert.deepEqual(same.picked, ["补充大学15"]);
+});
+
+// 下一页 1 秒后才到（比到底以后等的 500ms 还晚）：滚完时列表没变长过，也不当作看全了，已经看到的「人工智能与大数据」不选。
+test("a lazily loaded list whose next page comes after a second is not taken as complete: a longer option holding the value is not chosen", async () => {
+  const h = scrollingAntd(LAZY, { grow: { delay: 1000, more: [PAGE] } });
+  const result = await h.api.operate(h.target, "人工智能");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.equal(h.holder().scrollTop, 0);
+});
+
+// #429 扫描的 8 秒上限。custom-controls.js 用 w.eval 跑在 jsdom 的窗口里，它读的 Date 是 h.w.Date（不是 Node 的 Date），
+// 所以拨 h.w.Date.now 就拨到了它的时钟。替身在列表滚到某一屏、画出来以后把这个时钟拨快 8 秒。
+function skipClock(h, from) {
+  const clock = h.w.Date.now.bind(h.w.Date);
+  h.w.Date.now = () => clock() + (h.scrolls.some((top) => top >= from) ? 8000 : 0);
+}
+
+// 滚到最后一屏时 8 秒已经用完：滚回去和点之前再认一次有自己的等待，不占已经用完的时间，照样选上。
+test("an option matched just as the scan runs out of time is still scrolled back to and chosen", async () => {
+  const h = scrollingAntd(SCHOOLS);
+  const end = 100 * 32 - 256;
+  skipClock(h, end);
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.picked, ["北京大学"]);
+  assert.ok(h.scrolls.slice(h.scrolls.indexOf(end) + 1).some((top) => top > 0 && top < end), "scrolled back to 北京大学 after the time ran out");
+});
+
+// 滚到一半 8 秒就用完了：不再往下滚，按没有匹配的选项报，滚回原处（「北京大学」在后面，没看到）。
+test("a scan that runs out of time halfway stops there, is not guessed and scrolls back", async () => {
+  const h = scrollingAntd(SCHOOLS);
+  skipClock(h, 1000);
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.ok(Math.max(...h.scrolls) < 60 * 32 - 256, "stopped before the screen with 北京大学");
+  assert.equal(h.holder().scrollTop, 0);
+});
+
+// 滚到一半弹层收起了：不再滚，按选项没画出来报。
+test("virtual list without search whose popup closes halfway through the scan stops and reports the options as not rendered", async () => {
+  const h = scrollingAntd(SCHOOLS);
+  h.doc.addEventListener("scroll", ({ target }) => { if (target.scrollTop >= 1000) target.closest(".ant-select-dropdown").hidden = true; }, true);
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.reason, "options_not_rendered", JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+});
+
+// 刚打开时画出来的选项还量不出高度：先等列表停住再量，照样滚着找到。
+test("virtual list without search whose options have no height right after opening waits for them and finds the option off screen", async () => {
+  const h = scrollingAntd(SCHOOLS, { laidOutAfter: 60 });
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.picked, ["北京大学"]);
+});
+
+test("virtual list without search: a multiple select picks values off the first screen by scrolling", async () => {
+  const cities = Array.from({ length: 60 }, (_, i) => `城市${String(i + 1).padStart(2, "0")}`);
+  const h = scrollingAntd(cities, { multiple: true });
+  const result = await h.api.operate(h.target, "城市05、城市52");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.values, ["城市05", "城市52"]);
+});
+
+test("Element Plus el-select-v2 without filtering: an option off the first screen is found by scrolling", async () => {
+  const h = scrollingSelectV2(SCHOOLS);
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.picked, ["北京大学"]);
 });
