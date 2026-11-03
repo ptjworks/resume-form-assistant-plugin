@@ -422,6 +422,7 @@ test('a catalog over the budget is cut once per batch of questions, with the ite
   });
   assert.equal(more, long.diagnostics.requests);
   assert.ok(more >= 2 && more <= 6, `one request per batch of questions, got ${more}`);
+  assert.ok(long.diagnostics.catalogTrimmed < BIG_CATALOG.length, "counted once, not once per batch");
 });
 
 test('a trimmed catalog takes only its own refs, keeps the fits of each select in it and says it is a part', async () => {
@@ -444,7 +445,9 @@ test('a trimmed catalog takes only its own refs, keeps the fits of each select i
   const politics = fields.find((field) => field.fieldId === 'politics');
   assert.ok(politics.fits.length > 0 && politics.fits.every((token) => refs.has(token.split('.')[0])), JSON.stringify(politics.fits));
   assert.match(sent.user, /只列了和这批题目有关的一部分/);
-  assert.ok(result.diagnostics.catalogTrimmed > 0);
+  // 哪一批都没发出去的项数（去重），不是各批相加；这一批里没答上的题记在 trimmedUnanswered。
+  assert.equal(result.diagnostics.catalogTrimmed, BIG_CATALOG.length + 1 - catalog.length);
+  assert.equal(result.diagnostics.trimmedUnanswered, 1);
   // 不在本批目录里的编号不用，哪怕整份目录里有。
   assert.equal(result.matches.some((match) => match.fieldId === 'q0'), false);
   assert.equal(result.matches.find((match) => match.fieldId === 'politics').value, '共青团员');

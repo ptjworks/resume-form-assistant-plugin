@@ -204,7 +204,8 @@ export function mockModel(kind) {
 export function baseUrlAllowed(baseUrl, allowHttp = false) {
   let url;
   try { url = new URL(baseUrl); } catch { return false; }
-  const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  // Node 给 IPv6 地址的 hostname 带方括号（「[::1]」），两种写法都认。
+  const local = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
   return url.protocol === "https:" || (allowHttp && url.protocol === "http:" && local);
 }
 

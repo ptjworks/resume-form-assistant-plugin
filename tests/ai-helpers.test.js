@@ -757,8 +757,11 @@ test("worker: an English gender select takes M or F for 男 or 女", async () =>
     formFields: [{ fieldId: "g", label: "Gender", inputType: "select", tagName: "select", options: ["M", "F"] }],
     resumeFields: [{ group: "基本信息", key: "性别", value: "女" }]
   });
-  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "g", value: "女" }]);
-  assert.equal(helpers.findSelectOptionIndex(["M", "F"], "女"), 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "g", value: "F" }]);
+  // M、F 不是全局的同义写法：只在问性别的字段上换（choiceValue）。
+  assert.equal(helpers.findSelectOptionIndex(["M", "F"], "女"), -1);
+  assert.equal(helpers.choiceValue({ label: "Sex", inputType: "radio", options: ["M", "F"] }, "男"), "M");
+  assert.equal(helpers.choiceValue({ label: "T恤尺码", inputType: "select", options: ["S", "M", "L"] }, "男"), "男");
 });
 
 // #429 身份证号自检：校验码、出生日期和开头。号码都是按规则算出来的虚构号码。

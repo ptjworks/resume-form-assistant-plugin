@@ -227,12 +227,12 @@ function promptBytes(fields, candidates, partial = false) {
 
 // 整份资料目录装得下时，按题目分批，每批带整份目录。装不下时（资料项太多），每批题目最多占一半预算，
 // 目录先放这批题目 fits 里的项、再放和题目相关的项，放到装不下为止（relevantEntries）：一批只问一次，请求数只随题目的批数增长。
-// 编号仍是整份目录里的；fits 只留这一批目录里有的，留不下一项的题不发。trimmed 是各批没发出去的资料项数。
+// 编号仍是整份目录里的；fits 只留这一批目录里有的，留不下一项的题不发。trimmed 是哪一批都没发出去的资料项数。
 function makePromptBatches(formFields, entries) {
   const batches = [];
   let skippedOversized = 0;
-  let trimmed = 0;
-  if (!entries.length) return { batches, skippedOversized, skippedNoContext: formFields.length, trimmed };
+  const shown = new Set();
+  if (!entries.length) return { batches, skippedOversized, skippedNoContext: formFields.length, trimmed: 0 };
   const whole = promptBytes([], entries) <= AI_USER_BUDGET;
   const roomy = fields => (whole ? promptBytes(fields, entries) <= AI_USER_BUDGET : promptBytes(fields, [], true) <= AI_USER_BUDGET / 2);
   let current = [];
@@ -240,6 +240,7 @@ function makePromptBatches(formFields, entries) {
     if (!current.length) return;
     if (promptBytes(current, entries) <= AI_USER_BUDGET) {
       batches.push({ fields: current, candidates: entries, partial: false });
+      entries.forEach(entry => shown.add(entry.ref));
       current = [];
       return;
     }
@@ -254,7 +255,7 @@ function makePromptBatches(formFields, entries) {
     // 一题本身太大、连一项资料都放不下的，不发。
     if (candidates.length && fields.length) {
       batches.push({ fields, candidates, partial: true });
-      trimmed += entries.length - candidates.length;
+      candidates.forEach(entry => shown.add(entry.ref));
     } else skippedOversized += fields.length;
     current = [];
   };
@@ -263,7 +264,7 @@ function makePromptBatches(formFields, entries) {
     current.push(field);
   }
   flush();
-  return { batches, skippedOversized, skippedNoContext: 0, trimmed };
+  return { batches, skippedOversized, skippedNoContext: 0, trimmed: batches.length ? entries.length - shown.size : 0 };
 }
 
 // 目录装不下时给一批题目挑资料：先放这批题目 fits 里的项，再放字段名、分组、别的叫法和题目说的是同一件事的项，其余照原来的顺序，
@@ -375,6 +376,8 @@ async function handleAiFill(message, controller = new AbortController()) {
   let openView;
 
   const answeredFields = [];
+  // 目录被裁剪的那几批里的题（trimmedUnanswered 数其中没答上的）。
+  const trimmedFields = new Set();
   if (remainingFormFields.length) {
     const apiStart = performance.now();
     // 选项读得到、却没有一项资料填得进去的下拉不发，记作没有对应的资料，不算 AI 没匹配上。
@@ -422,6 +425,7 @@ async function handleAiFill(message, controller = new AbortController()) {
         continue;
       }
       if (controller.signal.aborted) break;
+      if (batch.partial) batch.fields.forEach(field => trimmedFields.add(field.fieldId));
       try {
         const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)));
         aiMatches.push(...ResumeProAIHelpers.filterValidMatches(batch.fields, found));
@@ -438,7 +442,11 @@ async function handleAiFill(message, controller = new AbortController()) {
     warnings.push(aiFailureMessage({ reason: "cancelled" }));
   }
   const seenMatchIds = new Set();
-  const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...settleAnswers(aiMatches)])
+  // 开放题（多行文本框、问动机的单行题）的回答被拦下时（资料项太多、几批对不上），和没有现成回答一样算开放题，不报成没写上。
+  const opinion = field => isOpenQuestion(field) || (isTextAnswer(field) && asksOpinion(field));
+  const opinionIds = new Set(formFields.filter(opinion).map(field => field.fieldId));
+  const answers = settleAnswers(aiMatches).filter(match => !(match.blocked && opinionIds.has(match.fieldId)));
+  const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...answers])
     .filter(match => {
       if (seenMatchIds.has(match.fieldId)) return false;
       seenMatchIds.add(match.fieldId);
@@ -449,9 +457,10 @@ async function handleAiFill(message, controller = new AbortController()) {
   diagnostics.aiMatches = aiAnswered.filter(match => !match.blocked).length;
   diagnostics.aiBlocked = aiAnswered.length - diagnostics.aiMatches;
   // 开放题（多行文本框、问动机的单行题）AI 看过、资料里没有现成的回答：不让 AI 现写，诊断里单独记一个原因。
-  const opinion = field => isOpenQuestion(field) || (isTextAnswer(field) && asksOpinion(field));
   diagnostics.openUnanswered = new Set(answeredFields.filter(field => opinion(field) && !seenMatchIds.has(field.fieldId))
     .map(field => field.fieldId)).size;
+  // 目录装不下、只发了一部分的那几批里没答上的题：可能是资料被裁掉了，不一定是没有。
+  diagnostics.trimmedUnanswered = [...trimmedFields].filter(fieldId => !seenMatchIds.has(fieldId)).length;
   const warning = [...new Set(warnings)].join(" ");
   return { success: !warning || matches.some(match => !match.blocked), matches, warning, error: warning, diagnostics,
     ...(openView ? { openView } : {}) };
@@ -617,7 +626,11 @@ function refMatches(payload, fields, catalog, allowed) {
     const part = (DATE_PARTS.includes(item.part) && !whole) || SPAN_SIDES.includes(item.part) ? (list.length === 1 ? item.part : "") : "";
     const tokens = list.map(ref => {
       const token = String(ref ?? "").trim();
-      if (whole) return token.replace(/\.(?:year|month|day)$/, "");
+      // 日期控件要整个日期：年、月、日剥掉；开始、结束（start、end）留着，取那一头。
+      if (whole) {
+        const bare = token.replace(/\.(?:year|month|day)$/, "");
+        return SPAN_SIDES.includes(part) && !bare.includes(".") ? `${bare}.${part}` : bare;
+      }
       return part && !token.includes(".") ? `${token}.${part}` : token;
     });
     // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框（「期望年薪」）收到的整条不要。
@@ -639,7 +652,8 @@ function refMatches(payload, fields, catalog, allowed) {
     // 级联、联动下拉要靠地区数据截地址；worker 没加载到它时不交整段地址，报原因。
     const region = field.cascadeGroup !== undefined || field.cascade === true;
     if (region && !globalThis.ResumeProRegions?.resolve) return [{ fieldId: field.fieldId, value: "", blocked: "region_unavailable" }];
-    const value = field.cascadeGroup !== undefined ? levelRegion(field, joined) : field.cascade === true ? regionPrefix(joined) : joined;
+    const value = field.cascadeGroup !== undefined ? levelRegion(field, joined) : field.cascade === true ? regionPrefix(joined)
+      : ResumeProAIHelpers.choiceValue(field, joined);
     return value ? [{ fieldId: field.fieldId, value }] : [];
   });
 }
@@ -705,7 +719,8 @@ function pickerDate(field, value) {
   if (helpers.rangeDateParts(picked)) return "";
   // 原生 date 框写不进「至今」。
   if (helpers.isPresentDate(picked)) return field.inputType === "date" ? "" : picked;
-  const day = field.pickerInputType === "month" ? "" : helpers.normalizeDateValue(picked, "date");
+  // 原生 month 框和认出是选月的日期控件只给年月。
+  const day = field.pickerInputType === "month" || field.inputType === "month" ? "" : helpers.normalizeDateValue(picked, "date");
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
   // 原生的 date 框只收到日的，只到月的浏览器不收，不交给它。日期控件（Element、antd 这类）收到年月时由填写层补成 1 日。
   if (field.inputType === "date") return "";

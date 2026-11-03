@@ -67,6 +67,7 @@ test("the key goes only to https unless http is asked for by name", async () => 
   assert.equal(baseUrlAllowed("http://127.0.0.1:8080/v1", true), true);
   assert.equal(baseUrlAllowed("http://localhost:8080/v1", true), true);
   assert.equal(baseUrlAllowed("http://[::1]:8080/v1", true), true);
+  assert.equal(new URL("http://[::1]:8080/v1").hostname, "[::1]", "the hostname Node gives an IPv6 loopback");
   assert.equal(baseUrlAllowed("http://api.example.test/v1", true), false, "http leaves this machine only never");
   assert.equal(baseUrlAllowed("ftp://api.example.test"), false);
   assert.equal(baseUrlAllowed("not a url"), false);

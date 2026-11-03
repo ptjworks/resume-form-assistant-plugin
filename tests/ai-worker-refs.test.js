@@ -191,6 +191,31 @@ test("a native date box takes only a whole day; a date picker takes a month and 
   assert.equal(byId.pickerNow.value, "至今");
 });
 
+test("a size select with an M option does not take the gender, and an AI answer to it is dropped", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "size", ref: catalog[0].ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "size", label: "T恤尺码", inputType: "select", options: ["S", "M", "L"] }, { fieldId: "x", label: "备注" }],
+    resumeFields: [{ group: "基本信息", key: "性别", value: "男" }, { group: "补充字段", key: "备注", value: "无" }]
+  });
+  assert.equal(fieldsOf(env.calls[0]).some((field) => field.fieldId === "size"), false, "no item fits a size");
+  assert.equal(valueOf(result, "size"), undefined);
+});
+
+test("a date picker whose question names no side takes the start or end the AI names in part", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "from", ref: catalog[0].ref, part: "start" }, { fieldId: "to", ref: catalog[0].ref, part: "end" },
+    { fieldId: "month", ref: catalog[1].ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "from", label: "在校时间", inputType: "date-picker", pickerInputType: "month", options: [] },
+      { fieldId: "to", label: "在校时间", inputType: "date-picker", pickerInputType: "month", options: [] },
+      { fieldId: "month", label: "到岗年月", inputType: "month", options: [] }],
+    resumeFields: [{ group: "教育经历", key: "教育经历1-时间", value: "2019.09-2023.06" }, { group: "求职补充", key: "可到岗日期", value: "2026-07-01" }]
+  });
+  assert.equal(valueOf(result, "from"), "2019-09");
+  assert.equal(valueOf(result, "to"), "2023-06");
+  // 原生 month 框只给年月。
+  assert.equal(valueOf(result, "month"), "2026-07");
+});
+
 test("a start or end named in the answer takes that side of a span, written either way", async () => {
   const env = worker((message, catalog) => [
     { fieldId: "start", ref: catalog[0].ref, part: "start" }, { fieldId: "end", ref: `${catalog[0].ref}.end` },
@@ -300,6 +325,15 @@ test("every long answer box checks that the item is about the same thing, whatev
   // 英文题和中文字段名对不上，「家庭住址」答不了「自我评价」；分组、同义词（获奖=奖励、简介=评价）对得上的照填。
   assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["awards", "intro", "work"]);
   assert.equal(result.diagnostics.openUnanswered, 3);
+});
+
+test("an open question whose answer is held back counts as having no ready answer, not as unwritten", async () => {
+  const resume = Array.from({ length: 10 }, (_, i) => ({ group: "自我评价", key: `自我评价${i}`, value: `评价${i}` }));
+  const env = worker((message, catalog) => [{ fieldId: "self", refs: catalog.map((entry) => entry.ref) }]);
+  const result = await env.run({ formFields: [{ fieldId: "self", label: "自我评价", tagName: "textarea", inputType: "textarea" }], resumeFields: resume });
+  assert.deepEqual(result.matches, []);
+  assert.equal(result.diagnostics.aiBlocked, 0);
+  assert.equal(result.diagnostics.openUnanswered, 1);
 });
 
 test("a multi-select keeps the items that fit its options and joins them; a single select drops the answer", async () => {

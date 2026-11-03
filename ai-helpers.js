@@ -17,7 +17,7 @@
     { type: "pinyin", keywords: ["拼音", "pinyin"] },
     { type: "email", keywords: ["邮箱", "email", "e-mail", "mail"] },
     { type: "phone", keywords: ["手机", "电话", "联系方式", "mobile", "phone", "联系电话"] },
-    { type: "gender", keywords: ["性别", "gender"] },
+    { type: "gender", keywords: ["性别", "gender", "sex"] },
     { type: "birth_date", keywords: ["出生日期", "生日", "birth", "出生年月"] },
     { type: "name", keywords: ["姓名", "name", "realname"] },
     // 证件类型只认下拉和单选（inferFieldSemantic）：号码框的占位文字可能写着「请先选择证件类型」。
@@ -99,9 +99,9 @@
     // 是否题：英文表单。
     ["是", "Yes"],
     ["否", "No"],
-    // 性别：英文表单，有的只写首字母。
-    ["男", "男性", "Male", "M"],
-    ["女", "女性", "Female", "F"]
+    // 性别：英文表单。只写首字母（M、F）的不放这里，见 choiceValue。
+    ["男", "男性", "Male"],
+    ["女", "女性", "Female"]
     // 「中国」不当成「中国大陆」：港澳台居民的国籍也是中国，选项把港澳台分开列时照旧不选。
   ];
   const SYNONYM_GROUPS = new Map();
@@ -206,6 +206,7 @@
     detectCascadeGroups,
     isValueValidForField,
     hasRealOptions,
+    choiceValue,
     valueShape,
     datePart,
     catalogKeys,
@@ -315,7 +316,7 @@
       if (matchIndex >= 0) {
         matches.push({
           fieldId: field.fieldId,
-          value: resumeFields[matchIndex].value
+          value: choiceValue(field, resumeFields[matchIndex].value)
         });
         usedResumeIndexes.add(matchIndex);
       }
@@ -754,8 +755,18 @@
       && field.options.some((option) => !isPlaceholderOption(option) && String(typeof option === "object" && option !== null ? option.text ?? "" : option ?? "").trim());
   }
 
+  // #429 英文表单的性别下拉只写首字母（M、F）：只在问性别的字段上，把「男」「女」换成选项里的 M、F。
+  // 不放进 OPTION_SYNONYMS：「T 恤尺码」这类下拉也有 M，全局认了会把性别算成能填进去。
+  const GENDER_LETTERS = [["M", ["男", "男性", "male"]], ["F", ["女", "女性", "female"]]];
+  function choiceValue(field, value) {
+    if (inferFieldSemantic(field) !== "gender" || !hasRealOptions(field) || findSelectOptionIndex(field.options, value) >= 0) return value;
+    const text = normalizeText(value);
+    const letter = GENDER_LETTERS.find(([, words]) => words.includes(text))?.[0];
+    return letter && findSelectOptionIndex(field.options, letter) >= 0 ? letter : value;
+  }
+
   function isValueValidForField(field, value) {
-    const text = String(value ?? "").trim();
+    const text = String(choiceValue(field, value) ?? "").trim();
     const semantic = inferFieldSemantic(field);
 
     if (!text) {
@@ -782,7 +793,8 @@
       case "birth_date":
         return /(\d{4}[-/.年]\d{1,2}([-/.\月]\d{1,2}日?)?)/.test(text);
       case "gender":
-        return /(男|女|male|female)/i.test(text);
+        // 只写首字母的 M、F 是 choiceValue 按选项换出来的。
+        return /(男|女|male|female)/i.test(text) || /^[mf]$/i.test(text);
       case "id_number":
         return /^[0-9xX]{8,18}$/.test(text.replace(/\s/g, ""));
       case "name":
