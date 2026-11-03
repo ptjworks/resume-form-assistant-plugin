@@ -156,6 +156,40 @@ test("删除要先确认，替换按原来的种类选文件", async () => {
   expect(await within(photos).findByText("还没有证件照。")).toBeTruthy();
 });
 
+test("保存或删除没成功时对话框留着，填的内容还在，原因写在对话框里", async () => {
+  const list = [file("a1", "resume", "简历.pdf", "application/pdf", { isDefault: true })];
+  const { calls } = mount((command) => {
+    if (command === "list_resume_files_cmd") return list;
+    if (command === "update_resume_file_cmd") return new Error("文件内容是PDF，文件名要以 .pdf 结尾。");
+    if (command === "delete_resume_file_cmd") return new Error("桌面暂时无法删除，请重试。");
+    return null;
+  });
+  const resumes = await screen.findByRole("region", { name: "简历附件" });
+  await userEvent.click(within(resumes).getByRole("button", { name: "编辑" }));
+  let dialog = await screen.findByRole("dialog");
+  const name = within(dialog).getByLabelText("文件名");
+  await userEvent.clear(name);
+  await userEvent.type(name, "简历.docx");
+  await userEvent.type(within(dialog).getByLabelText("说明"), "中文");
+  await userEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+  expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "文件内容是PDF，文件名要以 .pdf 结尾。");
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  expect((within(dialog).getByLabelText("文件名") as HTMLInputElement).value).toBe("简历.docx");
+  expect((within(dialog).getByLabelText("说明") as HTMLInputElement).value).toBe("中文");
+  await userEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+  // 再打开时不带着上一次的报错。
+  await userEvent.click(within(resumes).getByRole("button", { name: "删除" }));
+  dialog = await screen.findByRole("dialog");
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+  await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+  expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "桌面暂时无法删除，请重试。");
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  expect(within(resumes).getByText("简历.pdf")).toBeTruthy();
+  expect(calls.filter((c) => c.command === "delete_resume_file_cmd")).toHaveLength(1);
+});
+
 test("没有连上桌面程序时只说明", () => {
   render(
     <InvokeProvider invoke={null}>

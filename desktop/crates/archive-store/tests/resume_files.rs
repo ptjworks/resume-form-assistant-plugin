@@ -23,13 +23,61 @@ fn jpeg() -> Vec<u8> {
     [&[0xFF, 0xD8, 0xFF, 0xE0][..], b"\0\x10JFIF rest"].concat()
 }
 
+/// OLE 复合文档：文件头之后，按 128 字节对齐的目录项里放一个名字叫 `name`、类型是 `kind` 的条目。
+fn ole(name: &str, kind: u8, at: usize) -> Vec<u8> {
+    let mut bytes = vec![0u8; 1024];
+    bytes[..8].copy_from_slice(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
+    let encoded: Vec<u8> = format!("{name}\0").encode_utf16().flat_map(u16::to_le_bytes).collect();
+    bytes[at..at + encoded.len()].copy_from_slice(&encoded);
+    bytes[at + 64] = encoded.len() as u8;
+    bytes[at + 66] = kind;
+    bytes
+}
+
 fn doc() -> Vec<u8> {
-    let stream: Vec<u8> = "WordDocument".encode_utf16().flat_map(u16::to_le_bytes).collect();
-    [&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1][..], &[0u8; 64], &stream].concat()
+    ole("WordDocument", 2, 640)
+}
+
+/// 不压缩的最小 ZIP：本地文件头、中央目录、目录结尾。CRC 不填，识别时不看。
+fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let le16 = |n: usize| (n as u16).to_le_bytes();
+    let le32 = |n: usize| (n as u32).to_le_bytes();
+    let (mut out, mut central) = (Vec::new(), Vec::new());
+    for (name, body) in entries {
+        let offset = out.len();
+        out.extend(b"PK\x03\x04");
+        out.extend([20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        out.extend(le32(0));
+        out.extend(le32(body.len()));
+        out.extend(le32(body.len()));
+        out.extend(le16(name.len()));
+        out.extend(le16(0));
+        out.extend(name.as_bytes());
+        out.extend(*body);
+        central.extend(b"PK\x01\x02");
+        central.extend([20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        central.extend(le32(0));
+        central.extend(le32(body.len()));
+        central.extend(le32(body.len()));
+        central.extend(le16(name.len()));
+        central.extend([0u8; 12]);
+        central.extend(le32(offset));
+        central.extend(name.as_bytes());
+    }
+    let start = out.len();
+    out.extend(&central);
+    out.extend(b"PK\x05\x06");
+    out.extend([0u8; 4]);
+    out.extend(le16(entries.len()));
+    out.extend(le16(entries.len()));
+    out.extend(le32(central.len()));
+    out.extend(le32(start));
+    out.extend(le16(0));
+    out
 }
 
 fn docx() -> Vec<u8> {
-    [&b"PK\x03\x04"[..], &[0u8; 26], b"[Content_Types].xml", &[0u8; 30], b"word/document.xml"].concat()
+    zip(&[("[Content_Types].xml", b"<Types/>"), ("_rels/.rels", b"<Relationships/>"), ("word/document.xml", b"<w:document/>")])
 }
 
 fn code(error: StoreError) -> &'static str {
@@ -55,8 +103,17 @@ fn files_are_taken_by_their_content_and_kind_not_by_their_name() {
         (ResumeFileKind::Photo, "证件照.pdf", pdf(11)),       // 证件照只收图片
         (ResumeFileKind::Resume, "简历.png", [png(), b"x".to_vec()].concat()), // 简历只收文档
         (ResumeFileKind::Resume, "简历.docx", pdf(12)),       // 内容是 PDF，扩展名却是 docx
-        (ResumeFileKind::Other, "表格.docx", [&b"PK\x03\x04"[..], b"[Content_Types].xml xl/workbook.xml"].concat()), // XLSX
-        (ResumeFileKind::Other, "表格.doc", [&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1][..], b"Workbook"].concat()), // XLS
+        // XLSX，表格里的文字恰好是「word/document.xml」：只看 ZIP 目录里的条目名，不看内容。
+        (ResumeFileKind::Other, "表格.docx", zip(&[("[Content_Types].xml", b"<Types/>"), ("xl/workbook.xml", b"<workbook/>"),
+            ("xl/sharedStrings.xml", b"<t>word/document.xml</t>")])),
+        // 带宏的 Word 改了扩展名。
+        (ResumeFileKind::Other, "宏.docx", zip(&[("[Content_Types].xml", b"<Types/>"), ("word/document.xml", b"<w:document/>"),
+            ("word/vbaProject.bin", b"macro")])),
+        // 只有本地文件头、没有目录的残缺 ZIP。
+        (ResumeFileKind::Other, "残缺.docx", [&b"PK\x03\x04"[..], b"[Content_Types].xml word/document.xml"].concat()),
+        (ResumeFileKind::Other, "表格.doc", ole("Workbook", 2, 640)),           // XLS
+        (ResumeFileKind::Other, "存储.doc", ole("WordDocument", 1, 640)),       // 同名，但不是流
+        (ResumeFileKind::Other, "文字.doc", ole("WordDocument", 2, 600)),       // 不在目录项的位置上
         (ResumeFileKind::Other, "说明.pdf", "只是文字".as_bytes().to_vec()),
         (ResumeFileKind::Other, "空.pdf", Vec::new()),
         (ResumeFileKind::Resume, "大.pdf", pdf(MAX_RESUME_FILE_BYTES)),
