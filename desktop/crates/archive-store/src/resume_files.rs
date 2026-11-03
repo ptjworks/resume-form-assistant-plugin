@@ -265,9 +265,12 @@ fn check_name(name: &str, mime: &str) -> Result<(), StoreError> {
     if looks_like_credential(name) {
         return Err(invalid("文件名看起来像密码或密钥，改个名字再存。"));
     }
+    let Some(wanted) = extensions(mime).first() else {
+        return Err(invalid("这个文件的类型认不出，不能改名。"));
+    };
     let ext = name.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()).unwrap_or_default();
     if !extensions(mime).contains(&ext.as_str()) {
-        return Err(invalid(format!("文件内容是{}，文件名要以 .{} 结尾。", type_name(mime), extensions(mime)[0])));
+        return Err(invalid(format!("文件内容是{}，文件名要以 .{wanted} 结尾。", type_name(mime))));
     }
     Ok(())
 }
@@ -276,10 +279,13 @@ fn check_name(name: &str, mime: &str) -> Result<(), StoreError> {
 /// 扩展名和内容对不上的不收：网站常按扩展名判断类型，传上去会被拒。
 fn name_for_import(original: &str, mime: &str) -> Result<String, StoreError> {
     let base = original.rsplit(['/', '\\']).next().unwrap_or("").trim();
-    let wanted = extensions(mime)[0];
+    let Some(&wanted) = extensions(mime).first() else {
+        return Err(invalid("这个文件的类型认不出，没有添加。"));
+    };
+    // 只有扩展名的（「.pdf」）前面那段是空的，下面补成「文件」。
     let (stem, ext) = match base.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => (stem.trim().to_string(), ext.to_ascii_lowercase()),
-        _ => (base.trim_end_matches('.').to_string(), String::new()),
+        Some((stem, ext)) => (stem.trim().to_string(), ext.to_ascii_lowercase()),
+        None => (base.to_string(), String::new()),
     };
     if !ext.is_empty() && !extensions(mime).contains(&ext.as_str()) {
         return Err(invalid(format!("文件内容是{}，扩展名却是 .{ext}，没有添加。改好扩展名再添加。", type_name(mime))));
@@ -401,18 +407,40 @@ fn raw_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawFile> {
     })
 }
 
-/// 种类认不出、模板绑定读不出的记录不猜：当成「其他材料」「所有模板」会把文件用到用户没让用的地方。
-/// 整个列表报错，界面和插件都看得到。
-fn parse_row(raw: RawFile) -> Result<(ResumeFile, String), StoreError> {
-    let damaged = |what: &str| {
-        StoreError::Internal(format!("附件「{}」的记录损坏（{what}），为了不用错文件，附件先不列出。", raw.file.name))
-    };
+/// 读不出来的一条记录。不列进能用的文件，也不交给插件；界面上列出来，只能删掉这一行。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DamagedResumeFile {
+    pub id: String,
+    pub name: String,
+    pub reason: String,
+}
+
+/// 「附件」页要的：能用的文件，和读不出来的记录。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeFileListing {
+    pub files: Vec<ResumeFile>,
+    pub damaged: Vec<DamagedResumeFile>,
+}
+
+/// 存储位置不对、种类认不出、模板绑定读不出的记录不猜：拿去拼路径会读写档案以外的文件，当成「其他材料」
+/// 「所有模板」会把文件用到用户没让用的地方。这样的记录单独列出来，不当文件用。
+fn parse_row(raw: RawFile) -> Result<(ResumeFile, String), DamagedResumeFile> {
+    let damaged = |reason: &str| DamagedResumeFile { id: raw.file.id.clone(), name: raw.file.name.clone(), reason: reason.into() };
     if !stored_where_expected(&raw.rel, &raw.file.sha256) {
         return Err(damaged("存储位置不对"));
     }
     let kind = ResumeFileKind::parse(&raw.kind).ok_or_else(|| damaged("种类认不出"))?;
+    if !kind.allows(&raw.file.mime) {
+        return Err(damaged("文件类型不对"));
+    }
     let template_ids: Vec<String> = serde_json::from_str(&raw.templates).map_err(|_| damaged("模板绑定读不出"))?;
     Ok((ResumeFile { kind, template_ids, ..raw.file }, raw.rel))
+}
+
+fn damaged_error(damaged: DamagedResumeFile) -> StoreError {
+    StoreError::Internal(format!("附件「{}」的记录读不出来（{}），为了不用错文件，没有读写它。", damaged.name, damaged.reason))
 }
 
 const FILE_COLUMNS: &str =
@@ -425,36 +453,64 @@ impl StoreTx<'_> {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    fn resume_file_rows(&self) -> Result<Vec<(ResumeFile, String)>, StoreError> {
+    /// 能用的记录和读不出来的记录，分开给。
+    fn resume_file_rows(&self) -> Result<(Vec<(ResumeFile, String)>, Vec<DamagedResumeFile>), StoreError> {
         let live = self.template_ids_now()?;
         let mut stmt = self.conn().prepare(&format!(
             "SELECT {FILE_COLUMNS} FROM resume_files \
              ORDER BY CASE kind WHEN 'resume' THEN 0 WHEN 'photo' THEN 1 WHEN 'transcript' THEN 2 ELSE 3 END, position, rowid"
         ))?;
         let rows = stmt.query_map([], raw_row)?.collect::<Result<Vec<_>, _>>()?;
-        let mut files = rows.into_iter().map(parse_row).collect::<Result<Vec<_>, _>>()?;
-        for (file, _) in &mut files {
-            file.template_ids.retain(|id| live.contains(id));
+        let (mut files, mut damaged) = (Vec::new(), Vec::new());
+        for row in rows {
+            match parse_row(row) {
+                Ok((mut file, rel)) => {
+                    file.template_ids.retain(|id| live.contains(id));
+                    files.push((file, rel));
+                }
+                Err(bad) => damaged.push(bad),
+            }
         }
-        Ok(files)
+        Ok((files, damaged))
     }
 
-    /// 全部文件：按简历附件、证件照、成绩单、其他材料分好，每类按添加的先后。
+    /// 能用的文件：按简历附件、证件照、成绩单、其他材料分好，每类按添加的先后。读不出来的记录不在里面。
     pub fn resume_files(&self) -> Result<Vec<ResumeFile>, StoreError> {
-        Ok(self.resume_file_rows()?.into_iter().map(|(file, _)| file).collect())
+        Ok(self.resume_file_rows()?.0.into_iter().map(|(file, _)| file).collect())
     }
 
-    fn resume_file_row(&self, id: &str) -> Result<Option<(ResumeFile, String)>, StoreError> {
-        let live = self.template_ids_now()?;
-        let found = self
+    pub fn resume_file_listing(&self) -> Result<ResumeFileListing, StoreError> {
+        let (files, damaged) = self.resume_file_rows()?;
+        Ok(ResumeFileListing { files: files.into_iter().map(|(file, _)| file).collect(), damaged })
+    }
+
+    fn resume_file_raw(&self, id: &str) -> Result<Option<RawFile>, StoreError> {
+        Ok(self
             .conn()
             .query_row(&format!("SELECT {FILE_COLUMNS} FROM resume_files WHERE id = ?1"), params![id], raw_row)
-            .optional()?;
-        let Some((mut file, rel)) = found.map(parse_row).transpose()? else {
+            .optional()?)
+    }
+
+    /// 一条能用的记录；读不出来的按损坏报错。
+    fn resume_file_row(&self, id: &str) -> Result<Option<(ResumeFile, String)>, StoreError> {
+        let live = self.template_ids_now()?;
+        let Some(raw) = self.resume_file_raw(id)? else {
             return Ok(None);
         };
+        let (mut file, rel) = parse_row(raw).map_err(damaged_error)?;
         file.template_ids.retain(|id| live.contains(id));
         Ok(Some((file, rel)))
+    }
+
+    /// 读不出来的记录只删这一行，不碰任何文件：它的存储位置不可信。
+    fn delete_damaged_resume_file(&mut self, id: &str) -> Result<Option<bool>, StoreError> {
+        let Some(raw) = self.resume_file_raw(id)? else {
+            return Ok(Some(false));
+        };
+        if parse_row(raw).is_ok() {
+            return Ok(None);
+        }
+        Ok(Some(self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id])? > 0))
     }
 
     pub fn resume_file(&self, id: &str) -> Result<Option<ResumeFile>, StoreError> {
@@ -626,11 +682,16 @@ impl StoreTx<'_> {
     /// 删到一半的 `resume-file-<哈希>.deleting` 要是还有记录引用、原位置又没有文件（删记录失败、
     /// 挪回去也失败），就挪回原位，不当孤儿删。记录读不出（损坏）时什么都不删。
     pub fn sweep_resume_file_leftovers(&mut self) -> Result<usize, StoreError> {
-        let referenced: std::collections::HashSet<String> = self
-            .resume_file_rows()?
-            .into_iter()
-            .filter_map(|(_, rel)| rel.rsplit('/').next().map(str::to_string))
-            .collect();
+        // 每条记录都算引用，读不出来的也算：它的字节等用户删了这条记录再清，一条坏记录也不让清理整个停下。
+        let mut referenced = std::collections::HashSet::new();
+        {
+            let mut stmt = self.conn().prepare("SELECT sha256, stored_rel_path FROM resume_files")?;
+            for row in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+                let (sha256, rel) = row?;
+                referenced.insert(rel.rsplit(['/', '\\']).next().unwrap_or_default().to_string());
+                referenced.insert(sha256);
+            }
+        }
         let folder = self.archive_dir.join(RESUME_FILES_DIR);
         let mut removed = 0;
         for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
@@ -702,6 +763,10 @@ impl ArchiveStore {
         self.transaction(|tx| tx.resume_files())
     }
 
+    pub fn resume_file_listing(&self) -> Result<ResumeFileListing, StoreError> {
+        self.transaction(|tx| tx.resume_file_listing())
+    }
+
     pub fn resume_file(&self, id: &str) -> Result<Option<ResumeFile>, StoreError> {
         self.transaction(|tx| tx.resume_file(id))
     }
@@ -731,7 +796,11 @@ impl ArchiveStore {
 
     /// 删一个文件。字节先挪进 `tmp/` 再删记录（挪不动就什么都不删），提交之后删掉字节并核对真的没了；
     /// 没删干净照实报错，不报成删除成功。
+    /// 读不出来的记录只删这一行、不碰任何文件（存储位置不可信），它留下的字节等下一次清理。
     pub fn delete_resume_file(&self, id: &str) -> Result<bool, StoreError> {
+        if let Some(deleted) = self.transaction(|tx| tx.delete_damaged_resume_file(id))? {
+            return Ok(deleted);
+        }
         let Some(rel) = self.transaction(|tx| tx.resume_file_rel(id))? else {
             return Ok(false);
         };
@@ -814,6 +883,9 @@ mod tests {
     fn names_get_the_extension_their_content_has() {
         assert_eq!(name_for_import("C:\\Users\\a\\简历.PDF", PDF).unwrap(), "简历.pdf");
         assert_eq!(name_for_import("简历", PDF).unwrap(), "简历.pdf");
+        assert_eq!(name_for_import(".pdf", PDF).unwrap(), "文件.pdf");
+        assert_eq!(name_for_import("简历.", PDF).unwrap(), "简历.pdf");
+        assert!(check_name("简历.zip", "application/zip").is_err());
         assert_eq!(name_for_import("照片.jpeg", JPEG).unwrap(), "照片.jpeg");
         assert!(name_for_import("简历.docx", PDF).is_err());
         let long = format!("{}.pdf", "很".repeat(200));

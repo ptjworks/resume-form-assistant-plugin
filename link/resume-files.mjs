@@ -38,11 +38,13 @@ export function createResumeFiles({ session, store, sendNative, openChannel, sle
     return message;
   }
 
+  // Only the statuses listed above leave this module; any other desktop code reads as unavailable.
   function failure(result) {
     if (result.status === 'fatal') {
       if (result.code === 'conflict') return { status: 'conflict' };
+      if (result.code === 'invalid_payload') return { status: 'invalid_payload' };
       if (['protocol_incompatible', 'unknown_message_type'].includes(result.code)) return { status: 'unsupported' };
-      return { status: result.code ?? 'unavailable' };
+      return { status: 'unavailable' };
     }
     if (result.status === 'not_installed' || result.status === 'not_paired') return { status: result.status };
     return { status: 'unavailable' };
@@ -87,7 +89,12 @@ export function createResumeFiles({ session, store, sendNative, openChannel, sle
         if (result.status !== 'ok') return failure(result);
         const chunk = result.response.payload;
         if (chunk.byteSize !== file.byteSize || chunk.chunkCount !== count) return { status: 'conflict' };
-        const piece = decodeStandardBase64(chunk.bytesBase64);
+        let piece;
+        try {
+          piece = decodeStandardBase64(chunk.bytesBase64);
+        } catch {
+          return { status: 'corrupt' };
+        }
         const expected = index + 1 === count ? file.byteSize - index * RESUME_FILE_CHUNK_BYTES : RESUME_FILE_CHUNK_BYTES;
         if (piece.length !== expected || await sha256Hex(piece) !== chunk.chunkSha256) return { status: 'corrupt' };
         bytes.set(piece, index * RESUME_FILE_CHUNK_BYTES);

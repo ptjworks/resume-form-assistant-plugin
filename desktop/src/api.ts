@@ -510,6 +510,19 @@ export interface ResumeFileView {
   updatedAt: string;
 }
 
+/** #429：读不出来的一条附件记录（存储位置不对、种类认不出、模板绑定读不出）。不当文件用，只能删掉。 */
+export interface DamagedResumeFileView {
+  id: string;
+  name: string;
+  reason: string;
+}
+
+/** #429：附件页的内容：能用的文件，和读不出来的记录。 */
+export interface ResumeFileListing {
+  files: ResumeFileView[];
+  damaged: DamagedResumeFileView[];
+}
+
 /** 插件旧数据的一批导入（#130 PR 5）。只有状态与计数，不含任何内容。 */
 export interface LegacyImportPending {
   importId: string;

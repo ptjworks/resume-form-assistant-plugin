@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ResumeFileKind, ResumeFileView, ResumeOverview, TemplateSummary } from "../api.ts";
+import type { DamagedResumeFileView, ResumeFileKind, ResumeFileListing, ResumeFileView, ResumeOverview, TemplateSummary } from "../api.ts";
 import { formatSize } from "../backup.ts";
 import { useInvoke } from "../react/invoke.tsx";
 import { ResumeDialog } from "./ResumeDialog.tsx";
@@ -55,21 +55,27 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<ResumeFileView | null>(null);
+  const [damaged, setDamaged] = useState<DamagedResumeFileView[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string; damaged: boolean } | null>(null);
+
+  const show = useCallback((listing: ResumeFileListing) => {
+    setFiles(listing.files);
+    setDamaged(listing.damaged);
+  }, []);
 
   const load = useCallback(async () => {
     if (!invoke) return;
     try {
       const [list, overview] = await Promise.all([
-        invoke<ResumeFileView[]>("list_resume_files_cmd"),
+        invoke<ResumeFileListing>("list_resume_files_cmd"),
         invoke<ResumeOverview>("resume_overview_cmd"),
       ]);
-      setFiles(list);
+      show(list);
       setTemplates(overview.templates);
     } catch (error) {
       setNotice(describe(error));
     }
-  }, [invoke]);
+  }, [invoke, show]);
 
   useEffect(() => {
     if (active) void load();
@@ -89,18 +95,18 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   }, [files, invoke, previews]);
 
   /** 成功返回 true；失败时原因在 notice 里，打开着的对话框不关，用户填的东西还在。 */
-  const run = async (work: () => Promise<ResumeFileView[]>, done: string): Promise<boolean> => {
+  const run = async (work: () => Promise<ResumeFileListing>, done: string): Promise<boolean> => {
     if (!invoke || busy) return false;
     setBusy(true);
     try {
-      setFiles(await work());
+      show(await work());
       setNotice({ tone: "ok", text: done });
       return true;
     } catch (error) {
       setNotice(describe(error));
       // 有的失败发生在改动之后（新文件换上了、旧文件没删掉）：列表按桌面现在的样子重读。
       if (invoke) {
-        void invoke<ResumeFileView[]>("list_resume_files_cmd").then(setFiles, () => {});
+        void invoke<ResumeFileListing>("list_resume_files_cmd").then(show, () => {});
       }
       return false;
     } finally {
@@ -111,28 +117,29 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   const add = async (kind: ResumeFileKind) => {
     const path = await pickers?.openResumeFile?.(kind);
     if (!path || !invoke) return;
-    await run(() => invoke<ResumeFileView[]>("add_resume_file_cmd", { kind, path }), `已添加${KIND_NAMES[kind]}。`);
+    await run(() => invoke<ResumeFileListing>("add_resume_file_cmd", { kind, path }), `已添加${KIND_NAMES[kind]}。`);
   };
 
   const replace = async (file: ResumeFileView) => {
     const path = await pickers?.openResumeFile?.(file.kind);
     if (!path || !invoke) return;
-    await run(() => invoke<ResumeFileView[]>("replace_resume_file_cmd", { id: file.id, path }), `已替换「${file.name}」。`);
+    await run(() => invoke<ResumeFileListing>("replace_resume_file_cmd", { id: file.id, path }), `已替换「${file.name}」。`);
   };
 
   const save = async () => {
     if (!draft || !invoke) return;
     const { file, name, label, isDefault, templateIds } = draft;
     const saved = await run(
-      () => invoke<ResumeFileView[]>("update_resume_file_cmd", { id: file.id, patch: { name, label, isDefault, templateIds } }),
+      () => invoke<ResumeFileListing>("update_resume_file_cmd", { id: file.id, patch: { name, label, isDefault, templateIds } }),
       `已保存「${name.trim()}」。`,
     );
     if (saved) setDraft(null);
   };
 
-  const remove = async (file: ResumeFileView) => {
+  const remove = async (target: { id: string; name: string; damaged: boolean }) => {
     if (!invoke) return;
-    if (await run(() => invoke<ResumeFileView[]>("delete_resume_file_cmd", { id: file.id }), `已删除「${file.name}」。`)) {
+    const done = target.damaged ? `已删除「${target.name}」这条读不出来的记录。` : `已删除「${target.name}」。`;
+    if (await run(() => invoke<ResumeFileListing>("delete_resume_file_cmd", { id: target.id }), done)) {
       setConfirmDelete(null);
     }
   };
@@ -208,7 +215,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
                         >
                           编辑
                         </button>
-                        <button type="button" disabled={busy} onClick={() => openDialog(() => setConfirmDelete(file))}>删除</button>
+                        <button type="button" disabled={busy} onClick={() => openDialog(() => setConfirmDelete({ id: file.id, name: file.name, damaged: false }))}>删除</button>
                       </div>
                     </li>
                   ))}
@@ -219,6 +226,33 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
             </section>
           );
         })}
+        {damaged.length ? (
+          <section className="resume-files-group" aria-label="读不出来的记录">
+            <div className="resume-files-group-head">
+              <h3>读不出来的记录</h3>
+            </div>
+            <p className="note warn">有 {damaged.length} 个附件的记录读不出来，不会拿去上传。可以删掉这些记录，不动任何文件。</p>
+            <ul>
+              {damaged.map((item) => (
+                <li key={item.id}>
+                  <div className="resume-files-main">
+                    <p className="resume-files-name">{item.name}</p>
+                    <p className="resume-files-meta">{item.reason}</p>
+                  </div>
+                  <div className="resume-files-actions">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => openDialog(() => setConfirmDelete({ id: item.id, name: item.name, damaged: true }))}
+                    >
+                      删除记录
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </div>
       {notice && !draft && !confirmDelete ? <p className={`note ${notice.tone} resume-files-note`} role="status">{notice.text}</p> : null}
       <ResumeDialog
@@ -285,7 +319,11 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
           </>
         }
       >
-        <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
+        {confirmDelete?.damaged ? (
+          <p>「{confirmDelete.name}」这条记录读不出来。删掉的只是这条记录，不动任何文件。</p>
+        ) : (
+          <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
+        )}
         {dialogError}
       </ResumeDialog>
     </section>

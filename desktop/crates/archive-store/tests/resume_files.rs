@@ -136,7 +136,7 @@ fn files_are_taken_by_their_content_and_kind_not_by_their_name() {
 }
 
 #[test]
-fn a_damaged_record_stops_the_list_instead_of_being_guessed() {
+fn a_damaged_record_is_listed_apart_never_guessed_and_the_rest_still_work() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(dir.path());
     let db = open(dir.path());
@@ -157,11 +157,18 @@ fn a_damaged_record_stops_the_list_instead_of_being_guessed() {
         raw.execute_batch(&format!("{damage} WHERE id = '{}'; PRAGMA ignore_check_constraints = OFF;", file.id)).unwrap();
         drop(raw);
         let db = open(dir.path());
-        // 不当成「所有模板」「其他材料」：整个列表报错，单个也报错。
-        assert_eq!(code(db.resume_files().unwrap_err()), "internal_error", "{damage}");
+        // 不当成「所有模板」「其他材料」：不在能用的文件里，单独列出来；单个读也报错。别的文件照常。
+        let listing = db.resume_file_listing().unwrap();
+        assert!(listing.files.iter().all(|f| f.id != file.id), "{damage}");
+        assert_eq!(listing.files.len(), i, "{damage}");
+        assert_eq!(listing.damaged.iter().map(|d| (d.id.as_str(), d.name.as_str())).collect::<Vec<_>>(), vec![(file.id.as_str(), "简历.pdf")]);
+        assert!(db.resume_files().unwrap().iter().all(|f| f.id != file.id));
         assert_eq!(code(db.resume_file(&file.id).unwrap_err()), "internal_error", "{damage}");
-        // 读不出记录时，添加之后的清理什么都不删。
+        assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, 0).unwrap_err()), "internal_error", "{damage}");
+        // 有一条读不出来，清理照样做完，只是不动这条记录的字节。
+        std::fs::write(dir.path().join("archive").join(RESUME_FILES_DIR).join("leftover"), b"x").unwrap();
         db.add_resume_file(ResumeFileKind::Photo, &format!("照片{i}.png"), &[png(), vec![i as u8]].concat()).unwrap();
+        assert!(!dir.path().join("archive").join(RESUME_FILES_DIR).join("leftover").exists(), "{damage}");
         assert!(dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256).is_file(), "{damage}");
         db.close().unwrap();
         let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
@@ -171,16 +178,20 @@ fn a_damaged_record_stops_the_list_instead_of_being_guessed() {
         ))
         .unwrap();
     }
-    // 损坏的记录照样能删。
+    // 读不出来的记录可以删：只删这一行，删的时候不碰文件；它的字节下一次清理时才清掉。
     let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
     raw.execute_batch(&format!("UPDATE resume_files SET template_ids_json = 'not json' WHERE id = '{}'", file.id)).unwrap();
     drop(raw);
     let db = open(dir.path());
+    let bytes = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
     assert!(db.delete_resume_file(&file.id).unwrap());
-    let left = db.resume_files().unwrap();
-    assert_eq!(left.len(), 3);
-    assert!(left.iter().all(|f| f.kind == ResumeFileKind::Photo));
-    assert!(!dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256).exists());
+    assert!(bytes.is_file(), "deleting a damaged record touches no file");
+    let listing = db.resume_file_listing().unwrap();
+    assert!(listing.damaged.is_empty());
+    assert_eq!(listing.files.len(), 3);
+    assert!(listing.files.iter().all(|f| f.kind == ResumeFileKind::Photo));
+    db.add_resume_file(ResumeFileKind::Resume, "新简历.pdf", &pdf(9)).unwrap();
+    assert!(!bytes.exists(), "swept once nothing refers to it");
 }
 
 #[test]
@@ -379,15 +390,22 @@ fn a_stored_path_anywhere_else_is_damage_and_no_file_is_touched() {
         raw.execute("UPDATE resume_files SET stored_rel_path = ?1 WHERE id = ?2", rusqlite::params![bad, file.id]).unwrap();
         drop(raw);
         let db = open(dir.path());
-        assert_eq!(code(db.resume_files().unwrap_err()), "internal_error", "{bad}");
+        assert!(db.resume_files().unwrap().iter().all(|f| f.id != file.id), "{bad}");
+        assert_eq!(db.resume_file_listing().unwrap().damaged[0].reason, "存储位置不对", "{bad}");
         assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, 0).unwrap_err()), "internal_error", "{bad}");
         assert_eq!(code(db.read_resume_file(&file.id).unwrap_err()), "internal_error", "{bad}");
-        assert_eq!(code(db.delete_resume_file(&file.id).unwrap_err()), "internal_error", "{bad}");
         assert_eq!(code(db.replace_resume_file(&file.id, "新简历.pdf", &pdf(3)).unwrap_err()), "internal_error", "{bad}");
+        // 清理不因为这条记录停下，也不碰它指着的那个文件。
+        db.add_resume_file(ResumeFileKind::Other, &format!("材料{}.pdf", bad.len()), &pdf(10 + bad.len())).unwrap();
         assert_eq!(std::fs::read(&outside).unwrap(), pdf(2), "the file outside the folder is untouched: {bad}");
         assert!(dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256).is_file(), "{bad}");
         db.close().unwrap();
     }
+    // 删掉这条记录只删这一行：档案外的文件原样在。
+    let db = open(dir.path());
+    assert!(db.delete_resume_file(&file.id).unwrap());
+    assert!(db.resume_file_listing().unwrap().damaged.is_empty());
+    assert_eq!(std::fs::read(&outside).unwrap(), pdf(2));
 }
 
 #[test]
@@ -434,4 +452,23 @@ fn bytes_left_half_deleted_while_their_record_remains_are_put_back_not_swept() {
     assert!(folder.join(&file.sha256).is_file());
     assert_eq!(db.read_resume_file(&file.id).unwrap().1, pdf(50));
     assert!(!tmp.join(format!("resume-file-{}.deleting", file.sha256)).exists());
+}
+
+#[test]
+fn a_record_whose_type_is_unknown_or_wrong_for_its_kind_is_damaged_not_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    for (mime, reason) in [("application/zip", "文件类型不对"), ("image/png", "文件类型不对")] {
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute("UPDATE resume_files SET mime = ?1 WHERE id = ?2", rusqlite::params![mime, file.id]).unwrap();
+        drop(raw);
+        let db = open(dir.path());
+        assert_eq!(db.resume_file_listing().unwrap().damaged[0].reason, reason, "{mime}");
+        let renamed = db.update_resume_file(&file.id, &ResumeFilePatch { name: Some("新.pdf".into()), ..Default::default() });
+        assert_eq!(code(renamed.unwrap_err()), "internal_error", "{mime}");
+        db.close().unwrap();
+    }
 }

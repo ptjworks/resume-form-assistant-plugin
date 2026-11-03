@@ -192,3 +192,14 @@ test('a port the browser refuses to open is unavailable, not a rejected promise'
   assert.deepEqual(await c.files.fetch({ fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: 'a.pdf', mime: 'application/pdf' }),
     { status: 'unavailable' });
 });
+
+test('only the statuses the module lists come back; any other desktop code is unavailable', async () => {
+  const bytes = pdf(100);
+  const listing = { fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: 'a.pdf', mime: 'application/pdf' };
+  for (const [code, status] of [['restore_epoch_mismatch', 'unavailable'], ['previously_purged', 'unavailable'], ['payload_too_large', 'unavailable'],
+    ['secret_forbidden', 'unavailable'], ['invalid_payload', 'invalid_payload'], ['conflict', 'conflict'], ['unknown_message_type', 'unsupported']]) {
+    const c = await client(bytes, { fail: () => ({ code, retryable: false, message: 'x' }) });
+    assert.deepEqual(await c.files.list(), { status }, `list ${code}`);
+    assert.deepEqual(await c.files.fetch(listing), { status }, `fetch ${code}`);
+  }
+});
