@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
+const { refsFor } = require("./helpers/ai-refs.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
@@ -40,6 +41,7 @@ function layout(w) {
 function aiWorker(clock, resume = RESUME) {
   const calls = [];
   const cancels = [];
+  let lastResume = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
     ResumeProFormAgent: require("../form-agent.js"), AbortController, TextEncoder, performance: { now: () => clock.now },
@@ -53,9 +55,10 @@ function aiWorker(clock, resume = RESUME) {
       const call = { fields, labels: fields.map((field) => field.label) };
       const answer = (reply) => context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId, reply } });
       // 按题目名回答；不传就只回这几项里资料有的。
-      call.reply = (values = null) => answer({ ok: true, text: JSON.stringify(fields
+      // AI 只回资料编号（#429 第 11 项）：按值写的回答照这次发出去的目录换成编号。
+      call.reply = (values = null) => answer({ ok: true, text: refsFor(message.user, lastResume, JSON.stringify(fields
         .map((field) => ({ fieldId: field.fieldId, value: (values || Object.fromEntries(resume.map(([, key, value]) => [key, value])))[field.label] }))
-        .filter((item) => item.value)) });
+        .filter((item) => item.value))) });
       call.fail = (reply) => answer({ ok: false, ...reply });
       calls.push(call);
     }
@@ -66,6 +69,7 @@ function aiWorker(clock, resume = RESUME) {
     calls, cancels,
     dispatch: (message) => new Promise((resolve) => {
       const copy = JSON.parse(JSON.stringify(message));
+      if (Array.isArray(copy.resumeFields)) lastResume = copy.resumeFields;
       const keepOpen = context.dispatchAiMessage(copy, sender, (reply) => resolve(JSON.parse(JSON.stringify(reply ?? null))));
       if (!keepOpen && copy.type !== "CANCEL_AI_FILL") resolve(undefined);
     })
@@ -691,9 +695,10 @@ test("a field revealed later with the same question as one already on the page g
   p.worker.calls[0].reply();
   assert.ok(await p.until(() => p.worker.calls.length === 2), "the second one goes to the AI");
   assert.deepEqual(p.worker.calls[1].labels, ["每周可实习天数"]);
-  p.worker.calls[1].reply({ 每周可实习天数: "3天" });
+  // AI 只能挑资料里的一项（#429 第 11 项），这里挑的正是存过的回答。
+  p.worker.calls[1].reply({ 每周可实习天数: "5天" });
   const result = await running;
-  assert.deepEqual([p.value("days"), p.value("days2")], ["5天", "3天"]);
+  assert.deepEqual([p.value("days"), p.value("days2")], ["5天", "5天"]);
   assert.equal(result.outcome, "success", p.ui.diag.value);
 });
 
@@ -705,9 +710,9 @@ test("an assisted fill counts same questions across the whole page, not just the
     { scopes: [p.w.document.getElementById("second")] }), 15000);
   assert.ok(await p.until(() => p.worker.calls.length === 1));
   assert.deepEqual(p.worker.calls[0].labels, ["每周可实习天数", "毕业院校"]);
-  p.worker.calls[0].reply({ 每周可实习天数: "3天", 毕业院校: "示例大学" });
+  p.worker.calls[0].reply({ 每周可实习天数: "5天", 毕业院校: "示例大学" });
   await running;
-  assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "3天", "示例大学"]);
+  assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "5天", "示例大学"]);
 });
 
 // #429 证件类型按资料和号码本地填；资料写的和号码对不上的不填，报「和证件号码对不上」，也不交给 AI。

@@ -67,7 +67,7 @@
   // `scan_error` (#408): controls whose title or section could not be read, skipped one by one.
   const DROPS = ["type_hidden", "non_fillable", "disabled", "invisible", "popup_internal", "grouped", "page_chrome",
     "site_search", "outside_form", "no_label", "scan_error", "out_of_scope", "secret",
-    "no_resume_mapping", "ai_unmatched", "no_result", "not_sent", "changed_while_waiting", "not_written", "unconfirmed", "unsynced"];
+    "no_resume_mapping", "ai_unmatched", "open_question", "no_result", "not_sent", "changed_while_waiting", "not_written", "unconfirmed", "unsynced"];
   // Where each scanned field's title came from, and why a field was not offered for 我的信息 (#228).
   const LABEL_SOURCES = ["explicit", "item", "table", "sibling", "placeholder"];
   const OFFER_SKIPS = ["ambiguous", "entry"];
@@ -233,12 +233,14 @@
     const rest = d ? Math.max(0, firstRound - secret - n(d.ruleMatches) - noMapping - n(d.aiMatches))
       : input.requested ? firstRound : 0;
     const sent = d && aiCalled(input) ? Math.min(rest, Math.max(0, n(d.aiFields) - noMapping - n(d.aiMatches))) : 0;
+    // Of those, open questions with no ready answer in the resume (#429): the AI no longer writes one, so they get their own reason.
+    const open = Math.min(sent, n(d?.openUnanswered));
     const counts = {
       type_hidden: n(s?.typeHidden), non_fillable: n(s?.nonFillable), disabled: n(s?.disabled), invisible: n(s?.invisible),
       popup_internal: n(s?.popup), grouped: n(s?.grouped), page_chrome: n(s?.pageChrome), site_search: n(s?.siteSearch),
       outside_form: n(s?.outsideForm), no_label: n(s?.noLabel), scan_error: n(s?.scanError), out_of_scope: n(s?.outOfScope),
       secret, no_resume_mapping: noMapping,
-      ai_unmatched: failed ? 0 : sent, no_result: d ? (failed ? sent : 0) : rest, not_sent: 0,
+      ai_unmatched: failed ? 0 : sent - open, open_question: failed ? 0 : open, no_result: d ? (failed ? sent : 0) : rest, not_sent: 0,
       // Matches left alone because the user or the page changed the field while the AI worked (#402).
       changed_while_waiting: n(input.keptCount),
       not_written: n(input.unfilledCount), unconfirmed: n(input.unconfirmedCount), unsynced: n(input.unsyncedCount)
@@ -389,7 +391,7 @@
         continue;
       }
       // Every value has its own closed pattern; the length cap only bounds the regex work.
-      // The longest reachable value is drop_reasons with every reason at six digits (377 chars).
+      // The longest reachable value is drop_reasons with every reason at six digits (398 chars).
       const entry = /^([a-z_]{1,32}): (.{1,400})$/.exec(line);
       if (entry) {
         const known = Object.prototype.hasOwnProperty.call(VALUES, entry[1]) && VALUES[entry[1]].test(entry[2])

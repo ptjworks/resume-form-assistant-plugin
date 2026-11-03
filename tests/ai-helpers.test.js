@@ -741,13 +741,24 @@ test("worker: a rule value the field cannot accept does not count as matched", a
   const worker = loadWorker((request) => { body = request; });
 
   const result = await worker.handleAiFill({
-    formFields: [{ fieldId: "g", label: "Gender", inputType: "select", tagName: "select", options: ["M", "F"] }],
-    resumeFields: [{ group: "基本信息", key: "性别", value: "男" }]
+    formFields: [{ fieldId: "g", label: "Gender", inputType: "select", tagName: "select", options: ["Herr", "Frau"] }],
+    resumeFields: [{ group: "基本信息", key: "性别", value: "男" }, { group: "基本信息", key: "姓名", value: "测试用户" }]
   });
 
   assert.equal(result.diagnostics.ruleMatches, 0);
   assert.equal(result.diagnostics.aiFields, 1);
-  assert.ok(body.user.includes("Gender"));
+  // #429 第 11 项：没有一项资料填得进选项的下拉不发给 AI，记作没有对应的资料。
+  assert.equal(body, null);
+  assert.equal(result.diagnostics.skippedNoContext, 1);
+});
+
+test("worker: an English gender select takes M or F for 男 or 女", async () => {
+  const result = await loadWorker(() => {}).handleAiFill({
+    formFields: [{ fieldId: "g", label: "Gender", inputType: "select", tagName: "select", options: ["M", "F"] }],
+    resumeFields: [{ group: "基本信息", key: "性别", value: "女" }]
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "g", value: "女" }]);
+  assert.equal(helpers.findSelectOptionIndex(["M", "F"], "女"), 1);
 });
 
 // #429 身份证号自检：校验码、出生日期和开头。号码都是按规则算出来的虚构号码。

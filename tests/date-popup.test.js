@@ -504,6 +504,8 @@ test("a span of two dates gives the start or the end only when the question says
   assert.equal(pick("2019-2023", "离职年份"), "2023");
   assert.equal(pick("2019.09-2023.06", "在校时间（开始）"), "2019.09");
   assert.equal(pick("2019.09-2023.06", "Start date"), "2019.09");
+  assert.equal(pick("2019.09-2023.06", "Enrollment Date"), "2019.09");
+  assert.equal(pick("2019.09-2023.06", "Graduation Date (Master)"), "2023.06");
   // 没写、两样都写了：原样交回，由日期控件报日期不对。
   assert.equal(pick("2019.09-2023.06", "在校时间"), "2019.09-2023.06");
   assert.equal(pick("2019.09-2023.06", "起止时间"), "2019.09-2023.06");

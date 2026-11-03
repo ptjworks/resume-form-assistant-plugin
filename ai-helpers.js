@@ -94,9 +94,14 @@
     ["大学本科", "本科"],
     ["大学专科", "专科", "大专"],
     ...LEVEL_SYNONYMS,
-    // 性别：英文表单。
-    ["男", "男性", "Male"],
-    ["女", "女性", "Female"]
+    // 计算机等级（NCRE）：带不带「考试」「全国」。
+    ...["一", "二", "三", "四"].map((level) => [`全国计算机等级考试${level}级`, `全国计算机等级${level}级`, `计算机等级${level}级`, `计算机${level}级`]),
+    // 是否题：英文表单。
+    ["是", "Yes"],
+    ["否", "No"],
+    // 性别：英文表单，有的只写首字母。
+    ["男", "男性", "Male", "M"],
+    ["女", "女性", "Female", "F"]
     // 「中国」不当成「中国大陆」：港澳台居民的国籍也是中国，选项把港澳台分开列时照旧不选。
   ];
   const SYNONYM_GROUPS = new Map();
@@ -199,7 +204,12 @@
     rangeDateValue,
     rangeDateParts,
     isPresentDate,
-    detectCascadeGroups
+    detectCascadeGroups,
+    isValueValidForField,
+    hasRealOptions,
+    valueShape,
+    datePart,
+    catalogKeys
   };
 
   globalScope.ResumeProAIHelpers = helpers;
@@ -933,8 +943,8 @@
   // 「2023.09-至今」的结束取「至今」（#429）。两样都写了（起止时间）、都没写，或不是一段起止的，原样交回，由日期控件报日期不对。
   const SPAN_DATE = /(?:19|20)\d{2}(?:\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?|\s*[\/\-.]\s*\d{1,2}(?!\d)(?:\s*[\/\-.]\s*\d{1,2}(?!\d))?|\s*年)?/g;
   // 「起」「止」单独成词才算（「在校时间（起）」「在校时间：止」）：「发起」「起薪」「禁止」里的不算。
-  const SPAN_START = /开始|起始|入学|入职|(?:^|[\s(（【\[:：])起(?=$|[\s)）】\]:：])|\b(?:start|from|begin)/i;
-  const SPAN_END = /结束|截止|终止|毕业|离职|(?:^|[\s(（【\[:：])止(?=$|[\s)）】\]:：])|\b(?:end|until)\b/i;
+  const SPAN_START = /开始|起始|入学|入职|(?:^|[\s(（【\[:：])起(?=$|[\s)）】\]:：])|\b(?:start|from|begin|enrol|admission)/i;
+  const SPAN_END = /结束|截止|终止|毕业|离职|(?:^|[\s(（【\[:：])止(?=$|[\s)）】\]:：])|\b(?:end|until)\b|\bgraduat/i;
   function rangeDateValue(rawValue, hint) {
     const raw = String(rawValue ?? "").trim();
     const parts = rangeDateParts(raw);
@@ -1002,5 +1012,66 @@
 
   function pad2(value) {
     return String(Number(value)).padStart(2, "0");
+  }
+
+  // #429 第 11 项：发给 AI 的资料目录不带值，只带按值算出的形态，字段名看不出意思（「号码1」）时 AI 靠它判断。
+  // 只说形态：几位数字、邮箱、日期这类，认不出的给空串。
+  function valueShape(value) {
+    const text = String(value ?? "").trim();
+    const compact = text.replace(/[\s-]/g, "");
+    if (!text) return "";
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) return "邮箱";
+    if (MOBILE_VALUE.test(compact)) return "11 位数字";
+    if (CN_ID_VALUE.test(compact)) return "18 位证件号";
+    if (/^https?:\/\//i.test(text)) return "网址";
+    if (rangeDateParts(text)) return "起止日期";
+    if (/^[\d\s年月日\/\-.:T]+$/.test(text) && parseDateParts(text)?.year) return "日期";
+    if (/^\d+$/.test(compact)) return `${compact.length} 位数字`;
+    return text.length > 60 ? "长文本" : "";
+  }
+
+  // 日期里的年、月或日（出生年份、毕业月份分开的下拉）。一段起止先按题目取开始或结束（rangeDateValue）。
+  // 下拉读得到选项时按选项的写法给（「5」「05」「5月」），要和一个选项归一后完全相同：「9」不能靠「包含」落到「1999年」上。
+  // 对不上给空串；没有选项给补零的数字。
+  function datePart(value, part, field) {
+    const hint = [field?.label, field?.placeholder].filter(Boolean).join(" ");
+    const text = String(rangeDateValue(value, hint)).trim();
+    const yearOnly = /^((?:19|20)\d{2})\s*年?$/.exec(text);
+    const parsed = yearOnly ? { year: yearOnly[1] } : parseDateParts(text);
+    const number = Number(parsed?.[part]);
+    if (!["year", "month", "day"].includes(part) || !number) return "";
+    const unit = { year: "年", month: "月", day: "日" }[part];
+    const forms = part === "year" ? [String(number), `${number}${unit}`]
+      : [pad2(number), String(number), `${number}${unit}`, `${pad2(number)}${unit}`];
+    if (!hasRealOptions(field)) return forms[0];
+    const written = field.options.filter((option) => !isPlaceholderOption(option))
+      .flatMap((option) => (typeof option === "object" && option !== null ? [option.text, option.value] : [option]))
+      .map(normalizeText).filter(Boolean);
+    return forms.find((form) => written.includes(normalizeText(form))) || "";
+  }
+
+  // 桌面解析简历时，同一段经历的字段名起成「学校名或公司名 + 教育经历 - 专业」（semanticizeParsedFields），字段名里带着值。
+  // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。别的字段名原样。
+  function catalogKeys(resumeFields) {
+    const labels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
+    const numbers = new Map();
+    return resumeFields.map((field) => {
+      const key = String(field?.key ?? "");
+      const anchors = resumeFields.filter((other) => other?.group === field?.group)
+        .map((other) => sanitizeAnchor(other?.value))
+        .filter((anchor) => anchor.length >= 2 && key.startsWith(anchor))
+        .sort((a, b) => b.length - a.length);
+      for (const anchor of anchors) {
+        const rest = key.slice(anchor.length);
+        const label = labels.find((item) => rest.startsWith(item)) || /^[\u4e00-\u9fa5A-Za-z]+?信息(?=-|$|\s\()/.exec(rest)?.[0];
+        if (!label) continue;
+        const slot = `${field.group}\u0000${label}`;
+        if (!numbers.has(slot)) numbers.set(slot, new Map());
+        const seen = numbers.get(slot);
+        if (!seen.has(anchor)) seen.set(anchor, seen.size + 1);
+        return `${label}${seen.get(anchor)}${rest.slice(label.length)}`;
+      }
+      return key;
+    });
   }
 })(typeof self !== "undefined" ? self : globalThis);

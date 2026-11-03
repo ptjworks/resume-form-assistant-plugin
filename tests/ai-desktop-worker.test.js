@@ -6,14 +6,17 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'ai-worker.js'), 'utf8');
 const helpers = require('../ai-helpers.js');
+const { refsFor, catalogOf } = require('./helpers/ai-refs.js');
 const BASE = {
   formFields: [{ fieldId: 'name', label: '姓名' }, { fieldId: 'school', label: '学校' }],
   resumeFields: [{ group: '基本信息', key: '姓名', value: '测试用户' }, { group: '教育背景', key: '学校', value: '大学乙' }]
 };
 
+// 替身按值写回答，发给 worker 前按这次的资料目录换成编号（tests/helpers/ai-refs.js）。
 function worker(respond = () => ({ ok: true, text: '[{"fieldId":"school","value":"大学乙"}]' }), { now = () => 0 } = {}) {
   const sent = [];
   let sequence = 0;
+  let resume = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: helpers,
     ResumeProProfile: require('../profile-fields.js'),
@@ -26,13 +29,17 @@ function worker(respond = () => ({ ok: true, text: '[{"fieldId":"school","value"
       sent.push(message);
       if (message.kind === 'desktop-complete') {
         Promise.resolve(respond(message)).then(reply => {
-          context.self.onmessage({ data: { kind: 'desktop-result', callId: message.callId, reply } });
+          const answer = reply?.ok && typeof reply.text === 'string' ? { ...reply, text: refsFor(message.user, resume, reply.text) } : reply;
+          context.self.onmessage({ data: { kind: 'desktop-result', callId: message.callId, reply: answer } });
         });
       }
     }
   };
   vm.runInContext(source, context);
-  return { context, sent, run: (input = BASE, controller) => context.handleAiFill(input, controller) };
+  return { context, sent, run: (input = BASE, controller) => {
+    resume = input.resumeFields || [];
+    return context.handleAiFill(input, controller);
+  } };
 }
 
 test('AI fill keeps local rules and parses only desktop response text', async () => {
@@ -139,9 +146,10 @@ test('password and verification fields never enter any AI prompt', async () => {
 
 test('an oversized lone candidate is skipped instead of prompting AI without resume context', async () => {
   const env = worker(() => { throw new Error('AI must not receive an empty candidate batch'); });
+  // 资料的值不发（#429 第 11 项），撑爆预算的只能是字段名。
   const result = await env.run({
-    formFields: [{ fieldId: 'school', label: '学校', inputType: 'select', options: ['大学甲', '大学乙'] }],
-    resumeFields: [{ group: '教育背景', key: '学校', value: '合成资料'.repeat(20_000) }]
+    formFields: [{ fieldId: 'school', label: '学校' }],
+    resumeFields: [{ group: '教育背景', key: '学校'.repeat(20_000), value: '大学乙' }]
   });
   assert.equal(env.sent.filter(item => item.kind === 'desktop-complete').length, 0);
   assert.ok(result.diagnostics.skippedOversized > 0);
@@ -150,8 +158,8 @@ test('an oversized lone candidate is skipped instead of prompting AI without res
 
 test('a failed request replaces an earlier skip code, so the diagnostics name the failure', async () => {
   const input = {
-    formFields: [{ fieldId: 'school', label: '学校', inputType: 'select', options: ['大学甲', '大学乙'] }, { fieldId: 'intro', label: '个人简介' }],
-    resumeFields: [{ group: '教育背景', key: '学校', value: '合成资料'.repeat(20_000) }, { group: '其他', key: '自我评价', value: '合成评价' }]
+    formFields: [{ fieldId: 'school', label: '学校' }, { fieldId: 'intro', label: '个人简介' }],
+    resumeFields: [{ group: '教育背景', key: '学校'.repeat(20_000), value: '大学乙' }, { group: '其他', key: '自我评价', value: '合成评价' }]
   };
   const timeout = worker(() => ({ ok: false, reason: 'timeout' }));
   const failed = await timeout.run(input);
@@ -383,10 +391,14 @@ test('a later batch failure keeps matches already returned by the desktop', asyn
 
 test('candidate subsets for one page field produce at most one fill match', async () => {
   let calls = 0;
-  const env = worker(() => ({ ok: true, text: JSON.stringify([{ fieldId: 'single', value: `结果${++calls}` }]) }));
+  // 每批回这一批目录里的第一项。
+  const env = worker((message) => {
+    calls += 1;
+    return { ok: true, text: JSON.stringify([{ fieldId: 'single', ref: catalogOf(message.user)[0].ref }]) };
+  });
   const result = await env.run({
     formFields: [{ fieldId: 'single', label: '自我评价', inputType: 'text' }],
-    resumeFields: Array.from({ length: 30 }, (_, i) => ({ group: '自定义', key: `资料${i}`, value: '甲'.repeat(1800) }))
+    resumeFields: Array.from({ length: 30 }, (_, i) => ({ group: '自定义', key: `资料${i}` + '甲'.repeat(1800), value: `结果${i + 1}` }))
   });
   assert.ok(calls > 1);
   assert.equal(result.matches.length, 1);
