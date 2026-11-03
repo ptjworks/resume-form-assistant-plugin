@@ -368,17 +368,26 @@
     return squash(visibleText(el, isVisible, node => Boolean(node.matches?.(BUTTON))).join(" ")).slice(0, 120);
   }
 
+  // 文件项没了和报错冒出来，前后差不到这么久才算一回事（网站退回文件时两样同时发生；轮询是 200ms 一次）。
+  const ADJACENT_MS = 1000;
+
   // 这个框这一刻的样子：done 网站显示传好了，error 网站报错（带网站原话），uploading 还在传，dialog 网站弹了对话框，none 还没看到。
-  // withDialogs 为 false 时不看对话框，只看这个框自己（网站弹对话框时，简历本身传没传上）。
-  function state(slot, name, seen, docs, isVisible = () => true, { withDialogs = true } = {}) {
+  // withDialogs 为 false 时不看对话框，只看这个框自己（网站弹对话框时，简历本身传没传上）。now 是调用方的时钟（测试用假时钟）。
+  function state(slot, name, seen, docs, isVisible = () => true, { withDialogs = true, now = Date.now() } = {}) {
     const scopeEl = slot.scope || slot.root;
     const text = el => squash(el.textContent).slice(0, 120);
     const fresh = listItems(scopeEl).filter(el => !seen.items.has(el) && isVisible(el));
     const named = listItems(scopeEl).filter(el => isVisible(el) && (squash(el.textContent).includes(name)
       || Array.from(el.querySelectorAll("[title], img[alt]")).some(node => (node.getAttribute("title") || node.getAttribute("alt")) === name)));
     const items = [...new Set([...named, ...fresh])];
-    // 这个文件在框的列表里出现过（记在 seen 上，下一次看还在）：之后列表空了又冒出报错，是网站把它退了（Element 的做法）。
-    if (items.length) seen.shown = true;
+    // 这个文件在框的列表里出现过、后来又没了：记下没了的时间（记在 seen 上，下一次看还在）。Element 退回文件时就是这样，
+    // 文件项一闪就没了，紧接着冒出报错。
+    if (items.length) {
+      seen.shown = true;
+      seen.goneAt = null;
+    } else if (seen.shown && (seen.goneAt === null || seen.goneAt === undefined)) {
+      seen.goneAt = now;
+    }
     const status = el => {
       const classes = [el, ...el.querySelectorAll("[class]")].map(classText).join(" ").toLowerCase();
       if (/(?:^|[-_\s])(?:error|fail|failed)(?:$|[-_\s])|is-error/.test(classes)) return "error";
@@ -388,12 +397,19 @@
     const newDialog = withDialogs ? dialogs(docs, isVisible).find(el => changedSince(seen.dialogs, el)) : null;
     if (newDialog) return { state: "dialog", message: dialogText(newDialog, isVisible) };
     // 只有和这个框有关的报错才算它没传上：它的文件项出错、它所在表单项里冒出的报错、提示就在上传区里或写着这个文件名，
-    // 或者这个文件的文件项出现过、又从列表里没了，紧接着冒出报错。页面上别处的报错（别的字段的校验之类）只当参考，
+    // 或者这个文件的文件项没了、前后不到一秒冒出的报错。页面上别处的报错（别的字段的校验之类）只当参考，
     // 带在结果里，不单凭它判失败。
     const stem = String(name || "").replace(/\.[a-z0-9]{1,5}$/i, "");
     const mentions = el => Boolean(name) && (el.textContent.includes(name) || (stem.length >= 2 && el.textContent.includes(stem)));
     const alerts = visibleAll(docs, MESSAGE, isVisible).filter(el => changedSince(seen.messages, el) && ERROR_WORDS.test(el.textContent || ""));
-    const related = alerts.find(el => mentions(el) || Boolean(scopeEl?.contains?.(el))) || (seen.shown && !items.length ? alerts[0] : null);
+    // 每条报错第一次看到（或换了字、状态）的时间。
+    seen.alertAt = seen.alertAt || new Map();
+    for (const el of alerts) {
+      const looked = look(el);
+      if (seen.alertAt.get(el)?.look !== looked) seen.alertAt.set(el, { look: looked, at: now });
+    }
+    const goneWith = el => !items.length && Number.isFinite(seen.goneAt) && Math.abs(seen.alertAt.get(el).at - seen.goneAt) <= ADJACENT_MS;
+    const related = alerts.find(el => mentions(el) || Boolean(scopeEl?.contains?.(el)) || goneWith(el));
     const aside = alerts.find(el => el !== related);
     const inline = Array.from(scopeEl?.querySelectorAll?.(INLINE_ERROR) || [])
       .find(el => changedSince(seen.errors, el) && isVisible(el) && ERROR_WORDS.test(el.textContent || "") && !listItems(scopeEl).some(item => item.contains(el)));
@@ -410,8 +426,8 @@
       if (slot.root === slot.input && name && slot.input.files?.[0]?.name === name) return { state: "done", message: "" };
     } catch { /* 读不到就看页面 */ }
     // 别的写法：表单项里冒出了这个文件名。
-    const now = visibleText(scopeEl, isVisible).join(" ");
-    if (name && now.includes(name) && !seen.text.includes(name)) return { state: "done", message: "" };
+    const shown = visibleText(scopeEl, isVisible).join(" ");
+    if (name && shown.includes(name) && !seen.text.includes(name)) return { state: "done", message: "" };
     return { state: "none", message: said(aside) };
   }
 
@@ -432,11 +448,29 @@
     return "";
   }
 
-  // 网页上的忙碌标志，每个记一个指纹：转圈、加载遮罩、进度条、还在传的文件项按标签、class、role 认（进度条上的数字会变，不算进来）；
-  // 看得见的「解析中」「正在上传」这类短句按字认。网站把常驻的标志重建成新节点，指纹一样，还算原来那个。
+  // 进度条走满了不算忙。
+  function complete(el) {
+    const now = el.getAttribute?.("aria-valuenow");
+    if (now === null || now === undefined || now === "") return false;
+    const max = Number(el.getAttribute?.("aria-valuemax")) || 100;
+    return Number.isFinite(Number(now)) && Number(now) >= max;
+  }
+  // 透明的遮罩看不见，不算忙。
+  function transparent(el) {
+    try {
+      return (el.ownerDocument?.defaultView || scope).getComputedStyle(el).opacity === "0";
+    } catch {
+      return false;
+    }
+  }
+
+  // 网页上的忙碌标志，每个记一个指纹：转圈、加载遮罩、进度条、还在传的文件项按标签、class、role 和忙碌状态本身认
+  // （aria-busy、进度条的值）；看得见的「解析中」「正在上传」这类短句按字认。走满的进度条、透明的遮罩不算。
+  // 网站把常驻的标志重建成新节点，指纹一样，还算原来那个；同一个节点换了状态（又转起来、进度条又动了），指纹就不一样了。
   function busyPrints(docs, isVisible = () => true, exclude = () => false) {
-    const prints = visibleAll(docs, BUSY, isVisible).filter(el => !exclude(el))
-      .map(el => `el\u0001${el.tagName}\u0001${classText(el)}\u0001${el.getAttribute?.("role") || ""}`);
+    const attr = (el, name) => el.getAttribute?.(name) ?? "";
+    const prints = visibleAll(docs, BUSY, isVisible).filter(el => !exclude(el) && !complete(el) && !transparent(el))
+      .map(el => ["el", el.tagName, classText(el), attr(el, "role"), attr(el, "aria-busy"), attr(el, "aria-valuenow"), attr(el, "aria-valuetext")].join("\u0001"));
     for (const doc of docs) {
       const root = doc.body;
       if (!root) continue;
@@ -455,13 +489,15 @@
     }
     return prints;
   }
-  // 传简历之前就在的忙碌标志（常驻的步骤进度条、「审核处理中」这类状态字）：它们不说明网站在解析。
+  const tally = prints => prints.reduce((counts, print) => counts.set(print, (counts.get(print) || 0) + 1), new Map());
+  // 传简历之前就在的忙碌标志（常驻的步骤进度条、「审核处理中」这类状态字）和各有几个：它们不说明网站在解析。
   function busyBaseline(docs, isVisible = () => true, exclude = () => false) {
-    return new Set(busyPrints(docs, isVisible, exclude));
+    return tally(busyPrints(docs, isVisible, exclude));
   }
-  // 网页在忙：有 baseline 里没有的忙碌标志。不然常驻的标志会让每次都等到上限。
+  // 网页在忙：有 baseline 里没有的忙碌标志，或者同样的标志比传之前多了（又冒出一个一模一样的转圈）。
+  // 不然常驻的标志会让每次都等到上限。
   function busy(docs, isVisible = () => true, exclude = () => false, baseline = null) {
-    return busyPrints(docs, isVisible, exclude).some(print => !baseline?.has(print));
+    return [...tally(busyPrints(docs, isVisible, exclude))].some(([print, count]) => count > (baseline?.get(print) || 0));
   }
 
   // 传之后等网站的反应，最多 timeoutMs。sleep、now 由调用方给（测试用假时钟）。stopped() 为真时立刻停。
@@ -469,7 +505,7 @@
     const start = now();
     let last = { state: "none", message: "" };
     for (;;) {
-      last = state(slot, name, seen, docs, isVisible);
+      last = state(slot, name, seen, docs, isVisible, { now: now() });
       if (["done", "error", "dialog"].includes(last.state)) return last;
       if (stopped()) return { state: "stopped", message: "" };
       if (now() - start >= timeoutMs) return { state: last.state === "uploading" ? "uploading" : "unconfirmed", message: "" };

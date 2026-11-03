@@ -2247,24 +2247,57 @@
   }
 
   const UPLOAD_PLANNED = ["resume", "photo", "transcript"];
+  // 问后台每个框放哪份文件、取一份文件，各最多等多久：桌面卡住时一键填写和平台提示不能一直挂着。
+  const UPLOAD_ASK_MS = 5000;
+  const UPLOAD_FETCH_MS = 60000;
+  // 平台提示里「能不能先传简历」最多用多久：桌面里的附件变了没有消息过来，过了这么久再问一次。
+  const UPLOAD_HINT_MS = 15000;
+
+  // 问后台：最多等 ms 毫秒，到时没回按「桌面暂时连不上」（unavailable）；stopped() 为真（用户按了停止）也不再等。
+  function askDesktop(message, ms, stopped = () => false) {
+    return new Promise((resolve) => {
+      let timer = null;
+      let poll = null;
+      let settled = false;
+      const finish = (reply) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        window.clearInterval(poll);
+        resolve(reply);
+      };
+      timer = window.setTimeout(() => finish({ status: "unavailable" }), ms);
+      poll = window.setInterval(() => { if (stopped()) finish({ status: "stopped" }); }, 200);
+      Promise.resolve().then(() => chrome.runtime.sendMessage(message)).then(finish, () => finish({ status: "unavailable" }));
+    });
+  }
 
   // 每个上传框放桌面里的哪份文件，问后台：页面只说框要什么（类别、收的格式、大小上限、语言），后台按桌面里的文件挑，
   // 回每个框的文件编号或不传的原因（文件都太大时带上最小的大小）。文件名、标签这些不给页面，卡片上的由侧栏自己读。
   async function planDesktopFiles(slots, templateId) {
     const wanted = slots.filter((slot) => UPLOAD_PLANNED.includes(slot.kind) && !slot.hasFile);
     if (!wanted.length) return { status: "ok", slots: [] };
-    try {
-      const reply = await chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_PLAN", templateId,
-        slots: wanted.map((slot) => ({ id: slot.id, kind: slot.kind, accept: slot.accept, limit: slot.limit, language: slot.language || [] })) });
-      if (reply?.status === "ok" && Array.isArray(reply.slots)) return { status: "ok", slots: reply.slots };
-      return { status: reply?.status || "unavailable", slots: [] };
-    } catch {
-      return { status: "unavailable", slots: [] };
-    }
+    const reply = await askDesktop({ type: "DESKTOP_RESUME_FILES_PLAN", templateId,
+      slots: wanted.map((slot) => ({ id: slot.id, kind: slot.kind, accept: slot.accept, limit: slot.limit, language: slot.language || [] })) },
+    UPLOAD_ASK_MS);
+    if (reply?.status === "ok" && Array.isArray(reply.slots)) return { status: "ok", slots: reply.slots };
+    return { status: typeof reply?.status === "string" && reply.status ? reply.status : "unavailable", slots: [] };
+  }
+
+  // 平台提示的缓存按什么认：空着的简历框要什么、当前模板、桌面连没连上。换了模板、桌面连上或断开，都重新问。
+  function uploadHintKey(slots) {
+    return JSON.stringify([getActiveTemplate(state.currentStore)?.id || "", state.desktopMode || "",
+      slots.map((slot) => [slot.accept, slot.limit, slot.language])]);
+  }
+
+  // 后台对这些简历框的回答里，有没有能放进去的简历附件（自动选上的，或几份里请用户选）。
+  function resumeFits(planned) {
+    return planned.status === "ok" && planned.slots.some((item) => item.fileId || item.reason === "choose");
   }
 
   // 一键填写能不能替用户传简历（侧栏提示用）：页面上有空着的简历框，桌面里有能放进去的简历附件（和 prepareUpload 同一套挑法：
-  // 当前模板能用、框收这种格式、不超过上限）。同样的框一分钟问一次后台；问的时候照旧用上次问到的，还没问到时返回 null（还不知道）。
+  // 当前模板能用、框收这种格式、不超过上限）。同样的框 15 秒问一次后台，点一键填写时也会更新；问的时候照旧用上次问到的，
+  // 还没问到时返回 null（还不知道）。
   function canUploadResume() {
     let slots;
     try {
@@ -2273,14 +2306,11 @@
       return false;
     }
     if (!slots.length) return false;
-    const templateId = getActiveTemplate(state.currentStore)?.id || "";
-    const key = JSON.stringify([templateId, slots.map((slot) => [slot.accept, slot.limit, slot.language])]);
-    if ((key !== uploadHintSeen.key || Date.now() - uploadHintSeen.at > 60000) && !uploadHintSeen.asking) {
+    const key = uploadHintKey(slots);
+    if ((key !== uploadHintSeen.key || Date.now() - uploadHintSeen.at > UPLOAD_HINT_MS) && !uploadHintSeen.asking) {
       uploadHintSeen.asking = true;
       const done = (value) => { uploadHintSeen = { key, at: Date.now(), asking: false, value }; };
-      planDesktopFiles(slots, templateId).then((planned) => {
-        done(planned.status === "ok" && planned.slots.some((item) => item.fileId || item.reason === "choose"));
-      }, () => done(false));
+      planDesktopFiles(slots, getActiveTemplate(state.currentStore)?.id || "").then((planned) => done(resumeFits(planned)), () => done(false));
     }
     return uploadHintSeen.key === key ? uploadHintSeen.value : null;
   }
@@ -2448,6 +2478,12 @@
     const templateId = getActiveTemplate(store)?.id || "";
     const planned = await planDesktopFiles(slots, templateId);
     const answers = new Map(planned.slots.filter((item) => typeof item?.id === "string").map((item) => [item.id, item]));
+    // 点一键填写时问到的回答也更新平台提示：桌面里的附件刚换过的话，提示跟着变，不用等缓存过期。
+    const resumeSlots = slots.filter((slot) => slot.kind === "resume" && !slot.hasFile);
+    if (resumeSlots.length) {
+      uploadHintSeen = { key: uploadHintKey(resumeSlots), at: Date.now(), asking: uploadHintSeen.asking,
+        value: resumeFits({ status: planned.status, slots: resumeSlots.map((slot) => answers.get(slot.id)).filter(Boolean) }) };
+    }
     let platform = null;
     try {
       platform = self.ResumeProSiteKnowledge?.detect(document, location.href) || null;
@@ -2645,13 +2681,9 @@
 
   // 取一份用户在这张卡片上确认过的文件：后台只认这一页、这张卡片（这次加载的 epoch 和卡片版本）、确认过的那一版。
   // 回来的有内容，还有把它交给网站要用的文件名、类型、大小，和用来核对放不放得进框的类别。
+  // 最多等 UPLOAD_FETCH_MS（10 MB 的文件在桌面上读完大约要 7 秒）；用户按了停止就不再等。
   async function fetchDesktopFile(fileId, card) {
-    let reply;
-    try {
-      reply = await chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILE_FETCH", fileId, card });
-    } catch {
-      return { status: "unavailable" };
-    }
+    const reply = await askDesktop({ type: "DESKTOP_RESUME_FILE_FETCH", fileId, card }, UPLOAD_FETCH_MS, () => upload.stop);
     if (reply?.status !== "ok" || typeof reply.bytesBase64 !== "string") return { status: String(reply?.status || "unavailable") };
     const max = self.ResumeProUploadSlots?.MAX_FILE_BYTES || 0;
     if (typeof reply.name !== "string" || !reply.name || reply.name.length > 255 || typeof reply.mime !== "string" || typeof reply.kind !== "string"
@@ -2726,19 +2758,54 @@
       : `正在等网站解析简历，已等 ${waited} 秒，最多 ${seconds(timing.maxMs)} 秒…`;
   }
 
-  // 等解析时每 200ms 读一次：记下的框现在的值（加上页面上输入框的个数，看得出整张表重画）、网页忙不忙、
+  // 等解析时读记下的框现在的值，每次都对到页面上现在的框：整张表重画了，读的是新框的值，不拿已经不在页面上的旧框比。
+  // 上一次对上的框都还在页面上就接着用；有框没了，或者还有对不上的（每秒最多一次），才按 locateRecords 重新对。
+  // 每个值带上框的编号：换成了新框也算变化。对不上的记成「?」：从对得上变成对不上（或反过来）也算变化，一直对不上就不算。
+  function parseValues(records) {
+    const ids = new WeakMap();
+    let next = 0;
+    const idOf = (node) => {
+      if (!ids.has(node)) ids.set(node, (next += 1));
+      return ids.get(node);
+    };
+    const onPage = (entry) => Boolean(uploadNode(entry)?.isConnected) && !documentGone(entryDocument(entry));
+    let bound = records.map((record) => record.entry);
+    let boundAt = -Infinity;
+    return () => {
+      const lost = bound.some((entry) => entry && !onPage(entry));
+      const unbound = bound.some((entry) => !entry) && uploadClock.now() - boundAt >= 1000;
+      if (lost || unbound) {
+        try {
+          bound = locateRecords(records);
+        } catch {
+          bound = records.map(() => null);
+        }
+        boundAt = uploadClock.now();
+      }
+      return bound.map((entry) => {
+        if (!entry) return "?";
+        try {
+          return `${idOf(uploadNode(entry))}:${fillValueSnapshot(entry) ?? "∅"}`;
+        } catch {
+          return "?";
+        }
+      }).join("\u0001");
+    };
+  }
+
+  // 等解析时每 200ms 读一次：记下的框现在的值（见 parseValues，加上页面上输入框的个数）、网页忙不忙、
   // 有没有新弹出的对话框、简历框传得怎么样。
-  function readParse(records, sent, docs, baseline = null) {
+  function readParse(values, sent, docs, baseline = null) {
     const api = self.ResumeProUploadSlots;
-    const states = sent.map((item) => api.state(item.slot, item.file.name, item.seen, docs, isVisible));
+    const now = uploadClock.now();
+    const states = sent.map((item) => api.state(item.slot, item.file.name, item.seen, docs, isVisible, { now }));
     const dialog = states.find((seen) => seen.state === "dialog");
     let controls = 0;
     for (const doc of docs) {
       try { controls += doc.querySelectorAll("input, select, textarea").length; } catch { /* 文档没了 */ }
     }
-    const values = records.map((record) => { try { return fillValueSnapshot(record.entry) ?? "∅"; } catch { return "∅"; } });
     return {
-      signature: `${controls}\u0001${values.join("\u0001")}`,
+      signature: `${controls}\u0001${values()}`,
       busy: api.busy(docs, isVisible, (element) => Boolean(element.closest?.(`#${SIDEBAR_ID}`)), baseline),
       dialog: dialog ? dialog.message || "对话框" : "",
       upload: states.some((seen) => seen.state === "error") ? "error"
@@ -2878,9 +2945,15 @@
       for (const item of items) if (item.file && !item.outcome) item.outcome = { code: "card_void" };
       lines.push(text);
     };
+    // 会覆盖的平台上，简历还没交给网站就停下（卡片作废、按了停止、简历没交出去）：先记下表单现在的样子再停。
+    // 之后用户自己传简历、网站一解析，下一次一键填写拿它对照（见 keepPending）。
+    const holdRecords = (records = null) => {
+      if (upload.platform?.overwrites) keepPending(records || upload.pending?.records || recordFormValues(), edited);
+    };
     try {
       const chosen = items.filter((item) => item.file);
       if (cardVoid(chosen)) {
+        holdRecords();
         voidCard("上传框和确认时不一样了，这张卡片作废，没有上传，也没有填写。请重新点一键填写，再确认一次。");
         return;
       }
@@ -2892,7 +2965,7 @@
       }
       for (const item of wanted) {
         const got = files.get(item.file.fileId);
-        if (!got) item.outcome = { code: "stopped" };
+        if (!got || got.status === "stopped") item.outcome = { code: "stopped" };
         else if (got.status !== "ok") item.outcome = { code: `fetch_${["conflict", "corrupt", "not_confirmed"].includes(got.status) ? got.status : "unavailable"}` };
         else {
           Object.assign(item.file, got.meta);
@@ -2902,6 +2975,7 @@
       }
       if (upload.stop) {
         for (const item of wanted) if (!item.outcome) item.outcome = { code: "stopped" };
+        holdRecords();
         lines.push("已停止，没有上传，也没有填写。");
         return;
       }
@@ -2910,12 +2984,14 @@
       const first = ready.filter((item) => item.file.kind === "resume");
       const later = ready.filter((item) => item.file.kind !== "resume");
       // 会覆盖的平台上简历没能交给网站（取不到文件、放不进、框不收）：也不往下填。用户之后自己传简历，网站一解析，填好的就被盖掉。
-      // 停下之前先记下表单现在的样子，下一次一键填写拿它对照（见 keepPending）。
-      const isResume = (item) => item.slot.kind === "resume" || item.file?.kind === "resume";
+      // 只算真要当简历交给网站的那一项：简历框，或者认不出要什么的框选了简历、也放得进。证件照框、成绩单框选错了文件，
+      // 只是那个框不传，不算简历没传上。
+      const isResume = (item) => item.slot.kind === "resume"
+        || (!UPLOAD_PLANNED.includes(item.slot.kind) && item.file?.kind === "resume" && item.outcome?.code !== "not_fit");
       const resumeLost = () => Boolean(upload.platform?.overwrites) && wanted.some((item) => isResume(item) && item.outcome);
       const stopForResume = (sent, records) => {
-        for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible, { withDialogs: false }));
-        keepPending(records || upload.pending?.records || recordFormValues(), edited);
+        for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible, { withDialogs: false, now: uploadClock.now() }));
+        holdRecords(records);
         for (const item of later) item.outcome = { code: "not_reached" };
         lines.push("简历上传失败，所以没有继续填写。请在网页上看一下简历框，自己传好简历、等页面不动了，再点一键填写。");
       };
@@ -2932,7 +3008,7 @@
         const busyBaseline = api.busyBaseline(docs, isVisible, (element) => Boolean(element.closest?.(`#${SIDEBAR_ID}`)));
         if (first.length) {
           if (cardVoid(first)) {
-            if (upload.platform?.overwrites) keepPending(records);
+            holdRecords(records);
             voidCard("上传框和确认时不一样了，这张卡片作废，没有上传，也没有填写。请重新点一键填写，再确认一次。");
             return;
           }
@@ -2953,13 +3029,14 @@
         if (sent.length) {
           const timing = self.ResumeProSiteKnowledge?.parseTiming?.(upload.platform)
             || { known: false, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000 };
-          parse = await api.waitForParse(() => readParse(records, sent, docs, busyBaseline), {
+          const values = parseValues(records);
+          parse = await api.waitForParse(() => readParse(values, sent, docs, busyBaseline), {
             ...timing, now: uploadClock.now, sleep: uploadClock.sleep,
             stopped: () => upload.stop || location.href !== upload.href,
             onTick: (ms, changed) => step(parseStep(timing, ms, changed))
           });
           // 简历本身传没传上只看它自己的框：网站弹的对话框另起一句说。
-          for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible, { withDialogs: false }));
+          for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible, { withDialogs: false, now: uploadClock.now() }));
           // 简历没传上（网站报错）也停下：网站可能其实收到了文件、过一会儿才解析，解析结果会把填好的盖掉。
           if (["dialog", "timeout", "stopped", "upload_failed"].includes(parse.status)) {
             // 不填，记下的值留到下一次一键填写：那时简历框里已经有文件，不会再传，先改回再填。用户等的时候动过的框不改回。

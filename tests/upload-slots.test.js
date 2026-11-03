@@ -300,8 +300,8 @@ test("busy signs that were on the page before the upload are not counted, even w
   const baseline = slots.busyBaseline([doc], isVisible);
   assert.equal(slots.busy([doc], isVisible), true, "without a baseline the permanent ones count");
   assert.equal(slots.busy([doc], isVisible, () => false, baseline), false);
-  // 网站重画了步骤条：新的节点，同样的标志和字，进度数字变了。
-  doc.getElementById("steps").innerHTML = `<div role="progressbar" aria-valuenow="60"></div><p>资料审核处理中</p>`;
+  // 网站重画了步骤条：新的节点，同样的标志、字和进度。
+  doc.getElementById("steps").innerHTML = `<div role="progressbar" aria-valuenow="40"></div><p>资料审核处理中</p>`;
   assert.equal(slots.busy([doc], isVisible, () => false, baseline), false, "the same signs drawn again are still the old ones");
   doc.getElementById("x").innerHTML = `<div class="ant-spin ant-spin-spinning"></div>`;
   assert.equal(slots.busy([doc], isVisible, () => false, baseline), true, "a spinner that appeared afterwards counts");
@@ -389,4 +389,66 @@ test("before a file is handed over the box is checked again: the same control, k
   const item = input.closest(".ant-form-item");
   item.outerHTML = item.outerHTML;
   assert.equal(slots.recheck(resume, options), "gone");
+});
+
+test("a busy sign set again on a node that was there before counts: a bar that moves, aria-busy, a second spinner like the first, a mask that fades in", () => {
+  const doc = page(`<div id="bar" role="progressbar" aria-valuenow="100"></div><div id="panel" class="loading-panel" aria-busy="false"></div>
+    <div id="steps" role="progressbar" aria-valuenow="40"></div>
+    <div class="ant-spin ant-spin-spinning"></div><div id="x"></div><div id="mask" class="el-loading-mask" style="opacity: 0"></div>`);
+  const baseline = slots.busyBaseline([doc], isVisible);
+  const busyNow = () => slots.busy([doc], isVisible, () => false, baseline);
+  assert.equal(busyNow(), false, "a full bar, a bar standing still, a spinner that was always there and a see-through mask are not busy");
+  // 传之前停在 40% 的进度条动起来：同一个节点，标签、class、role 都没变。
+  const steps = doc.getElementById("steps");
+  steps.setAttribute("aria-valuenow", "70");
+  assert.equal(busyNow(), true, "a bar that was standing still moves");
+  steps.setAttribute("aria-valuenow", "40");
+  // 新冒出来一个已经走满的进度条：不算忙。
+  doc.getElementById("x").innerHTML = `<div role="progressbar" aria-valuenow="100" aria-valuemax="100"></div>`;
+  assert.equal(busyNow(), false, "a new bar that is already full");
+  doc.getElementById("x").innerHTML = "";
+  // 走满的进度条又从头走：同一个节点，值变了。
+  const bar = doc.getElementById("bar");
+  bar.setAttribute("aria-valuenow", "30");
+  assert.equal(busyNow(), true, "the bar moves again");
+  bar.setAttribute("aria-valuenow", "100");
+  assert.equal(busyNow(), false, "a full bar is not busy");
+  // 同一个节点 aria-busy 从 false 变成 true。
+  const panel = doc.getElementById("panel");
+  panel.setAttribute("aria-busy", "true");
+  assert.equal(busyNow(), true, "aria-busy turns on");
+  panel.setAttribute("aria-busy", "false");
+  // 页面上本来就有一个一直在转的图标，又冒出一个一模一样的。
+  doc.getElementById("x").innerHTML = `<div class="ant-spin ant-spin-spinning"></div>`;
+  assert.equal(busyNow(), true, "a second spinner just like the first");
+  doc.getElementById("x").innerHTML = "";
+  // 透明的遮罩显出来。
+  doc.getElementById("mask").style.opacity = "1";
+  assert.equal(busyNow(), true, "a mask that fades in");
+});
+
+test("after the file's item goes, only an error close in time counts as its failure; one long after is a side note", () => {
+  const doc = page(`${antd({ id: "a", title: "简历附件" })}<div class="ant-form-item"><label for="phone">手机号</label><input id="phone"></div>`);
+  doc.body.insertAdjacentHTML("beforeend", `<div class="ant-message"></div>`);
+  const [slot] = found(doc);
+  const docs = [doc];
+  const name = "测试用户_简历.pdf";
+  const list = slot.scope.querySelector(".ant-upload-list");
+  const toast = doc.querySelector(".ant-message");
+  const item = `<div class="ant-upload-list-item ant-upload-list-item-uploading"><span title="${name}">${name}</span></div>`;
+  const seen = slots.before(slot, docs, isVisible);
+  list.innerHTML = item;
+  assert.equal(slots.state(slot, name, seen, docs, isVisible, { now: 1000 }).state, "uploading");
+  list.innerHTML = "";
+  assert.deepEqual(slots.state(slot, name, seen, docs, isVisible, { now: 1200 }), { state: "none", message: "" });
+  // 文件项没了 5 秒以后，别处冒出一条校验报错：只作参考。
+  toast.innerHTML = `<div class="ant-message-notice"><span>手机号格式不正确</span></div>`;
+  assert.deepEqual(slots.state(slot, name, seen, docs, isVisible, { now: 6200 }), { state: "none", message: "手机号格式不正确" });
+  // 再传一次：文件项没了，同一刻冒出报错（Element 退回文件）。
+  const again = slots.before(slot, docs, isVisible);
+  list.innerHTML = item;
+  slots.state(slot, name, again, docs, isVisible, { now: 7000 });
+  list.innerHTML = "";
+  toast.innerHTML = `<div class="ant-message-notice"><span>文件大小不能超过 2MB</span></div>`;
+  assert.deepEqual(slots.state(slot, name, again, docs, isVisible, { now: 7200 }), { state: "error", message: "文件大小不能超过 2MB" });
 });

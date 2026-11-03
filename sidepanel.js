@@ -245,6 +245,9 @@
   let uploadView = null;
   let uploadFiles = null;
   let uploadFilesKey = "";
+  // 桌面里的文件列表最多等这么久：桌面卡住时卡片不能一直停在「正在读取」。没读到时 uploadFilesDown 为真。
+  const UPLOAD_LIST_MS = 5000;
+  let uploadFilesDown = false;
   let uploadChoices = new Map();
   let uploadPending = false;
   let pageHostWithPort = "";
@@ -952,14 +955,22 @@
   }
 
   async function loadUploadFiles(key) {
+    let timer = null;
     let reply = null;
     try {
-      reply = await chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_LIST" });
+      reply = await Promise.race([
+        Promise.resolve().then(() => chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_LIST" })),
+        new Promise((resolve) => { timer = setTimeout(() => resolve({ status: "unavailable" }), UPLOAD_LIST_MS); })
+      ]);
     } catch {
       reply = null;
+    } finally {
+      clearTimeout(timer);
     }
     if (uploadFilesKey !== key) return;
-    uploadFiles = reply?.status === "ok" && Array.isArray(reply.files) ? reply.files : [];
+    const ok = reply?.status === "ok" && Array.isArray(reply.files);
+    uploadFiles = ok ? reply.files : [];
+    uploadFilesDown = !ok;
     renderUpload();
   }
 
@@ -1029,7 +1040,8 @@
             row.append(select);
           }
           const text = uploadFiles === null ? "正在读取桌面里的文件…"
-            : candidates.length ? (uploadChoice(slot) ? "" : uploadNote(slot)) : uploadNote(slot) || "桌面里没有能放进这个框的文件。";
+            : uploadFilesDown && !["has_file", "file_unsure"].includes(slot.reason) ? "桌面暂时连不上，不能上传。"
+              : candidates.length ? (uploadChoice(slot) ? "" : uploadNote(slot)) : uploadNote(slot) || "桌面里没有能放进这个框的文件。";
           if (text) {
             const note = document.createElement("p");
             note.className = "upload-row__note";

@@ -26,7 +26,7 @@ const OFFER = {
   restore: { count: 2, labels: ["兴趣爱好", "期望城市"], pending: false }
 };
 
-async function openPanel(t, { upload = OFFER, tabUrl = "https://app.mokahr.com/campus_apply/example/1", files = FILES } = {}) {
+async function openPanel(t, { upload = OFFER, tabUrl = "https://app.mokahr.com/campus_apply/example/1", files = FILES, before = null } = {}) {
   const dom = new JSDOM(HTML, { url: "chrome-extension://ext/sidepanel.html", runScripts: "outside-only", pretendToBeVisual: true });
   const w = dom.window;
   t.after(() => w.close());
@@ -43,7 +43,8 @@ async function openPanel(t, { upload = OFFER, tabUrl = "https://app.mokahr.com/c
           templates: [{ id: "t", name: "虚构模板", fieldCount: 1 }],
           activeTemplate: { id: "t", name: "虚构模板", groups: [{ name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }] }] },
           profile: { values: {}, family: [], custom: [] }, profileRevision: 1 } };
-        if (message.type === "DESKTOP_RESUME_FILES_LIST") return { status: "ok", files };
+        // files 为 null：桌面卡住，一直不回。
+        if (message.type === "DESKTOP_RESUME_FILES_LIST") return files === null ? new Promise(() => {}) : { status: "ok", files };
         if (message.type === "DESKTOP_RESUME_FILES_GRANT") return { status: "ok" };
         return { status: "ok" };
       },
@@ -64,6 +65,7 @@ async function openPanel(t, { upload = OFFER, tabUrl = "https://app.mokahr.com/c
     }
   };
   w.navigator.clipboard = { writeText: async () => {} };
+  before?.(w);
   for (const file of SCRIPTS) w.eval(fs.readFileSync(path.join(ROOT, file), "utf8"));
   await flush();
   const get = (id) => w.document.getElementById(id);
@@ -238,4 +240,18 @@ test("a pending card says which boxes changed again later and will not be put ba
     "上次上传后网站改了你填过的 1 项，会先改回：兴趣爱好。",
     "后来又改过的 1 项不改回，请核对：期望城市。"
   ]);
+});
+
+test("a file list that never comes does not leave the card waiting: each box says the desktop cannot be reached", async (t) => {
+  // 桌面一直不回：等 5 秒的计时器改成马上到点。
+  const p = await openPanel(t, { files: null, before: (w) => {
+    const timer = w.setTimeout.bind(w);
+    w.setTimeout = (fn, delay, ...rest) => timer(fn, delay === 5000 ? 0 : delay, ...rest);
+  } });
+  await p.poll();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await flush();
+  assert.deepEqual(p.rows().map((row) => row.note), ["桌面暂时连不上，不能上传。", "桌面暂时连不上，不能上传。", "桌面暂时连不上，不能上传。"]);
+  assert.equal(p.get("upload-confirm").disabled, true);
+  assert.equal(p.get("upload-fill").disabled, false, "filling without the files is still there");
 });
