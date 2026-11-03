@@ -223,6 +223,10 @@ const FORM = row("name", "姓名", `<input id="name">`) + row("hobby", "兴趣�
 test("after the side panel's yes: resume first, then the parse, the user's value back, the fill, and the photo last", async (t) => {
   const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
   fakeSite(p);
+  // 侧栏的进度就是这个按钮上的字：记下每一次的。
+  const steps = [];
+  let shown = p.ui.fill.textContent;
+  Object.defineProperty(p.ui.fill, "textContent", { configurable: true, get: () => shown, set: (value) => { shown = value; steps.push(value); } });
   const started = await p.send({ type: "RESUME_PANEL_FILL" });
   assert.deepEqual(started, { ok: true, upload: true });
   // 侧栏卡片：网站、每个框给的文件、会改回哪些。确认之前什么都没传，也没填。
@@ -241,6 +245,11 @@ test("after the side panel's yes: resume first, then the parse, the user's value
   const done = await p.finished();
   await Promise.all(p.fills);
   assert.deepEqual(p.seen.events, ["resume", "parse", "fill", "photo"]);
+  // 等解析时说大约要多久，过了最短时间说最多等多久；网站 3 秒就改完了表单，也等够 Moka 的 12 秒才填。
+  assert.ok(steps.includes("正在等网站解析简历，大约 12 秒（已等 3 秒）…"), steps.join(" | "));
+  assert.ok(steps.includes("正在等网站解析简历，已等 12 秒，最多 60 秒…"), steps.join(" | "));
+  assert.deepEqual([...new Set(steps.filter((text) => !text.startsWith("正在等网站解析简历")))].slice(0, 3),
+    ["正在从桌面取文件…", "正在上传简历…", "正在扫描网页..."]);
   assert.equal(p.w.document.getElementById("resume").files[0].name, RESUME_FILE.name);
   assert.equal(p.w.document.getElementById("photo").files[0].name, PHOTO_FILE.name);
   assert.equal(p.w.document.getElementById("works").files.length, 0);
@@ -417,4 +426,20 @@ test("stopping while waiting on the photo says it was handed over but not confir
   await Promise.all(p.fills);
   assert.equal(p.w.document.getElementById("photo").files[0].name, PHOTO_FILE.name);
   assert.ok(done.upload.lines.includes("证件照：传了 证件照.jpg，没确认网站收到，请看一下网页。"), done.upload.lines.join(" | "));
+});
+
+test("when the user stops the fill, the files after it are not uploaded", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  // 填到毕业院校（AI 给的值，写入阶段）时用户按了停止。
+  p.w.document.getElementById("school").addEventListener("input", () => { p.ui.cancel.onclick?.(); }, { once: true });
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  const done = await p.finished();
+  await Promise.all(p.fills);
+  assert.match(p.ui.status.textContent, /已停止/);
+  assert.equal(p.w.document.getElementById("photo").files.length, 0);
+  assert.equal(p.seen.events.includes("photo"), false);
+  assert.ok(done.upload.lines.includes("证件照：没有上传。"), done.upload.lines.join(" | "));
+  assert.ok(done.upload.lines.includes(`简历附件：已上传 ${RESUME_FILE.name}。`));
 });

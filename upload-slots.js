@@ -425,17 +425,14 @@
   }
 
   // 传完简历后等网站解析完。read() 每 200ms 读一次：{ signature 表单的值, busy 网页在忙, dialog, upload 简历框的状态 }。
-  // 解析完要同时满足：不忙、简历框不在传；表单值连续 quietMs 没变；至少等了 minMs（网站解析时不一定显示忙碌，等太短的话
-  // 解析结果会在填完之后才到，把填好的又盖掉）。最短时间到之前，简历传完以后看到网页忙过又不忙了（解析结束的信号），
-  // 之后安静 quietMs 也算完；earlyOnChange 时表单值变过也算（不认识的网站：值变了说明解析结果已经到了）。
-  // 简历框自己的进度条只说明还在传，不算解析的信号。
+  // 三个条件都满足才算解析完：网页不忙、简历框不在传；表单值连续 quietMs 没变；至少等了 minMs。最短时间是保底，不提前结束：
+  // 网站解析时不一定显示忙碌，忙碌标志消失以后解析结果也可能才写回来，等得不够就会把填好的又盖掉，那时填后核对已经做完了，发现不了。
   // 网站弹出对话框（「是否覆盖」这类）、简历没传上、到了上限都停下，由调用方说明情况；表单值变过时上限放宽到 extendMs。
-  async function waitForParse(read, { sleep, now, minMs = 1000, quietMs = 1500, maxMs = 10000, extendMs = maxMs, earlyOnChange = false,
+  async function waitForParse(read, { sleep, now, minMs = 1000, quietMs = 1500, maxMs = 10000, extendMs = maxMs,
     stopped = () => false, onTick = () => {} } = {}) {
     const start = now();
     let signature = read().signature;
     let lastChange = start;
-    let parsedBusy = false;
     let changed = false;
     for (;;) {
       await sleep(200);
@@ -451,12 +448,10 @@
         lastChange = at;
         changed = true;
       }
-      const uploading = seen.upload === "uploading";
-      if (seen.busy || uploading) lastChange = at;
-      if (seen.busy && !uploading && seen.upload !== "none") parsedBusy = true;
-      const quiet = !seen.busy && !uploading && at - lastChange >= quietMs;
-      if (quiet && (elapsed >= minMs || parsedBusy || (earlyOnChange && changed))) return { status: "done", elapsed, changed };
-      if (elapsed >= (changed ? Math.max(maxMs, extendMs) : maxMs)) return { status: "timeout", elapsed, changed, busy: Boolean(seen.busy || uploading) };
+      const busy = Boolean(seen.busy) || seen.upload === "uploading";
+      if (busy) lastChange = at;
+      if (!busy && at - lastChange >= quietMs && elapsed >= minMs) return { status: "done", elapsed, changed };
+      if (elapsed >= (changed ? Math.max(maxMs, extendMs) : maxMs)) return { status: "timeout", elapsed, changed, busy };
     }
   }
 

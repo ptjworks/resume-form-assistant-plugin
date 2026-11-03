@@ -163,11 +163,11 @@ test("a box with nothing on the desktop says so and offers the desktop page; a c
 
 test("while uploading the stop button says 停止上传; afterwards the result lists each box and goes away on 知道了", async (t) => {
   const p = await openPanel(t, { upload: { phase: "running", version: 3, epoch: "e1" } });
-  p.state.status = { ready: true, busy: true, phase: "正在等网站解析简历（已等 4 秒）…", canCancel: true, cancelLabel: "停止上传", upload: { phase: "running", version: 3, epoch: "e1" } };
+  p.state.status = { ready: true, busy: true, phase: "正在等网站解析简历，大约 12 秒（已等 4 秒）…", canCancel: true, cancelLabel: "停止上传", upload: { phase: "running", version: 3, epoch: "e1" } };
   await p.poll();
   assert.equal(p.get("cancel-button").hidden, false);
   assert.equal(p.get("cancel-button").textContent, "停止上传");
-  assert.equal(p.get("fill-progress-phase").textContent, "正在等网站解析简历（已等 4 秒）…");
+  assert.equal(p.get("fill-progress-phase").textContent, "正在等网站解析简历，大约 12 秒（已等 4 秒）…");
   assert.equal(p.get("task-panel").hidden, true);
   p.state.status = { ready: true, busy: false, upload: { phase: "done", version: 3, epoch: "e1", tone: "warn",
     lines: ["简历附件：已上传 测试用户_简历.pdf。", "证件照：传了 证件照.jpg，没确认网站收到，请看一下网页。", 42], addFiles: false } };

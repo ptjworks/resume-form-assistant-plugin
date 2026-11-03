@@ -225,12 +225,13 @@ test("waiting for the parse: a known platform waits its minimum even when the fo
   assert.equal(result.elapsed, 12000);
 });
 
-test("waiting for the parse: a known platform may end early once the page was busy after the upload and then went quiet", async () => {
+test("waiting for the parse: the minimum holds even after the page was busy and went quiet; a later write still lands before the fill", async () => {
   const c = clock();
-  const read = () => ({ signature: c.at() >= 5000 ? "parsed" : "before",
+  // 2～5 秒网页在转圈，5 秒时表单变了；转圈停了以后 9 秒时网站又写了一次（解析结果晚到）。
+  const read = () => ({ signature: c.at() >= 9000 ? "late" : c.at() >= 5000 ? "parsed" : "before",
     busy: c.at() >= 2000 && c.at() < 5000, upload: c.at() >= 1000 ? "done" : "uploading" });
   const result = await slots.waitForParse(read, { ...c, minMs: 25000, quietMs: 2000, maxMs: 60000 });
-  assert.deepEqual([result.status, result.elapsed], ["done", 7000]);
+  assert.deepEqual([result.status, result.elapsed, result.changed], ["done", 25000, true]);
 });
 
 test("the upload's own progress bar is not a sign the parse is over", async () => {
@@ -255,14 +256,14 @@ test("waiting for the parse stops on a dialog, a failed upload, a stop, and at t
   assert.deepEqual([result.status, result.elapsed, result.busy], ["timeout", 60000, true]);
 });
 
-test("waiting on a site that is not known to parse: quiet for 1.5 s is enough; a change ends it early and stretches the limit", async () => {
+test("waiting on a site that is not known to parse: 1 s and quiet for 1.5 s; a change stretches the limit", async () => {
   let c = clock();
-  let result = await slots.waitForParse(() => ({ signature: "s", busy: false, upload: "done" }), { ...c, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000, earlyOnChange: true });
+  let result = await slots.waitForParse(() => ({ signature: "s", busy: false, upload: "done" }), { ...c, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000 });
   assert.deepEqual([result.status, result.elapsed, result.changed], ["done", 1600, false]);
   c = clock();
   // 值一直在变到 12 秒：比 10 秒的上限晚，因为变过，上限放宽到 15 秒。
   result = await slots.waitForParse(() => ({ signature: String(Math.min(c.at(), 12000)), busy: false, upload: "done" }),
-    { ...c, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000, earlyOnChange: true });
+    { ...c, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000 });
   assert.deepEqual([result.status, result.elapsed, result.changed], ["done", 13600, true]);
 });
 

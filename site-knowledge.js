@@ -100,14 +100,14 @@
       ? `${name}上传简历后会重新解析并覆盖已填内容。一键填写会先上传简历，等解析完再填写。`
       : `${name}上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。`;
   }
-  // 传完简历后怎么等网站解析（见 upload-slots.js 的 waitForParse）。会覆盖的平台至少等 parseMs，最多 60 秒，表单安静 2 秒；
-  // 只有看到网页忙过又不忙了才提前结束。别的网站至少 1 秒，表单安静 1.5 秒，最多 10 秒；这段时间里表单的值变了，
-  // 当它也会解析覆盖：值变过就可以提前结束，上限放宽到 15 秒。
+  // 传完简历后怎么等网站解析（见 upload-slots.js 的 waitForParse）。不忙、表单安静、等够最短时间三个条件都满足才算完，不提前结束。
+  // 会覆盖的平台至少等 parseMs，表单安静 2 秒，最多 60 秒。别的网站至少 1 秒，表单安静 1.5 秒，最多 10 秒；
+  // 这段时间里表单的值变了，当它也会解析覆盖，上限放宽到 15 秒。
   function parseTiming(platform) {
     if (platform?.overwrites && Number.isInteger(platform.parseMs)) {
-      return { known: true, minMs: platform.parseMs, quietMs: 2000, maxMs: 60000, extendMs: 60000, earlyOnChange: false };
+      return { known: true, minMs: platform.parseMs, quietMs: 2000, maxMs: 60000, extendMs: 60000 };
     }
-    return { known: false, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000, earlyOnChange: true };
+    return { known: false, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000 };
   }
 
   // 字数：按字符（UTF-16 码元，和浏览器的 maxlength 一样）；按字节的站点一个字一个字量，0～255 以外的字算 2（emoji 也算 2）。

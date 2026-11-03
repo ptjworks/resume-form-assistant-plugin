@@ -2561,6 +2561,15 @@
     return { code: ["done", "error", "dialog"].includes(seen.state) ? seen.state : "unconfirmed", message: seen.message || "" };
   }
 
+  // 等解析时侧栏的进度：已知会解析覆盖的平台先说大约要多久（至少等这么久），过了这个时间说最多等多久；别的网站说最多等多久。
+  function parseStep(timing, ms) {
+    const seconds = (value) => Math.max(1, Math.round(value / 1000));
+    const waited = Math.floor(ms / 1000);
+    if (!timing.known) return `正在等网站处理简历，已等 ${waited} 秒，最多 ${seconds(timing.extendMs)} 秒…`;
+    return ms < timing.minMs ? `正在等网站解析简历，大约 ${seconds(timing.minMs)} 秒（已等 ${waited} 秒）…`
+      : `正在等网站解析简历，已等 ${waited} 秒，最多 ${seconds(timing.maxMs)} 秒…`;
+  }
+
   // 等解析时每 200ms 读一次：记下的框现在的值（加上页面上输入框的个数，看得出整张表重画）、网页忙不忙、
   // 有没有新弹出的对话框、简历框传得怎么样。
   function readParse(records, sent, docs) {
@@ -2689,11 +2698,11 @@
         }
         if (sent.length) {
           const timing = self.ResumeProSiteKnowledge?.parseTiming?.(upload.platform)
-            || { minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000, earlyOnChange: true };
+            || { known: false, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000 };
           parse = await api.waitForParse(() => readParse(records, sent, docs), {
             ...timing, now: uploadClock.now, sleep: uploadClock.sleep,
             stopped: () => upload.stop || location.href !== upload.href,
-            onTick: (ms) => step(`正在等网站解析简历（已等 ${Math.floor(ms / 1000)} 秒）…`)
+            onTick: (ms) => step(parseStep(timing, ms))
           });
           // 简历本身传没传上只看它自己的框：网站弹的对话框另起一句说。
           for (const item of sent) item.outcome = uploadOutcome(api.state(item.slot, item.file.name, item.seen, docs, isVisible, { withDialogs: false }));
