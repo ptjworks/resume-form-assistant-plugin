@@ -9,21 +9,21 @@ const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "..", "ai-worker.js"), "utf8");
 const helpers = require("../ai-helpers.js");
 const { catalogOf, refOf } = require("./helpers/ai-refs.js");
+const { pathToFileURL } = require("node:url");
 const regions = (() => {
   const scope = {};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "region-data.js"), "utf8"), { self: scope });
   return scope.ResumeProRegions;
 })();
 
-// respond(message, catalog) 返回 AI 的回答（数组或文字）；legacy 打开评测脚本用的旧发值方式。
+// respond(message, catalog) 返回 AI 的回答（数组或文字）；legacy 接着跑评测用的旧发值方式（scripts/eval-fill-legacy.js）。
 function worker(respond = () => [], { legacy = false } = {}) {
   const calls = [];
   let sequence = 0;
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: helpers, ResumeProProfile: require("../profile-fields.js"),
     AbortController, TextEncoder, performance: { now: () => 0 }, crypto: { randomUUID: () => `call-${++sequence}` },
-    ResumeProRegions: regions,
-    ...(legacy ? { ResumeProEvalValuePrompt: true } : {})
+    ResumeProRegions: regions
   });
   context.self = {
     postMessage(message) {
@@ -35,6 +35,7 @@ function worker(respond = () => [], { legacy = false } = {}) {
     }
   };
   vm.runInContext(source, context);
+  if (legacy) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js"), "utf8"), context);
   return { calls, run: async (input) => JSON.parse(JSON.stringify(await context.handleAiFill(input))) };
 }
 
@@ -288,7 +289,7 @@ test("an open question the resume has no answer to is counted on its own", async
   assert.equal(result.diagnostics.aiMatches, 1);
 });
 
-test("the old value prompt is still there for the eval script, behind a global the extension never sets", async () => {
+test("the old value prompt lives only in the eval script, which replaces handleAiFill after the worker", async () => {
   const resume = [{ group: "教育经历", key: "学校", value: "虚构理工学院" }];
   const env = worker(() => [{ fieldId: "school", value: "虚构理工学院" }], { legacy: true });
   const result = await env.run({ formFields: [{ fieldId: "school", label: "毕业院校" }], resumeFields: resume });
@@ -296,7 +297,18 @@ test("the old value prompt is still there for the eval script, behind a global t
   assert.match(env.calls[0].system, /应该填写什么值/);
   assert.equal(valueOf(result, "school"), "虚构理工学院");
   assert.equal(refOf(env.calls[0].user, "学校"), undefined, "no catalog in the old prompt");
-  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8"), /ResumeProEvalValuePrompt/);
+});
+
+test("the shipped worker has no old value prompt and no switch, and the eval script is not packed", async () => {
+  assert.doesNotMatch(source, /ResumeProEvalValuePrompt|LEGACY_SYSTEM_PROMPT|buildLegacyUserPrompt|应该填写什么值/);
+  assert.equal("selectResumeCandidates" in helpers, false);
+  const { PLUGIN_ARCHIVE_OPERANDS } = await import(pathToFileURL(path.join(__dirname, "..", "desktop", "scripts", "pack-plugin.js")).href);
+  assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes("ai-worker.js"));
+  assert.equal(PLUGIN_ARCHIVE_OPERANDS.some((entry) => entry === "scripts" || entry.startsWith("scripts/")), false);
+  const { assertPluginOnlyArchive } = await import(pathToFileURL(path.join(__dirname, "..", "desktop", "scripts", "check-plugin-release-allowlist.js")).href);
+  const packed = ["manifest.json", "background.js", "content.js", "content.css", "LICENSE", "ai-worker.js"];
+  assert.doesNotThrow(() => assertPluginOnlyArchive(packed));
+  assert.throws(() => assertPluginOnlyArchive([...packed, "scripts/eval-fill-legacy.js"]), /scripts\/eval-fill-legacy\.js/);
 });
 
 test("a parsed key whose school name was edited afterwards still leaves the old name out", async () => {
@@ -308,6 +320,16 @@ test("a parsed key whose school name was edited afterwards still leaves the old 
   });
   assert.ok(!env.calls[0].user.includes("旧虚构学院"));
   assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "教育经历1-专业", "请描述你的实习经历-收获"]);
+});
+
+test("a key in an experience group that starts with a school name is renamed whatever label follows", async () => {
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "role", label: "社团职务" }],
+    resumeFields: [{ group: "校园经历", key: "虚构理工学院社团经历-组织", value: "虚构理工学院" }, { group: "校园经历", key: "虚构理工学院社团经历-职位", value: "社长" }]
+  });
+  assert.ok(!env.calls[0].user.includes("虚构理工学院"));
+  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["校园经历1-社团经历-组织", "校园经历1-社团经历-职位"]);
 });
 
 test("the catalog names the latest of several spans in a group and the other names of a profile field", async () => {

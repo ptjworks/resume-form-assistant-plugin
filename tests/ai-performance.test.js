@@ -1,6 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const helpers = require("../ai-helpers.js");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+// 按领域挑资料只剩 #429 第 11 项之前的发值方式在用，搬到了只给评测用的 scripts/eval-fill-legacy.js（下个版本删掉）。
+// 这里照旧测它，评测拿来对照的那份行为不变。
+const context = vm.createContext({});
+vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js"), "utf8"), context);
+const helpers = { selectResumeCandidates: context.selectResumeCandidates };
 
 const resumeFields = [
   { group: "基本信息", key: "姓名", value: "测试用户" },

@@ -191,7 +191,6 @@
     isSecretFormField,
     isSafeResumeField,
     localRuleMatches,
-    selectResumeCandidates,
     findSelectOptionIndex,
     isSameOptionText,
     optionSearchText,
@@ -274,40 +273,6 @@
     const text = normalizeText(key);
     if (/^(dob|born)$/.test(text)) return "birth_date";
     return OTHER_NUMBER_KEY.test(text) ? "other" : "";
-  }
-
-  // Keep complete groups (including every repeated experience). Unknown or
-  // cross-domain labels deliberately fall back to the full resume.
-  function selectResumeCandidates(formFields, resumeFields) {
-    const domains = [
-      /教育|学校|院校|研究生|硕士|博士|专业|学历|学位|入学|毕业|education|school|university|major|degree|postgraduate/i,
-      /工作经历|实习|任职经历|工作内容|工作单位|公司|雇主|\bwork\s+(?:history|experience)\b|\bemployment\b|\binternship\b|\bcompany\b/i,
-      /项目|科研|研究经历|\bproject\b|\bresearch\b/i,
-      /论文|专利|发表|publication|patent/i,
-      /证书|奖励|奖项|荣誉|certificate|award/i,
-      /技能|语言能力|skill|language/i,
-      /基本信息|个人信息|姓名|电话|邮箱|籍贯|personal|contact/i
-    ];
-    const classify = (text) => domains.flatMap((pattern, i) => pattern.test(text) ? [i] : []);
-    const selected = new Set();
-    for (const field of formFields) {
-      const context = [field.group, field.label, field.placeholder, field.name, field.ariaLabel].filter(Boolean).join(" ");
-      // Eligibility/location questions are not employment-history questions.
-      if (/authoriz|eligib|sponsor|visa|work\s*(?:permit|location)|career\s*plan|工作许可|工作授权|工作地点|工作计划|职业规划|求职意向|就业资格|签证/i.test(context)) return resumeFields;
-      const categories = classify(context);
-      if (categories.length !== 1) return resumeFields;
-      const category = categories[0];
-      if (!resumeFields.some(item => classify(String(item.group || "")).includes(category))) return resumeFields;
-      const relevant = resumeFields.filter((item) => {
-        const groups = classify(String(item.group || ""));
-        // Custom groups cannot safely be ruled out.
-        // Current employer/role and similar facts may live in basic info.
-        return !groups.length || groups.includes(6) || groups.includes(category);
-      });
-      if (!relevant.length) return resumeFields;
-      relevant.forEach((item) => selected.add(item));
-    }
-    return resumeFields.filter((item) => selected.has(item));
   }
 
   function buildRuleBasedMatches(formFields, resumeFields) {
@@ -1052,19 +1017,22 @@
 
   // 桌面解析简历时，同一段经历的字段名起成「学校名或公司名 + 教育经历 - 专业」（semanticizeParsedFields），字段名里带着值。
   // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。
-  // 前缀对不上现在的值（解析以后改过学校名）时，经历类分组里「某某 + 教育经历」这样的字段名也换掉。别的字段名原样。
+  // 经历类分组里，字段名以这一组的某个值开头的，后面不管是什么，前缀都换成编号（「某校社团经历-职位」→「校园经历1-社团经历-职位」）；
+  // 前缀对不上现在的值（解析以后改过学校名）时，「某某 + 教育经历」这样的也换掉。别的字段名原样。
   function catalogKeys(resumeFields) {
     const labels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
     const numbers = new Map();
-    const renamed = (group, anchor, label, rest) => {
+    const numberOf = (group, label, anchor) => {
       const slot = `${group}\u0000${label}`;
       if (!numbers.has(slot)) numbers.set(slot, new Map());
       const seen = numbers.get(slot);
       if (!seen.has(anchor)) seen.set(anchor, seen.size + 1);
-      return `${label}${seen.get(anchor)}${rest.slice(label.length)}`;
+      return seen.get(anchor);
     };
     return resumeFields.map((field) => {
       const key = String(field?.key ?? "");
+      const group = String(field?.group ?? "");
+      const groupLabel = ENTITY_LABEL_BY_GROUP.find((item) => item.pattern.test(group))?.label;
       const anchors = resumeFields.filter((other) => other?.group === field?.group)
         .map((other) => sanitizeAnchor(other?.value))
         .filter((anchor) => anchor.length >= 2 && key.startsWith(anchor))
@@ -1072,12 +1040,17 @@
       for (const anchor of anchors) {
         const rest = key.slice(anchor.length);
         const label = labels.find((item) => rest.startsWith(item)) || /^[\u4e00-\u9fa5A-Za-z]+?信息(?=-|$|\s\()/.exec(rest)?.[0];
-        if (label) return renamed(field.group, anchor, label, rest);
+        if (label) return `${label}${numberOf(group, label, anchor)}${rest.slice(label.length)}`;
       }
-      if (ENTITY_LABEL_BY_GROUP.some((item) => item.pattern.test(String(field?.group ?? "")))) {
-        for (const label of labels) {
-          const at = key.indexOf(label);
-          if (at >= 1 && at <= 18 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) return renamed(field.group, key.slice(0, at), label, key.slice(at));
+      if (!groupLabel) return key;
+      if (anchors.length) {
+        const rest = key.slice(anchors[0].length).replace(/^[\s\-_:：]+/, "");
+        return `${groupLabel}${numberOf(group, groupLabel, anchors[0])}${rest ? `-${rest}` : ""}`;
+      }
+      for (const label of labels) {
+        const at = key.indexOf(label);
+        if (at >= 1 && at <= 18 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) {
+          return `${label}${numberOf(group, label, key.slice(0, at))}${key.slice(at + label.length)}`;
         }
       }
       return key;

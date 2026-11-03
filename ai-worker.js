@@ -30,26 +30,6 @@ const AI_SYSTEM_PROMPT = [
   "17. 带 maxLength 的字段照常对应：资料太长时插件不填，会告诉用户字数上限，不要因为它跳过，也不要换一项不相干的资料"
 ].join("\n");
 
-// #429 第 11 项之前的发值方式，只给 scripts/eval-fill.mjs 对比准确率用，界面上没有开关。下个版本删掉。
-const legacyValuePrompt = () => globalThis.ResumeProEvalValuePrompt === true;
-const LEGACY_SYSTEM_PROMPT = [
-  "你是一个网页表单填写助手。根据简历字段数据，判断表单中每个输入框应该填写什么值。",
-  "规则：",
-  "1. 仅返回 JSON 数组，不含任何解释或 markdown 代码块",
-  '2. 格式：[{"fieldId":"xxx","value":"yyy"}]',
-  "3. 只填写能确定匹配的字段，不确定的跳过",
-  "4. 基本信息字段优先精确匹配，不要把教育背景、经历、技能字段填进姓名、邮箱、手机号、出生日期等基础字段",
-  "5. 下拉框、单选框的 value 必须是该字段 options 里的原文，不要改写、不要自造，不要选「请选择」这类占位项",
-  "6. 证件类型、学历、学位、外语语种/等级、年月分拆、省市县等下拉框，简历里有明确对应的数据就填写，没有就跳过",
-  "7. 带 cascadeLevel 的字段属于同一组联动下拉，按层级分别给出省、市、县等对应层级的值",
-  "8. 匹配考虑同义词：手机=电话=联系方式=mobile=phone；学历=最高学历=培养层次",
-  "9. 紧急联系人、父亲、母亲、配偶、家庭成员等字段只能用对应那个人的数据；不要把本人的姓名、手机号、邮箱、出生日期填进去，也不要把一个人的数据填给另一个人",
-  "10. 籍贯、高考生源地、户口所在地是三个不同的问题，不能拿一个的数据填另一个；省、市、县要填对应层级",
-  "11. 带 multiple 的字段可以多选：简历里有几项就给几项，用「、」隔开，每一项都按第 5 条取 options 里的原文",
-  "12. 带 cascade 的字段是逐级选择（省 → 市 → 区县这类）：从最上面一级写到简历里有的最细一级，用「/」隔开，例如「广东省/深圳市/南山区」",
-  "13. 带 maxLength 的字段，value 不能超过这个字数（lengthUnit 为 byte 时按字节算，汉字算 2）；长回答写不下就精简，学校、公司、专业这类名称写不下时跳过，不要截断"
-].join("\n");
-
 const activeFillRequests = new Map();
 const desktopCalls = new Map();
 
@@ -240,17 +220,20 @@ function safeResumeField(field) {
   return ResumeProAIHelpers.isSafeResumeField(field, ResumeProProfile);
 }
 
-// candidatesFor：一批字段配哪些资料（目录整份，或旧方式按领域挑的值）；build：拼 user 文本。
-function makePromptBatches(formFields, candidatesFor, build) {
+function promptBytes(fields, candidates) {
   // The user text is JSON-escaped again inside the Native Messaging envelope.
-  const promptBytes = (fields, candidates) => new TextEncoder().encode(JSON.stringify(build(fields, candidates))).length;
+  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates))).length;
+}
+
+// 每批都配整份资料目录；目录太大时这一批分几次发，每次带目录的一部分（编号是整份目录里的）。
+function makePromptBatches(formFields, entries) {
   const batches = [];
   let skippedOversized = 0;
   let skippedNoContext = 0;
   let current = [];
   const emit = fields => {
     if (!fields.length) return;
-    const candidates = candidatesFor(fields);
+    const candidates = entries;
     if (!candidates.length) { skippedNoContext += fields.length; return; }
     if (promptBytes(fields, candidates) <= AI_USER_BUDGET) {
       batches.push({ fields, candidates });
@@ -276,7 +259,7 @@ function makePromptBatches(formFields, candidatesFor, build) {
   };
   for (const field of formFields) {
     const next = [...current, field];
-    const candidates = candidatesFor(next);
+    const candidates = entries;
     if (promptBytes(next, candidates) <= AI_USER_BUDGET) {
       current = next;
     } else {
@@ -354,10 +337,8 @@ async function handleAiFill(message, controller = new AbortController()) {
   const ruleMatches = ResumeProAIHelpers.localRuleMatches(formFields, resumeFields, ResumeProProfile, pageFields);
   const matchedFieldIds = new Set(ruleMatches.map(match => match.fieldId));
   const remainingFormFields = formFields.filter(field => !matchedFieldIds.has(field.fieldId));
-  const legacy = legacyValuePrompt();
-  const catalog = legacy ? null : buildCatalog(resumeFields);
-  const selectedCandidates = !remainingFormFields.length ? []
-    : legacy ? ResumeProAIHelpers.selectResumeCandidates(remainingFormFields, resumeFields) : catalog.entries;
+  const catalog = buildCatalog(resumeFields);
+  const selectedCandidates = remainingFormFields.length ? catalog.entries : [];
   const diagnostics = {
     ruleMatches: ruleMatches.length, aiFields: remainingFormFields.length,
     candidateFields: selectedCandidates.length, resumeFields: resumeFields.length,
@@ -376,10 +357,8 @@ async function handleAiFill(message, controller = new AbortController()) {
   if (remainingFormFields.length) {
     const apiStart = performance.now();
     // 选项读得到、却没有一项资料填得进去的下拉不发，记作没有对应的资料，不算 AI 没匹配上。
-    const prompt = legacy ? { fields: remainingFormFields, noFit: 0 } : promptFields(remainingFormFields, catalog);
-    const { batches, skippedOversized, skippedNoContext } = legacy
-      ? makePromptBatches(prompt.fields, fields => ResumeProAIHelpers.selectResumeCandidates(fields, resumeFields), buildLegacyUserPrompt)
-      : makePromptBatches(prompt.fields, () => catalog.entries, buildUserPrompt);
+    const prompt = promptFields(remainingFormFields, catalog);
+    const { batches, skippedOversized, skippedNoContext } = makePromptBatches(prompt.fields, catalog.entries);
     diagnostics.skippedOversized = skippedOversized;
     diagnostics.skippedNoContext = skippedNoContext + prompt.noFit;
     if (skippedOversized) {
@@ -398,9 +377,9 @@ async function handleAiFill(message, controller = new AbortController()) {
         break;
       }
       if (maxCalls !== undefined) diagnostics.calls += 1;
-      const user = legacy ? buildLegacyUserPrompt(batch.fields, batch.candidates) : buildUserPrompt(batch.fields, batch.candidates);
+      const user = buildUserPrompt(batch.fields, batch.candidates);
       diagnostics.promptBytes += new TextEncoder().encode(user).length;
-      const result = await sendToDesktop({ purpose: "fill", tier, system: legacy ? LEGACY_SYSTEM_PROMPT : AI_SYSTEM_PROMPT, user, signal: controller.signal });
+      const result = await sendToDesktop({ purpose: "fill", tier, system: AI_SYSTEM_PROMPT, user, signal: controller.signal });
       if (tier && (result?.tier === "strong" || result?.tier === "default")) diagnostics.tierUsed = result.tier;
       // #299：服务商多久回了响应头（几批取最慢的），超时停在哪一步。旧桌面不给就不记。
       if (Number.isInteger(result?.firstByteMs) && result.firstByteMs >= 0) {
@@ -421,8 +400,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       }
       if (controller.signal.aborted) break;
       try {
-        const payload = parseJsonContent(result.text);
-        const found = legacy ? normalizeMatches(payload) : refMatches(payload, batch.fields, catalog);
+        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog);
         aiMatches.push(...ResumeProAIHelpers.filterValidMatches(batch.fields, found));
         answeredFields.push(...batch.fields);
       } catch {
@@ -462,18 +440,6 @@ function buildUserPrompt(formFields, entries) {
     JSON.stringify(entries),
     "",
     "填写原则：基本信息优先对应基本信息分组；教育背景不要给邮箱、电话、出生日期、籍贯等基础字段；低置信度时跳过。"
-  ].join("\n");
-}
-
-function buildLegacyUserPrompt(formFields, resumeFields) {
-  return [
-    "表单字段列表：",
-    JSON.stringify(formFields),
-    "",
-    "简历字段列表：",
-    JSON.stringify(resumeFields),
-    "",
-    "填写原则：基本信息优先匹配基本信息分组；教育背景不要填进邮箱、电话、出生日期、籍贯等基础字段；低置信度时留空。"
   ].join("\n");
 }
 
@@ -698,29 +664,4 @@ function parseJsonContent(content) {
     .trim();
 
   return JSON.parse(cleaned);
-}
-
-function normalizeMatches(payload) {
-  const source = Array.isArray(payload) ? payload : payload?.matches;
-
-  if (!Array.isArray(source)) {
-    throw new Error("结果不是 JSON 数组。");
-  }
-
-  return source
-    .map((item) => {
-      if (!item || typeof item !== "object") {
-        return null;
-      }
-
-      const fieldId = String(item.fieldId ?? "").trim();
-      const value = String(item.value ?? "");
-
-      if (!fieldId || !value) {
-        return null;
-      }
-
-      return { fieldId, value };
-    })
-    .filter(Boolean);
 }
