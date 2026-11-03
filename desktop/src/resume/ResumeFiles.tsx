@@ -358,7 +358,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
         }
       >
         {confirmDelete?.damaged ? (
-          <p>「{confirmDelete.name}」这条记录读不出来。删掉记录时，能按它的哈希在附件目录里找到、又没有别的记录在用的那份文件会一起删掉，删了不能恢复；附件目录里没人用的残留也会顺手清掉，清不掉的删除之后会提示。档案以外的文件不动。</p>
+          <p>「{confirmDelete.name}」这条记录读不出来。删掉记录时，能按它的哈希在附件目录里找到、又没有别的记录在用的那份文件会一起删掉，删了不能恢复。附件目录顶层没人用的残留会顺手清掉；清不掉的、子目录里的，删除之后会列出来。档案以外的文件不动。</p>
         ) : (
           <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
         )}
