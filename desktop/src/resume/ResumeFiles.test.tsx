@@ -252,7 +252,7 @@ test("读不出来的记录单独列出，可以删掉", async () => {
   expect(within(screen.getByRole("region", { name: "简历附件" })).getByText("简历.pdf")).toBeTruthy();
   await userEvent.click(within(broken).getByRole("button", { name: "删除记录" }));
   const dialog = await screen.findByRole("dialog");
-  expect(dialog.textContent).toContain("删掉后，它在档案里留下的那份文件一起清掉，档案以外的文件不动");
+  expect(dialog.textContent).toContain("删掉后，附件目录里不再有记录用到的文件一起清掉，档案以外的文件不动");
   await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
   await waitFor(() => expect(screen.queryByRole("region", { name: "读不出来的记录" })).toBeNull());
   expect(calls.find((c) => c.command === "delete_resume_file_cmd")?.args).toEqual({ id: "x1" });

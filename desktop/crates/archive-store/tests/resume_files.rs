@@ -202,6 +202,33 @@ fn a_damaged_record_is_listed_apart_never_guessed_and_the_rest_still_work() {
     assert!(folder.join("leftover").is_file());
 }
 
+#[cfg(windows)]
+#[test]
+fn a_damaged_record_whose_bytes_are_held_is_deleted_but_not_reported_clean() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute_batch(&format!("UPDATE resume_files SET template_ids_json = 'not json' WHERE id = '{}'", file.id)).unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    // 别的程序独占着这条记录留下的字节：记录删掉了，但照实报出字节还在，不报成干净的成功。
+    let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(folder.join(&file.sha256)).unwrap();
+    let error = db.delete_resume_file(&file.id).unwrap_err();
+    assert!(matches!(error, StoreError::Io(_)), "{error}");
+    assert!(error.to_string().contains("还没从磁盘上删掉"), "{error}");
+    assert!(db.resume_file_listing().unwrap().damaged.is_empty());
+    assert!(folder.join(&file.sha256).is_file());
+    drop(held);
+    // 放开以后，下一次增删附件时清掉。
+    db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
+    assert!(!folder.join(&file.sha256).exists());
+}
+
 #[test]
 fn leftovers_in_tmp_are_swept_and_a_locked_file_is_not_reported_deleted() {
     let dir = tempfile::tempdir().unwrap();

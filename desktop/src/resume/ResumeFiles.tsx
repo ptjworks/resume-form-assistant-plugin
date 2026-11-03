@@ -340,7 +340,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
         }
       >
         {confirmDelete?.damaged ? (
-          <p>「{confirmDelete.name}」这条记录读不出来。删掉后，它在档案里留下的那份文件一起清掉，档案以外的文件不动。</p>
+          <p>「{confirmDelete.name}」这条记录读不出来。删掉后，附件目录里不再有记录用到的文件一起清掉，档案以外的文件不动。</p>
         ) : (
           <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
         )}

@@ -513,14 +513,17 @@ impl StoreTx<'_> {
     }
 
     /// 读不出来的记录只删这一行，不按它记的路径动文件：它的存储位置不可信。
-    fn delete_damaged_resume_file(&mut self, id: &str) -> Result<Option<bool>, StoreError> {
+    /// 记录是好的返回 `None`；没有这条记录是 `Some(None)`；删掉了返回它记的哈希，清理后拿来核对它的字节。
+    fn delete_damaged_resume_file(&mut self, id: &str) -> Result<Option<Option<String>>, StoreError> {
         let Some(raw) = self.resume_file_raw(id)? else {
-            return Ok(Some(false));
+            return Ok(Some(None));
         };
+        let sha256 = raw.file.sha256.clone();
         if parse_row(raw).is_ok() {
             return Ok(None);
         }
-        Ok(Some(self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id])? > 0))
+        let deleted = self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id])? > 0;
+        Ok(Some(deleted.then_some(sha256)))
     }
 
     pub fn resume_file(&self, id: &str) -> Result<Option<ResumeFile>, StoreError> {
@@ -787,13 +790,22 @@ impl ArchiveStore {
     /// 没删干净照实报错，不报成删除成功。
     /// 读不出来的记录只删这一行，不按它记的路径动文件（存储位置不可信）。删掉以后照样清一次：
     /// 它在附件目录里按哈希留着的字节没人引用了，不清掉的话，备份会因为这份孤立文件停下。
+    /// 那份字节没清掉（被别的程序占着、清理出错）照实报错，不报成干净的成功。
     pub fn delete_resume_file(&self, id: &str) -> Result<bool, StoreError> {
         let _writes = self.lock_resume_files();
         if let Some(deleted) = self.transaction(|tx| tx.delete_damaged_resume_file(id))? {
-            if deleted {
-                let _ = self.sweep_resume_file_leftovers();
+            let Some(sha256) = deleted else {
+                return Ok(false);
+            };
+            let swept = self.sweep_resume_file_leftovers();
+            // 同样的哈希只登记一次：这条记录删了，附件目录里叫这个名字的文件就没人用了。
+            let left = is_sha256(&sha256) && self.archive_dir().join(RESUME_FILES_DIR).join(&sha256).exists();
+            if swept.is_err() || left {
+                return Err(StoreError::Io(std::io::Error::other(
+                    "已删掉这条读不出来的记录，但它留下的文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再清一次。",
+                )));
             }
-            return Ok(deleted);
+            return Ok(true);
         }
         let Some(rel) = self.transaction(|tx| tx.resume_file_rel(id))? else {
             return Ok(false);
