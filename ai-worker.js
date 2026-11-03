@@ -513,7 +513,9 @@ function asksDatePart(field) {
   return /^\s*[年月日]\s*$/.test(String(field?.label ?? ""))
     || DATE_PART_WORDS.test([field?.label, field?.placeholder, field?.name, field?.idAttr].filter(Boolean).join(" "));
 }
-const REF_TOKEN = /^(r\d+)(?:\.(year|month|day))?$/;
+// 编号后面可以跟年、月、日，或一段起止的开始、结束（start、end：AI 常这样写，提示词没要求，本地也认）。
+const REF_TOKEN = /^(r\d+)(?:\.(year|month|day|start|end))?$/;
+const SPAN_SIDES = ["start", "end"];
 
 // 选项读得到的下拉、单选，带上 fits：哪几项资料（或资料里日期的年、月、日）填得进某个选项，只给编号，不说落到哪一项。
 // 一项都填不进去的不发（noFit）。联动下拉的下一级和级联的选项要等页面加载，不算。
@@ -566,14 +568,14 @@ function refMatches(payload, fields, catalog) {
     if (list.length > (field.multiple === true ? 20 : 8)) return [{ fieldId: field.fieldId, value: "", blocked: "too_many_items" }];
     // 日期控件要整个日期：AI 多给了年、月、日也按整项填，一段起止由页面按题目取开始或结束。
     const whole = isDateControl(field);
-    const part = DATE_PARTS.includes(item.part) && list.length === 1 && !whole ? item.part : "";
+    const part = (DATE_PARTS.includes(item.part) && !whole) || SPAN_SIDES.includes(item.part) ? (list.length === 1 ? item.part : "") : "";
     const tokens = list.map(ref => {
       const token = String(ref ?? "").trim();
       if (whole) return token.replace(/\.(?:year|month|day)$/, "");
       return part && !token.includes(".") ? `${token}.${part}` : token;
     });
     // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框（「期望年薪」）收到的整条不要。
-    const parted = tokens.some(token => REF_TOKEN.exec(token)?.[2]);
+    const parted = tokens.some(token => DATE_PARTS.includes(REF_TOKEN.exec(token)?.[2]));
     if (parted && !field.fits && !asksDatePart(field)) return [];
     if (field.fits && tokens.some(token => !field.fits.includes(token))) return [];
     if (isTextAnswer(field) && !answersOpinion(field, tokens, catalog)) return [];
@@ -693,6 +695,8 @@ function refValue(token, field, catalog) {
   const [, ref, part] = REF_TOKEN.exec(token) || [];
   const value = ref ? catalog.values.get(ref) : undefined;
   if (value === undefined) return "";
+  // 开始、结束：一段起止取那一头，不是一段起止的照原值。
+  if (SPAN_SIDES.includes(part)) return ResumeProAIHelpers.rangeDateParts(value)?.[part === "start" ? 0 : 1] ?? value;
   return part ? ResumeProAIHelpers.datePart(value, part, field) : value;
 }
 

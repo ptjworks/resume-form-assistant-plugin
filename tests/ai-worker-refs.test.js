@@ -184,6 +184,23 @@ test("a native date box takes only a whole day; a date picker takes a month and 
   assert.equal(valueOf(result, "picker"), "2019-09");
 });
 
+test("a start or end named in the answer takes that side of a span, written either way", async () => {
+  const env = worker((message, catalog) => [
+    { fieldId: "start", ref: catalog[0].ref, part: "start" }, { fieldId: "end", ref: `${catalog[0].ref}.end` },
+    { fieldId: "text", ref: `${catalog[0].ref}.start` }, { fieldId: "single", ref: `${catalog[1].ref}.end` }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "start", label: "在校时间", placeholder: "开始", inputType: "date-picker", pickerInputType: "month", options: [] },
+      { fieldId: "end", label: "在校时间", inputType: "date-picker", pickerInputType: "month", options: [] },
+      { fieldId: "text", label: "入学年月" }, { fieldId: "single", label: "到岗年月" }],
+    resumeFields: [{ group: "教育经历", key: "教育经历1-时间", value: "2019.09-2023.06" }, { group: "求职补充", key: "可到岗时间", value: "2026.07" }]
+  });
+  assert.equal(valueOf(result, "start"), "2019-09");
+  assert.equal(valueOf(result, "end"), "2023-06", "the side named in the ref wins over a question that names none");
+  assert.equal(valueOf(result, "text"), "2019.09");
+  assert.equal(valueOf(result, "single"), "2026.07", "an item that is not a span stays as it is");
+});
+
 test("a date picker given an item that is not a date reports a bad date instead of typing it in", async () => {
   const env = worker((message, catalog) => [{ fieldId: "start", ref: catalog[0].ref }]);
   const result = await env.run({
