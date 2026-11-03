@@ -219,7 +219,7 @@ test("waiting for the parse: a known platform waits its minimum even when the fo
     // 1 秒时传完，3 秒时网站改了表单，之后不再变。
     return { signature: c.at() >= 3000 ? "parsed" : "before", busy: false, upload: c.at() >= 1000 ? "done" : "uploading" };
   };
-  const result = await slots.waitForParse(read, { ...c, minMs: 12000, quietMs: 2000, maxMs: 60000, extendMs: 60000, earlyOnChange: false });
+  const result = await slots.waitForParse(read, { ...c, minMs: 12000, quietMs: 2000, maxMs: 60000, extendMs: 60000 });
   assert.equal(result.status, "done");
   assert.equal(result.changed, true);
   assert.equal(result.elapsed, 12000);
