@@ -142,6 +142,7 @@
     desktopPill: document.getElementById("desktop-pill"),
     pageDomain: document.getElementById("page-domain"),
     pageReady: document.getElementById("page-ready"),
+    siteHint: document.getElementById("site-hint"),
     templateMeta: document.getElementById("template-meta"),
     pluginVersion: document.getElementById("plugin-version"),
     fieldsTemplate: document.getElementById("fields-template"),
@@ -586,6 +587,10 @@
     // While the page fills, the card says so with the page's own phase text; no made-up percentage.
     elements.fillProgress.hidden = !filling;
     elements.fillProgressPhase.textContent = filling ? (status.phase || "正在填写…") : "";
+    // #429 上传简历后会覆盖已填内容的平台：网页给的一句提示，放在「当前网页」下面。
+    const siteHint = typeof status?.siteHint === "string" ? status.siteHint : "";
+    elements.siteHint.hidden = !siteHint;
+    elements.siteHint.textContent = siteHint;
     // 等 AI 久了，网页给的提示（#402）：已经先填了几项、可以取消。
     const waitHint = filling && typeof status.waitHint === "string" ? status.waitHint : "";
     if (elements.fillProgressHint) {

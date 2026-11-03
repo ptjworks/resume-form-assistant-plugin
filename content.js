@@ -55,6 +55,8 @@
   // 等 AI 多久后给提示（#402，原来是 90 秒）。
   const WAIT_HINT_SECONDS = 30;
   const textFillFailures = new WeakMap();
+  // #429 超出字数上限没填的框：当时的上限，没填上的原因里写明（见 prepareTextValue、limitText）。
+  const textLimits = new WeakMap();
   // 给页面自己的校验留一点时间。短到不拖慢整表，长过常见的几十毫秒回滚。
   let textCommitWaitMs = 100;
   // #173：本次一键填写成功的文本框，只放在当前网页的内存里，不写 storage。
@@ -85,6 +87,7 @@
     cascade_unsupported: "两级选择暂不支持",
     control_disabled: "字段不可操作",
     invalid_date: "日期格式或范围不符",
+    too_long: "超出字数上限",
     range_incomplete: "起止日期缺一头",
     format_mismatch: "只能填数字",
     readonly_picker: "网页自己的选择框",
@@ -203,7 +206,9 @@
         deepOffer: deepOfferLevel(),
         deepConsent: deepConsentSeen(),
         // #226 本站配方：只说有没有、上次是不是过期，不带网址和配方内容。
-        recipe: recipeStatus()
+        recipe: recipeStatus(),
+        // #429 上传简历后会覆盖已填内容的平台：侧栏提示先上传简历再填写。
+        siteHint: siteHint()
       });
       return false;
     }
@@ -496,7 +501,7 @@
     const helpers = ["ResumeProFeedback", "ResumeProAIClient", "ResumeProAIHelpers", "ResumeProAntdPrefix", "ResumeProRegions", "ResumeProCustomControls",
       "ResumeProControls", "ResumeProProfile", "ResumeProResumeData", "ResumeProFormAgent", "ResumeProFillProbe",
       "ResumeProFieldScan", "ResumeProPageOutline", "ResumeProDeepAnalysis", "ResumeProPageActions",
-      "ResumeProPageRecipe", "ResumeProSidebarState"];
+      "ResumeProPageRecipe", "ResumeProSiteKnowledge", "ResumeProSidebarState"];
     const missing = helpers.find((name) => !self[name]);
     if (missing) throw new TypeError(`${missing} is not loaded`);
 
@@ -2117,6 +2122,23 @@
     return { saved: Boolean(recipeCache.recipe), stale: recipeCache.lastUse === "stale" };
   }
 
+  // #429 侧栏的平台提示（见 site-knowledge.js）：同一网址 2 秒内用上次认的，过了再认一次（要读页面特征；单页应用的表单是后画出来的，
+  // 也会换掉）。
+  let siteHintSeen = { href: "", at: 0, text: "" };
+  function siteHint() {
+    const href = location.href;
+    if (siteHintSeen.href === href && Date.now() - siteHintSeen.at < 2000) return siteHintSeen.text;
+    let text = "";
+    try {
+      const knowledge = self.ResumeProSiteKnowledge;
+      text = knowledge?.uploadHint(knowledge.detect(document, href)) || "";
+    } catch {
+      text = "";
+    }
+    siteHintSeen = { href, at: Date.now(), text };
+    return text;
+  }
+
   function noteRecipeUse(status) {
     const key = currentRecipeKey();
     if (!key || recipeCache.id !== recipeId(key)) return;
@@ -2601,7 +2623,8 @@
         // #399 #405 写入被拒的文本框：框里剩下的是什么；#301 日历没选上、框里却换成了别的日子（#418 回车交出今天）。
         const leftover = LEFTOVER_REASONS.has(reason) ? textLeftovers.get(control) : null;
         const changed = reason === 'selection_not_committed' && leftover?.session === session && leftover.after === 'other';
-        const why = changed ? '选成了别的日期' : TEXT_FILL_FAILURE_LABELS[reason] || '';
+        const why = changed ? '选成了别的日期' : reason === 'too_long' && textLimits.has(control) ? limitText(textLimits.get(control))
+          : TEXT_FILL_FAILURE_LABELS[reason] || '';
         const shown = why ? `${label}（${why}）` : label;
         if (uncertain ?? ['verification_timeout', 'framework_state_unsynced', 'value_changed', 'cancelled', 'element_disconnected'].includes(reason)) {
           unconfirmedCount += 1;
@@ -3844,6 +3867,8 @@
         ...(multiple ? { multiple: true } : {}),
         // #429 级联（省 → 市 → 区县这类逐级选的）：要的是从上到下的整条路径，本地匹配会把省、市、县拼起来，AI 提示词第 12 条。
         ...(control.controlKind === "cascader" ? { cascade: true } : {}),
+        // #429 字数上限（框的 maxlength 或组件的字数统计）告诉 AI，回答不超过它；按字节算的站点写明，提示词第 13 条。
+        ...(["text", "textarea"].includes(control.controlKind) ? lengthHint(element) : {}),
         dynamicOptions: ["custom-select", "cascader"].includes(control.controlKind),
         name: element.getAttribute("name") || "",
         idAttr: element.id || "",
@@ -5135,10 +5160,37 @@
     return statedUnits(element).every((stated) => group.includes(stated)) ? number : null;
   }
 
+  // #429 文本框的字数上限：框的 maxlength 或组件自己的字数统计（见 site-knowledge.js）；字数按字节算的站点按字节量。
+  function textLimit(element) {
+    const knowledge = self.ResumeProSiteKnowledge;
+    const max = knowledge?.limitOf(element);
+    if (!Number.isInteger(max)) return null;
+    // 看框所在文档的网址（同源框架里的表单看框架自己的）；about:blank 这类框架往外层框架找，都没有看整页的。
+    return { max, bytes: knowledge.countsBytes(knowledge.addressOf(element.ownerDocument, location.href)) };
+  }
+  function lengthHint(element) {
+    const limit = textLimit(element);
+    return limit ? { maxLength: limit.max, ...(limit.bytes ? { lengthUnit: "byte" } : {}) } : {};
+  }
+  function limitText(limit) {
+    return limit.bytes ? `超过 ${limit.max} 字节上限，汉字算 2` : `超过 ${limit.max} 字上限`;
+  }
   // #399 #405 一键填写写之前按框的要求整理要写的字（控件层写之前调用；侧栏、字段卡片手动写入不整理）。
   // 返回 { value }，日期按 1 日补齐的带 dayDefaulted。type=number 里取不出数字的返回 { reason: "format_mismatch" }，不写。
   // inputmode 只是给手机键盘的提示，很多框什么都收：先照原样写，numeric 是页面没收下时改写的数字（取不出是 null）。
+  // #429 整理完再看字数上限：超了不写，返回 { reason: "too_long" }，没填上的原因写明超过几字上限。
+  // 不截断：截断会把学校、专业这类名称截成别的，长回答断在半句，由用户自己改短。
   function prepareTextValue(element, value) {
+    const prepared = formatTextValue(element, value);
+    if (prepared.reason) return prepared;
+    const limit = textLimit(element);
+    const written = normalizeExpectedTextValue(element, prepared.value);
+    if (!limit || self.ResumeProSiteKnowledge.measure(written, limit.bytes) <= limit.max) return prepared;
+    textLimits.set(element, limit);
+    return { reason: "too_long" };
+  }
+
+  function formatTextValue(element, value) {
     const text = String(value ?? "");
     if (!isInputElement(element)) {
       return { value: text };
@@ -5194,7 +5246,10 @@
   }
 
   function textFillFailureLabel(element) {
-    return TEXT_FILL_FAILURE_LABELS[textFillFailureCode(element)] || "";
+    const control = element?.kind === "element" ? element.element : element;
+    const code = textFillFailureCode(element);
+    if (code === "too_long" && textLimits.has(control)) return limitText(textLimits.get(control));
+    return TEXT_FILL_FAILURE_LABELS[code] || "";
   }
 
   function normalizeExpectedTextValue(element, value) {
