@@ -431,21 +431,34 @@
     return { state: "none", message: said(aside) };
   }
 
-  // 交给框之前再看一眼：还是确认时那个框（同一个 file 框、同一个上传区和表单项），题目、认成的类别、收的格式、大小上限都没变，
-  // 框里也还没有文件。返回 "" 可以传，"changed" 框变了（卡片作废，要用户重新确认），"gone" 框没了，"has_file"、"file_unsure" 框里有文件了。
+  // 交给框之前再看一眼：还是确认时那个框，题目、认成的类别、收的格式、大小上限都没变，框里也还没有文件。
+  // 认框不只看节点：网站把这个框重画了（file 框、上传区、表单项换成了新节点）也不要紧，原来的表单项里、或者整页只有一个
+  // 题目、类别、accept、大小上限都一样的框，就是它，接着用新的。原来的 file 框还在、却挪到了别的表单项，也要整页只有它一个
+  // 这样的框才认。返回 { state, slot }：state 为 "" 可以传，slot 是现在页面上的这个框；"changed" 框变了或认不准是哪个
+  // （卡片作废，要用户重新确认）；"gone" 框没了；"has_file"、"file_unsure" 框里有文件了。
   function recheck(slot, options = {}) {
-    if (!slot?.input?.isConnected) return "gone";
-    let fresh = null;
+    const doc = slot?.input?.ownerDocument;
+    let slots = [];
     try {
-      fresh = find(slot.input.ownerDocument, options).find(item => item.input === slot.input) || null;
+      slots = doc ? find(doc, options) : [];
     } catch {
-      fresh = null;
+      slots = [];
     }
-    if (!fresh) return "gone";
-    if (fresh.root !== slot.root || fresh.scope !== slot.scope || fresh.title !== slot.title || fresh.kind !== slot.kind
-      || fresh.accept !== slot.accept || fresh.limit !== slot.limit) return "changed";
-    if (fresh.hasFile) return fresh.fileUnsure ? "file_unsure" : "has_file";
-    return "";
+    const alike = slots.filter(item => item.title === slot.title && item.kind === slot.kind
+      && item.accept === slot.accept && item.limit === slot.limit);
+    const same = slots.find(item => item.input === slot.input) || null;
+    let fresh = null;
+    if (same) {
+      if (!alike.includes(same)) return { state: "changed" };
+      fresh = same.scope === slot.scope || alike.length === 1 ? same : null;
+    } else {
+      const inPlace = slot.scope?.isConnected ? alike.filter(item => slot.scope.contains(item.input)) : [];
+      fresh = inPlace.length === 1 ? inPlace[0] : alike.length === 1 ? alike[0] : null;
+      if (!fresh && !alike.length) return { state: "gone" };
+    }
+    if (!fresh) return { state: "changed" };
+    if (fresh.hasFile) return { state: fresh.fileUnsure ? "file_unsure" : "has_file", slot: fresh };
+    return { state: "", slot: fresh };
   }
 
   // 进度条走满了不算忙。

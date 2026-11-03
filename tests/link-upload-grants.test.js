@@ -11,6 +11,8 @@ const CARD = 'k3x9-a1b2:4';
 const api = { runtime: { id: 'ext', getURL: (file) => `chrome-extension://ext/${file}` }, tabs: { get: async () => null } };
 const PANEL = { id: 'ext', url: 'chrome-extension://ext/sidepanel.html' };
 const page = (tabId, url, frameId = 0) => ({ id: 'ext', tab: { id: tabId }, frameId, url });
+// 取一份文件：给的话是确认时那一版的 sha256，不给是 ''。
+const took = (grants, ...args) => grants.take(...args)?.sha256 ?? '';
 
 async function load() {
   return import('../link/upload-grants.mjs');
@@ -28,16 +30,16 @@ test('a grant gives each confirmed file once, to the same tab, site and card onl
   let time = 1000;
   const grants = createUploadGrants({ now: () => time });
   assert.equal(grants.grant(7, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }, { fileId: 'p1', sha256: OTHER_SHA }]), true);
-  assert.equal(grants.take(8, 'https://jobs.example.test/apply', 'r1', CARD), '', 'another tab');
-  assert.equal(grants.take(7, 'https://evil.example.test/apply', 'r1', CARD), '', 'another site in the same tab');
-  assert.equal(grants.take(7, 'http://jobs.example.test/apply', 'r1', CARD), '', 'same host, other scheme');
-  assert.equal(grants.take(7, 'https://jobs.example.test/apply', 'r1', 'k3x9-a1b2:5'), '', 'a later card on the same page');
-  assert.equal(grants.take(7, 'https://jobs.example.test/apply', 'r1', 'zz-reload:4'), '', 'the same card number after a reload');
-  assert.equal(grants.take(7, 'https://jobs.example.test/apply', 'x9', CARD), '', 'a file that was not confirmed');
-  assert.equal(grants.take(7, 'https://jobs.example.test/apply/step2', 'r1', CARD), SHA, 'the confirmed version');
-  assert.equal(grants.take(7, 'https://jobs.example.test/apply', 'r1', CARD), '', 'only once');
+  assert.equal(took(grants, 8, 'https://jobs.example.test/apply', 'r1', CARD), '', 'another tab');
+  assert.equal(took(grants, 7, 'https://evil.example.test/apply', 'r1', CARD), '', 'another site in the same tab');
+  assert.equal(took(grants, 7, 'http://jobs.example.test/apply', 'r1', CARD), '', 'same host, other scheme');
+  assert.equal(took(grants, 7, 'https://jobs.example.test/apply', 'r1', 'k3x9-a1b2:5'), '', 'a later card on the same page');
+  assert.equal(took(grants, 7, 'https://jobs.example.test/apply', 'r1', 'zz-reload:4'), '', 'the same card number after a reload');
+  assert.equal(took(grants, 7, 'https://jobs.example.test/apply', 'x9', CARD), '', 'a file that was not confirmed');
+  assert.equal(took(grants, 7, 'https://jobs.example.test/apply/step2', 'r1', CARD), SHA, 'the confirmed version');
+  assert.equal(took(grants, 7, 'https://jobs.example.test/apply', 'r1', CARD), '', 'only once');
   time += GRANT_TTL_MS + 1;
-  assert.equal(grants.take(7, 'https://jobs.example.test/apply', 'p1', CARD), '', 'expired');
+  assert.equal(took(grants, 7, 'https://jobs.example.test/apply', 'p1', CARD), '', 'expired');
 });
 
 test('a grant is refused for a page that is not http(s), a card that is not one, or a malformed list; a new one replaces the old', async () => {
@@ -51,11 +53,11 @@ test('a grant is refused for a page that is not http(s), a card that is not one,
   assert.equal(grants.grant(1, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: 'nope' }]), false);
   assert.equal(grants.grant(1, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }]), true);
   assert.equal(grants.grant(1, 'https://jobs.example.test', 'k3x9-a1b2:5', [{ fileId: 'p1', sha256: OTHER_SHA }]), true);
-  assert.equal(grants.take(1, 'https://jobs.example.test/', 'r1', CARD), '', 'the older yes is gone');
-  assert.equal(grants.take(1, 'https://jobs.example.test/', 'p1', 'k3x9-a1b2:5'), OTHER_SHA);
+  assert.equal(took(grants, 1, 'https://jobs.example.test/', 'r1', CARD), '', 'the older yes is gone');
+  assert.equal(took(grants, 1, 'https://jobs.example.test/', 'p1', 'k3x9-a1b2:5'), OTHER_SHA);
   grants.grant(2, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }]);
   grants.revoke(2);
-  assert.equal(grants.take(2, 'https://jobs.example.test/', 'r1', CARD), '');
+  assert.equal(took(grants, 2, 'https://jobs.example.test/', 'r1', CARD), '');
 });
 
 test('a tab that moves to another address or closes loses its yes; other updates keep it', async () => {
@@ -67,13 +69,13 @@ test('a tab that moves to another address or closes loses its yes; other updates
   grants.grant(3, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }, { fileId: 'p1', sha256: OTHER_SHA }]);
   listeners.updated(3, { status: 'complete' });
   listeners.updated(3, { title: '网上申请' });
-  assert.equal(grants.take(3, 'https://jobs.example.test/apply', 'r1', CARD), SHA, 'loading finished, title changed');
+  assert.equal(took(grants, 3, 'https://jobs.example.test/apply', 'r1', CARD), SHA, 'loading finished, title changed');
   // 单页应用换了地址（同一个网站）：剩下的文件也不给了。
   listeners.updated(3, { url: 'https://jobs.example.test/apply#step2' });
-  assert.equal(grants.take(3, 'https://jobs.example.test/apply#step2', 'p1', CARD), '');
+  assert.equal(took(grants, 3, 'https://jobs.example.test/apply#step2', 'p1', CARD), '');
   grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }]);
   listeners.removed(4);
-  assert.equal(grants.take(4, 'https://jobs.example.test/apply', 'r1', CARD), '');
+  assert.equal(took(grants, 4, 'https://jobs.example.test/apply', 'r1', CARD), '');
   // 没有 tabs 的环境（测试里的假 chrome）不出错。
   assert.doesNotThrow(() => revokeOnNavigation({}, grants));
 });
@@ -99,7 +101,7 @@ test('only the side panel may grant, and only for the site its tab shows now and
   assert.deepEqual(await call(mod, deps, { ...message, origin: 'https://other.example.test' }, PANEL), { status: 'stale' });
   assert.deepEqual(await call(mod, deps, { ...message, card: undefined }, PANEL), { status: 'invalid_payload' });
   assert.deepEqual(await call(mod, deps, message, PANEL), { status: 'ok' });
-  assert.equal(grants.take(4, 'https://jobs.example.test/apply', 'r1', CARD), SHA);
+  assert.equal(took(grants, 4, 'https://jobs.example.test/apply', 'r1', CARD), SHA);
 });
 
 test('a content script gets a file only after the grant, for that card, from the top frame, and only the version confirmed', async () => {
@@ -174,5 +176,26 @@ test('the side panel can take its yes back; a page cannot', async () => {
   grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }]);
   assert.deepEqual(await call(mod, deps, { type: mod.RESUME_FILES_REVOKE, tabId: 4 }, page(4, 'https://jobs.example.test/')), { status: 'forbidden' });
   assert.deepEqual(await call(mod, deps, { type: mod.RESUME_FILES_REVOKE, tabId: 4 }, PANEL), { status: 'ok' });
-  assert.equal(grants.take(4, 'https://jobs.example.test/', 'r1', CARD), '');
+  assert.equal(took(grants, 4, 'https://jobs.example.test/', 'r1', CARD), '');
+});
+
+test('a file bound to other templates is not handed over, whatever the panel picked; one bound to the template in use, or to none, is', async () => {
+  const mod = await load();
+  const rows = [
+    { fileId: 'r1', kind: 'resume', name: '通用简历.pdf', mime: 'application/pdf', byteSize: 3, sha256: SHA, templateIds: [], updatedAt: '2026-11-03T08:00:00Z' },
+    { fileId: 'r2', kind: 'resume', name: '英文简历.pdf', mime: 'application/pdf', byteSize: 3, sha256: OTHER_SHA, templateIds: ['t2'], updatedAt: '2026-11-03T08:00:00Z' }
+  ];
+  const grants = mod.createUploadGrants();
+  const files = desk({ rows });
+  const deps = { api, grants, files };
+  const fetch = (fileId) => call(mod, deps, { type: mod.RESUME_FILE_FETCH, fileId, card: CARD }, page(4, 'https://jobs.example.test/apply'));
+  grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }, { fileId: 'r2', sha256: OTHER_SHA }], 't1');
+  assert.equal((await fetch('r1')).status, 'ok', 'a file bound to no template');
+  assert.deepEqual(await fetch('r2'), { status: 'wrong_template' }, 'bound to t2 while t1 is in use');
+  assert.deepEqual(files.fetched, ['r1'], 'the file for the other template was not read');
+  grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r2', sha256: OTHER_SHA }], 't2');
+  assert.equal((await fetch('r2')).status, 'ok', 'bound to the template in use');
+  grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r2', sha256: OTHER_SHA }]);
+  assert.deepEqual(await fetch('r2'), { status: 'wrong_template' }, 'no template in use: only files bound to none');
+  assert.equal(grants.grant(4, 'https://jobs.example.test', CARD, [{ fileId: 'r1', sha256: SHA }], 7), false, 'a template id that is not one');
 });

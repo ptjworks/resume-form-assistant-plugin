@@ -245,9 +245,10 @@
   let uploadView = null;
   let uploadFiles = null;
   let uploadFilesKey = "";
-  // 桌面里的文件列表最多等这么久：桌面卡住时卡片不能一直停在「正在读取」。没读到时 uploadFilesDown 为真。
+  // 桌面里的文件列表最多等这么久：桌面卡住时卡片不能一直停在「正在读取」。
+  // 没读到时 uploadFilesDown 是原因：desktop_old（桌面太旧）或 desktop_unavailable（连不上、超时）。
   const UPLOAD_LIST_MS = 5000;
-  let uploadFilesDown = false;
+  let uploadFilesDown = "";
   let uploadChoices = new Map();
   let uploadPending = false;
   let pageHostWithPort = "";
@@ -970,7 +971,8 @@
     if (uploadFilesKey !== key) return;
     const ok = reply?.status === "ok" && Array.isArray(reply.files);
     uploadFiles = ok ? reply.files : [];
-    uploadFilesDown = !ok;
+    // 没读到列表：桌面太旧（unsupported）和连不上、超时分开说。
+    uploadFilesDown = ok ? "" : reply?.status === "unsupported" ? "desktop_old" : "desktop_unavailable";
     renderUpload();
   }
 
@@ -979,13 +981,21 @@
     return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   }
 
-  // 一个框能选的文件：框收得下、不超过上限。认得出要什么的框只列这一类，认不出的和别的材料列全部。
+  // 绑了模板的附件只给那几个模板用：没绑模板的，和绑了当前模板的，才能选（后台交文件前按同样的规则再核对一次）。
+  function usableForTemplate(file) {
+    const ids = Array.isArray(file?.templateIds) ? file.templateIds : [];
+    const current = selectedTemplate()?.id || "";
+    return !ids.length || (Boolean(current) && ids.includes(current));
+  }
+
+  // 一个框能选的文件：当前模板能用、框收得下、不超过上限。认得出要什么的框只列这一类，认不出的和别的材料列全部。
   function uploadCandidates(slot) {
     const api = self.ResumeProUploadSlots;
     const files = Array.isArray(uploadFiles) ? uploadFiles : [];
     if (!api || ["has_file", "file_unsure", "desktop_old", "desktop_unavailable"].includes(slot.reason)) return [];
     const known = ["resume", "photo", "transcript"].includes(slot.kind);
-    return files.filter((file) => (!known || file.kind === slot.kind) && api.fits({ accept: slot.accept, limit: slot.limit }, file));
+    return files.filter((file) => usableForTemplate(file) && (!known || file.kind === slot.kind)
+      && api.fits({ accept: slot.accept, limit: slot.limit }, file));
   }
 
   function uploadNote(slot) {
@@ -1039,9 +1049,11 @@
             select.value = uploadChoice(slot);
             row.append(select);
           }
+          // 列表没读到：框自己有原因（已经有文件、桌面旧、连不上）就说它的，别的框按列表没读到的原因说。
+          const listNote = uploadFilesDown && !["has_file", "file_unsure", "desktop_old", "desktop_unavailable"].includes(slot.reason)
+            ? uploadNote({ ...slot, reason: uploadFilesDown }) : "";
           const text = uploadFiles === null ? "正在读取桌面里的文件…"
-            : uploadFilesDown && !["has_file", "file_unsure"].includes(slot.reason) ? "桌面暂时连不上，不能上传。"
-              : candidates.length ? (uploadChoice(slot) ? "" : uploadNote(slot)) : uploadNote(slot) || "桌面里没有能放进这个框的文件。";
+            : listNote || (candidates.length ? (uploadChoice(slot) ? "" : uploadNote(slot)) : uploadNote(slot) || "桌面里没有能放进这个框的文件。");
           if (text) {
             const note = document.createElement("p");
             note.className = "upload-row__note";
@@ -1123,7 +1135,8 @@
           let granted = null;
           try {
             granted = await chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_GRANT", tabId: tab.id, origin,
-              card: `${view.epoch}:${view.version}`, files: files.map((file) => ({ fileId: file.fileId, sha256: file.sha256 })) });
+              card: `${view.epoch}:${view.version}`, templateId: selectedTemplate()?.id || "",
+              files: files.map((file) => ({ fileId: file.fileId, sha256: file.sha256 })) });
           } catch {
             granted = null;
           }

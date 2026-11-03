@@ -44,7 +44,8 @@ async function openPanel(t, { upload = OFFER, tabUrl = "https://app.mokahr.com/c
           activeTemplate: { id: "t", name: "虚构模板", groups: [{ name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }] }] },
           profile: { values: {}, family: [], custom: [] }, profileRevision: 1 } };
         // files 为 null：桌面卡住，一直不回。
-        if (message.type === "DESKTOP_RESUME_FILES_LIST") return files === null ? new Promise(() => {}) : { status: "ok", files };
+        // files 是字符串：桌面这样回（比如 "unsupported"，旧桌面）。
+        if (message.type === "DESKTOP_RESUME_FILES_LIST") return files === null ? new Promise(() => {}) : typeof files === "string" ? { status: files } : { status: "ok", files };
         if (message.type === "DESKTOP_RESUME_FILES_GRANT") return { status: "ok" };
         return { status: "ok" };
       },
@@ -116,7 +117,7 @@ test("上传并填写 first tells the worker this tab, this site and only the ch
   p.get("upload-confirm").click();
   await flush();
   assert.deepEqual(p.workerCalls("DESKTOP_RESUME_FILES_GRANT"), [{ type: "DESKTOP_RESUME_FILES_GRANT", tabId: 7, origin: "https://app.mokahr.com",
-    card: "e1:3", files: [{ fileId: "r1", sha256: SHA("a") }] }], "the yes is for this card only");
+    card: "e1:3", templateId: "t", files: [{ fileId: "r1", sha256: SHA("a") }] }], "the yes is for this card and the template in use only");
   assert.deepEqual(p.pageCalls("RESUME_PANEL_UPLOAD"), [{ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: 3, epoch: "e1",
     choices: [{ slot: "upload-0", fileId: "r1" }] }]);
   const order = p.calls.filter((call) => ["DESKTOP_RESUME_FILES_GRANT", "RESUME_PANEL_UPLOAD"].includes(call.message.type)).map((call) => call.message.type);
@@ -254,4 +255,24 @@ test("a file list that never comes does not leave the card waiting: each box say
   assert.deepEqual(p.rows().map((row) => row.note), ["桌面暂时连不上，不能上传。", "桌面暂时连不上，不能上传。", "桌面暂时连不上，不能上传。"]);
   assert.equal(p.get("upload-confirm").disabled, true);
   assert.equal(p.get("upload-fill").disabled, false, "filling without the files is still there");
+});
+
+test("a file bound only to another template is not offered; one bound to the template in use, or to none, is", async (t) => {
+  const files = [
+    { ...FILES[0], templateIds: [] },
+    { ...FILES[1], templateIds: ["t2"] },
+    { fileId: "r3", kind: "resume", name: "本模板简历.pdf", label: "", mime: "application/pdf", byteSize: 70000, sha256: SHA("d"), isDefault: false, templateIds: ["t", "t2"] },
+    FILES[2]
+  ];
+  const p = await openPanel(t, { files });
+  await p.poll();
+  // 当前模板是 t：只绑了 t2 的英文简历不列出来。
+  assert.deepEqual(p.rows()[0].options, ["不传", "测试用户_简历.pdf（1.2 MB） · 中文", "本模板简历.pdf（68 KB）"]);
+  assert.equal(p.rows()[2].options.includes("Test_Resume.pdf（88 KB） · 英文"), false, "not for a box the page cannot tell either");
+});
+
+test("an old desktop that cannot list files says so, not that it cannot be reached", async (t) => {
+  const p = await openPanel(t, { files: "unsupported" });
+  await p.poll();
+  assert.deepEqual(p.rows().map((row) => row.note), ["桌面程序版本较旧，不能上传。", "桌面程序版本较旧，不能上传。", "桌面程序版本较旧，不能上传。"]);
 });

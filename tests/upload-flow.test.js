@@ -115,7 +115,7 @@ const elementPhoto = (id, title) => `
     <div class="el-upload el-upload--picture-card"><i class="el-icon-plus"></i><input id="${id}" type="file" accept="image/*" class="el-upload__input" style="display:none"></div>
     <ul class="el-upload-list el-upload-list--picture-card"></ul></div></div>`;
 
-async function page(t, body, { url = "https://app.mokahr.com/campus_apply/example/1", answers = {}, files = [RESUME_FILE, PHOTO_FILE], listStatus = "ok", hold = null, silent = [] } = {}) {
+async function page(t, body, { url = "https://app.mokahr.com/campus_apply/example/1", answers = {}, files = [RESUME_FILE, PHOTO_FILE], listStatus = "ok", hold = null, silent = [], gate = null } = {}) {
   const { createUploadGrants, handleUploadMessage } = await import("../link/upload-grants.mjs");
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url });
@@ -157,7 +157,12 @@ async function page(t, body, { url = "https://app.mokahr.com/campus_apply/exampl
         if (message.type === "AI_FILL" || message.type === "CANCEL_AI_FILL") return ai(message);
         // silent 里的消息后台一直不回（桌面卡住）。
         if (silent.includes(message.type)) return new Promise(() => {});
-        if (String(message.type).startsWith("DESKTOP_RESUME_FILE")) return background(message);
+        if (String(message.type).startsWith("DESKTOP_RESUME_FILE")) {
+          // gate：后台算好了回答，先压着，等测试放行再交给页面（看晚到的回答怎么处理）。
+          const reply = await background(message);
+          if (gate) await gate(message);
+          return reply;
+        }
         return {};
       } },
     storage: { local: { get: async () => ({}), set: async (value) => { seen.stored.push(JSON.stringify(value)); } },
@@ -918,4 +923,85 @@ test("the hint learns of a resume added on the desktop when one-click fill asks,
   await settle();
   later += 2100;
   assert.equal((await p.status()).siteHint, before);
+});
+
+test("a resume chosen for an 'other material' box is not the resume: it goes last, after the fill, and nothing waits on it", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  p.w.document.getElementById("works").addEventListener("change", () => p.seen.events.push("works"));
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  // 用户只给「作品集」框选了简历文件，简历框、证件照框都不传。
+  const done = await (async () => { await p.confirm([{ slot: "upload-2", fileId: RESUME_FILE.fileId }]); return p.finished(); })();
+  await Promise.all(p.fills);
+  assert.equal(p.w.document.getElementById("resume").files.length, 0);
+  assert.equal(p.w.document.getElementById("works").files[0].name, RESUME_FILE.name);
+  assert.deepEqual(p.seen.events, ["fill", "works"], "filled first, the material last; no parse wait");
+  assert.equal(done.upload.lines.some((line) => line.includes("简历上传失败")), false, done.upload.lines.join(" | "));
+});
+
+test("a photo box the parse drew again is still the photo box: the photo goes up", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  // 网站解析时把证件照这一题整个重画了（file 框、上传区都是新节点，题目、格式不变）。新框传上以后显示缩略图。
+  p.w.document.getElementById("resume").addEventListener("change", () => p.time.after(3000, () => {
+    const item = p.w.document.getElementById("photo").closest(".el-form-item");
+    item.outerHTML = item.outerHTML;
+    p.w.document.getElementById("photo").addEventListener("change", () => {
+      p.seen.events.push("photo");
+      p.w.document.querySelector(".el-upload-list").innerHTML = `<li class="el-upload-list__item is-success"><img class="el-upload-list__item-thumbnail" src="blob:https://app.mokahr.com/2"></li>`;
+    });
+  }));
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  const done = await p.finished();
+  await Promise.all(p.fills);
+  assert.equal(p.w.document.getElementById("photo").files[0].name, PHOTO_FILE.name);
+  assert.ok(done.upload.lines.includes("证件照：已上传 证件照.jpg。"), done.upload.lines.join(" | "));
+  assert.equal(done.upload.lines.some((line) => line.includes("作废")), false);
+});
+
+test("when the upload ends while another AI task is busy, the fill button gets its words back now and its use back when that task lets go", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  const hooks = p.w.ResumeProHighlightTest;
+  // 传证件照的时候，用户在侧栏开始了别的 AI 任务（占着忙碌状态）。
+  p.w.document.getElementById("photo").addEventListener("change", () => hooks.setAiBusy(true));
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  // 页面一直报忙（别的任务占着），只等上传结束。
+  for (let i = 0; i < 2000 && (await p.status()).upload?.phase === "running"; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal((await p.status()).upload.phase, "done");
+  await Promise.all(p.fills);
+  assert.equal(p.ui.fill.textContent, "一键 AI 填写");
+  assert.equal(p.ui.fill.disabled, true, "still busy elsewhere");
+  hooks.setAiBusy(false);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(p.ui.fill.disabled, false);
+});
+
+test("a hint answer that comes back after a newer one is dropped", async (t) => {
+  const files = [PHOTO_FILE];
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  let first = true;
+  // 第一次问桌面（平台提示）的回答压住：它是按「桌面里还没有简历」算的。
+  const gate = (message) => {
+    if (message.type !== "DESKTOP_RESUME_FILES_PLAN" || !first) return Promise.resolve();
+    first = false;
+    return held;
+  };
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" }, files, gate });
+  fakeSite(p);
+  const real = p.w.Date.now.bind(p.w.Date);
+  let later = 0;
+  p.w.Date.now = () => real() + later;
+  assert.equal((await p.status()).siteHint, "");
+  // 这时用户在桌面里加了简历，点一键填写：问到的新回答是能先传简历。
+  files.push(RESUME_FILE);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  // 旧回答这才回来：过期了，丢掉。
+  release();
+  await settle();
+  later += 2100;
+  assert.equal((await p.status()).siteHint, "Moka 上传简历后会重新解析并覆盖已填内容。一键填写会先上传简历，等解析完再填写。");
 });

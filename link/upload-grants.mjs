@@ -46,18 +46,25 @@ export function fromTopFrame(sender, api) {
     && sender.frameId === 0 && typeof sender.url === 'string';
 }
 
+/** A file bound to templates is for those templates only; an unbound one is for any. */
+export function usableFor(file, templateId) {
+  const ids = Array.isArray(file?.templateIds) ? file.templateIds : [];
+  return !ids.length || (Boolean(templateId) && ids.includes(templateId));
+}
+
 export function createUploadGrants({ now = () => Date.now() } = {}) {
-  // tabId -> { origin, card, files: Map<fileId, sha256>, expires }
+  // tabId -> { origin, card, templateId, files: Map<fileId, sha256>, expires }
   const grants = new Map();
 
   /**
    * The user's yes for one card in one tab: `origin` is the site the panel showed, `card` the
-   * card's `${epoch}:${version}`, `files` the [{ fileId, sha256 }] it listed. A new yes for the
-   * same tab replaces the old one.
+   * card's `${epoch}:${version}`, `files` the [{ fileId, sha256 }] it listed, `templateId` the
+   * template the panel had in use. A new yes for the same tab replaces the old one.
    */
-  function grant(tabId, origin, card, files) {
+  function grant(tabId, origin, card, files, templateId = '') {
     if (!Number.isInteger(tabId) || !originOf(origin) || originOf(origin) !== origin) return false;
     if (typeof card !== 'string' || !CARD.test(card)) return false;
+    if (typeof templateId !== 'string' || templateId.length > 128) return false;
     const list = Array.isArray(files) ? files : [];
     if (!list.length || list.length > MAX_GRANTED_FILES) return false;
     const granted = new Map();
@@ -65,24 +72,24 @@ export function createUploadGrants({ now = () => Date.now() } = {}) {
       if (typeof file?.fileId !== 'string' || !file.fileId || file.fileId.length > 64 || !SHA256.test(file?.sha256 ?? '')) return false;
       granted.set(file.fileId, file.sha256);
     }
-    grants.set(tabId, { origin, card, files: granted, expires: now() + GRANT_TTL_MS });
+    grants.set(tabId, { origin, card, templateId, files: granted, expires: now() + GRANT_TTL_MS });
     return true;
   }
 
   /**
-   * One file for the card `card` shown by the frame at `url` in `tabId`: the confirmed digest,
-   * at most once per granted file, or '' when there is no such yes.
+   * One file for the card `card` shown by the frame at `url` in `tabId`: { sha256, templateId }
+   * of the yes, at most once per granted file, or null when there is no such yes.
    */
   function take(tabId, url, fileId, card) {
     const held = grants.get(tabId);
-    if (!held) return '';
-    if (now() > held.expires) { grants.delete(tabId); return ''; }
-    if (originOf(url) !== held.origin || card !== held.card) return '';
+    if (!held) return null;
+    if (now() > held.expires) { grants.delete(tabId); return null; }
+    if (originOf(url) !== held.origin || card !== held.card) return null;
     const sha256 = typeof fileId === 'string' ? held.files.get(fileId) : undefined;
-    if (!sha256) return '';
+    if (!sha256) return null;
     held.files.delete(fileId);
     if (!held.files.size) grants.delete(tabId);
-    return sha256;
+    return { sha256, templateId: held.templateId };
   }
 
   function revoke(tabId) {
@@ -154,7 +161,7 @@ export function handleUploadMessage({ api, grants, files, slots }, message, send
     Promise.resolve(api.tabs.get(message.tabId)).then(tab => {
       const origin = originOf(tab?.url);
       if (!origin || origin !== message.origin) return { status: 'stale' };
-      return grants.grant(message.tabId, origin, message.card, message.files) ? { status: 'ok' } : { status: 'invalid_payload' };
+      return grants.grant(message.tabId, origin, message.card, message.files, message.templateId ?? '') ? { status: 'ok' } : { status: 'invalid_payload' };
     }).then(sendResponse, () => sendResponse({ status: 'stale' }));
     return true;
   }
@@ -167,14 +174,16 @@ export function handleUploadMessage({ api, grants, files, slots }, message, send
   }
   if (type === RESUME_FILE_FETCH) {
     if (!fromTopFrame(sender, api)) { sendResponse({ status: 'forbidden' }); return false; }
-    const sha256 = grants.take(sender.tab.id, sender.url, message.fileId, message.card);
-    if (!sha256) { sendResponse({ status: 'not_confirmed' }); return false; }
+    const held = grants.take(sender.tab.id, sender.url, message.fileId, message.card);
+    if (!held) { sendResponse({ status: 'not_confirmed' }); return false; }
     (async () => {
-      // The version the user confirmed must still be the one on the desktop.
+      // The version the user confirmed must still be the one on the desktop, and still be for
+      // the template the panel had in use (the panel lists only those; this does not rely on it).
       const listed = await files.list();
       if (listed.status !== 'ok') return { status: listed.status };
-      const row = listed.files.find(file => file.fileId === message.fileId && file.sha256 === sha256);
+      const row = listed.files.find(file => file.fileId === message.fileId && file.sha256 === held.sha256);
       if (!row) return { status: 'conflict' };
+      if (!usableFor(row, held.templateId)) return { status: 'wrong_template' };
       const read = await files.fetch(row);
       if (read.status !== 'ok') return { status: read.status };
       return { status: 'ok', name: row.name, mime: row.mime, kind: row.kind, byteSize: row.byteSize, updatedAt: row.updatedAt,

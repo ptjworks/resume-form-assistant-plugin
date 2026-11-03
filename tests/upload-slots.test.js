@@ -365,30 +365,53 @@ test("before a file is handed over the box is checked again: the same control, k
   const doc = page(antd({ id: "a", title: "简历附件", accept: ".pdf", extra: "支持 PDF，不超过 5MB" }) + antd({ id: "b", title: "证件照", accept: "image/*" }));
   const options = { isVisible, describe };
   const [resume] = found(doc);
+  const state = () => slots.recheck(resume, options).state;
   assert.equal(resume.limit, 5 * 1024 * 1024);
-  assert.equal(slots.recheck(resume, options), "");
+  assert.deepEqual(slots.recheck(resume, options), { state: "", slot: slots.recheck(resume, options).slot });
+  assert.equal(slots.recheck(resume, options).slot.input, resume.input);
   const input = doc.getElementById("a");
   input.setAttribute("accept", ".pdf,.doc");
-  assert.equal(slots.recheck(resume, options), "changed", "what the box takes");
+  assert.equal(state(), "changed", "what the box takes");
   input.setAttribute("accept", ".pdf");
   const extra = doc.querySelector(".ant-form-item-extra");
   extra.textContent = "支持 PDF，不超过 2MB";
-  assert.equal(slots.recheck(resume, options), "changed", "the size limit");
+  assert.equal(state(), "changed", "the size limit");
   extra.textContent = "支持 PDF，不超过 5MB";
   const label = doc.querySelector("label[for='a']");
   label.textContent = "成绩单";
   label.title = "成绩单";
-  assert.equal(slots.recheck(resume, options), "changed", "the title and the kind");
+  assert.equal(state(), "changed", "the title and the kind");
   label.textContent = "简历附件";
   label.title = "简历附件";
-  assert.equal(slots.recheck(resume, options), "");
+  assert.equal(state(), "");
   resume.scope.querySelector(".ant-upload-list").innerHTML = `<div class="ant-upload-list-item ant-upload-list-item-done"><span title="别的简历.pdf">别的简历.pdf</span></div>`;
-  assert.equal(slots.recheck(resume, options), "has_file");
+  assert.equal(state(), "has_file");
   resume.scope.querySelector(".ant-upload-list").innerHTML = "";
-  // 网站重画了这一题：原来那个 file 框没了。
-  const item = input.closest(".ant-form-item");
+});
+
+test("a box the site drew again is the same box when title, kind, accept and size limit all match and it is the only one like it", () => {
+  const doc = page(antd({ id: "a", title: "简历附件", accept: ".pdf", extra: "支持 PDF，不超过 5MB" }) + antd({ id: "b", title: "证件照", accept: "image/*" }));
+  const options = { isVisible, describe };
+  const [resume] = found(doc);
+  // 网站重画了这一题：file 框、上传区、表单项都是新节点，内容一样。
+  const item = doc.getElementById("a").closest(".ant-form-item");
   item.outerHTML = item.outerHTML;
-  assert.equal(slots.recheck(resume, options), "gone");
+  const again = slots.recheck(resume, options);
+  assert.equal(again.state, "");
+  assert.notEqual(again.slot.input, resume.input);
+  assert.equal(again.slot.input, doc.getElementById("a"), "the box now on the page");
+  // 只重画了 file 框：还在原来的表单项里，认得出。
+  const input = doc.getElementById("a");
+  input.replaceWith(input.cloneNode(true));
+  assert.equal(slots.recheck(again.slot, options).slot.input, doc.getElementById("a"));
+  // 重画以后页面上有两个一模一样的框：认不准是哪个，卡片作废。
+  const twin = doc.getElementById("a").closest(".ant-form-item");
+  twin.insertAdjacentHTML("afterend", twin.outerHTML.replace('id="a"', 'id="a2"'));
+  twin.outerHTML = twin.outerHTML;
+  assert.equal(slots.recheck(again.slot, options).state, "changed");
+  // 这一题整个没了。
+  for (const node of doc.querySelectorAll("#a, #a2")) node.closest(".ant-form-item").remove();
+  assert.equal(slots.recheck(again.slot, options).state, "gone");
 });
 
 test("a busy sign set again on a node that was there before counts: a bar that moves, aria-busy, a second spinner like the first, a mask that fades in", () => {
