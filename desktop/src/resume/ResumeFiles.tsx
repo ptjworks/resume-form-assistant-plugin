@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { DamagedResumeFileView, ResumeFileKind, ResumeFileListing, ResumeFileView, ResumeOverview, TemplateSummary } from "../api.ts";
+import type { DamagedResumeFileView, ResumeFileDeleted, ResumeFileKind, ResumeFileListing, ResumeFileView, ResumeOverview, TemplateSummary } from "../api.ts";
 import { formatSize } from "../backup.ts";
 import { useInvoke } from "../react/invoke.tsx";
 import { ResumeDialog } from "./ResumeDialog.tsx";
@@ -30,6 +30,14 @@ const GROUPS: Array<{ title: string; kinds: ResumeFileKind[]; empty: string }> =
 function describe(error: unknown): Notice {
   const err = error as { message?: string } | null;
   return { tone: "error", text: err?.message ?? "操作失败，请重试。" };
+}
+
+/** 删除以后附件目录里还有会让备份停下的文件，或者没能核对：照实说出来，不说成已经清干净。 */
+function leftoverWarning(result: ResumeFileDeleted): string {
+  if (result.unchecked) return `没能核对附件目录里还有没有残留（${result.unchecked}），备份可能仍会被挡住。`;
+  const leftovers = result.leftovers ?? [];
+  if (!leftovers.length) return "";
+  return `附件目录里还有 ${leftovers.length} 个文件没清掉，备份可能仍会被这些残留挡住：${leftovers.join("、")}。`;
 }
 
 const opensHere = (file: ResumeFileView) => file.mime === "application/pdf" || file.mime.startsWith("image/");
@@ -95,12 +103,13 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   }, [files, invoke, previews]);
 
   /** 成功返回 true；失败时原因在 notice 里，打开着的对话框不关，用户填的东西还在。 */
-  const run = async (work: () => Promise<ResumeFileListing>, done: string): Promise<boolean> => {
+  const run = async <T extends ResumeFileListing>(work: () => Promise<T>, done: string | ((result: T) => Notice)): Promise<boolean> => {
     if (!invoke || busy) return false;
     setBusy(true);
     try {
-      show(await work());
-      setNotice({ tone: "ok", text: done });
+      const result = await work();
+      show(result);
+      setNotice(typeof done === "string" ? { tone: "ok", text: done } : done(result));
       return true;
     } catch (error) {
       setNotice(describe(error));
@@ -139,9 +148,14 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   const remove = async (target: { id: string; name: string; damaged: boolean }) => {
     if (!invoke) return;
     const done = target.damaged ? `已删除「${target.name}」这条读不出来的记录。` : `已删除「${target.name}」。`;
-    if (await run(() => invoke<ResumeFileListing>("delete_resume_file_cmd", { id: target.id }), done)) {
-      setConfirmDelete(null);
-    }
+    const deleted = await run(
+      () => invoke<ResumeFileDeleted>("delete_resume_file_cmd", { id: target.id }),
+      (result) => {
+        const warning = leftoverWarning(result);
+        return warning ? { tone: "warn", text: `${done}${warning}` } : { tone: "ok", text: done };
+      },
+    );
+    if (deleted) setConfirmDelete(null);
   };
 
   const openDialog = (open: () => void) => {
@@ -340,7 +354,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
         }
       >
         {confirmDelete?.damaged ? (
-          <p>「{confirmDelete.name}」这条记录读不出来。删掉后，附件目录里不再有记录用到的文件一起清掉，档案以外的文件不动。</p>
+          <p>「{confirmDelete.name}」这条记录读不出来。删掉记录会连它的附件文件一起删掉，删了不能恢复；附件目录里没有记录再用的文件也一起清掉。档案以外的文件不动。</p>
         ) : (
           <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
         )}

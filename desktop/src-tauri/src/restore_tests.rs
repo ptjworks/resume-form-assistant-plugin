@@ -150,7 +150,8 @@ fn a_resume_file_record_pointing_outside_the_archive_stays_out_of_backups_and_de
     assert!(store.check_attachment_refs().unwrap().invalid_files.contains(&outside.to_string_lossy().to_string()));
     // The user deletes the broken record on the attachments page: the bytes nobody refers to any
     // more are cleared with it, so the next backup goes through, without the outside file.
-    assert!(store.delete_resume_file(&file.id).unwrap());
+    let deletion = store.delete_resume_file(&file.id).unwrap();
+    assert!(deletion.deleted && deletion.leftovers.is_empty() && deletion.unchecked.is_none(), "{deletion:?}");
     assert!(!source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256).exists());
     let package = export_to(&store, &source.paths, "backup.zip");
     let manifest = backup::read_manifest(&package).unwrap();

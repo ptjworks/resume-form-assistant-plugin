@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::Path;
 
 use archive_store::{ArchiveStore, ResumeFileKind, ResumeFileListing, ResumeFilePatch, MAX_RESUME_FILE_BYTES};
+use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::attachment_commands::AttachmentSummary;
@@ -69,9 +70,19 @@ pub fn update(store: &ArchiveStore, id: &str, patch: &ResumeFilePatch) -> Result
     list(store)
 }
 
-pub fn delete(store: &ArchiveStore, id: &str) -> Result<ResumeFileListing, CommandError> {
-    store.delete_resume_file(id).map_err(shown)?;
-    list(store)
+/// 删除以后的列表，带上清理之后附件目录里还会让备份停下的文件；核对出错时 `unchecked` 是原因。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeFileDeleted {
+    #[serde(flatten)]
+    pub listing: ResumeFileListing,
+    pub leftovers: Vec<String>,
+    pub unchecked: Option<String>,
+}
+
+pub fn delete(store: &ArchiveStore, id: &str) -> Result<ResumeFileDeleted, CommandError> {
+    let deletion = store.delete_resume_file(id).map_err(shown)?;
+    Ok(ResumeFileDeleted { listing: list(store)?, leftovers: deletion.leftovers, unchecked: deletion.unchecked })
 }
 
 /// 照片的缩略图。不是图片、太大或读不出来时是 `None`。
@@ -107,7 +118,7 @@ pub async fn update_resume_file_cmd(app: AppHandle, id: String, patch: ResumeFil
 }
 
 #[tauri::command]
-pub async fn delete_resume_file_cmd(app: AppHandle, id: String) -> Result<ResumeFileListing, CommandError> {
+pub async fn delete_resume_file_cmd(app: AppHandle, id: String) -> Result<ResumeFileDeleted, CommandError> {
     archive_worker(app, move |state| with_store(state, |store| delete(store, &id))).await
 }
 

@@ -430,6 +430,16 @@ pub struct ResumeFileListing {
     pub damaged: Vec<DamagedResumeFile>,
 }
 
+/// 删一个附件的结果。记录删掉了就算成功；清理之后附件目录里还有备份清单不收的文件（备份会因为它们停下），
+/// 列在 `leftovers` 里；核对附件目录时出错，原因在 `unchecked` 里，不当成已经清干净。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeFileDeletion {
+    pub deleted: bool,
+    pub leftovers: Vec<String>,
+    pub unchecked: Option<String>,
+}
+
 /// 存储位置不对、种类认不出、大小或类型不对、模板绑定读不出的记录不猜：拿去拼路径会读写档案以外的文件，
 /// 当成「其他材料」「所有模板」会把文件用到用户没让用的地方。这样的记录单独列出来，不当文件用。
 fn parse_row(raw: RawFile) -> Result<(ResumeFile, String), DamagedResumeFile> {
@@ -510,20 +520,6 @@ impl StoreTx<'_> {
             return Ok(None);
         };
         parse_row(raw).map(Some).map_err(damaged_error)
-    }
-
-    /// 读不出来的记录只删这一行，不按它记的路径动文件：它的存储位置不可信。
-    /// 记录是好的返回 `None`；没有这条记录是 `Some(None)`；删掉了返回它记的哈希，清理后拿来核对它的字节。
-    fn delete_damaged_resume_file(&mut self, id: &str) -> Result<Option<Option<String>>, StoreError> {
-        let Some(raw) = self.resume_file_raw(id)? else {
-            return Ok(Some(None));
-        };
-        let sha256 = raw.file.sha256.clone();
-        if parse_row(raw).is_ok() {
-            return Ok(None);
-        }
-        let deleted = self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id])? > 0;
-        Ok(Some(deleted.then_some(sha256)))
     }
 
     pub fn resume_file(&self, id: &str) -> Result<Option<ResumeFile>, StoreError> {
@@ -638,30 +634,48 @@ impl StoreTx<'_> {
         self.resume_file(id)?.ok_or_else(|| StoreError::Internal("resume file vanished in the same transaction".into()))
     }
 
-    /// 文件字节的位置，只读这两列：种类、模板绑定损坏的记录也能删。位置本身不对的不给，按损坏报错。
-    fn resume_file_rel(&self, id: &str) -> Result<Option<String>, StoreError> {
-        let found: Option<(String, String)> = self
-            .conn()
-            .query_row("SELECT stored_rel_path, sha256 FROM resume_files WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .optional()?;
-        match found {
-            Some((rel, sha256)) if stored_where_expected(&rel, &sha256) => Ok(Some(rel)),
-            Some(_) => Err(StoreError::Internal("这个附件记录里的存储位置不对，没有动任何文件。".into())),
-            None => Ok(None),
+    fn resume_file_hash(&self, id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self.conn().query_row("SELECT sha256 FROM resume_files WHERE id = ?1", params![id], |r| r.get(0)).optional()?)
+    }
+
+    /// 删一条记录时要一起删的字节。没有这条记录是 `None`；有就给它的哈希，和附件目录里按这个哈希放的那份
+    /// 字节的位置（相对档案根）。读不出来的记录也一样：不按它记的路径（不可信），只认按哈希放的那份。
+    /// 哈希写法不对、或者别的记录还用着这个哈希时，没有要删的字节。
+    fn resume_file_bytes_to_delete(&self, id: &str) -> Result<Option<(String, Option<String>)>, StoreError> {
+        let Some(sha256) = self.resume_file_hash(id)? else {
+            return Ok(None);
+        };
+        let shared: bool = self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM resume_files WHERE sha256 = ?1 AND id <> ?2)",
+            params![sha256, id],
+            |r| r.get(0),
+        )?;
+        let rel = (is_sha256(&sha256) && !shared).then(|| rel_path(&sha256));
+        Ok(Some((sha256, rel)))
+    }
+
+    /// 删记录。哈希还是开始删时的那个才删：期间换过文件就不动。
+    fn forget_resume_file(&mut self, id: &str, sha256: &str) -> Result<bool, StoreError> {
+        match self.resume_file_hash(id)? {
+            None => Ok(false),
+            Some(now) if now != sha256 => Err(StoreError::Conflict("这个附件刚在别处改过，请重新打开附件页再删。".into())),
+            Some(_) => Ok(self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id])? > 0),
         }
     }
 
-    /// 删记录。存储位置还是开始删时的那个才删：期间换过文件就不动。
-    fn forget_resume_file(&mut self, id: &str, rel: &str) -> Result<bool, StoreError> {
-        if self.resume_file_rel(id)?.as_deref() != Some(rel) {
-            return Err(StoreError::Conflict("这个附件刚在别处改过，请重新打开附件页再删。".into()));
+    /// 备份清单会收的附件文件（相对档案根）：和 [ArchiveStore::backup_inventory_from_snapshot] 同一条规则，
+    /// 只收存储位置对的记录。
+    fn resume_file_backup_paths(&self) -> Result<std::collections::HashSet<String>, StoreError> {
+        let mut stmt = self.conn().prepare("SELECT stored_rel_path, sha256 FROM resume_files")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut listed = std::collections::HashSet::new();
+        for row in rows {
+            let (rel, sha256) = row?;
+            if stored_where_expected(&rel, &sha256) {
+                listed.insert(rel);
+            }
         }
-        Ok(self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id])? > 0)
-    }
-
-    /// 还有没有记录用着这个哈希（不管记录坏没坏）。
-    fn resume_file_hash_in_use(&self, sha256: &str) -> Result<bool, StoreError> {
-        Ok(self.conn().query_row("SELECT EXISTS(SELECT 1 FROM resume_files WHERE sha256 = ?1)", params![sha256], |r| r.get(0))?)
+        Ok(listed)
     }
 
     /// 清理时要留下的字节：每条记录里写法合法的 sha256 都算，不管这条记录的存储位置、种类坏没坏
@@ -686,7 +700,7 @@ fn trash_for(archive_dir: &Path, rel: &str) -> std::path::PathBuf {
     archive_dir.join("tmp").join(format!("resume-file-{sha256}.deleting"))
 }
 
-/// 删一个文件，被占用（杀毒软件扫描之类）时稍等再试几次。返回它最后是不是真的没了。
+/// 删一个文件，被占用（杀毒软件扫描之类）时稍等再试几次。返回它最后是不是确定没了：查不清的不算没了。
 fn remove_verified(path: &Path) -> bool {
     for attempt in 0..5 {
         match std::fs::remove_file(path) {
@@ -696,20 +710,30 @@ fn remove_verified(path: &Path) -> bool {
             _ => break,
         }
     }
-    !path.exists()
+    matches!(present(path), Ok(false))
+}
+
+/// 文件在不在：确定不在是 `false`；查的时候出错（没有权限之类）照实报错，不当成不在。
+fn present(path: &Path) -> Result<bool, StoreError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// 把不再引用的字节挪进 `tmp/` 再删掉，核对原位置和临时位置都没了；没删干净就报 `message`。
 fn discard(archive_dir: &Path, rel: &str, message: &str) -> Result<(), StoreError> {
     let target = archive_dir.join(rel);
     let trash = trash_for(archive_dir, rel);
-    if target.exists() {
+    // 查不清在不在的也照删除处理，最后由 remove_verified 确认真的没了。
+    if !matches!(present(&target), Ok(false)) {
         std::fs::create_dir_all(archive_dir.join("tmp"))?;
         if std::fs::rename(&target, &trash).is_err() && !remove_verified(&target) {
             return Err(StoreError::Io(std::io::Error::other(message.to_string())));
         }
     }
-    if trash.exists() && !remove_verified(&trash) {
+    if !matches!(present(&trash), Ok(false)) && !remove_verified(&trash) {
         return Err(StoreError::Io(std::io::Error::other(message.to_string())));
     }
     Ok(())
@@ -790,51 +814,75 @@ impl ArchiveStore {
         self.transaction(|tx| tx.update_resume_file(id, patch))
     }
 
-    /// 删一个文件。在事务外先把字节挪进 `tmp/`（不进备份），挪不动（被别的程序占着）就什么都不删、
-    /// 照实报错；再用一个短事务删记录，删不掉就把字节挪回去。提交之后删掉字节并核对真的没了；
-    /// 没删干净照实报错，不报成删除成功。
-    /// 读不出来的记录只删这一行，不按它记的路径动文件（存储位置不可信）。删掉以后照样清一次：
-    /// 它在附件目录里按哈希留着的字节没人引用了，不清掉的话，备份会因为这份孤立文件停下。
-    /// 结果只看这次删的那个哈希：还有记录引用它就该留着，算成功；没有记录引用、文件却还在磁盘上，
-    /// 才照实报「留下的文件还没删掉」，不报成干净的成功。别的残留清不掉不影响这次的结果。
-    pub fn delete_resume_file(&self, id: &str) -> Result<bool, StoreError> {
+    /// 删一个附件。能用的记录和读不出来的记录走同一条路，要删的字节只认附件目录里按哈希放的那份
+    /// （读不出来的记录记的路径不可信，不拿来动文件；别的记录还用着这个哈希就不动）：
+    /// - 在事务外先把字节挪进 `tmp/`（不进备份）。挪不动（被别的程序占着）、查不清它在不在，就什么都不删、
+    ///   照实报错。
+    /// - 再用一个短事务删记录，删不掉就把字节挪回去。
+    /// - 提交以后删掉挪走的字节（删不掉留给下一次清理，它在 `tmp/` 里不挡备份），再清一次残留。
+    ///
+    /// 记录删掉了就算成功。清理之后按备份清单的规则核对附件目录：还有会让备份停下的残留就列在结果里，
+    /// 核对本身出错也写在结果里，不当成已经清干净。
+    pub fn delete_resume_file(&self, id: &str) -> Result<ResumeFileDeletion, StoreError> {
         let _writes = self.lock_resume_files();
-        if let Some(deleted) = self.transaction(|tx| tx.delete_damaged_resume_file(id))? {
-            let Some(sha256) = deleted else {
-                return Ok(false);
-            };
-            self.sweep_resume_files_noting_errors();
-            let home = self.archive_dir().join(RESUME_FILES_DIR).join(&sha256);
-            if is_sha256(&sha256) && home.exists() && !self.transaction(|tx| tx.resume_file_hash_in_use(&sha256))? {
-                return Err(StoreError::Io(std::io::Error::other(
-                    "已删掉这条读不出来的记录，但它留下的文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再清一次。",
-                )));
-            }
-            return Ok(true);
-        }
-        let Some(rel) = self.transaction(|tx| tx.resume_file_rel(id))? else {
-            return Ok(false);
+        let Some((sha256, rel)) = self.transaction(|tx| tx.resume_file_bytes_to_delete(id))? else {
+            return Ok(ResumeFileDeletion::default());
         };
-        let target = self.archive_dir().join(&rel);
-        let trash = trash_for(self.archive_dir(), &rel);
-        let moved = target.exists();
-        if moved {
-            std::fs::create_dir_all(self.archive_dir().join("tmp"))?;
-            std::fs::rename(&target, &trash).map_err(|_| invalid("文件正被别的程序占用，没有删除。关掉占用它的程序后再删一次。"))?;
+        let mut moved = None;
+        if let Some(rel) = rel {
+            let target = self.archive_dir().join(&rel);
+            if present(&target)? {
+                let trash = trash_for(self.archive_dir(), &rel);
+                std::fs::create_dir_all(self.archive_dir().join("tmp"))?;
+                std::fs::rename(&target, &trash).map_err(|_| invalid("文件正被别的程序占用，没有删除。关掉占用它的程序后再删一次。"))?;
+                moved = Some((target, trash));
+            }
         }
-        let deleted = self.transaction(|tx| tx.forget_resume_file(id, &rel));
-        if deleted.is_err() && moved {
+        let deleted = self.transaction(|tx| tx.forget_resume_file(id, &sha256));
+        if let (Err(_), Some((target, trash))) = (&deleted, &moved) {
             // 记录还在：字节放回原处。挪不回去时它还叫 resume-file-<哈希>.deleting，清理时会挪回来。
-            let _ = std::fs::rename(&trash, &target);
+            let _ = std::fs::rename(trash, target);
         }
         let deleted = deleted?;
-        if (trash.exists() && !remove_verified(&trash)) || target.exists() {
-            return Err(StoreError::Io(std::io::Error::other(
-                "已从附件里删掉，但文件正被别的程序占用，还没从磁盘上删掉；下次增删附件时会再清一次。",
-            )));
+        if let Some((_, trash)) = &moved {
+            if !remove_verified(trash) {
+                eprintln!("resume-files: trash-kept");
+            }
         }
         self.sweep_resume_files_noting_errors();
-        Ok(deleted)
+        let (leftovers, unchecked) = match self.resume_file_backup_leftovers() {
+            Ok(found) => (found, None),
+            Err(error) => (Vec::new(), Some(error.to_string())),
+        };
+        Ok(ResumeFileDeletion { deleted, leftovers, unchecked })
+    }
+
+    /// 附件目录里备份清单不收的文件（相对档案根）：备份会把它们当孤立文件停下。清单的规则和
+    /// [ArchiveStore::backup_inventory_from_snapshot] 一样，只收存储位置对的记录。读目录出错照实报错。
+    pub fn resume_file_backup_leftovers(&self) -> Result<Vec<String>, StoreError> {
+        let listed = self.transaction(|tx| tx.resume_file_backup_paths())?;
+        let mut leftovers = Vec::new();
+        let mut walk = vec![self.archive_dir().join(RESUME_FILES_DIR)];
+        while let Some(dir) = walk.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
+            for entry in entries {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    walk.push(entry.path());
+                    continue;
+                }
+                let rel = entry.path().strip_prefix(self.archive_dir()).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+                if !listed.contains(&rel) {
+                    leftovers.push(rel);
+                }
+            }
+        }
+        leftovers.sort();
+        Ok(leftovers)
     }
 
     /// 顺手的清理：失败不改变这次增删的结果（下一次增删还会再清），原始错误写进桌面日志。
@@ -866,7 +914,7 @@ impl ArchiveStore {
             }
             if let Some(sha256) = name.strip_prefix("resume-file-").and_then(|rest| rest.strip_suffix(".deleting")) {
                 let home = folder.join(sha256);
-                if referenced.contains(sha256) && !home.exists() {
+                if referenced.contains(sha256) && matches!(present(&home), Ok(false)) {
                     std::fs::create_dir_all(&folder)?;
                     let _ = std::fs::rename(entry.path(), &home);
                     continue;

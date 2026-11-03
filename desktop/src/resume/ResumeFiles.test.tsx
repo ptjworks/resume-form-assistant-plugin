@@ -252,11 +252,43 @@ test("读不出来的记录单独列出，可以删掉", async () => {
   expect(within(screen.getByRole("region", { name: "简历附件" })).getByText("简历.pdf")).toBeTruthy();
   await userEvent.click(within(broken).getByRole("button", { name: "删除记录" }));
   const dialog = await screen.findByRole("dialog");
-  expect(dialog.textContent).toContain("删掉后，附件目录里不再有记录用到的文件一起清掉，档案以外的文件不动");
+  expect(dialog.textContent).toContain("删掉记录会连它的附件文件一起删掉，删了不能恢复；附件目录里没有记录再用的文件也一起清掉。档案以外的文件不动。");
   await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
   await waitFor(() => expect(screen.queryByRole("region", { name: "读不出来的记录" })).toBeNull());
   expect(calls.find((c) => c.command === "delete_resume_file_cmd")?.args).toEqual({ id: "x1" });
   expect(screen.getByRole("status").textContent).toBe("已删除「旧简历.pdf」这条读不出来的记录。");
+});
+
+test("删完附件目录里还有会挡住备份的文件，或者没能核对，照实提示", async () => {
+  let listing = {
+    files: [file("a1", "resume", "简历.pdf", "application/pdf", { isDefault: true })],
+    damaged: [{ id: "x1", name: "旧简历.pdf", reason: "存储位置不对" }, { id: "x2", name: "旧照片.png", reason: "种类认不出" }],
+  };
+  mount((command, args) => {
+    if (command === "list_resume_files_cmd") return listing;
+    if (command === "delete_resume_file_cmd") {
+      listing = { ...listing, damaged: listing.damaged.filter((d) => d.id !== args?.id) };
+      return args?.id === "x1"
+        ? { ...listing, leftovers: ["attachments/resume-files/stray"], unchecked: null }
+        : { ...listing, leftovers: [], unchecked: "拒绝访问。" };
+    }
+    return null;
+  });
+  const broken = await screen.findByRole("region", { name: "读不出来的记录" });
+  await userEvent.click(within(within(broken).getByText("旧简历.pdf").closest("li") as HTMLElement).getByRole("button", { name: "删除记录" }));
+  await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "删除" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  const leftover = screen.getByRole("status");
+  expect(leftover.textContent).toBe(
+    "已删除「旧简历.pdf」这条读不出来的记录。附件目录里还有 1 个文件没清掉，备份可能仍会被这些残留挡住：attachments/resume-files/stray。",
+  );
+  expect(leftover.className).toContain("warn");
+  await userEvent.click(within(screen.getByRole("region", { name: "读不出来的记录" })).getByRole("button", { name: "删除记录" }));
+  await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "删除" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("status").textContent).toBe(
+    "已删除「旧照片.png」这条读不出来的记录。没能核对附件目录里还有没有残留（拒绝访问。），备份可能仍会被挡住。",
+  );
 });
 
 test("没有连上桌面程序时只说明", () => {

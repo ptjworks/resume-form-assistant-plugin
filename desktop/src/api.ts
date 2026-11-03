@@ -523,6 +523,12 @@ export interface ResumeFileListing {
   damaged: DamagedResumeFileView[];
 }
 
+/** #429：删除以后的列表。`leftovers` 是清理之后附件目录里还会让备份停下的文件；核对出错时 `unchecked` 是原因。 */
+export interface ResumeFileDeleted extends ResumeFileListing {
+  leftovers: string[];
+  unchecked: string | null;
+}
+
 /** 插件旧数据的一批导入（#130 PR 5）。只有状态与计数，不含任何内容。 */
 export interface LegacyImportPending {
   importId: string;
