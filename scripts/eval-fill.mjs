@@ -28,7 +28,7 @@ const regions = (() => {
   return scope.ResumeProRegions;
 })();
 const WORKER = readFileSync(join(ROOT, "ai-worker.js"), "utf8");
-const SITE_GROUP = "本网站回答";
+const SITE_GROUP = profileApi.SITE_GROUP;
 
 // 和 content.js 一样拼资料：模板（桌面解析的字段按 semanticizeParsedFields 改过名）在前，「我的信息」里没重名的在后；
 // 本网站存过的回答（#452）放最后。

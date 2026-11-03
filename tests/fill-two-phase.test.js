@@ -7,7 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
-const { refsFor } = require("./helpers/ai-refs.js");
+const { refsFor, catalogOf } = require("./helpers/ai-refs.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
@@ -725,6 +725,8 @@ test("an assisted fill counts same questions across the whole page, not just the
 // #429 第五项第 2 点：问到对方公司的题，用这个网站记住的回答在 AI 回来之前填；补充字段里同名的不用。
 const SITE = [{ key: "是否有亲属在本公司工作", value: "否" }];
 const COMPANY = radios("relative", "是否有亲属在本公司工作", ["是", "否"]);
+// AI 只能挑资料里填得进选项的一项（#429 第 11 项）：换了说法的补充字段，本地不认作同一题，留给 AI。
+const RELATIVE_ELSEWHERE = [{ key: "是否有亲属在本行工作", value: "否" }];
 
 test("a company question takes this site's remembered answer with the local matches, not the custom field's", async (t) => {
   const p = page(t, input("name", "姓名") + COMPANY + input("salary", "期望薪资"),
@@ -743,7 +745,7 @@ test("a company question takes this site's remembered answer with the local matc
 
 test("without a remembered answer, or with a desktop that has none, the company question goes to the AI", async (t) => {
   for (const site of [null, []]) {
-    const p = page(t, input("name", "姓名") + COMPANY, { site });
+    const p = page(t, input("name", "姓名") + COMPANY, { site, custom: RELATIVE_ELSEWHERE });
     const running = p.run();
     assert.ok(await p.until(() => p.worker.calls.length === 1));
     assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作"]);
@@ -792,7 +794,7 @@ test("a company question revealed later reads the site answers again after a fai
     doc.getElementById("apply").append(holder.firstChild);
   };
   const retried = page(t, input("name", "姓名") + GENDER + COMPANY, {
-    site: (read) => (read === 1 ? null : [{ key: "是否曾在本行实习", value: "否" }]), onGender: reveal
+    site: (read) => (read === 1 ? null : [{ key: "是否曾在本行实习", value: "否" }]), onGender: reveal, custom: RELATIVE_ELSEWHERE
   });
   let running = retried.run();
   assert.ok(await retried.until(() => retried.value("gender") === "m" && retried.worker.calls.length === 1));
@@ -804,7 +806,7 @@ test("a company question revealed later reads the site answers again after a fai
 
   // 桌面不支持，或者后台不认这个发送方：再读结果也一样，只读一次。
   for (const site of [null, "forbidden"]) {
-    const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site, onGender: reveal });
+    const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site, onGender: reveal, custom: RELATIVE_ELSEWHERE });
     running = old.run();
     assert.ok(await old.until(() => old.value("gender") === "m" && old.worker.calls.length === 1));
     old.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
@@ -824,7 +826,9 @@ test("a company question left to the AI may see this site's remembered answer, n
     const running = p.run();
     assert.ok(await p.until(() => p.worker.calls.length === 1));
     assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作", "是否有亲属在本公司工作"]);
-    assert.equal(p.worker.calls[0].prompt.includes("财务部"), expected, siteKey);
+    // 发给 AI 的资料目录只有字段名（#429 第 11 项）：看有没有这个网站那一组。
+    assert.equal(catalogOf(p.worker.calls[0].prompt).some((entry) => entry.group === "本网站回答"), expected, siteKey);
+    assert.equal(p.worker.calls[0].prompt.includes("财务部"), false, "the remembered answer itself is never sent");
     p.worker.calls[0].reply({});
     await running;
   }
@@ -848,7 +852,8 @@ test("a remembered answer read for a question revealed later is hidden in field 
   assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
   p.worker.calls[0].reply();
   assert.ok(await p.until(() => p.worker.calls.length === 2), "the echoing field goes to the AI");
-  p.worker.calls[1].reply({ 父亲在本公司财务部任职情况说明: "无" });
+  // AI 只能挑资料里的一项（#429 第 11 项）；挑哪一项都一样，页面会把它清掉。
+  p.worker.calls[1].reply({ 父亲在本公司财务部任职情况说明: "测试用户" });
   const result = await running;
   assert.equal(p.value("relative"), "父亲在本公司财务部任职");
   assert.equal(result.unfilledCount, 1, "the echoing field is reported as not filled");
