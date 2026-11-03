@@ -95,37 +95,40 @@
     return `${platform.name}${/[A-Za-z0-9]$/.test(platform.name) ? " " : ""}上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。`;
   }
 
-  // 字数：按字符（UTF-16 码元，和浏览器的 maxlength 一样）；按字节的站点里 0～255 以外的字算 2。
+  // 字数：按字符（UTF-16 码元，和浏览器的 maxlength 一样）；按字节的站点一个字一个字量，0～255 以外的字算 2（emoji 也算 2）。
   function measure(text, bytes) {
     const value = String(text ?? "");
-    return bytes ? value.length + (value.match(/[^\x00-\xff]/g) || []).length : value.length;
+    if (!bytes) return value.length;
+    let total = 0;
+    for (const char of value) total += char.codePointAt(0) > 0xff ? 2 : 1;
+    return total;
   }
   // 浏览器只对这几类框和多行文本认 maxlength（HTML 规范），数字、日期这类框带了也不管用，不按它拦。
   const MAXLENGTH_TYPES = new Set(["text", "search", "url", "tel", "email", "password"]);
   // 组件自己的字数统计「12 / 100」「0/20」，取后面的上限。只认字数统计专用的类名：antd 的 X-show-count-suffix、X-data-count
-  // 和带 X-show-count 的外层上的 data-count，Element 的 X__count（el-input__count），word-limit、word-count 一类（Arco、Vant、iView）。
-  // 类名只是带 count 的（分页、步骤的「1 / 3」）不算。
+  // 和带 X-show-count 的外层上的 data-count，输入框组件的 input__count、textarea__count（Element 的 el-input__count），
+  // word-limit、word-count 一类（Arco、Vant、iView）。类名只是带 count 的（分页、步骤的「1 / 3」，list__count 这类）不算。
   const COUNT = /^\s*\d+\s*\/\s*(\d+)\s*$/;
-  const COUNTER = /(?:-show-count-suffix|-data-count|__count|[-_]word-limit|[-_]word-count)$/i;
+  const COUNTER = /(?:-show-count-suffix|-data-count|(?:input|textarea)__count|[-_]word-limit|[-_]word-count)$/i;
   const COUNTER_WRAPPER = /-show-count$/i;
   const classes = node => String(node.getAttribute?.("class") || "").split(/\s+/).filter(Boolean);
   // 框的字数上限：框自己的 maxlength；没有时看组件自己显示的字数统计（antd 4 带 showCount 的多行文本把 maxlength 拿掉了，
   // 只在外层的 data-count 里；antd 5 只设 count.max 的输入框只有「0 / 10」）。只在只装着这一个框的外层里找，最多往上三层。
-  // 没有上限返回 null；maxlength="0" 和浏览器一样是 0 字。
+  // 没有上限返回 null。上限是 0 的（maxlength="0"、字数统计「0 / 0」）也当没有上限：改前这类框能填上，真站上 0 也基本不是真的上限。
   function limitOf(el) {
     if (!el || !["INPUT", "TEXTAREA"].includes(el.tagName)) return null;
     if (el.tagName === "INPUT" && !MAXLENGTH_TYPES.has(String(el.type || "text").toLowerCase())) return null;
     const native = Number(el.maxLength);
-    if (Number.isInteger(native) && native >= 0) return native;
+    if (Number.isInteger(native) && native > 0) return native;
     let node = el.parentElement;
     for (let depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
       if (node.querySelectorAll("input:not([type='hidden']), textarea").length > 1) break;
       const wrapped = classes(node).some(name => COUNTER_WRAPPER.test(name)) ? COUNT.exec(node.getAttribute("data-count") || "") : null;
-      if (wrapped) return Number(wrapped[1]);
+      if (wrapped && Number(wrapped[1]) > 0) return Number(wrapped[1]);
       for (const holder of node.querySelectorAll("[class]")) {
         if (!classes(holder).some(name => COUNTER.test(name))) continue;
         const hit = COUNT.exec(holder.textContent || "");
-        if (hit) return Number(hit[1]);
+        if (hit && Number(hit[1]) > 0) return Number(hit[1]);
       }
     }
     return null;

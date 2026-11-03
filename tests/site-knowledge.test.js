@@ -66,6 +66,10 @@ test("length counts characters, or bytes with a Chinese character as 2", () => {
   assert.equal(knowledge.measure("示例大学 A1", true), 11);
   assert.equal(knowledge.measure("", true), 0);
   assert.equal(knowledge.measure("é", true), 1, "Latin-1 letters count 1");
+  // emoji 在 JavaScript 里占两个码元：按字节的站点算一个字、2 字节；按字符和浏览器的 maxlength 一样算 2。
+  assert.equal(knowledge.measure("😀", true), 2);
+  assert.equal(knowledge.measure("示例😀A", true), 7);
+  assert.equal(knowledge.measure("😀"), 2);
 });
 
 test("a box's limit is its maxlength, or the component's own counter when it has none", () => {
@@ -97,7 +101,10 @@ test("only text-like boxes take maxlength, and only a component's own counter co
     <div class="field" data-count="1 / 3"><input id="data"></div>
     <div class="arco-input-group-wrapper"><input id="arco"><span class="arco-input-word-limit">0/30</span></div>
     <div class="van-field"><textarea id="vant"></textarea><div class="van-field__word-limit">0/200</div></div>
-    <div class="ivu-input-wrapper"><input id="iview"><span class="ivu-input-word-count">0/50</span></div>`);
+    <div class="ivu-input-wrapper"><input id="iview"><span class="ivu-input-word-count">0/50</span></div>
+    <div class="el-input"><input id="element-count"><span class="el-input__count">0/15</span></div>
+    <div class="x-textarea"><textarea id="textarea-count"></textarea><span class="x-textarea__count">0/40</span></div>
+    <div class="list"><input id="listed"><span class="list__count">1 / 3</span></div>`);
   const limit = (name) => knowledge.limitOf(doc.getElementById(name));
   // 数字、日期框按规范不认 maxlength。
   assert.equal(limit("number"), null);
@@ -111,16 +118,22 @@ test("only text-like boxes take maxlength, and only a component's own counter co
   assert.equal(limit("arco"), 30);
   assert.equal(limit("vant"), 200);
   assert.equal(limit("iview"), 50);
+  // __count 只认输入框、多行文本组件的（el-input__count 这类），列表的 list__count「1 / 3」不算。
+  assert.equal(limit("element-count"), 15);
+  assert.equal(limit("textarea-count"), 40);
+  assert.equal(limit("listed"), null);
 });
 
-test("a maxlength of 0 is a limit of 0 characters, as in the browser", () => {
+test("a limit of 0 is taken as no limit: such boxes were filled before, and 0 is hardly a real limit on a live site", () => {
   const doc = page(`
     <input id="zero" maxlength="0"><input id="negative" maxlength="-1">
-    <div class="ant-input-textarea ant-input-textarea-show-count" data-count="0 / 0"><textarea id="counted"></textarea></div>`);
+    <div class="ant-input-textarea ant-input-textarea-show-count" data-count="0 / 0"><textarea id="counted"></textarea></div>
+    <div class="el-input"><input id="zero-count" maxlength="0"><span class="el-input__count">0/0</span></div>`);
   const limit = (name) => knowledge.limitOf(doc.getElementById(name));
-  assert.equal(limit("zero"), 0);
+  assert.equal(limit("zero"), null);
   assert.equal(limit("negative"), null);
-  assert.equal(limit("counted"), 0);
+  assert.equal(limit("counted"), null);
+  assert.equal(limit("zero-count"), null);
 });
 
 test("a frame without an address of its own takes the address of the frame around it", () => {
