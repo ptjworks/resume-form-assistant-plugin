@@ -181,20 +181,25 @@ fn a_damaged_record_is_listed_apart_never_guessed_and_the_rest_still_work() {
         ))
         .unwrap();
     }
-    // 读不出来的记录可以删：只删这一行，删的时候不碰文件；它的字节下一次清理时才清掉。
+    // 读不出来的记录可以删：删的是这一行，删完照样清一次，它按哈希留着的字节没人引用了，一起清掉；
+    // 别的文件不动。
     let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
     raw.execute_batch(&format!("UPDATE resume_files SET template_ids_json = 'not json' WHERE id = '{}'", file.id)).unwrap();
     drop(raw);
     let db = open(dir.path());
-    let bytes = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    let bytes = folder.join(&file.sha256);
+    assert!(bytes.is_file());
     assert!(db.delete_resume_file(&file.id).unwrap());
-    assert!(bytes.is_file(), "deleting a damaged record touches no file");
+    assert!(!bytes.exists(), "swept once nothing refers to it");
     let listing = db.resume_file_listing().unwrap();
     assert!(listing.damaged.is_empty());
     assert_eq!(listing.files.len(), 5);
-    assert!(listing.files.iter().all(|f| f.kind == ResumeFileKind::Photo));
-    db.add_resume_file(ResumeFileKind::Resume, "新简历.pdf", &pdf(9)).unwrap();
-    assert!(!bytes.exists(), "swept once nothing refers to it");
+    assert!(listing.files.iter().all(|f| f.kind == ResumeFileKind::Photo && folder.join(&f.sha256).is_file()));
+    // 没删到的（不存在的 id）不清理，也不报错。
+    std::fs::write(folder.join("leftover"), b"x").unwrap();
+    assert!(!db.delete_resume_file(&file.id).unwrap());
+    assert!(folder.join("leftover").is_file());
 }
 
 #[test]
@@ -432,11 +437,13 @@ fn a_stored_path_anywhere_else_is_damage_and_no_file_is_touched() {
         assert!(db.check_attachment_refs().unwrap().invalid_files.contains(&bad), "{bad}");
         db.close().unwrap();
     }
-    // 删掉这条记录只删这一行：档案外的文件原样在。
+    // 删掉这条记录：它记的路径不碰，档案外的文件原样在；它按哈希留在附件目录里的字节一起清掉。
     let db = open(dir.path());
     assert!(db.delete_resume_file(&file.id).unwrap());
     assert!(db.resume_file_listing().unwrap().damaged.is_empty());
     assert_eq!(std::fs::read(&outside).unwrap(), pdf(2));
+    assert!(!folder.join(&file.sha256).exists());
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 5, "the other files stay");
 }
 
 #[test]

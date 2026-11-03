@@ -47,7 +47,7 @@ fn read_picked(path: &Path) -> Result<(String, Vec<u8>), CommandError> {
     Ok((name, bytes))
 }
 
-/// 能用的文件和读不出来的记录：后者界面上单独列出来，只能删掉那一行。
+/// 能用的文件和读不出来的记录：后者界面上单独列出来，只能删掉。
 pub fn list(store: &ArchiveStore) -> Result<ResumeFileListing, CommandError> {
     store.resume_file_listing().map_err(shown)
 }

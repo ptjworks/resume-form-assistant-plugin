@@ -512,7 +512,7 @@ impl StoreTx<'_> {
         parse_row(raw).map(Some).map_err(damaged_error)
     }
 
-    /// 读不出来的记录只删这一行，不碰任何文件：它的存储位置不可信。
+    /// 读不出来的记录只删这一行，不按它记的路径动文件：它的存储位置不可信。
     fn delete_damaged_resume_file(&mut self, id: &str) -> Result<Option<bool>, StoreError> {
         let Some(raw) = self.resume_file_raw(id)? else {
             return Ok(Some(false));
@@ -785,10 +785,14 @@ impl ArchiveStore {
     /// 删一个文件。在事务外先把字节挪进 `tmp/`（不进备份），挪不动（被别的程序占着）就什么都不删、
     /// 照实报错；再用一个短事务删记录，删不掉就把字节挪回去。提交之后删掉字节并核对真的没了；
     /// 没删干净照实报错，不报成删除成功。
-    /// 读不出来的记录只删这一行、不碰任何文件（存储位置不可信），它留下的字节等下一次清理。
+    /// 读不出来的记录只删这一行，不按它记的路径动文件（存储位置不可信）。删掉以后照样清一次：
+    /// 它在附件目录里按哈希留着的字节没人引用了，不清掉的话，备份会因为这份孤立文件停下。
     pub fn delete_resume_file(&self, id: &str) -> Result<bool, StoreError> {
         let _writes = self.lock_resume_files();
         if let Some(deleted) = self.transaction(|tx| tx.delete_damaged_resume_file(id))? {
+            if deleted {
+                let _ = self.sweep_resume_file_leftovers();
+            }
             return Ok(deleted);
         }
         let Some(rel) = self.transaction(|tx| tx.resume_file_rel(id))? else {

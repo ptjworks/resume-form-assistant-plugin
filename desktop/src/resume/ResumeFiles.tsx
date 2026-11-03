@@ -237,7 +237,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
             <div className="resume-files-group-head">
               <h3>读不出来的记录</h3>
             </div>
-            <p className="note warn">有 {damaged.length} 个附件的记录读不出来，不会拿去上传。可以删掉这些记录，不动任何文件。</p>
+            <p className="note warn">有 {damaged.length} 个附件的记录读不出来，不会拿去上传。可以删掉这些记录。</p>
             <ul>
               {damaged.map((item) => (
                 <li key={item.id}>
@@ -340,7 +340,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
         }
       >
         {confirmDelete?.damaged ? (
-          <p>「{confirmDelete.name}」这条记录读不出来。删掉的只是这条记录，不动任何文件。</p>
+          <p>「{confirmDelete.name}」这条记录读不出来。删掉后，它在档案里留下的那份文件一起清掉，档案以外的文件不动。</p>
         ) : (
           <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
         )}

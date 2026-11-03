@@ -124,7 +124,7 @@ fn resume_files_travel_in_a_backup_and_come_back_whole() {
 }
 
 #[test]
-fn a_resume_file_record_pointing_outside_the_archive_never_brings_that_file_into_a_backup() {
+fn a_resume_file_record_pointing_outside_the_archive_stays_out_of_backups_and_deleting_it_unblocks_them() {
     // #429: a record whose stored path was changed to a file outside the archive. The backup
     // list leaves the record out, so that path is never compared, read or packed.
     let source = layout();
@@ -147,12 +147,15 @@ fn a_resume_file_record_pointing_outside_the_archive_never_brings_that_file_into
     let error = export_archive(&store, &source.paths, &blocked, NOW).unwrap_err();
     assert!(format!("{error:?}").contains("孤立"), "{error:?}");
     assert!(!blocked.exists());
-    // Without those bytes the backup goes through, and the outside file is not in it.
-    std::fs::remove_file(source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256)).unwrap();
+    assert!(store.check_attachment_refs().unwrap().invalid_files.contains(&outside.to_string_lossy().to_string()));
+    // The user deletes the broken record on the attachments page: the bytes nobody refers to any
+    // more are cleared with it, so the next backup goes through, without the outside file.
+    assert!(store.delete_resume_file(&file.id).unwrap());
+    assert!(!source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256).exists());
     let package = export_to(&store, &source.paths, "backup.zip");
     let manifest = backup::read_manifest(&package).unwrap();
     assert!(manifest.entries.iter().all(|entry| !entry.path.contains("outside") && !entry.path.contains(&file.sha256)));
-    assert!(store.check_attachment_refs().unwrap().invalid_files.contains(&outside.to_string_lossy().to_string()));
+    assert!(store.check_attachment_refs().unwrap().invalid_files.is_empty());
     assert_eq!(std::fs::read(&outside).unwrap(), b"%PDF-1.7\nnot part of the archive");
     store.close().unwrap();
 }
