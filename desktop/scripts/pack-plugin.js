@@ -35,6 +35,7 @@ export const PLUGIN_ARCHIVE_OPERANDS = [
   "page-actions.js",
   "page-recipe.js",
   "site-knowledge.js",
+  "upload-slots.js",
   "feedback-core.js",
   "usage-signals.js",
   "usage-ui.js",
