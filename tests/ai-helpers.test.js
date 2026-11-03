@@ -710,19 +710,20 @@ test("rules: a group name does not turn a named field of another kind into the n
   ]), { name: "李亚男" });
 });
 
-// 以前证件类型、学历、学位、年月这类下拉框被挡在 AI 外面，本地规则又不处理，永远填不上。
+// 以前政治面貌、学历、学位、年月这类下拉框被挡在 AI 外面，本地规则又不处理，永远填不上。
+// 证件类型现在由本地规则按资料和号码填（#429），见下面的 id_type 用例。
 test("worker: choice fields the rules cannot fill are sent to AI with their options", async () => {
   let body = null;
   const worker = loadWorker((request) => { body = request; });
 
   const result = await worker.handleAiFill({
     formFields: [
-      { fieldId: "f1", label: "证件类型", inputType: "select", tagName: "select", options: ["身份证", "护照"] },
+      { fieldId: "f1", label: "政治面貌", inputType: "select", tagName: "select", options: ["共青团员", "群众"] },
       { fieldId: "f2", label: "最高学历", inputType: "select", tagName: "select", options: ["大学本科", "硕士研究生"] },
       { fieldId: "f3", label: "出生年份", inputType: "select", tagName: "select", options: ["2005", "2006"] }
     ],
     resumeFields: [
-      { group: "基本信息", key: "证件类型", value: "身份证" },
+      { group: "基本信息", key: "政治面貌", value: "共青团员" },
       { group: "教育背景", key: "最高学历", value: "大学本科" },
       { group: "基本信息", key: "出生年月", value: "2005-09" }
     ]
@@ -730,7 +731,7 @@ test("worker: choice fields the rules cannot fill are sent to AI with their opti
 
   assert.equal(result.diagnostics.aiFields, 3);
   const prompt = body.user;
-  for (const text of ["证件类型", "最高学历", "出生年份", "身份证"]) {
+  for (const text of ["政治面貌", "最高学历", "出生年份", "共青团员"]) {
     assert.ok(prompt.includes(text), `${text} should reach the prompt`);
   }
 });
@@ -747,4 +748,132 @@ test("worker: a rule value the field cannot accept does not count as matched", a
   assert.equal(result.diagnostics.ruleMatches, 0);
   assert.equal(result.diagnostics.aiFields, 1);
   assert.ok(body.user.includes("Gender"));
+});
+
+// #429 身份证号自检：校验码、出生日期和开头。号码都是按规则算出来的虚构号码。
+test("idNumberInfo checks the check digit, the birth date and the leading code", () => {
+  const info = helpers.idNumberInfo;
+  assert.deepEqual(info("11010519491231002X"), { valid: true, kind: "resident" });
+  assert.deepEqual(info("11010519491231002x"), { valid: true, kind: "resident" });
+  assert.deepEqual(info("110105 19491231 002X"), { valid: true, kind: "resident" });
+  assert.deepEqual(info("44030620050712003X"), { valid: true, kind: "resident" });
+  assert.deepEqual(info("810000199408230021"), { valid: true, kind: "hkmo" });
+  assert.deepEqual(info("820000200002290021"), { valid: true, kind: "hkmo" }, "2000-02-29 is a real day");
+  assert.deepEqual(info("830000199201300022"), { valid: true, kind: "tw" });
+  assert.deepEqual(info("911840199001010018"), { valid: true, kind: "foreign" });
+  // 校验码错、日期不存在、还没到的日期、开头不是省级代码。
+  assert.deepEqual(info("110105194912310021"), { valid: false, kind: "" });
+  assert.deepEqual(info("110105200002300015"), { valid: false, kind: "" });
+  assert.deepEqual(info("11010520991231002X"), { valid: false, kind: "" });
+  assert.deepEqual(info("710000199001010015"), { valid: false, kind: "" });
+  // 出生日期按本地的年月日和今天比：今天出生的算数，明天的不算。
+  const W = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+  const withCheck = (body) => body + "10X98765432"[[...body].reduce((sum, digit, i) => sum + W[i] * Number(digit), 0) % 11];
+  const ymd = (date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+  const now = new Date();
+  assert.equal(info(withCheck(`110105${ymd(now)}001`)).valid, true);
+  assert.equal(info(withCheck(`110105${ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1))}001`)).valid, false);
+  // 不是 18 位的不判：15 位一代证、护照、通行证。
+  for (const value of ["110105491231002", "E12345678", "H12345678", "", null]) assert.equal(info(value), null, String(value));
+});
+
+test("residence permits fall back to the joint option only when the page has no separate one", () => {
+  const pick = (texts, value) => { const index = helpers.findSelectOptionIndex(options(texts), value); return index < 0 ? null : texts[index]; };
+  assert.equal(pick(["居民身份证", "港澳台居民居住证"], "港澳居民居住证"), "港澳台居民居住证");
+  assert.equal(pick(["居民身份证", "港澳台居民居住证"], "台湾居民居住证"), "港澳台居民居住证");
+  assert.equal(pick(["港澳居民居住证", "台湾居民居住证", "港澳台居民居住证"], "台湾居民居住证"), "台湾居民居住证");
+  // 合写的要分到港澳还是台湾看不出来，不选。
+  assert.equal(pick(["港澳居民居住证", "台湾居民居住证"], "港澳台居民居住证"), null);
+  assert.equal(pick(["护照", "外国人永久居留证"], "外国人永久居留身份证"), "外国人永久居留证");
+  assert.equal(pick(["护照", " 港澳台居民居住证 "], "港澳居民居住证"), " 港澳台居民居住证 ");
+});
+
+const idTypeField = (texts, extra = {}) => ({ fieldId: "type", label: "证件类型", inputType: "select", tagName: "select", options: options(texts), ...extra });
+const idResume = (type, number) => [
+  ...(type ? [{ group: "基本信息", key: "证件类型", value: type }] : []),
+  ...(number ? [{ group: "基本信息", key: "证件号码", value: number }] : [])
+];
+const idTypeMatch = (field, resume) => helpers.buildRuleBasedMatches([field], resume).find((match) => match.fieldId === field.fieldId);
+
+test("id type: without a stated type the number picks the option", () => {
+  const all = ["请选择", "身份证", "护照", "港澳居民居住证", "台湾居民居住证", "港澳台居民居住证"];
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("", "11010519491231002X")), { fieldId: "type", value: "居民身份证" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("", "810000199408230021")), { fieldId: "type", value: "港澳居民居住证" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("", "830000199201300022")), { fieldId: "type", value: "台湾居民居住证" });
+  // 选项只有合写的「港澳台居民居住证」：填分写的名字，选的时候落到合写那项。选项读不到（自定义下拉）时也填分写的。
+  const joint = idTypeField(["居民身份证", "护照", "港澳台居民居住证"]);
+  const jointValue = idTypeMatch(joint, idResume("", "810000199408230021")).value;
+  assert.equal(jointValue, "港澳居民居住证");
+  assert.equal(helpers.findSelectOptionIndex(joint.options, jointValue), 2);
+  assert.equal(idTypeMatch(idTypeField([], { tagName: "input" }), idResume("", "830000199201300022")).value, "台湾居民居住证");
+  assert.equal(idTypeMatch(idTypeField(["身份证", "护照", "外国人永久居留证"]), idResume("", "911840199001010018")).value, "外国人永久居留身份证");
+  // 号码没过校验、看不出类型，或选项里没有这一类：不填。
+  assert.equal(idTypeMatch(idTypeField(all), idResume("", "110105194912310021")), undefined);
+  assert.equal(idTypeMatch(idTypeField(all), idResume("", "E12345678")), undefined);
+  assert.equal(idTypeMatch(idTypeField(["身份证", "护照"]), idResume("", "810000199408230021")), undefined);
+  // 「身份证件类型」也是证件类型；号码框的占位文字提到证件类型的照旧是号码框。
+  assert.equal(idTypeMatch(idTypeField(all, { label: "身份证件类型" }), idResume("", "11010519491231002X")).value, "居民身份证");
+  assert.deepEqual(ruleValues([textField("no", "证件号码", { placeholder: "请先选择证件类型" })], idResume("居民身份证", "11010519491231002X")),
+    { no: "11010519491231002X" });
+});
+
+test("id type: a stated type wins, and one the number contradicts is blocked instead of filled", () => {
+  const all = ["身份证", "护照", "港澳居民来往内地通行证", "港澳台居民居住证", "其他"];
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("居民身份证", "11010519491231002X")), { fieldId: "type", value: "居民身份证" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("护照", "E12345678")), { fieldId: "type", value: "护照" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("护照", "")), { fieldId: "type", value: "护照" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("居民身份证", "110105194912310021")), { fieldId: "type", value: "居民身份证" },
+    "a number that fails the check says nothing about the type");
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("居民身份证", "810000199408230021")),
+    { fieldId: "type", value: "居民身份证", blocked: "id_type_mismatch" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("港澳居民来往内地通行证", "11010519491231002X")),
+    { fieldId: "type", value: "港澳居民来往内地通行证", blocked: "id_type_mismatch" });
+  // 「我的信息」没有居住证可选，选了「其他」的按号码选；选项里也没有就填「其他」。持居民身份证却选「其他」的算对不上。
+  assert.equal(idTypeMatch(idTypeField(all), idResume("其他", "830000199201300022")).value, "台湾居民居住证", "lands on the joint option");
+  assert.equal(idTypeMatch(idTypeField(["身份证", "护照", "其他"]), idResume("其他", "830000199201300022")).value, "其他");
+  assert.equal(idTypeMatch(idTypeField(all), idResume("其他", "11010519491231002X")).blocked, "id_type_mismatch");
+  // 认得出的写法才比：同义写法、括号里的补充照样对得上；港澳和台湾的居住证不互认；认不出的写法照资料填。
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("居民身份证（二代）", "11010519491231002X")), { fieldId: "type", value: "居民身份证（二代）" });
+  assert.equal(idTypeMatch(idTypeField(all), idResume("台胞证", "11010519491231002X")).blocked, "id_type_mismatch");
+  assert.equal(idTypeMatch(idTypeField(all), idResume("台湾居民居住证", "810000199408230021")).blocked, "id_type_mismatch");
+  assert.equal(idTypeMatch(idTypeField(all), idResume("港澳居民居住证", "830000199201300022")).blocked, "id_type_mismatch");
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("港澳台居民居住证", "830000199201300022")), { fieldId: "type", value: "港澳台居民居住证" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("港澳台居住证", "810000199408230021")), { fieldId: "type", value: "港澳台居住证" });
+  assert.deepEqual(idTypeMatch(idTypeField(all), idResume("居民身份证 (二代)", "11010519491231002X")), { fieldId: "type", value: "居民身份证 (二代)" });
+  // 资料写合写的居住证、选项分开写：按号码选分写的那项。
+  const split = idTypeField(["居民身份证", "港澳居民居住证", "台湾居民居住证"]);
+  assert.deepEqual(idTypeMatch(split, idResume("港澳台居民居住证", "830000199201300022")), { fieldId: "type", value: "台湾居民居住证" });
+  assert.equal(idTypeMatch(idTypeField(["身份证", "护照", "其它"]), idResume("其它", "810000199408230021")).value, "其它");
+  assert.equal(idTypeMatch(idTypeField(all), idResume("其它", "810000199408230021")).value, "港澳居民居住证");
+  // 号码框填的是排在前面的那条（纯数字的护照号），不拿后面的身份证号来比；字母开头的护照号进不了号码框，号码框填的是身份证号。
+  const both = (first, second) => [{ group: "基本信息", key: "证件类型", value: "护照" },
+    { group: "基本信息", key: "证件号码", value: first }, { group: "基本信息", key: "身份证号", value: second }];
+  assert.deepEqual(idTypeMatch(idTypeField(all), both("123456789", "11010519491231002X")), { fieldId: "type", value: "护照" });
+  assert.equal(idTypeMatch(idTypeField(all), both("E12345678", "11010519491231002X")).blocked, "id_type_mismatch");
+  // 字段名认不出（「号码1」）的号码照样按值认作证件号，和号码框一样。
+  assert.equal(idTypeMatch(idTypeField(["身份证", "港澳台居民居住证"]), [{ group: "基本信息", key: "号码1", value: "810000199408230021" }]).value, "港澳居民居住证");
+  // 同一张表上：号码框填的就是拿来比的那条。
+  for (const [first, type, number] of [["123456789", { value: "护照" }, "123456789"], ["E12345678", { value: "护照", blocked: "id_type_mismatch" }, "11010519491231002X"]]) {
+    const matches = helpers.buildRuleBasedMatches([idTypeField(all), textField("no", "证件号码")], both(first, "11010519491231002X"));
+    assert.deepEqual(matches, [{ fieldId: "type", ...type }, { fieldId: "no", value: number }], first);
+    // 号码框排在前面也一样。
+    const reversed = helpers.buildRuleBasedMatches([textField("no", "证件号码"), idTypeField(all)], both(first, "11010519491231002X"));
+    assert.deepEqual(reversed, [{ fieldId: "no", value: number }, { fieldId: "type", ...type }], `${first} reversed`);
+  }
+  // 紧急联系人的证件类型不用本人的资料。
+  assert.equal(idTypeMatch(idTypeField(all, { group: "紧急联系人" }), idResume("", "11010519491231002X")), undefined);
+});
+
+test("id type: a blocked match survives the validity filter and keeps the field away from the AI", async () => {
+  const field = idTypeField(["身份证", "港澳台居民居住证"]);
+  const resume = idResume("护照", "810000199408230021");
+  const profile = require("../profile-fields.js");
+  // 资料写的「护照」选项里没有，也照样留着，填写时报出来。
+  assert.deepEqual(helpers.localRuleMatches([field], resume, profile), [{ fieldId: "type", value: "护照", blocked: "id_type_mismatch" }]);
+  let body = null;
+  const worker = loadWorker((request) => { body = request; });
+  const result = await worker.handleAiFill({ formFields: [field, { fieldId: "major", label: "专业", inputType: "text", options: [] }],
+    resumeFields: [...resume, { group: "教育背景", key: "专业", value: "示例专业" }] });
+  assert.deepEqual(JSON.parse(body.user.split("\n")[1]).map((item) => item.label), ["专业"], "the type field is not sent to the AI");
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "type", value: "护照", blocked: "id_type_mismatch" }]);
 });
