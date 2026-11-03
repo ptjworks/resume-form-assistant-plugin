@@ -39,7 +39,7 @@ function desktop(bytes, { patch = () => ({}), fail = () => null } = {}) {
   return { sent, reply };
 }
 
-async function client(bytes, { capabilities = CAPABILITIES, send, ...desk } = {}) {
+async function client(bytes, { capabilities = CAPABILITIES, send, openChannel, ...desk } = {}) {
   const { createResumeFiles } = await import('../link/resume-files.mjs');
   const { validateRequest } = await import('../link/protocol/validate.mjs');
   const fake = desktop(bytes, desk);
@@ -56,11 +56,11 @@ async function client(bytes, { capabilities = CAPABILITIES, send, ...desk } = {}
     now: () => new Date('2026-11-03T00:00:00Z'),
     sleep: async () => {},
     sendNative: answer,
-    openChannel: () => {
+    openChannel: openChannel ?? (() => {
       const channel = { closed: false, sends: 0, send: async (host, message) => { channel.sends += 1; return answer(host, message); }, close() { channel.closed = true; } };
       channels.push(channel);
       return channel;
-    }
+    })
   });
   return { files, sent: fake.sent, channels };
 }
@@ -184,4 +184,11 @@ test('a chunk of the wrong length is corrupt, whether the validator or the clien
     fileId: FILE, sha256: listing.sha256, byteSize: bytes.length, chunkIndex: message.payload.chunkIndex, chunkCount: 2,
     chunkSha256: sha(longer), bytesBase64: longer.toString('base64') } } }) });
   assert.deepEqual(await raw.files.fetch(listing), { status: 'corrupt' });
+});
+
+test('a port the browser refuses to open is unavailable, not a rejected promise', async () => {
+  const bytes = pdf(100);
+  const c = await client(bytes, { openChannel: () => { throw new Error('Specified native messaging host not found.'); } });
+  assert.deepEqual(await c.files.fetch({ fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: 'a.pdf', mime: 'application/pdf' }),
+    { status: 'unavailable' });
 });

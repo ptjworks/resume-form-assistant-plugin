@@ -354,3 +354,84 @@ fn a_v8_archive_gains_the_table_and_keeps_its_site_answers() {
     assert_eq!(upgraded.site_answers("campus.example.com").unwrap().len(), 1);
     upgraded.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
 }
+
+fn sha_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+#[test]
+fn a_stored_path_anywhere_else_is_damage_and_no_file_is_touched() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    let outside = dir.path().join("outside.pdf");
+    std::fs::write(&outside, pdf(2)).unwrap();
+    for bad in [
+        outside.to_string_lossy().to_string(),
+        format!("{RESUME_FILES_DIR}/../../outside.pdf"),
+        "attachments/2026/11/outside.pdf".to_string(),
+        format!("{RESUME_FILES_DIR}/{}", file.sha256.to_ascii_uppercase()),
+    ] {
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute("UPDATE resume_files SET stored_rel_path = ?1 WHERE id = ?2", rusqlite::params![bad, file.id]).unwrap();
+        drop(raw);
+        let db = open(dir.path());
+        assert_eq!(code(db.resume_files().unwrap_err()), "internal_error", "{bad}");
+        assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, 0).unwrap_err()), "internal_error", "{bad}");
+        assert_eq!(code(db.read_resume_file(&file.id).unwrap_err()), "internal_error", "{bad}");
+        assert_eq!(code(db.delete_resume_file(&file.id).unwrap_err()), "internal_error", "{bad}");
+        assert_eq!(code(db.replace_resume_file(&file.id, "新简历.pdf", &pdf(3)).unwrap_err()), "internal_error", "{bad}");
+        assert_eq!(std::fs::read(&outside).unwrap(), pdf(2), "the file outside the folder is untouched: {bad}");
+        assert!(dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256).is_file(), "{bad}");
+        db.close().unwrap();
+    }
+}
+
+#[test]
+fn a_stored_file_of_the_wrong_size_is_not_read_into_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(RESUME_FILE_CHUNK_BYTES + 10)).unwrap();
+    let stored = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
+    std::fs::write(&stored, pdf(RESUME_FILE_CHUNK_BYTES * 3)).unwrap();
+    assert_eq!(code(db.read_resume_file(&file.id).unwrap_err()), "conflict");
+    for index in [0, 1] {
+        assert_eq!(code(db.read_resume_file_chunk(&file.id, &file.sha256, index).unwrap_err()), "conflict", "{index}");
+    }
+}
+
+#[test]
+fn a_stale_file_at_the_same_place_is_replaced_and_a_failed_add_still_sweeps() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    std::fs::create_dir_all(&folder).unwrap();
+    // 崩溃留下的、没人引用的一份坏文件，正好占着要添加的文件的位置。
+    let bytes = pdf(40);
+    std::fs::write(folder.join(sha_of(&bytes)), b"broken").unwrap();
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    assert_eq!(db.read_resume_file(&file.id).unwrap().1, bytes);
+    // 添加被拒（同样的内容），残留也照样清掉。
+    std::fs::write(folder.join("leftover"), b"x").unwrap();
+    assert_eq!(code(db.add_resume_file(ResumeFileKind::Other, "副本.pdf", &bytes).unwrap_err()), "validation_failed");
+    assert!(!folder.join("leftover").exists());
+}
+
+#[test]
+fn bytes_left_half_deleted_while_their_record_remains_are_put_back_not_swept() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(50)).unwrap();
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    let tmp = dir.path().join("archive").join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    // 删记录失败、字节又没能挪回去：它还在 tmp/ 里，记录也还在。
+    std::fs::rename(folder.join(&file.sha256), tmp.join(format!("resume-file-{}.deleting", file.sha256))).unwrap();
+    db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
+    assert!(folder.join(&file.sha256).is_file());
+    assert_eq!(db.read_resume_file(&file.id).unwrap().1, pdf(50));
+    assert!(!tmp.join(format!("resume-file-{}.deleting", file.sha256)).exists());
+}

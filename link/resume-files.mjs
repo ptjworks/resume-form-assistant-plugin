@@ -70,7 +70,13 @@ export function createResumeFiles({ session, store, sendNative, openChannel, sle
     const count = Math.ceil(file.byteSize / RESUME_FILE_CHUNK_BYTES);
     const bytes = new Uint8Array(file.byteSize);
     const pieces = [];
-    const channel = openChannel();
+    let channel;
+    try {
+      channel = openChannel();
+    } catch {
+      // The browser refused the port: the same as a desktop that cannot be reached.
+      return { status: 'unavailable' };
+    }
     try {
       for (let index = 0; index < count; index += 1) {
         const message = await envelope('resumeFiles.read', { fileId: file.fileId, sha256: file.sha256, chunkIndex: index }, gate.probe);
