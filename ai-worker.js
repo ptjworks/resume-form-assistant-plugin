@@ -507,9 +507,16 @@ function buildCatalog(resumeFields) {
     const aka = aliasesOf(field.key);
     const shape = helpers.valueShape(field.value);
     const mark = latest.has(index) ? `${shape}，本组最近一段` : shape;
-    return { ref, group: String(field.group ?? ""), key: keys[index], ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}) };
+    return { ref, group: String(field.group ?? ""), key: shortKey(keys[index]), ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}) };
   });
   return { entries, values, items };
+}
+
+// 字段名最多留 200 个字：本网站回答、补充字段的字段名是题目原文，一条极长的会让它所在的那批超出预算、整次报「内容太多」。
+const CATALOG_KEY_LIMIT = 200;
+function shortKey(key) {
+  const text = String(key ?? "");
+  return text.length > CATALOG_KEY_LIMIT ? `${text.slice(0, CATALOG_KEY_LIMIT)}…` : text;
 }
 
 // 同一组里有几段起止日期（几段实习）时，结束得最晚的一段（「至今」最晚）：AI 看不到时间，问「最近一段」时靠它。并列的不标。
@@ -591,7 +598,8 @@ function refMatches(payload, fields, catalog) {
     if (isOpenQuestion(field) && !answersOpenQuestion(field, tokens, catalog)) return [];
     const values = tokens.map(token => refValue(token, field, catalog));
     const joined = values.every(Boolean) ? joinRefValues(field, values) : "";
-    const value = !joined ? "" : field.cascade === true ? regionPrefix(joined) : isDateControl(field) ? pickerDate(field, joined) : joined;
+    const region = field.cascade === true || field.cascadeGroup !== undefined;
+    const value = !joined ? "" : region ? regionPrefix(joined) : isDateControl(field) ? pickerDate(field, joined) : joined;
     return value ? [{ fieldId: field.fieldId, value }] : [];
   });
 }
@@ -626,7 +634,8 @@ function pickerDate(field, value) {
   return /^\d{4}-\d{2}$/.test(month) ? month : picked;
 }
 
-// 级联题拿到一整段地址（「广东省深圳市南山区科苑路 8 号」）时，只留前面认得出的地区（至少到市）：街道门牌级联里选不了。
+// 级联题和联动下拉的各级拿到一整段地址（「广东省深圳市南山区科苑路 8 号」）时，只留前面认得出的地区（至少到市）：
+// 街道门牌级联里选不了，联动下拉按「包含」选时也少一些误选。
 function regionPrefix(value) {
   const regions = globalThis.ResumeProRegions;
   const text = String(value).trim();

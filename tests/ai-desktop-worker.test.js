@@ -144,12 +144,12 @@ test('password and verification fields never enter any AI prompt', async () => {
   assert.ok(result.diagnostics.skippedSecret >= 3);
 });
 
-test('an oversized lone candidate is skipped instead of prompting AI without resume context', async () => {
+test('a field too large to send with any resume item is skipped instead of prompting AI without resume context', async () => {
   const env = worker(() => { throw new Error('AI must not receive an empty candidate batch'); });
-  // 资料的值不发（#429 第 11 项），撑爆预算的只能是字段名。
+  // 资料的值不发、字段名截到 200 字（#429 第 11 项）：撑爆预算的只能是网页字段本身。
   const result = await env.run({
-    formFields: [{ fieldId: 'school', label: '学校' }],
-    resumeFields: [{ group: '教育背景', key: '学校'.repeat(20_000), value: '大学乙' }]
+    formFields: [{ fieldId: 'school', label: '学校', placeholder: '甲'.repeat(17_000) }],
+    resumeFields: [{ group: '教育背景', key: '学校', value: '大学乙' }]
   });
   assert.equal(env.sent.filter(item => item.kind === 'desktop-complete').length, 0);
   assert.ok(result.diagnostics.skippedOversized > 0);
@@ -158,8 +158,8 @@ test('an oversized lone candidate is skipped instead of prompting AI without res
 
 test('a failed request replaces an earlier skip code, so the diagnostics name the failure', async () => {
   const input = {
-    formFields: [{ fieldId: 'school', label: '学校' }, { fieldId: 'intro', label: '个人简介' }],
-    resumeFields: [{ group: '教育背景', key: '学校'.repeat(20_000), value: '大学乙' }, { group: '其他', key: '自我评价', value: '合成评价' }]
+    formFields: [{ fieldId: 'school', label: '学校', placeholder: '甲'.repeat(17_000) }, { fieldId: 'intro', label: '个人简介' }],
+    resumeFields: [{ group: '教育背景', key: '学校', value: '大学乙' }, { group: '其他', key: '自我评价', value: '合成评价' }]
   };
   const timeout = worker(() => ({ ok: false, reason: 'timeout' }));
   const failed = await timeout.run(input);
@@ -398,7 +398,8 @@ test('candidate subsets for one page field produce at most one fill match', asyn
   });
   const result = await env.run({
     formFields: [{ fieldId: 'single', label: '自我评价', inputType: 'text' }],
-    resumeFields: Array.from({ length: 30 }, (_, i) => ({ group: '自定义', key: `资料${i}` + '甲'.repeat(1800), value: `结果${i + 1}` }))
+    // 资料项多到整份目录超出预算，分成几批发。
+    resumeFields: Array.from({ length: 100 }, (_, i) => ({ group: '自定义', key: `资料${i}` + '甲'.repeat(190), value: `结果${i + 1}` }))
   });
   assert.ok(calls > 1);
   assert.equal(result.matches.length, 1);

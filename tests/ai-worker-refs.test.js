@@ -303,14 +303,31 @@ test("the catalog names the latest of several spans in a group and the other nam
   assert.deepEqual(entry("现居住地").aka, ["现住址", "居住地址", "通讯地址"]);
 });
 
-test("a cascade given a whole address keeps the region at its head", async () => {
-  const env = worker((message, catalog) => [{ fieldId: "city", ref: catalog[0].ref }, { fieldId: "text", ref: catalog[0].ref }]);
+test("a cascade or a level of linked selects given a whole address keeps the region at its head", async () => {
+  const env = worker((message, catalog) => ["city", "text", "province", "town"].map((fieldId) => ({ fieldId, ref: catalog[0].ref })));
   const result = await env.run({
-    formFields: [{ fieldId: "city", label: "现居住城市", inputType: "select", cascade: true, options: [] }, { fieldId: "text", label: "通讯地址" }],
+    formFields: [{ fieldId: "city", label: "现居住城市", inputType: "select", cascade: true, options: [] }, { fieldId: "text", label: "通讯地址" },
+      { fieldId: "province", label: "现居住地（省）", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 0, options: ["请选择", "广东省", "湖南省"] },
+      { fieldId: "town", label: "现居住地（市）", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 1, options: ["请选择"] }],
     resumeFields: [{ group: "户籍与地区", key: "现居住地", value: "广东省深圳市南山区粤海街道科苑路 8 号" }]
   });
   assert.equal(valueOf(result, "city"), "广东省深圳市南山区");
+  assert.equal(valueOf(result, "province"), "广东省深圳市南山区");
+  assert.equal(valueOf(result, "town"), "广东省深圳市南山区");
   assert.equal(valueOf(result, "text"), "广东省深圳市南山区粤海街道科苑路 8 号", "a text field keeps the whole address");
+});
+
+test("a very long saved question is cut in the catalog, so it does not push its batch over the budget", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "school", ref: catalog.find((entry) => entry.key === "学校").ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }],
+    resumeFields: [{ group: "本网站回答", key: "请详细描述".repeat(8000), value: "很长的回答" }, { group: "教育经历", key: "学校", value: "虚构大学" }]
+  });
+  assert.equal(env.calls.length, 1);
+  assert.equal(result.diagnostics.skippedOversized, 0);
+  assert.equal(result.warning, "");
+  assert.equal(valueOf(result, "school"), "虚构大学");
+  assert.equal(catalogOf(env.calls[0].user)[0].key.length, 201);
 });
 
 test("computer levels and English yes or no are the same option in other words", () => {
