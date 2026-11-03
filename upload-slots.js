@@ -345,15 +345,20 @@
       .filter(el => Array.from(el.querySelectorAll(BUTTON)).some(button => isVisible(button)));
   }
 
-  // 传之前记下的样子：之后只看新冒出来的文件项、提示和对话框。
+  // 提示、报错、对话框的样子：class 加上里面的字。网站复用同一个节点、只换里面的字或状态时，样子变了也算新的。
+  const look = el => `${classText(el)}\u0001${squash(el.textContent)}`;
+  const looks = list => new Map(list.map(el => [el, look(el)]));
+  const changedSince = (seen, el) => !seen.has(el) || seen.get(el) !== look(el);
+
+  // 传之前记下的样子：之后只看新冒出来的、或者换了字和状态的文件项、提示和对话框。
   function before(slot, docs, isVisible = () => true) {
     const scopeEl = slot.scope || slot.root;
     return {
       items: new Set(listItems(scopeEl)),
       thumbs: new Set(thumbnails(scopeEl)),
-      messages: new Set(visibleAll(docs, MESSAGE, isVisible)),
-      errors: new Set(Array.from(scopeEl?.querySelectorAll?.(INLINE_ERROR) || []).filter(el => isVisible(el) && squash(el.textContent))),
-      dialogs: new Set(dialogs(docs, isVisible)),
+      messages: looks(visibleAll(docs, MESSAGE, isVisible)),
+      errors: looks(Array.from(scopeEl?.querySelectorAll?.(INLINE_ERROR) || []).filter(el => isVisible(el) && squash(el.textContent))),
+      dialogs: looks(dialogs(docs, isVisible)),
       text: visibleText(scopeEl, isVisible).join(" ")
     };
   }
@@ -372,22 +377,32 @@
     const named = listItems(scopeEl).filter(el => isVisible(el) && (squash(el.textContent).includes(name)
       || Array.from(el.querySelectorAll("[title], img[alt]")).some(node => (node.getAttribute("title") || node.getAttribute("alt")) === name)));
     const items = [...new Set([...named, ...fresh])];
+    // 这个文件在框的列表里出现过（记在 seen 上，下一次看还在）：之后列表空了又冒出报错，是网站把它退了（Element 的做法）。
+    if (items.length) seen.shown = true;
     const status = el => {
       const classes = [el, ...el.querySelectorAll("[class]")].map(classText).join(" ").toLowerCase();
       if (/(?:^|[-_\s])(?:error|fail|failed)(?:$|[-_\s])|is-error/.test(classes)) return "error";
       if (/uploading|is-uploading/.test(classes) || Array.from(el.querySelectorAll("[role='progressbar'], [class*='progress']")).some(node => isVisible(node))) return "uploading";
       return "done";
     };
-    const newDialog = withDialogs ? dialogs(docs, isVisible).find(el => !seen.dialogs.has(el)) : null;
+    const newDialog = withDialogs ? dialogs(docs, isVisible).find(el => changedSince(seen.dialogs, el)) : null;
     if (newDialog) return { state: "dialog", message: dialogText(newDialog, isVisible) };
-    const alert = visibleAll(docs, MESSAGE, isVisible).find(el => !seen.messages.has(el) && ERROR_WORDS.test(el.textContent || ""));
+    // 只有和这个框有关的报错才算它没传上：它的文件项出错、它所在表单项里冒出的报错、提示就在上传区里或写着这个文件名，
+    // 或者这个文件的文件项出现过、又从列表里没了，紧接着冒出报错。页面上别处的报错（别的字段的校验之类）只当参考，
+    // 带在结果里，不单凭它判失败。
+    const stem = String(name || "").replace(/\.[a-z0-9]{1,5}$/i, "");
+    const mentions = el => Boolean(name) && (el.textContent.includes(name) || (stem.length >= 2 && el.textContent.includes(stem)));
+    const alerts = visibleAll(docs, MESSAGE, isVisible).filter(el => changedSince(seen.messages, el) && ERROR_WORDS.test(el.textContent || ""));
+    const related = alerts.find(el => mentions(el) || Boolean(scopeEl?.contains?.(el))) || (seen.shown && !items.length ? alerts[0] : null);
+    const aside = alerts.find(el => el !== related);
     const inline = Array.from(scopeEl?.querySelectorAll?.(INLINE_ERROR) || [])
-      .find(el => !seen.errors.has(el) && isVisible(el) && ERROR_WORDS.test(el.textContent || "") && !listItems(scopeEl).some(item => item.contains(el)));
+      .find(el => changedSince(seen.errors, el) && isVisible(el) && ERROR_WORDS.test(el.textContent || "") && !listItems(scopeEl).some(item => item.contains(el)));
     const failed = items.find(el => status(el) === "error");
-    if (failed) return { state: "error", message: alert ? text(alert) : inline ? text(inline) : "" };
-    if (alert) return { state: "error", message: text(alert) };
-    if (inline) return { state: "error", message: text(inline) };
-    if (items.some(el => status(el) === "uploading")) return { state: "uploading", message: "" };
+    const said = el => el ? text(el) : "";
+    if (failed) return { state: "error", message: said(related || inline || aside) };
+    if (related) return { state: "error", message: said(related) };
+    if (inline) return { state: "error", message: said(inline) };
+    if (items.some(el => status(el) === "uploading")) return { state: "uploading", message: said(aside) };
     if (items.length) return { state: "done", message: "" };
     if (thumbnails(scopeEl).some(img => !seen.thumbs.has(img) && isVisible(img))) return { state: "done", message: "" };
     // 原生的 file 框（没有组件，框自己就是上传区）：框里就是这个文件，提交表单时才传，这就是它的全部状态。
@@ -397,12 +412,31 @@
     // 别的写法：表单项里冒出了这个文件名。
     const now = visibleText(scopeEl, isVisible).join(" ");
     if (name && now.includes(name) && !seen.text.includes(name)) return { state: "done", message: "" };
-    return { state: "none", message: "" };
+    return { state: "none", message: said(aside) };
   }
 
-  // 网页上的忙碌标志：转圈、加载遮罩、进度条、还在传的文件项，或看得见的「解析中」「正在上传」这类短句（记它所在的元素）。
-  function busyMarks(docs, isVisible = () => true, exclude = () => false) {
-    const marks = visibleAll(docs, BUSY, isVisible).filter(el => !exclude(el));
+  // 交给框之前再看一眼：还是确认时那个框（同一个 file 框、同一个上传区和表单项），题目、认成的类别、收的格式、大小上限都没变，
+  // 框里也还没有文件。返回 "" 可以传，"changed" 框变了（卡片作废，要用户重新确认），"gone" 框没了，"has_file"、"file_unsure" 框里有文件了。
+  function recheck(slot, options = {}) {
+    if (!slot?.input?.isConnected) return "gone";
+    let fresh = null;
+    try {
+      fresh = find(slot.input.ownerDocument, options).find(item => item.input === slot.input) || null;
+    } catch {
+      fresh = null;
+    }
+    if (!fresh) return "gone";
+    if (fresh.root !== slot.root || fresh.scope !== slot.scope || fresh.title !== slot.title || fresh.kind !== slot.kind
+      || fresh.accept !== slot.accept || fresh.limit !== slot.limit) return "changed";
+    if (fresh.hasFile) return fresh.fileUnsure ? "file_unsure" : "has_file";
+    return "";
+  }
+
+  // 网页上的忙碌标志，每个记一个指纹：转圈、加载遮罩、进度条、还在传的文件项按标签、class、role 认（进度条上的数字会变，不算进来）；
+  // 看得见的「解析中」「正在上传」这类短句按字认。网站把常驻的标志重建成新节点，指纹一样，还算原来那个。
+  function busyPrints(docs, isVisible = () => true, exclude = () => false) {
+    const prints = visibleAll(docs, BUSY, isVisible).filter(el => !exclude(el))
+      .map(el => `el\u0001${el.tagName}\u0001${classText(el)}\u0001${el.getAttribute?.("role") || ""}`);
     for (const doc of docs) {
       const root = doc.body;
       if (!root) continue;
@@ -416,15 +450,18 @@
         const value = squash(node.data);
         if (!value || value.length > 30 || !BUSY_WORDS.test(value)) continue;
         const parent = node.parentElement;
-        if (parent && !exclude(parent) && isVisible(parent)) marks.push(parent);
+        if (parent && !exclude(parent) && isVisible(parent)) prints.push(`text\u0001${value}`);
       }
     }
-    return marks;
+    return prints;
   }
-  // 网页在忙。baseline 是传简历之前就在的标志（常驻的步骤进度条、「审核处理中」这类状态字）：它们不说明网站在解析，不算，
-  // 不然每次都要等到上限。
+  // 传简历之前就在的忙碌标志（常驻的步骤进度条、「审核处理中」这类状态字）：它们不说明网站在解析。
+  function busyBaseline(docs, isVisible = () => true, exclude = () => false) {
+    return new Set(busyPrints(docs, isVisible, exclude));
+  }
+  // 网页在忙：有 baseline 里没有的忙碌标志。不然常驻的标志会让每次都等到上限。
   function busy(docs, isVisible = () => true, exclude = () => false, baseline = null) {
-    return busyMarks(docs, isVisible, exclude).some(mark => !baseline?.has(mark));
+    return busyPrints(docs, isVisible, exclude).some(print => !baseline?.has(print));
   }
 
   // 传之后等网站的反应，最多 timeoutMs。sleep、now 由调用方给（测试用假时钟）。stopped() 为真时立刻停。
@@ -474,7 +511,7 @@
   const api = {
     MAX_FILE_BYTES, KIND_NAMES, KIND_MIMES,
     accepts, acceptsKind, classify, limitBytes, find, hasFile, fileEvidence, current, chooseFile, fits, put,
-    before, state, busy, busyMarks, watch, waitForParse, dialogs
+    before, state, recheck, busy, busyBaseline, watch, waitForParse, dialogs
   };
   scope.ResumeProUploadSlots = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }

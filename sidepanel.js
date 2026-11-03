@@ -1057,7 +1057,8 @@
           ? `上次上传后网站改了你填过的 ${offer.restore.count} 项，会先改回：${labels}。`
           : `上传后网站会重新解析。已填的 ${offer.restore.count} 项要是被改掉，会改回：${labels}；表单被网站重排时可能改不回，改不回的会列出来。`);
         if (offer.restore.pending && offer.restore.laterCount) {
-          notes.push(`停下以后又变过的 ${offer.restore.laterCount} 项不改回，请核对：${list(offer.restore.later, offer.restore.laterCount)}。`);
+          // 停下以后又变过的、等解析时你自己改过的：都不改回。
+          notes.push(`后来又改过的 ${offer.restore.laterCount} 项不改回，请核对：${list(offer.restore.later, offer.restore.laterCount)}。`);
         }
       }
       elements.uploadNotes.hidden = !notes.length;
@@ -1085,7 +1086,8 @@
     renderTaskPanel();
   }
 
-  // 卡片上的按钮。确认时先把这个标签页、这个网站、选的文件告诉后台（后台只把这几个文件、各一次交给这一页），再让页面开始。
+  // 卡片上的按钮。确认时先把这个标签页、这个网站、这张卡片、选的文件告诉后台（后台只把这几个文件、各一次交给这一页的这张卡片，
+  // 标签页跳到别的网址就作废），再让页面开始。
   async function uploadAction(action) {
     const view = uploadView;
     if (uploadPending || !view) return;
@@ -1109,7 +1111,7 @@
           let granted = null;
           try {
             granted = await chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_GRANT", tabId: tab.id, origin,
-              files: files.map((file) => ({ fileId: file.fileId, sha256: file.sha256 })) });
+              card: `${view.epoch}:${view.version}`, files: files.map((file) => ({ fileId: file.fileId, sha256: file.sha256 })) });
           } catch {
             granted = null;
           }

@@ -187,7 +187,9 @@ test("a file is put into the box as a picked file: input.files is set, then inpu
 });
 
 test("what the site did with the file: a done or failed list item, an error message, or a dialog", () => {
-  const doc = page(`${antd({ id: "a", title: "简历附件" })}<div class="ant-message"></div>`);
+  // 提示条画在表单外面；表单里还有别的题，上传框的范围就是它自己那一题。
+  const doc = page(`${antd({ id: "a", title: "简历附件" })}<div class="ant-form-item"><label for="phone">手机号</label><input id="phone"></div>`);
+  doc.body.insertAdjacentHTML("beforeend", `<div class="ant-message"></div>`);
   const [slot] = found(doc);
   const docs = [doc];
   const seen = slots.before(slot, docs, isVisible);
@@ -293,13 +295,98 @@ test("a native file box with no component is done once it holds the file; the pa
   assert.equal(slots.state(slot, "别的.pdf", seen, [doc], isVisible).state, "none");
 });
 
-test("busy signs that were on the page before the upload are not counted", () => {
-  const doc = page(`<div role="progressbar" aria-valuenow="40"></div><p id="status">资料审核处理中</p><div id="x"></div>`);
-  const baseline = new Set(slots.busyMarks([doc], isVisible));
+test("busy signs that were on the page before the upload are not counted, even when the site draws them again", () => {
+  const doc = page(`<div id="steps"><div role="progressbar" aria-valuenow="40"></div><p id="status">资料审核处理中</p></div><div id="x"></div>`);
+  const baseline = slots.busyBaseline([doc], isVisible);
   assert.equal(slots.busy([doc], isVisible), true, "without a baseline the permanent ones count");
   assert.equal(slots.busy([doc], isVisible, () => false, baseline), false);
+  // 网站重画了步骤条：新的节点，同样的标志和字，进度数字变了。
+  doc.getElementById("steps").innerHTML = `<div role="progressbar" aria-valuenow="60"></div><p>资料审核处理中</p>`;
+  assert.equal(slots.busy([doc], isVisible, () => false, baseline), false, "the same signs drawn again are still the old ones");
   doc.getElementById("x").innerHTML = `<div class="ant-spin ant-spin-spinning"></div>`;
   assert.equal(slots.busy([doc], isVisible, () => false, baseline), true, "a spinner that appeared afterwards counts");
+  doc.getElementById("x").innerHTML = `<p>简历解析中</p>`;
+  assert.equal(slots.busy([doc], isVisible, () => false, baseline), true, "a new 'parsing' line counts");
   doc.getElementById("x").innerHTML = `<p>正在导入资料</p>`;
   assert.equal(slots.busy([doc], isVisible, () => false, baseline), false, "导入 is not one of the words");
+});
+
+test("a message or dialog the site reuses counts as new once its text or state changes", () => {
+  const doc = page(`${antd({ id: "a", title: "简历附件" })}<div class="ant-message"><div class="ant-message-notice"><span>文件格式不正确</span></div></div>
+    <div class="ant-modal" role="dialog"><div class="ant-modal-body">请先上传简历</div><button type="button">知道了</button></div>`);
+  const [slot] = found(doc);
+  const docs = [doc];
+  const seen = slots.before(slot, docs, isVisible);
+  // 传之前就在的旧提示、旧对话框：不算。
+  assert.deepEqual(slots.state(slot, "测试用户_简历.pdf", seen, docs, isVisible), { state: "none", message: "" });
+  // 网站用同一个节点换了字：是这次的报错。
+  doc.querySelector(".ant-message-notice span").textContent = "测试用户_简历.pdf 上传失败";
+  assert.deepEqual(slots.state(slot, "测试用户_简历.pdf", seen, docs, isVisible, { withDialogs: false }), { state: "error", message: "测试用户_简历.pdf 上传失败" });
+  doc.querySelector(".ant-modal-body").textContent = "是否用简历内容覆盖已填写的信息？";
+  assert.deepEqual(slots.state(slot, "测试用户_简历.pdf", seen, docs, isVisible), { state: "dialog", message: "是否用简历内容覆盖已填写的信息？" });
+  // 字没变、只换了状态（class）也算：文件项出错时，那条提示就是它的原话。
+  doc.querySelector(".ant-modal").remove();
+  doc.querySelector(".ant-message-notice span").textContent = "上传失败";
+  const later = slots.before(slot, docs, isVisible);
+  doc.querySelector(".ant-message-notice").classList.add("ant-message-notice-error");
+  doc.querySelector(".ant-upload-list").innerHTML = `<div class="ant-upload-list-item ant-upload-list-item-error"><span title="测试用户_简历.pdf">测试用户_简历.pdf</span></div>`;
+  assert.deepEqual(slots.state(slot, "测试用户_简历.pdf", later, docs, isVisible), { state: "error", message: "上传失败" });
+});
+
+test("an error elsewhere on the page is only a side note; one in the upload area or naming the file fails the upload", () => {
+  // 提示条画在表单外面（antd、Element 都挂在 body 下）。
+  const doc = page(`${antd({ id: "a", title: "简历附件" })}<div class="ant-form-item"><label for="phone">手机号</label><input id="phone"></div>`);
+  doc.body.insertAdjacentHTML("beforeend", `<div class="ant-message"></div>`);
+  const [slot] = found(doc);
+  const docs = [doc];
+  const seen = slots.before(slot, docs, isVisible);
+  const list = slot.scope.querySelector(".ant-upload-list");
+  list.innerHTML = `<div class="ant-upload-list-item ant-upload-list-item-uploading"><span title="测试用户_简历.pdf">测试用户_简历.pdf</span></div>`;
+  doc.querySelector(".ant-message").innerHTML = `<div class="ant-message-notice"><span>手机号格式不正确</span></div>`;
+  assert.deepEqual(slots.state(slot, "测试用户_简历.pdf", seen, docs, isVisible), { state: "uploading", message: "手机号格式不正确" });
+  list.innerHTML = `<div class="ant-upload-list-item ant-upload-list-item-done"><span title="测试用户_简历.pdf">测试用户_简历.pdf</span></div>`;
+  assert.deepEqual(slots.state(slot, "测试用户_简历.pdf", seen, docs, isVisible), { state: "done", message: "" });
+  // 没有文件项的写法：别处的报错不算，写着这个文件名的、在上传区里的算。
+  const plain = page(`<div class="row"><label for="cv">简历</label><div class="upload-area"><input id="cv" type="file" accept=".pdf"></div></div>
+    <div class="row"><label for="mail">邮箱</label><input id="mail"></div>`);
+  plain.body.insertAdjacentHTML("beforeend", `<div id="toast"></div>`);
+  const [box] = found(plain);
+  const first = slots.before(box, [plain], isVisible);
+  plain.getElementById("toast").innerHTML = `<div role="alert">邮箱格式不正确</div>`;
+  assert.deepEqual(slots.state(box, "测试用户_简历.pdf", first, [plain], isVisible), { state: "none", message: "邮箱格式不正确" });
+  plain.getElementById("toast").innerHTML = `<div role="alert">测试用户_简历 上传失败</div>`;
+  assert.deepEqual(slots.state(box, "测试用户_简历.pdf", first, [plain], isVisible), { state: "error", message: "测试用户_简历 上传失败" });
+  plain.getElementById("toast").innerHTML = "";
+  (box.scope || box.root).insertAdjacentHTML("beforeend", `<div role="alert">上传失败，请重试</div>`);
+  assert.deepEqual(slots.state(box, "测试用户_简历.pdf", first, [plain], isVisible), { state: "error", message: "上传失败，请重试" });
+});
+
+test("before a file is handed over the box is checked again: the same control, kind, accept, size limit and group", () => {
+  const doc = page(antd({ id: "a", title: "简历附件", accept: ".pdf", extra: "支持 PDF，不超过 5MB" }) + antd({ id: "b", title: "证件照", accept: "image/*" }));
+  const options = { isVisible, describe };
+  const [resume] = found(doc);
+  assert.equal(resume.limit, 5 * 1024 * 1024);
+  assert.equal(slots.recheck(resume, options), "");
+  const input = doc.getElementById("a");
+  input.setAttribute("accept", ".pdf,.doc");
+  assert.equal(slots.recheck(resume, options), "changed", "what the box takes");
+  input.setAttribute("accept", ".pdf");
+  const extra = doc.querySelector(".ant-form-item-extra");
+  extra.textContent = "支持 PDF，不超过 2MB";
+  assert.equal(slots.recheck(resume, options), "changed", "the size limit");
+  extra.textContent = "支持 PDF，不超过 5MB";
+  const label = doc.querySelector("label[for='a']");
+  label.textContent = "成绩单";
+  label.title = "成绩单";
+  assert.equal(slots.recheck(resume, options), "changed", "the title and the kind");
+  label.textContent = "简历附件";
+  label.title = "简历附件";
+  assert.equal(slots.recheck(resume, options), "");
+  resume.scope.querySelector(".ant-upload-list").innerHTML = `<div class="ant-upload-list-item ant-upload-list-item-done"><span title="别的简历.pdf">别的简历.pdf</span></div>`;
+  assert.equal(slots.recheck(resume, options), "has_file");
+  resume.scope.querySelector(".ant-upload-list").innerHTML = "";
+  // 网站重画了这一题：原来那个 file 框没了。
+  const item = input.closest(".ant-form-item");
+  item.outerHTML = item.outerHTML;
+  assert.equal(slots.recheck(resume, options), "gone");
 });

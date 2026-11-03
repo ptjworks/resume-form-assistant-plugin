@@ -6,6 +6,7 @@ import { createResume } from './resume.mjs';
 import { createAi } from './ai.mjs';
 import { createLegacy, LEGACY_ALARM } from './legacy.mjs';
 import '../profile-fields.js';
+import '../upload-slots.js';
 import { createIntents } from './intents.mjs';
 import { createOutbox } from './outbox.mjs';
 import { createReconcile } from './reconcile.mjs';
@@ -17,7 +18,7 @@ import { createUploads } from './uploads.mjs';
 import { createMail } from './mail.mjs';
 import { createSiteAnswers, siteOfSender, SITE_ANSWERS_READ, SITE_ANSWERS_SAVE } from './site-answers.mjs';
 import { createResumeFiles } from './resume-files.mjs';
-import { createUploadGrants, handleUploadMessage } from './upload-grants.mjs';
+import { createUploadGrants, handleUploadMessage, revokeOnNavigation } from './upload-grants.mjs';
 import { HOST_NAME } from './transport.mjs';
 import { createQQExporter } from './qq-export.mjs';
 import { DESKTOP_MESSAGE_TYPES } from './messages.mjs';
@@ -57,7 +58,7 @@ export function installDesktopLink(api) {
   const openNativeChannel = nativeChannel(api);
   const resumeFiles = createResumeFiles({ ...deps, session, openChannel: () => openNativeChannel(HOST_NAME) });
   const uploadGrants = createUploadGrants();
-  api.tabs?.onRemoved?.addListener?.(tabId => uploadGrants.revoke(tabId));
+  revokeOnNavigation(api, uploadGrants);
   const exportQQ = createQQExporter(api);
   const ai = createAi({ ...deps, session, port: nativePort(api) });
   const legacy = createLegacy({
@@ -97,7 +98,7 @@ export function installDesktopLink(api) {
       mail.save(message).then(sendResponse, () => sendResponse({ status: 'unavailable' }));
       return true;
     }
-    const uploadHandled = handleUploadMessage({ api, grants: uploadGrants, files: resumeFiles }, message, sender, sendResponse);
+    const uploadHandled = handleUploadMessage({ api, grants: uploadGrants, files: resumeFiles, slots: globalThis.ResumeProUploadSlots }, message, sender, sendResponse);
     if (uploadHandled !== null) return uploadHandled;
     if (message?.type === SITE_ANSWERS_READ || message?.type === SITE_ANSWERS_SAVE) {
       const site = siteOfSender(sender, api.runtime.id);

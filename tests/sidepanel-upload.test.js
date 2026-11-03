@@ -114,7 +114,7 @@ test("上传并填写 first tells the worker this tab, this site and only the ch
   p.get("upload-confirm").click();
   await flush();
   assert.deepEqual(p.workerCalls("DESKTOP_RESUME_FILES_GRANT"), [{ type: "DESKTOP_RESUME_FILES_GRANT", tabId: 7, origin: "https://app.mokahr.com",
-    files: [{ fileId: "r1", sha256: SHA("a") }] }]);
+    card: "e1:3", files: [{ fileId: "r1", sha256: SHA("a") }] }], "the yes is for this card only");
   assert.deepEqual(p.pageCalls("RESUME_PANEL_UPLOAD"), [{ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: 3, epoch: "e1",
     choices: [{ slot: "upload-0", fileId: "r1" }] }]);
   const order = p.calls.filter((call) => ["DESKTOP_RESUME_FILES_GRANT", "RESUME_PANEL_UPLOAD"].includes(call.message.type)).map((call) => call.message.type);
@@ -231,11 +231,11 @@ test("an upload result from another site than the tab shows is not drawn", async
   assert.equal(p.get("upload-result").hidden, false);
 });
 
-test("a pending card says which boxes changed after the stop and will not be put back", async (t) => {
+test("a pending card says which boxes changed again later and will not be put back", async (t) => {
   const p = await openPanel(t, { upload: { ...OFFER, restore: { count: 1, labels: ["兴趣爱好"], pending: true, laterCount: 1, later: ["期望城市"] } } });
   await p.poll();
   assert.deepEqual([...p.get("upload-notes").querySelectorAll("li")].map((item) => item.textContent).slice(1), [
     "上次上传后网站改了你填过的 1 项，会先改回：兴趣爱好。",
-    "停下以后又变过的 1 项不改回，请核对：期望城市。"
+    "后来又改过的 1 项不改回，请核对：期望城市。"
   ]);
 });
