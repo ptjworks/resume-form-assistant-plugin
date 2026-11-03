@@ -724,11 +724,10 @@ function settleAnswers(matches) {
   });
 }
 
-// 多行文本框（长回答）和问动机、打算、优缺点、看法的单行题，资料项要和题目说的是同一件事：字段名、分组、别的叫法和题目、
-// 题目所在的分组，去掉「为什么」「你」「公司」「信息」「经历」「工作」「能力」这类哪道题都有的词以后，有相同的词（两个字一段；
-// 「获奖」「奖励」「荣誉」这类当成同一个词，见 TOPIC_SYNONYMS；英文是一个四个字母以上的词）：至少两个不同的词相同，
-// 或者相同的词出现在资料项自己的字段名、别的叫法里（只靠资料项的分组对上一个词不算），或者字段名和题目归一后一模一样。
-// 补充字段、本网站回答也一样。
+// 多行文本框（长回答）和问动机、打算、优缺点、看法的单行题，资料项要和题目说的是同一件事：资料项自己的字段名、别的叫法，
+// 和题目、题目所在的分组，去掉「为什么」「你」「公司」「信息」「经历」「工作」「能力」这类哪道题都有的词以后，有相同的词
+// （两个字一段；「获奖」「奖励」「荣誉」这类当成同一个词，见 TOPIC_SYNONYMS；英文是一个四个字母以上的词），或者字段名和题目归一后一模一样。
+// 资料项的分组不算：「社会实践」分组下的「工作描述」答不了「社会实践中的收获和看法」。补充字段、本网站回答也一样。
 // AI 看不到值时会随手挑一项：浏览器验收里「为什么选择我们公司」被填成过最高学历、期望工作地点，评测里被填成自我评价。
 const OPINION_QUESTION = /为什么|为何|动机|原因|理由|规划|打算|优势|劣势|不足|缺点|优点|困难|挑战|看法|理解|认识|谈谈|说说|举例|\b(?:why|plans?|goals?|strengths?|weakness(?:es)?|challenges?|motivat\w*|reasons?)\b/i;
 const COMMON_WORDS = new RegExp(`${OPINION_QUESTION.source}|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下|信息|基本|其他|补充|情况|经历|工作|发展|能力|学习|经验|方面|相关`, "gi");
@@ -753,9 +752,7 @@ function answersOnTopic(field, tokens, catalog) {
     // 题目和字段名一模一样（存过的原题「你的优势和不足」去掉通用词就什么都不剩）直接算。
     const names = [item.key, ...(aliasesOf(item.key) || [])];
     if (names.some(name => ResumeProAIHelpers.looseText(name) === same)) return true;
-    const own = topic(names.join(" "));
-    const hits = new Set([...own, ...topic(item.group)].filter(word => asked.includes(word)));
-    return hits.size >= 2 || own.some(word => hits.has(word));
+    return topic(names.join(" ")).some(word => asked.includes(word));
   });
 }
 

@@ -372,6 +372,18 @@ test("a view question takes no item that shares only a common word like 工作 w
   assert.equal(result.diagnostics.openUnanswered, 2);
 });
 
+test("an item is on topic only by words of its own name, never by its group", async () => {
+  const resume = [{ group: "社会实践", key: "工作描述", value: "在虚构社区做志愿者" }, { group: "社会实践", key: "实践收获", value: "学会了沟通" }];
+  const env = worker((message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key).ref;
+    return [{ fieldId: "view", ref: ref("工作描述") }, { fieldId: "gain", ref: ref("实践收获") }];
+  });
+  const box = (fieldId, label) => ({ fieldId, label, tagName: "textarea", inputType: "textarea" });
+  const result = await env.run({ formFields: [box("view", "社会实践中的收获和看法"), box("gain", "社会实践中的收获")], resumeFields: resume });
+  // 「社会实践」只在资料项的分组里，「工作描述」不能靠它放行；「实践收获」的字段名自己就对得上。
+  assert.deepEqual(result.matches.map((match) => match.fieldId), ["gain"]);
+});
+
 test("an open question whose answer is held back counts as having no ready answer, not as unwritten", async () => {
   const resume = Array.from({ length: 10 }, (_, i) => ({ group: "自我评价", key: `自我评价${i}`, value: `评价${i}` }));
   const env = worker((message, catalog) => [{ fieldId: "self", refs: catalog.map((entry) => entry.ref) }]);
