@@ -482,6 +482,14 @@ export interface ProfileRecordView {
   revision: number;
 }
 
+/** 按网站记住的一个回答（#429）。`site` 是插件按网址算的网站，`question` 是用户看到的题目原文。 */
+export interface SiteAnswerView {
+  site: string;
+  question: string;
+  answer: string;
+  updatedAt: string;
+}
+
 /** 插件旧数据的一批导入（#130 PR 5）。只有状态与计数，不含任何内容。 */
 export interface LegacyImportPending {
   importId: string;

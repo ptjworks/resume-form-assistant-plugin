@@ -142,6 +142,7 @@
     desktopPill: document.getElementById("desktop-pill"),
     pageDomain: document.getElementById("page-domain"),
     pageReady: document.getElementById("page-ready"),
+    siteHint: document.getElementById("site-hint"),
     templateMeta: document.getElementById("template-meta"),
     pluginVersion: document.getElementById("plugin-version"),
     fieldsTemplate: document.getElementById("fields-template"),
@@ -586,6 +587,10 @@
     // While the page fills, the card says so with the page's own phase text; no made-up percentage.
     elements.fillProgress.hidden = !filling;
     elements.fillProgressPhase.textContent = filling ? (status.phase || "正在填写…") : "";
+    // #429 上传简历后会覆盖已填内容的平台：网页给的一句提示，放在「当前网页」下面。
+    const siteHint = typeof status?.siteHint === "string" ? status.siteHint : "";
+    elements.siteHint.hidden = !siteHint;
+    elements.siteHint.textContent = siteHint;
     // 等 AI 久了，网页给的提示（#402）：已经先填了几项、可以取消。
     const waitHint = filling && typeof status.waitHint === "string" ? status.waitHint : "";
     if (elements.fillProgressHint) {
@@ -1824,7 +1829,9 @@
   const profileItems = () => !profileOffer ? [] : [
     ...profileOffer.filled.map((item) => ({ ...item, kind: "filled" })),
     ...profileOffer.pending.map((item) => ({ ...item, kind: "pending" })),
-    ...profileOffer.conflicts.map((item) => ({ ...item, kind: "conflict" }))
+    ...profileOffer.conflicts.map((item) => ({ ...item, kind: "conflict" })),
+    // #429：只在这个网站用的回答，存到桌面的网站回答。
+    ...(profileOffer.site || []).map((item) => ({ ...item, kind: "site" }))
   ];
   const profileChecked = (item) => profileChoices.has(item.id) ? profileChoices.get(item.id) : Boolean(item.defaultSelected);
 
@@ -1838,15 +1845,16 @@
   function profileRow(item) {
     const preview = (value) => value.length > PROFILE_PREVIEW_CHARS ? `${value.slice(0, PROFILE_PREVIEW_CHARS)}…` : value;
     const lines = [];
-    if (item.kind === "conflict") {
+    if (item.kind === "conflict" || (item.kind === "site" && item.existing)) {
       lines.push(`<span class="profile-item__value" title="${escapeHtml(item.existing)}">桌面：${escapeHtml(preview(item.existing))}</span>`);
       lines.push(`<span class="profile-item__value" title="${escapeHtml(item.value)}">网页：${escapeHtml(preview(item.value))}</span>`);
-    } else if (item.kind === "filled") {
+    } else if (item.kind === "filled" || item.kind === "site") {
       lines.push(`<span class="profile-item__value" title="${escapeHtml(item.value)}">${escapeHtml(preview(item.value))}</span>`);
     }
     if (item.completes) lines.push('<em class="profile-item__tag">桌面里已有这个待补充项，会补上内容</em>');
     if (item.jobSpecific) lines.push('<em class="profile-item__tag">可能只适用于当前岗位，默认不勾选</em>');
     if (item.unreadable) lines.push('<em class="profile-item__tag">网页上已有内容但读不准，只保存字段名</em>');
+    if (item.kind === "site" && item.existing) lines.push('<em class="profile-item__tag">这个网站记住的回答不同，勾选后才替换</em>');
     return `<label class="profile-item"><input type="checkbox" data-profile-id="${escapeHtml(item.id)}"${profileChecked(item) ? " checked" : ""}${profileSavePending || profileOffer?.saving ? " disabled" : ""}>`
       + `<span class="profile-item__body"><span class="profile-item__key">${escapeHtml(item.key)}</span>${lines.join("")}</span></label>`;
   }
@@ -1867,6 +1875,7 @@
     const filled = items.filter((item) => item.kind === "filled");
     const pending = items.filter((item) => item.kind === "pending");
     const conflicts = items.filter((item) => item.kind === "conflict");
+    const site = items.filter((item) => item.kind === "site");
     const savedItems = Array.isArray(result?.savedItems) ? result.savedItems : [];
     const savedContent = savedItems.filter((item) => item.kind !== "pending");
     const savedQuestions = savedItems.length - savedContent.length;
@@ -1880,26 +1889,36 @@
           : `已记下 ${savedQuestions || result.saved} 个问题`;
     } else {
       // 重点是「补充字段」：简历和「我的信息」里还没有的网页问题，可以存成桌面「我的信息」的补充字段。
-      elements.profileOfferText.textContent = !items.length && result?.text ? result.text : filled.length
+      elements.profileOfferText.textContent = !items.length && result?.text ? result.text : filled.length && site.length
+        ? `可以把 ${filled.length} 个答案加入补充字段，${site.length} 个记在这个网站`
+        : filled.length
         ? `可以把 ${filled.length} 个答案加入补充字段`
+        : site.length
+        ? `可以把 ${site.length} 个答案记在这个网站`
         : conflicts.length
           ? "网页内容与补充字段里已有的内容不同"
           : `有 ${pending.length} 个问题可以加入补充字段`;
     }
-    const offerCount = filled.length + pending.length + conflicts.length;
+    const offerCount = filled.length + pending.length + conflicts.length + site.length;
     elements.profileOfferCount.hidden = completed || !offerCount;
     elements.profileOfferCount.textContent = offerCount ? `${offerCount} 个问题` : "";
     elements.profileOfferIntro.hidden = completed || !items.length;
     elements.profileOfferIntro.textContent = filled.length
       ? "这些问题你的简历里还没有。保存到桌面「我的信息 · 补充字段」后，下次遇到相同问题会自动填写。"
+      : site.length
+        ? "这些题目问到这家公司。保存到桌面「网站回答」后，下次在这个网站遇到相同的题会自动填写。"
       : conflicts.length
         ? "桌面原内容会保留；只有你选中时才会替换。"
         : "这些问题你的简历里还没有。在网页填好答案后，这里会列出可以保存的内容；保存到桌面「我的信息 · 补充字段」后，下次遇到相同问题会自动填写。";
     elements.profileOfferResult.hidden = !result;
     if (result) {
       elements.profileOfferResult.className = `profile-result is-${result.kind}`;
+      const savedSite = savedItems.filter((item) => item.kind === "site").length;
+      const savedWhere = savedSite && savedSite === savedItems.length ? "已保存到桌面「网站回答」，下次在这个网站填写可以使用。"
+        : savedSite ? "已保存到桌面「我的信息」和「网站回答」，下次填写可以使用。"
+          : savedContent.length ? "已保存到桌面「我的信息」，下次填写可以使用。" : "已保存到桌面「我的信息」；补上答案后，下次填写可以使用。";
       elements.profileOfferResult.innerHTML = completed
-        ? `<span>${escapeHtml(savedContent.length ? "已保存到桌面「我的信息」，下次填写可以使用。" : "已保存到桌面「我的信息」；补上答案后，下次填写可以使用。")}</span>`
+        ? `<span>${escapeHtml(savedWhere)}</span>`
           + (result.kind === "partial" ? `<span>${escapeHtml(result.text)}</span>` : "")
           + (result.hint && (result.kind === "partial" || result.hint.includes("暂时没能重新读取")) ? `<span>${escapeHtml(result.hint)}</span>` : "")
           + (result.details?.length ? `<ul>${result.details.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "")
@@ -1919,6 +1938,9 @@
         + `<div class="profile-items">${list.map(profileRow).join("")}</div></details>`;
     elements.profileOfferGroups.innerHTML = completed ? "" : [
       filled.length ? `<div class="profile-items profile-items--filled">${filled.map(profileRow).join("")}</div>` : "",
+      site.length ? `<div class="profile-site"><p class="profile-site__title">${escapeHtml(offer.siteName ? `只在 ${offer.siteName} 使用` : "只在这个网站使用")}</p>`
+        + `<p class="profile-group__hint">题目问到这家公司，换个网站不会用。</p>`
+        + `<div class="profile-items">${site.map(profileRow).join("")}</div></div>` : "",
       more("pending", pending, filled.length
         ? `还有 ${pending.length} 个问题没填 · 稍后处理`
         : `查看这 ${pending.length} 个问题`, "只记下问题名称；在网页填好后，这里会自动出现可保存的答案。"),
@@ -1935,7 +1957,7 @@
     elements.profileOfferNotes.hidden = completed || !notes.length;
     elements.profileOfferNotes.innerHTML = notes.map(escapeHtml).join("<br>");
 
-    elements.profileOfferSave.hidden = completed || !items.length || (!selected.length && !filled.length && !conflicts.length);
+    elements.profileOfferSave.hidden = completed || !items.length || (!selected.length && !filled.length && !conflicts.length && !site.length);
     elements.profileOfferSkip.hidden = completed || !items.length;
     elements.profileOfferSave.textContent = busy ? "正在保存…" : !selected.length
       ? "选择要保存的内容"
@@ -1956,7 +1978,7 @@
     if (!profileOffer || profileSavePending) return;
     const selected = profileItems().filter(profileChecked).map((item) => ({
       id: item.id, key: item.key, kind: item.kind, reviewedValue: item.value ?? "",
-      ...(item.kind === "conflict" ? { replaceOf: item.existing } : {})
+      ...(item.kind === "conflict" || (item.kind === "site" && item.existing) ? { replaceOf: item.existing } : {})
     }));
     if (!selected.length) return;
     profileSavePending = true;

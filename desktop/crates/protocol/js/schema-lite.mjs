@@ -25,6 +25,8 @@ const PAYLOAD_KEYS = {
   "usage.touch": "usage-touch",
   "usage.settings": "usage-settings",
   "mail.import": "mail-import",
+  "siteAnswers.read": "site-answers-read",
+  "siteAnswers.save": "site-answers-save",
   "legacy.import": "legacy-import",
 };
 
@@ -44,6 +46,8 @@ const RESPONSE_PAYLOAD_KEYS = {
   "usage.touch": "usage-touch",
   "usage.settings": "usage-settings",
   "mail.import": "mail-import",
+  "siteAnswers.read": "site-answers-read",
+  "siteAnswers.save": "site-answers-save",
   "legacy.import": "legacy-import",
 };
 

@@ -454,6 +454,24 @@ button.danger:hover:not(:disabled) { background: #fcf1f1; border-color: #e3aaaa;
 .profile-form-actions > button { min-height: 38px; padding-inline: 16px; border-radius: 9px; }
 .profile-form-actions > button.primary { padding-inline: 20px; }
 
+/* 网站回答（#429）：按网站分组的题目和回答，只看和删。 */
+.site-answers { flex: 1; }
+.site-answers-head { flex: none; padding: 16px 24px; border-bottom: 1px solid var(--card-line); }
+.site-answers-head h2 { margin: 0; font-size: 19px; font-weight: 600; }
+.site-answers-head p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.site-answers-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
+.site-answers-body > p { margin: 0; font-size: 13px; }
+.site-answers-site { padding: 14px 16px; border: 1px solid var(--card-line); border-radius: 12px; }
+.site-answers-site-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.site-answers-site-head h3 { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.site-answers-site ul { margin: 0; padding: 0; list-style: none; }
+.site-answers-site li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #edf0f3; }
+.site-answers-site li > span { font-size: 11px; }
+.site-answers-question { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.site-answers-answer { margin: 2px 0 0; font-size: 13px; font-weight: 500; white-space: pre-wrap; overflow-wrap: anywhere; }
+.site-answers button { min-height: 30px; padding: 3px 12px; border-radius: 8px; font-size: 12px; }
+.site-answers-note { flex: none; margin: 0 24px 16px; }
+
 /* 简历页的弹窗：白色面板、细边、轻阴影；内容长时只滚动正文，标题与按钮一直可见。 */
 dialog.resume-dialog { width: calc(100% - 32px); max-width: 540px; max-height: calc(100dvh - 48px); padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 20px 60px #1c233033; }
 dialog.resume-dialog[open] { display: flex; flex-direction: column; }

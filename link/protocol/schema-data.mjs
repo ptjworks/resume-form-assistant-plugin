@@ -3,7 +3,7 @@ export const SCHEMA_DATA = {
   "rules": {
     "protocolVersion": 2,
     "minProtocolVersion": 1,
-    "maxProtocolVersion": 4,
+    "maxProtocolVersion": 5,
     "maxEnvelopeBytes": 65536,
     "suggestedRawChunkBytes": 32768,
     "maxSnapshotBytes": 2097152,
@@ -29,7 +29,9 @@ export const SCHEMA_DATA = {
       "resume.read",
       "resume.update",
       "legacy.import",
-      "mail.import"
+      "mail.import",
+      "siteAnswers.read",
+      "siteAnswers.save"
     ],
     "writeTypes": [
       "job.save",
@@ -53,7 +55,9 @@ export const SCHEMA_DATA = {
       "legacy.import",
       "usage.touch",
       "usage.settings",
-      "mail.import"
+      "mail.import",
+      "siteAnswers.read",
+      "siteAnswers.save"
     ],
     "v2MessageTypes": [
       "resume.read",
@@ -119,6 +123,10 @@ export const SCHEMA_DATA = {
     ],
     "v4MessageTypes": [
       "mail.import"
+    ],
+    "v5MessageTypes": [
+      "siteAnswers.read",
+      "siteAnswers.save"
     ]
   },
   "envelope": {
@@ -166,7 +174,9 @@ export const SCHEMA_DATA = {
           "legacy.import",
           "usage.touch",
           "usage.settings",
-          "mail.import"
+          "mail.import",
+          "siteAnswers.read",
+          "siteAnswers.save"
         ]
       },
       "occurredAt": {
@@ -939,6 +949,70 @@ export const SCHEMA_DATA = {
         }
       }
     },
+    "site-answers-read": {
+      "$id": "https://resumepro.local/protocol/payloads/site-answers-read.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site"
+      ],
+      "properties": {
+        "site": {
+          "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "site-answers-save": {
+      "$id": "https://resumepro.local/protocol/payloads/site-answers-save.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site",
+        "answers"
+      ],
+      "properties": {
+        "site": {
+          "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "answers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "previous": {
+                "description": "用户确认时看到的桌面旧回答；不带表示桌面里本来没有这道题",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            }
+          }
+        }
+      }
+    },
     "snapshot-chunk": {
       "$id": "https://resumepro.local/protocol/payloads/snapshot-chunk.json",
       "type": "object",
@@ -1167,7 +1241,7 @@ export const SCHEMA_DATA = {
         "capabilities": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 16,
+          "maxItems": 32,
           "items": {
             "type": "string",
             "enum": [
@@ -1186,7 +1260,9 @@ export const SCHEMA_DATA = {
               "legacy.import",
               "usage.touch",
               "usage.settings",
-              "mail.import"
+              "mail.import",
+              "siteAnswers.read",
+              "siteAnswers.save"
             ]
           }
         }
@@ -1597,6 +1673,88 @@ export const SCHEMA_DATA = {
         "profileRevision": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "site-answers-read": {
+      "$id": "https://resumepro.local/protocol/responses/site-answers-read.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site",
+        "answers"
+      ],
+      "properties": {
+        "site": {
+          "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "answers": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            }
+          }
+        }
+      }
+    },
+    "site-answers-save": {
+      "$id": "https://resumepro.local/protocol/responses/site-answers-save.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site",
+        "answers"
+      ],
+      "properties": {
+        "site": {
+          "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "answers": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            }
+          }
         }
       }
     },

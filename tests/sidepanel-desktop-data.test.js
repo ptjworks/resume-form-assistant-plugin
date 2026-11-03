@@ -327,3 +327,18 @@ test('the panel says so while old plugin data is on its way to the desktop', asy
   await ui.get('legacy-hint-open').listeners.click();
   assert.ok(ui.calls.some(call => call.type === 'DESKTOP_OPEN_VIEW' && call.view === 'resume'));
 });
+
+// #429：上传简历后会覆盖已填内容的平台，网页给的一句提示显示在「当前网页」下面；没有提示、网页断开时收起。
+test('the page card shows the page\'s upload hint', async () => {
+  const ui = await harness();
+  const hint = 'Moka 上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。';
+  ui.setPageResponse({ ready: true, busy: false, siteHint: hint });
+  ui.poll();
+  await ui.tick();
+  assert.equal(ui.get('site-hint').hidden, false);
+  assert.equal(ui.get('site-hint').textContent, hint);
+  ui.setPageResponse({ ready: true, busy: false, siteHint: '' });
+  ui.poll();
+  await ui.tick();
+  assert.equal(ui.get('site-hint').hidden, true);
+});

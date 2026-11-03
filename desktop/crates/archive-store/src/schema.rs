@@ -10,7 +10,7 @@
 //! - message_receipts 持久化提交回执(含 sourceRestoreEpoch 与 payloadSha256)与永久删除墓碑。
 //! - schema_migrations 记录迁移历史;PRAGMA user_version 为权威版本。
 
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 #[derive(Clone, Copy)]
 pub struct Migration {
@@ -322,6 +322,20 @@ CREATE TABLE evidence_recycle (
 );
 "#;
 
+/// #429：题目问到对方公司的回答按网站存，只在同一个网站复用（见 `site_answers.rs`）。
+/// 同一网站里题目归一后只存一条；`question` 留着用户看到的原文。
+pub const V8_SITE_ANSWERS: &str = r#"
+CREATE TABLE site_answers (
+  site TEXT NOT NULL,
+  question_key TEXT NOT NULL,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (site, question_key)
+);
+"#;
+
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         to_version: 1,
@@ -357,5 +371,10 @@ pub const MIGRATIONS: &[Migration] = &[
         to_version: 7,
         description: "recoverable notification recycle bin",
         sql: V7_EVIDENCE_RECYCLE,
+    },
+    Migration {
+        to_version: 8,
+        description: "answers remembered per site for questions about the company (#429)",
+        sql: V8_SITE_ANSWERS,
     },
 ];

@@ -34,7 +34,7 @@ pub use snapshot::{
 pub use time::is_utc_timestamp;
 pub use types::*;
 pub use validate::{
-    payload_sha256, source_restore_epoch, utf8_json_len, validate_request_bytes, validate_request_value,
+    is_site_key, payload_sha256, source_restore_epoch, utf8_json_len, validate_request_bytes, validate_request_value,
     validate_response_for_request, validate_response_value,
 };
 

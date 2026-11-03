@@ -319,3 +319,41 @@ test('with the desktop not reachable the save button is disabled instead of pret
   assert.equal(ui.save.disabled, true);
   assert.equal(ui.calls.some(item => item.type === 'RESUME_PANEL_OFFER'), false);
 });
+
+// #429：只在这个网站用的回答单独一组，默认勾选；这个网站记住了不同回答的，勾上才替换，带着看到的旧回答。
+test('answers about the company are a group of their own for this site, and a different remembered one is replaced only when ticked', async () => {
+  const ui = await harness();
+  const site = [
+    { id: 'site:是否有亲属在本公司工作', key: '是否有亲属在本公司工作', value: '否', existing: '', defaultSelected: true },
+    { id: 'site:是否曾在本行实习', key: '是否曾在本行实习', value: '是', existing: '否', defaultSelected: false }
+  ];
+  const withSite = offer({ filled: [], pending: [], site, siteName: 'campus.example.com' });
+  ui.setPage(message => message.type === 'RESUME_PANEL_OFFER'
+    ? { ok: false, saved: 0, profileOffer: withSite }
+    : { ready: true, profileOffer: withSite });
+  await ui.refresh();
+
+  const html = ui.groups.innerHTML;
+  assert.equal(ui.get('profile-offer-text').textContent, '可以把 2 个答案记在这个网站');
+  assert.match(ui.get('profile-offer-intro').textContent, /下次在这个网站遇到相同的题会自动填写/);
+  assert.match(html, /只在 campus\.example\.com 使用/);
+  assert.match(html, /data-profile-id="site:是否有亲属在本公司工作" checked/);
+  assert.doesNotMatch(html, /data-profile-id="site:是否曾在本行实习" checked/);
+  assert.match(html, /桌面：否[\s\S]*网页：是[\s\S]*这个网站记住的回答不同，勾选后才替换/);
+  assert.equal(ui.save.textContent, '记住这 1 项');
+
+  await ui.toggle('site:是否曾在本行实习', true);
+  await ui.save.listeners.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(ui.sent()[0].selected)), [
+    { id: 'site:是否有亲属在本公司工作', key: '是否有亲属在本公司工作', kind: 'site', reviewedValue: '否' },
+    { id: 'site:是否曾在本行实习', key: '是否曾在本行实习', kind: 'site', reviewedValue: '是', replaceOf: '否' }
+  ]);
+
+  // 存好之后说存到了哪里。
+  const done = offer({ filled: [], pending: [], site: [], siteName: 'campus.example.com',
+    result: { kind: 'success', text: '已保存 2 项，下次填写可用。', hint: '', details: [], saved: 2,
+      savedItems: [{ key: '是否有亲属在本公司工作', value: '否', kind: 'site' }, { key: '是否曾在本行实习', value: '是', kind: 'site' }] } });
+  ui.setPage({ ready: true, profileOffer: done });
+  await ui.refresh();
+  assert.match(ui.get('profile-offer-result').innerHTML, /已保存到桌面「网站回答」，下次在这个网站填写可以使用。/);
+});

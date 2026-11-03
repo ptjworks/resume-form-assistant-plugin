@@ -55,6 +55,8 @@
   // 等 AI 多久后给提示（#402，原来是 90 秒）。
   const WAIT_HINT_SECONDS = 30;
   const textFillFailures = new WeakMap();
+  // #429 超出字数上限没填的框：当时的上限，没填上的原因里写明（见 prepareTextValue、limitText）。
+  const textLimits = new WeakMap();
   // 给页面自己的校验留一点时间。短到不拖慢整表，长过常见的几十毫秒回滚。
   let textCommitWaitMs = 100;
   // #173：本次一键填写成功的文本框，只放在当前网页的内存里，不写 storage。
@@ -85,6 +87,7 @@
     cascade_unsupported: "两级选择暂不支持",
     control_disabled: "字段不可操作",
     invalid_date: "日期格式或范围不符",
+    too_long: "超出字数上限",
     range_incomplete: "起止日期缺一头",
     format_mismatch: "只能填数字",
     readonly_picker: "网页自己的选择框",
@@ -133,7 +136,13 @@
     profileOfferResult: null,
     profileResultCandidateSignature: "",
     profileDismissedCandidateSignature: null,
-    profileSaving: false
+    profileSaving: false,
+    // #429：这个网站记住的回答，{ site, answers } 或读不到时的 { status }；null 是这次填写还没读过。
+    siteAnswers: null,
+    // 正在读网站回答时是那次读取（读完就清掉）：候选规划据此先不列问到对方公司的题，保存时等它读完。
+    siteAnswersReading: null,
+    // 给出这批候选时页面所在的网站（#429）：网站回答只存到这个网站，页面换了网站就不存。
+    profileOfferSite: ""
   };
   // #188 辅助新增的状态，只在本页内存里；控制逻辑见 handlePanelRepeat。
   const REPEAT_ACTIVE = ["scanning", "planning", "preview", "executing", "filling"];
@@ -197,7 +206,9 @@
         deepOffer: deepOfferLevel(),
         deepConsent: deepConsentSeen(),
         // #226 本站配方：只说有没有、上次是不是过期，不带网址和配方内容。
-        recipe: recipeStatus()
+        recipe: recipeStatus(),
+        // #429 上传简历后会覆盖已填内容的平台：侧栏提示先上传简历再填写。
+        siteHint: siteHint()
       });
       return false;
     }
@@ -490,7 +501,7 @@
     const helpers = ["ResumeProFeedback", "ResumeProAIClient", "ResumeProAIHelpers", "ResumeProAntdPrefix", "ResumeProRegions", "ResumeProCustomControls",
       "ResumeProControls", "ResumeProProfile", "ResumeProResumeData", "ResumeProFormAgent", "ResumeProFillProbe",
       "ResumeProFieldScan", "ResumeProPageOutline", "ResumeProDeepAnalysis", "ResumeProPageActions",
-      "ResumeProPageRecipe", "ResumeProSidebarState"];
+      "ResumeProPageRecipe", "ResumeProSiteKnowledge", "ResumeProSidebarState"];
     const missing = helpers.find((name) => !self[name]);
     if (missing) throw new TypeError(`${missing} is not loaded`);
 
@@ -2111,6 +2122,23 @@
     return { saved: Boolean(recipeCache.recipe), stale: recipeCache.lastUse === "stale" };
   }
 
+  // #429 侧栏的平台提示（见 site-knowledge.js）：同一网址 2 秒内用上次认的，过了再认一次（要读页面特征；单页应用的表单是后画出来的，
+  // 也会换掉）。
+  let siteHintSeen = { href: "", at: 0, text: "" };
+  function siteHint() {
+    const href = location.href;
+    if (siteHintSeen.href === href && Date.now() - siteHintSeen.at < 2000) return siteHintSeen.text;
+    let text = "";
+    try {
+      const knowledge = self.ResumeProSiteKnowledge;
+      text = knowledge?.uploadHint(knowledge.detect(document, href)) || "";
+    } catch {
+      text = "";
+    }
+    siteHintSeen = { href, at: Date.now(), text };
+    return text;
+  }
+
   function noteRecipeUse(status) {
     const key = currentRecipeKey();
     if (!key || recipeCache.id !== recipeId(key)) return;
@@ -2554,6 +2582,12 @@
       const resumeFields = self.ResumeProProfile
         ? self.ResumeProProfile.mergeResumeFields(templateFields, profileFields)
         : templateFields;
+      // #429：页面上有问到对方公司的题，才去读这个网站记住的回答，并进资料（本网站回答组，只按题目原样比）。
+      // 辅助新增不收起上一轮的保存候选，候选按的那份网站回答也留着用。
+      if (!assisted) state.siteAnswers = null;
+      if (fields.some(siteScopedField)) {
+        resumeFields.push(...siteAnswerResumeFields(currentSiteAnswers() || await loadSiteAnswers()));
+      }
       // 诊断里要藏起来的简历内容（一个字的值太容易撞上普通字段名，不参与比较）。
       const resumeValues = resumeFields.map(field => normalizeForOverlap(field?.value)).filter(value => value.length >= 2);
       phase = "roundTripMs";
@@ -2589,7 +2623,8 @@
         // #399 #405 写入被拒的文本框：框里剩下的是什么；#301 日历没选上、框里却换成了别的日子（#418 回车交出今天）。
         const leftover = LEFTOVER_REASONS.has(reason) ? textLeftovers.get(control) : null;
         const changed = reason === 'selection_not_committed' && leftover?.session === session && leftover.after === 'other';
-        const why = changed ? '选成了别的日期' : TEXT_FILL_FAILURE_LABELS[reason] || '';
+        const why = changed ? '选成了别的日期' : reason === 'too_long' && textLimits.has(control) ? limitText(textLimits.get(control))
+          : TEXT_FILL_FAILURE_LABELS[reason] || '';
         const shown = why ? `${label}（${why}）` : label;
         if (uncertain ?? ['verification_timeout', 'framework_state_unsynced', 'value_changed', 'cancelled', 'element_disconnected'].includes(reason)) {
           unconfirmedCount += 1;
@@ -2718,18 +2753,27 @@
         }
         grown.found += added.length;
         grownFields.push(...added);
+        // 后来冒出来的题里才有问到对方公司的：这时再读这个网站记住的回答（#429）。
+        if (!siteAnswersSettled() && added.some(siteScopedField)) {
+          const siteFields = siteAnswerResumeFields(await loadSiteAnswers());
+          resumeFields.push(...siteFields);
+          // 诊断里的字段名要藏起这些回答，和一开始就有的资料一样。
+          resumeValues.push(...siteFields.map(field => normalizeForOverlap(field.value)).filter(value => value.length >= 2));
+          if (!isCurrent()) return;
+        }
         const helpers = self.ResumeProAIHelpers;
         // 同名的题要和页面上原有的一起数（#429），所以把整张表的字段也传进去。
         const local = helpers?.localRuleMatches && self.ResumeProProfile
           ? helpers.localRuleMatches(added, resumeFields, self.ResumeProProfile, fresh.fields) : [];
         // 题目名和模板里唯一一项的名称完全相同（「专业」对「专业」），也当场对上；
-        // 资料里同名的不止一项（多段教育经历），交给 AI 按上下文分。补充字段上面已经按题目比过，有几类不复用（#429），这里不再看。
+        // 资料里同名的不止一项（多段教育经历），交给 AI 按上下文分。补充字段和本网站回答上面已经按题目比过，有几类不复用（#429），这里不再看。
         const normalize = value => helpers?.normalizeText ? helpers.normalizeText(value) : String(value ?? "").trim();
         // ResumeProProfile 是启动时必需的脚本；就算缺了，资料里也不会有补充字段（补充字段由它从「我的信息」转出来）。
         const customGroup = self.ResumeProProfile?.CUSTOM_GROUP;
+        const siteGroup = self.ResumeProProfile?.SITE_GROUP;
         for (const field of added) {
           if (local.some(match => match.fieldId === field.fieldId)) continue;
-          const same = resumeFields.filter(item => item?.value && (!customGroup || item.group !== customGroup)
+          const same = resumeFields.filter(item => item?.value && (!customGroup || item.group !== customGroup) && (!siteGroup || item.group !== siteGroup)
             && normalize(item.key) === normalize(field.label));
           if (same.length === 1) local.push(...(helpers?.filterValidMatches ? helpers.filterValidMatches([field], [{ fieldId: field.fieldId, value: same[0].value }]) : []));
         }
@@ -3823,6 +3867,8 @@
         ...(multiple ? { multiple: true } : {}),
         // #429 级联（省 → 市 → 区县这类逐级选的）：要的是从上到下的整条路径，本地匹配会把省、市、县拼起来，AI 提示词第 12 条。
         ...(control.controlKind === "cascader" ? { cascade: true } : {}),
+        // #429 字数上限（框的 maxlength 或组件的字数统计）告诉 AI，回答不超过它；按字节算的站点写明，提示词第 13 条。
+        ...(["text", "textarea"].includes(control.controlKind) ? lengthHint(element) : {}),
         dynamicOptions: ["custom-select", "cascader"].includes(control.controlKind),
         name: element.getAttribute("name") || "",
         idAttr: element.id || "",
@@ -5114,10 +5160,37 @@
     return statedUnits(element).every((stated) => group.includes(stated)) ? number : null;
   }
 
+  // #429 文本框的字数上限：框的 maxlength 或组件自己的字数统计（见 site-knowledge.js）；字数按字节算的站点按字节量。
+  function textLimit(element) {
+    const knowledge = self.ResumeProSiteKnowledge;
+    const max = knowledge?.limitOf(element);
+    if (!Number.isInteger(max)) return null;
+    // 看框所在文档的网址（同源框架里的表单看框架自己的）；about:blank 这类框架往外层框架找，都没有看整页的。
+    return { max, bytes: knowledge.countsBytes(knowledge.addressOf(element.ownerDocument, location.href)) };
+  }
+  function lengthHint(element) {
+    const limit = textLimit(element);
+    return limit ? { maxLength: limit.max, ...(limit.bytes ? { lengthUnit: "byte" } : {}) } : {};
+  }
+  function limitText(limit) {
+    return limit.bytes ? `超过 ${limit.max} 字节上限，汉字算 2` : `超过 ${limit.max} 字上限`;
+  }
   // #399 #405 一键填写写之前按框的要求整理要写的字（控件层写之前调用；侧栏、字段卡片手动写入不整理）。
   // 返回 { value }，日期按 1 日补齐的带 dayDefaulted。type=number 里取不出数字的返回 { reason: "format_mismatch" }，不写。
   // inputmode 只是给手机键盘的提示，很多框什么都收：先照原样写，numeric 是页面没收下时改写的数字（取不出是 null）。
+  // #429 整理完再看字数上限：超了不写，返回 { reason: "too_long" }，没填上的原因写明超过几字上限。
+  // 不截断：截断会把学校、专业这类名称截成别的，长回答断在半句，由用户自己改短。
   function prepareTextValue(element, value) {
+    const prepared = formatTextValue(element, value);
+    if (prepared.reason) return prepared;
+    const limit = textLimit(element);
+    const written = normalizeExpectedTextValue(element, prepared.value);
+    if (!limit || self.ResumeProSiteKnowledge.measure(written, limit.bytes) <= limit.max) return prepared;
+    textLimits.set(element, limit);
+    return { reason: "too_long" };
+  }
+
+  function formatTextValue(element, value) {
     const text = String(value ?? "");
     if (!isInputElement(element)) {
       return { value: text };
@@ -5173,7 +5246,10 @@
   }
 
   function textFillFailureLabel(element) {
-    return TEXT_FILL_FAILURE_LABELS[textFillFailureCode(element)] || "";
+    const control = element?.kind === "element" ? element.element : element;
+    const code = textFillFailureCode(element);
+    if (code === "too_long" && textLimits.has(control)) return limitText(textLimits.get(control));
+    return TEXT_FILL_FAILURE_LABELS[code] || "";
   }
 
   function normalizeExpectedTextValue(element, value) {
@@ -5499,6 +5575,65 @@
     `).join("");
   }
 
+  // #429：问到对方公司的题，回答按网站存在桌面，只在同一个网站本地复用（profile-fields.js 的 siteScopedTitle）。
+  function siteScopedField(field) {
+    const api = self.ResumeProProfile;
+    return Boolean(api?.siteScopedTitle?.(api.normalizeKey(field?.title || field?.label)));
+  }
+
+  // 读这个网站记住的回答。网站由后台按本页网址认，这里不传；桌面旧、共享招聘站认不出公司、没连上时记下原因，当作没有。
+  async function loadSiteAnswers() {
+    const reading = readSiteAnswers();
+    state.siteAnswersReading = reading;
+    try {
+      return await reading;
+    } finally {
+      if (state.siteAnswersReading === reading) state.siteAnswersReading = null;
+    }
+  }
+
+  async function readSiteAnswers() {
+    let reply = null;
+    try {
+      reply = await chrome.runtime.sendMessage({ type: "DESKTOP_SITE_ANSWERS_READ" });
+    } catch {
+      reply = null;
+    }
+    const ok = reply?.status === "ok" && typeof reply.site === "string" && Array.isArray(reply.answers);
+    // 回复到的时候页面已经跳到别的网站（单页应用）：这份不是眼前这个网站的，不留，下次再读。
+    const here = self.ResumeProProfile?.siteKeyOf?.(location.href) || "";
+    const next = ok && reply.site === here ? { site: reply.site, answers: reply.answers }
+      : { status: ok ? "stale" : String(reply?.status || "unavailable") };
+    // 保存时重读失败：留着已经读到的这个网站的回答，候选不会因此从网站回答挪回补充字段。
+    // 留着的不是眼前这个网站的（页面已经换了网站），照实换成这次的结果，免得「认不出网站」之类之后还反复去读。
+    if (next.site || !currentSiteAnswers()) state.siteAnswers = next;
+    return next;
+  }
+
+  // 读到的是不是这个页面所在网站的回答：单页应用可能已经跳到另一家公司的地址。
+  function currentSiteAnswers() {
+    const answers = state.siteAnswers;
+    return answers?.site && answers.site === self.ResumeProProfile?.siteKeyOf?.(location.href) ? answers : null;
+  }
+
+  // 不用再读的：已经有这个网站的回答，或者桌面不支持、认不出网站、后台不认这个发送方（再读结果也一样）。
+  // 别的失败（桌面暂时没连上之类）后来冒出公司题时再读。
+  function siteAnswersSettled() {
+    return Boolean(currentSiteAnswers()) || ["unsupported", "no_site", "forbidden"].includes(state.siteAnswers?.status);
+  }
+
+  function siteAnswerResumeFields(siteAnswers) {
+    return siteAnswers?.site ? self.ResumeProProfile.siteAnswerFields(siteAnswers.answers) : [];
+  }
+
+  // 候选规划用：读到了这个网站的回答才按网站分；还在读时这类题先不列，读完重算；
+  // 读不到（桌面旧、共享站点、读取失败）这类题照旧按补充字段处理。
+  function siteOfferContext() {
+    const answers = currentSiteAnswers();
+    if (answers) return { answers: answers.answers };
+    return state.siteAnswersReading && !siteAnswersSettled() ? { pending: true } : null;
+  }
+
   // 填完之后，网页上没匹配上的字段（已填的和空着的）和它们此刻的内容，列给用户勾选后存进桌面「我的信息」（#189）。
   // 档案只在桌面：这里不留副本，每次都按网页当前的值和桌面最新的档案重新算。
   function offerUnansweredFields(candidates, stats = null) {
@@ -5506,13 +5641,31 @@
     if (!api) return;
 
     state.profileOfferCandidates = candidates;
+    state.profileOfferSite = api.siteKeyOf?.(location.href) || "";
     state.profileOfferResult = null;
     state.profileResultCandidateSignature = "";
     state.profileDismissedCandidateSignature = null;
     state.profileOfferVersion += 1;
+    // 问到对方公司的题这次填写时没读过网站回答（比如都没在填写的字段里），或者上次没读成：再读一次。
+    // 读的时候这类题先不列（不然用户这时保存，会按补充字段存进「我的信息」），读完重算一遍，候选换了版本。
+    if (!siteAnswersSettled() && candidates.some((candidate) => api.siteScopedCandidate(candidate))) {
+      const version = state.profileOfferVersion;
+      loadSiteAnswers().then(() => {
+        if (version !== state.profileOfferVersion || !state.profileOfferCandidates?.length) return;
+        state.profileOfferVersion += 1;
+        const fresh = currentProfilePlan();
+        if (api.planHasOffer(fresh)) syncProfileOfferCard(fresh);
+      }).catch(() => {});
+    }
     const plan = currentProfilePlan(state.currentStore, stats);
 
     if (!api.planHasOffer(plan)) {
+      // 问到对方公司的题还空着，或者网站回答还在读（#429）：候选留着、卡片先不显示（没有可存的项时 syncProfileOfferCard 把它收起，
+      // 侧栏的快照也是 null），用户在网页上答了、读完了，侧栏下一次刷新就列出来。
+      if (plan.siteWaiting) {
+        syncProfileOfferCard(plan);
+        return;
+      }
       closeProfileOffer();
       return;
     }
@@ -5523,6 +5676,7 @@
     const card = shadowRoot?.querySelector("#resume-pro-profile-offer");
     if (card) card.hidden = true;
     state.profileOfferCandidates = [];
+    state.profileOfferSite = "";
     state.profileOfferResult = null;
     state.profileResultCandidateSignature = "";
     state.profileDismissedCandidateSignature = null;
@@ -5599,7 +5753,8 @@
       candidate.matched ? candidate : { ...candidate, ...readProfileEntry(candidate.entry) });
     const template = getActiveTemplate(store);
     return self.ResumeProProfile.planProfileOffer({
-      candidates, profile: store?.profile, templateFields: template ? flattenTemplateFields(template) : [], stats
+      candidates, profile: store?.profile, templateFields: template ? flattenTemplateFields(template) : [], stats,
+      site: siteOfferContext()
     });
   }
 
@@ -5610,7 +5765,7 @@
     if (!api || (!state.profileOfferCandidates?.length && !result)) return null;
     const plan = state.profileOfferCandidates?.length
       ? currentProfilePlan()
-      : { filled: [], pending: [], conflicts: [], notes: [], same: 0, hidden: 0 };
+      : { filled: [], pending: [], conflicts: [], site: [], notes: [], same: 0, hidden: 0 };
     // 保存完成后保持简短结果；用户随后在网页补出新答案时，再展示新的保存建议。
     if (result?.saved > 0 && profileCandidateSignature(plan) !== state.profileResultCandidateSignature) {
       state.profileOfferResult = null;
@@ -5629,6 +5784,8 @@
       filled: plan.filled.map(({ id, key, value, completes, jobSpecific, defaultSelected }) => ({ id, key, value, completes, jobSpecific, defaultSelected })),
       pending: plan.pending.map(({ id, key, unreadable }) => ({ id, key, unreadable, defaultSelected: false })),
       conflicts: plan.conflicts.map(({ id, key, value, existing }) => ({ id, key, value, existing, defaultSelected: false })),
+      site: (plan.site || []).map(({ id, key, value, existing, defaultSelected }) => ({ id, key, value, existing, defaultSelected })),
+      siteName: currentSiteAnswers()?.site || "",
       notes: plan.notes.map((note) => note.text),
       same: plan.same,
       hidden: plan.hidden,
@@ -5639,7 +5796,8 @@
   function profileCandidateSignature(plan) {
     return JSON.stringify([
       ...(plan?.filled || []).map((item) => [item.id, item.value]),
-      ...(plan?.conflicts || []).map((item) => [item.id, item.value, item.existing])
+      ...(plan?.conflicts || []).map((item) => [item.id, item.value, item.existing]),
+      ...(plan?.site || []).map((item) => [item.id, item.value, item.existing])
     ]);
   }
 
@@ -5647,7 +5805,7 @@
     return (Array.isArray(raw) ? raw : []).slice(0, 200).map((item) => ({
       id: String(item?.id ?? ""),
       key: String(item?.key ?? ""),
-      kind: ["filled", "pending", "conflict"].includes(item?.kind) ? item.kind : undefined,
+      kind: ["filled", "pending", "conflict", "site"].includes(item?.kind) ? item.kind : undefined,
       reviewedValue: typeof item?.reviewedValue === "string" ? item.reviewedValue : undefined,
       replaceOf: typeof item?.replaceOf === "string" ? item.replaceOf : undefined
     }));
@@ -5664,8 +5822,74 @@
     return "桌面暂时无法保存「我的信息」，什么都没有写入；候选还在，可以稍后再试。";
   }
 
-  // 点击保存：重新读桌面档案和网页当前的值，按用户的勾选写入，成功后再读一次桌面档案。
+  function siteSaveFailure(status) {
+    if (status === "conflict") return "这个网站的回答刚在桌面改过，网站回答这次没有保存；请重新核对后再保存。";
+    if (status === "secret") return "桌面认为有一项回答像密码或验证码，网站回答这次没有保存。";
+    if (status === "invalid_payload" || status === "input_too_large") return "桌面没有接受这次的网站回答（可能超出数量限制，或桌面认为这道题不该按网站记住），什么都没有写入。";
+    if (status === "unsupported") return "桌面程序版本较旧，不能按网站记住回答；更新桌面程序后再保存。";
+    if (status === "no_site") return "认不出这个网站是哪家公司，网站回答没有保存。";
+    if (status === "stale") return "页面已经换到别的网站，网站回答这次没有保存；候选还在。";
+    if (["not_installed", "not_paired", "never_paired", "incompatible", "unavailable"].includes(status)) {
+      return `网站回答没有保存：${self.ResumeProResumeData.modeCopy(status).message}`;
+    }
+    return "桌面暂时无法保存网站回答，什么都没有写入；可以稍后再试。";
+  }
+
+  // #429：勾选的网站回答。点击时重读桌面里这个网站的回答和网页当前的值；previous 对不上（桌面刚改过）重读一次再核对。
+  async function saveSiteSelection(selection) {
+    const api = self.ResumeProProfile;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const read = await loadSiteAnswers();
+      if (!read.site) return { saved: [], skipped: [], error: siteSaveFailure(read.status) };
+      // 用户核对候选时是另一个网站（单页应用已经跳走）：那些回答不是这个网站的，不存。
+      if (read.site !== state.profileOfferSite) return { saved: [], skipped: [], error: siteSaveFailure("stale") };
+      const plan = currentProfilePlan();
+      const outcome = api.applySiteSelection(plan, selection ?? api.defaultProfileSelection(plan));
+      if (!outcome.answers.length) return { saved: [], skipped: outcome.skipped, error: "" };
+      let reply = null;
+      try {
+        // 带上要存到的网站：后台按发消息时的页面地址再核对一次，读和存之间页面换了网站就不写。
+        reply = await chrome.runtime.sendMessage({ type: "DESKTOP_SITE_ANSWERS_SAVE", site: read.site, answers: outcome.answers });
+      } catch {
+        reply = null;
+      }
+      if (reply?.status === "conflict" && attempt === 0) continue;
+      if (reply?.status !== "ok") return { saved: [], skipped: outcome.skipped, error: siteSaveFailure(reply?.status) };
+      // 桌面确认写入了；下次填写和候选都用它回的这个网站的全部回答。
+      state.siteAnswers = { site: reply.site, answers: reply.answers };
+      return { saved: outcome.saved, skipped: outcome.skipped, error: "" };
+    }
+    return { saved: [], skipped: [], error: siteSaveFailure("conflict") };
+  }
+
+  // 点击保存：补充字段和网站回答（#429）分开写，各自重读桌面、各自核对；两边的结果合在一起告诉用户。
   async function saveProfileSelection(request) {
+    const api = self.ResumeProProfile;
+    const selected = request ? normalizeProfileSelection(request.selected) : null;
+    const siteChosen = selected ? selected.filter((item) => item.id.startsWith("site:")) : null;
+    const profileChosen = selected ? selected.filter((item) => !item.id.startsWith("site:")) : null;
+    // 网站回答还在读：等读完再按结果规划，问到对方公司的题不先按补充字段存（#429）。
+    if (state.siteAnswersReading) await state.siteAnswersReading;
+    const profile = !selected || profileChosen.length ? await saveProfileFields(profileChosen) : null;
+    const site = (!selected && currentSiteAnswers()) || siteChosen?.length ? await saveSiteSelection(siteChosen) : null;
+    if (!site) return profile ?? { ...api.describeProfileSave({}), saved: 0 };
+    const saved = [...(profile?.savedItems || []), ...site.saved.map(({ key, value, kind }) => ({ key, value, kind }))];
+    const skipped = [...(profile?.skippedItems || []), ...site.skipped];
+    const errors = [profile?.kind === "error" ? profile.text : "", site.error].filter(Boolean);
+    if (!saved.length && errors.length) return { kind: "error", text: errors.join(" "), hint: "", details: skipped.map((item) => item.text), saved: 0 };
+    const message = api.describeProfileSave({ saved, skipped });
+    if (errors.length) {
+      message.kind = "partial";
+      message.details = [...errors, ...message.details];
+    }
+    return {
+      ...message, saved: saved.length, savedItems: saved,
+      hint: [message.hint, profile?.reloadHint || ""].filter(Boolean).join(" ")
+    };
+  }
+
+  // 补充字段：重新读桌面档案和网页当前的值，按用户的勾选写入，成功后再读一次桌面档案。
+  async function saveProfileFields(selected) {
     const api = self.ResumeProProfile;
     const fail = (text) => ({ kind: "error", text, hint: "", details: [], saved: 0 });
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -5673,9 +5897,9 @@
       if (!fresh) return fail(profileSaveFailure(state.desktopMode));
       state.currentStore = fresh;
       const plan = currentProfilePlan(fresh);
-      const selection = request ? normalizeProfileSelection(request.selected) : api.defaultProfileSelection(plan);
+      const selection = selected ?? api.defaultProfileSelection(plan);
       const outcome = api.applyProfileSelection(fresh.profile, plan, selection);
-      if (!outcome.saved.length) return { ...api.describeProfileSave(outcome), saved: 0 };
+      if (!outcome.saved.length) return { ...api.describeProfileSave(outcome), saved: 0, savedItems: [], skippedItems: outcome.skipped };
 
       const reply = await chrome.runtime.sendMessage({
         type: "DESKTOP_RESUME_UPDATE", op: "saveProfile",
@@ -5691,10 +5915,12 @@
         if (shadowRoot?.querySelector("#resume-pro-template-select")) renderSidebar();
       }
       const message = api.describeProfileSave(outcome);
+      const reloadHint = after ? "" : "暂时没能重新读取桌面档案，下次填写前会再读一次。";
       return {
         ...message, saved: outcome.saved.length,
         savedItems: outcome.saved.map(({ key, value, kind }) => ({ key, value, kind })),
-        hint: [message.hint, after ? "" : "暂时没能重新读取桌面档案，下次填写前会再读一次。"].filter(Boolean).join(" ")
+        skippedItems: outcome.skipped, reloadHint,
+        hint: [message.hint, reloadHint].filter(Boolean).join(" ")
       };
     }
     return fail(profileSaveFailure("conflict"));
@@ -8075,8 +8301,15 @@
       setNativeSidePanel(supported) {
         state.nativeSidePanel = Boolean(supported);
       },
+      setSiteAnswers(value) {
+        state.siteAnswers = value;
+      },
+      getSiteAnswers() {
+        return state.siteAnswers;
+      },
       setProfileOffer({ candidates }) {
         state.profileOfferCandidates = candidates;
+        state.profileOfferSite = self.ResumeProProfile?.siteKeyOf?.(location.href) || "";
         state.profileOfferResult = null;
         state.profileOfferVersion += 1;
       },
