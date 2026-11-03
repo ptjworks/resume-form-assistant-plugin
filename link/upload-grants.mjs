@@ -2,8 +2,9 @@
 // The panel tells the service worker which tab, which site, which card and which files; a content
 // script then gets each of those files once, for that tab, that page address (the whole of it) and
 // that card only, within a few minutes. The tab closing or moving to another address takes the yes
-// with it, and so does the page itself when it moves on or its upload ends. Anything else is
-// refused here, whatever the content script asks for. Grants live in the worker's memory only.
+// with it (coming back does not bring it back), and so does the page itself when it moves on or its
+// upload ends. Anything else is refused here, whatever the content script asks for. Grants live in
+// the worker's memory only.
 //
 // Metadata and content are kept apart. The file list (names, labels, sizes, types, template
 // bindings, digests) goes to the side panel alone, which shows it on the card. A page's content
@@ -140,14 +141,29 @@ export function createUploadGrants({ now = () => Date.now() } = {}) {
     if (grants.get(tabId)?.card === card) grants.delete(tabId);
   }
 
-  return { grant, claim, settle, take, revoke, release };
+  /**
+   * Where the tab is now, as the worker last saw it (tabs.onUpdated, tabs.get). Once that is another
+   * address than the one the yes was for, the yes goes and stays gone, even if the page comes back.
+   */
+  function seen(tabId, url) {
+    const entry = grants.get(tabId);
+    if (entry && url !== entry.url) grants.delete(tabId);
+  }
+
+  return { grant, claim, settle, take, revoke, release, seen };
 }
 
-/** A tab that closes or moves to another address (a single-page app's too) loses its yes. */
+/**
+ * A tab that closes or moves to another address (a single-page app's too) loses its yes, and keeps
+ * it lost when it comes back. The worker hears of every move from tabs.onUpdated (a new url comes
+ * with pushState, a new hash and history.back as well) and looks at where the tab is when a file
+ * is taken (tabs.get); it does not ask for webNavigation. A message's sender.url does not help: it
+ * stays where the page loaded. The page also gives its card back when it notices it moved.
+ */
 export function revokeOnNavigation(api, grants) {
   api.tabs?.onRemoved?.addListener?.(tabId => grants.revoke(tabId));
   api.tabs?.onUpdated?.addListener?.((tabId, change) => {
-    if (change?.url) grants.revoke(tabId);
+    if (change?.url) grants.seen(tabId, change.url);
   });
 }
 
@@ -226,40 +242,52 @@ export function handleUploadMessage({ api, grants, files, slots, fetchTimeoutMs 
   }
   if (type === RESUME_FILE_FETCH) {
     if (!fromTopFrame(sender, api)) { sendResponse({ status: 'forbidden' }); return false; }
-    // Hold the file while it is read, so a second request for it reads nothing. The yes is used up
-    // only when the file is handed over: a desktop that fails, or a read that runs past
-    // fetchTimeoutMs (shorter than the page's own wait), lets the hold go and the yes stays.
     const tabId = sender.tab.id;
-    const claimed = grants.claim(tabId, sender.url, message.fileId, message.card);
-    if (claimed === 'busy') { sendResponse({ status: 'busy' }); return false; }
-    if (!claimed) { sendResponse({ status: 'not_confirmed' }); return false; }
-    const settle = used => grants.settle(tabId, message.fileId, message.card, claimed.token, used);
-    let timer = null;
-    const deadline = new Promise(resolve => { timer = setTimeout(() => resolve(null), fetchTimeoutMs); });
-    const work = (async () => {
-      // The version the user confirmed must still be the one on the desktop, and still be for
-      // the template the panel had in use (the panel lists only those; this does not rely on it).
-      const listed = await files.list();
-      if (listed.status !== 'ok') return { status: listed.status };
-      const row = listed.files.find(file => file.fileId === message.fileId && file.sha256 === claimed.sha256);
-      if (!row) return { status: 'conflict' };
-      if (!usableFor(row, claimed.templateId)) return { status: 'wrong_template' };
-      const read = await files.fetch(row);
-      if (read.status !== 'ok') return { status: read.status };
-      return { status: 'ok', name: row.name, mime: row.mime, kind: row.kind, byteSize: row.byteSize, updatedAt: row.updatedAt,
-        bytesBase64: read.bytesBase64 };
-    })();
-    Promise.race([work, deadline]).then(reply => {
-      clearTimeout(timer);
-      // Past the deadline: the page stops waiting soon; whatever the read brings later is dropped.
-      if (!reply) { settle(false); return { status: 'unavailable' }; }
-      if (reply.status !== 'ok') { settle(false); return reply; }
-      return settle(true) ? reply : { status: 'not_confirmed' };
-    }, () => {
-      clearTimeout(timer);
-      settle(false);
-      return { status: 'unavailable' };
-    }).then(sendResponse);
+    const { fileId, card } = message;
+    // Read one held file: the yes is used up only when the file is handed over. A desktop that
+    // fails, or a read that runs past fetchTimeoutMs (shorter than the page's own wait), lets the
+    // hold go and the yes stays.
+    const deliver = claimed => {
+      const settle = used => grants.settle(tabId, fileId, card, claimed.token, used);
+      let timer = null;
+      const deadline = new Promise(resolve => { timer = setTimeout(() => resolve(null), fetchTimeoutMs); });
+      const work = (async () => {
+        // The version the user confirmed must still be the one on the desktop, and still be for
+        // the template the panel had in use (the panel lists only those; this does not rely on it).
+        const listed = await files.list();
+        if (listed.status !== 'ok') return { status: listed.status };
+        const row = listed.files.find(file => file.fileId === fileId && file.sha256 === claimed.sha256);
+        if (!row) return { status: 'conflict' };
+        if (!usableFor(row, claimed.templateId)) return { status: 'wrong_template' };
+        const read = await files.fetch(row);
+        if (read.status !== 'ok') return { status: read.status };
+        return { status: 'ok', name: row.name, mime: row.mime, kind: row.kind, byteSize: row.byteSize, updatedAt: row.updatedAt,
+          bytesBase64: read.bytesBase64 };
+      })();
+      return Promise.race([work, deadline]).then(reply => {
+        clearTimeout(timer);
+        // Past the deadline: the page stops waiting soon; whatever the read brings later is dropped.
+        if (!reply) { settle(false); return { status: 'unavailable' }; }
+        if (reply.status !== 'ok') { settle(false); return reply; }
+        return settle(true) ? reply : { status: 'not_confirmed' };
+      }, () => {
+        clearTimeout(timer);
+        settle(false);
+        return { status: 'unavailable' };
+      });
+    };
+    // Check the yes against where the tab is now. sender.url is where the page loaded: a
+    // single-page app that moved since (pushState, a new hash) still reports that address, so it
+    // says nothing about where the tab is; tabs.get does. A tab seen at another address than the
+    // yes was for loses it for good. The file is held before anything is read, so a second
+    // request for it reads nothing.
+    Promise.resolve().then(() => api.tabs.get(tabId)).then(tab => String(tab?.url || ''), () => '').then(address => {
+      grants.seen(tabId, address);
+      const claimed = grants.claim(tabId, address, fileId, card);
+      if (claimed === 'busy') return { status: 'busy' };
+      if (!claimed) return { status: 'not_confirmed' };
+      return deliver(claimed);
+    }).then(sendResponse, () => sendResponse({ status: 'unavailable' }));
     return true;
   }
   return null;

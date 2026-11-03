@@ -518,3 +518,22 @@ test("words in scripts, styles and noscript are not a 'parsing' line", () => {
   doc.getElementById("x").insertAdjacentHTML("beforeend", "<p>简历解析中</p>");
   assert.equal(slots.busy([doc], isVisible, () => false, baseline), true, "the same words shown on the page count");
 });
+
+test("whether a box wants a Chinese or an English resume is read from its title, button and hints alike", () => {
+  // 题目只写了「附件」，提示里说要英文简历：认成简历框、要英文的，选英文那份。
+  const doc = page(antd({ id: "a", title: "附件", accept: ".pdf", extra: "请上传英文简历（English CV）" }));
+  const [slot] = found(doc);
+  assert.equal(slot.kind, "resume");
+  assert.deepEqual(slot.language, ["en"]);
+  assert.equal(slots.chooseFile(slot, FILES).fileId, "r2");
+  // 题目说了英文，提示里中文、英文都提到：和认类别一样先按题目。
+  const titled = page(antd({ id: "c", title: "英文简历", accept: ".pdf", extra: "没有英文简历的，也可以上传中文简历" }));
+  const [english] = found(titled);
+  assert.deepEqual(english.language, ["en"]);
+  assert.equal(slots.chooseFile(english, FILES).fileId, "r2");
+  // 题目、提示都没说：不按语言挑，用默认的那份。
+  const plain = page(antd({ id: "b", title: "简历附件", accept: ".pdf", extra: "支持 PDF" }));
+  const [other] = found(plain);
+  assert.deepEqual(other.language, []);
+  assert.equal(slots.chooseFile(other, FILES).fileId, "r1");
+});

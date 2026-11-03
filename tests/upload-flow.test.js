@@ -115,8 +115,8 @@ const elementPhoto = (id, title) => `
     <div class="el-upload el-upload--picture-card"><i class="el-icon-plus"></i><input id="${id}" type="file" accept="image/*" class="el-upload__input" style="display:none"></div>
     <ul class="el-upload-list el-upload-list--picture-card"></ul></div></div>`;
 
-async function page(t, body, { url = "https://app.mokahr.com/campus_apply/example/1", answers = {}, files = [RESUME_FILE, PHOTO_FILE], listStatus = "ok", hold = null, silent = [], gate = null, replies = {}, skip = [] } = {}) {
-  const { createUploadGrants, handleUploadMessage } = await import("../link/upload-grants.mjs");
+async function page(t, body, { url = "https://app.mokahr.com/campus_apply/example/1", answers = {}, files = [RESUME_FILE, PHOTO_FILE], listStatus = "ok", hold = null, silent = [], gate = null, replies = {}, skip = [], tabEvents = true } = {}) {
+  const { createUploadGrants, handleUploadMessage, revokeOnNavigation } = await import("../link/upload-grants.mjs");
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url });
   const w = dom.window;
@@ -141,10 +141,30 @@ async function page(t, body, { url = "https://app.mokahr.com/campus_apply/exampl
     fetch: async (file) => (hold && await hold(), { status: "ok", name: file.name, mime: file.mime, byteSize: file.byteSize, sha256: file.sha256,
       bytesBase64: Buffer.from(BYTES[file.fileId], "latin1").toString("base64") })
   };
-  const api = { runtime: { id: "test-extension", getURL: (file) => `chrome-extension://test-extension/${file}` }, tabs: { get: async () => ({ url: w.location.href }) } };
+  // 照 Chrome 来：tabs.get 给标签页现在的地址；消息的 sender.url 是页面载入时的地址，pushState、改 hash 以后也不变；
+  // 标签页换了地址，后台收到 tabs.onUpdated。tabEvents 为 false 时后台没收到（通知晚到），看页面自己交回确认。
+  const loaded = w.location.href;
+  const tabListeners = [];
+  const api = { runtime: { id: "test-extension", getURL: (file) => `chrome-extension://test-extension/${file}` },
+    tabs: { get: async () => ({ url: w.location.href }), onUpdated: { addListener: (fn) => tabListeners.push(fn) } } };
+  revokeOnNavigation(api, grants);
+  if (tabEvents) {
+    let shown = loaded;
+    const moved = () => {
+      if (w.location.href === shown) return;
+      shown = w.location.href;
+      for (const fn of tabListeners) fn(9, { url: shown });
+    };
+    for (const name of ["pushState", "replaceState"]) {
+      const original = w.history[name].bind(w.history);
+      w.history[name] = (...args) => { original(...args); moved(); };
+    }
+    w.addEventListener("hashchange", moved);
+    w.addEventListener("popstate", moved);
+  }
   const background = (message) => new Promise((resolve) => {
     const answer = (reply) => { seen.replies.push(JSON.stringify(reply)); resolve(reply); };
-    const kept = handleUploadMessage({ api, grants, files: desktop, slots: SLOTS }, message, { id: "test-extension", tab: { id: 9 }, frameId: 0, url: w.location.href }, answer);
+    const kept = handleUploadMessage({ api, grants, files: desktop, slots: SLOTS }, message, { id: "test-extension", tab: { id: 9 }, frameId: 0, url: loaded }, answer);
     if (kept === null) answer({});
   });
   w.chrome = {
@@ -1049,7 +1069,8 @@ test("a plan the worker turns down for this sender is not called a desktop that 
 });
 
 test("a page that moves on, or whose upload ends, gives back what is left of its yes", async (t) => {
-  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  // 后台没收到标签页换地址的通知：这里看页面自己交回。
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" }, tabEvents: false });
   fakeSite(p);
   await p.send({ type: "RESUME_PANEL_FILL" });
   const offer = (await p.status()).upload;
@@ -1074,6 +1095,24 @@ test("a page that moves on, or whose upload ends, gives back what is left of its
   await settle();
   assert.equal(p.w.document.getElementById("resume").files[0].name, RESUME_FILE.name);
   assert.equal(p.grants.take(9, p.w.location.href, PHOTO_FILE.fileId, nextCard), null, "the unused yes for the photo is gone");
+});
+
+test("a yes is gone once the tab moved away, even when it is back at the same address before the upload starts", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const offer = (await p.status()).upload;
+  p.grants.grant(9, p.w.location.href, `${offer.epoch}:${offer.version}`, [{ fileId: RESUME_FILE.fileId, sha256: RESUME_FILE.sha256 }]);
+  // 侧栏确认以后、页面开始上传以前，网站跳到下一页又回到这一页：页面看地址没变照常开始，后台不给文件。
+  p.w.history.pushState({}, "", "/campus_apply/example/2");
+  p.w.history.pushState({}, "", "/campus_apply/example/1");
+  assert.deepEqual(await p.send({ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: offer.version, epoch: offer.epoch,
+    choices: [{ slot: "upload-0", fileId: RESUME_FILE.fileId }] }), { ok: true });
+  const done = await p.finished();
+  await Promise.all(p.fills);
+  assert.ok(p.seen.messages.some((message) => message.includes("DESKTOP_RESUME_FILE_FETCH")), "the page asked for the file");
+  assert.equal(p.w.document.getElementById("resume").files.length, 0);
+  assert.ok(done.upload.lines.includes("简历附件：没有在侧栏确认，没有上传。"), done.upload.lines.join(" | "));
 });
 
 test("a filled box that is only out of sight now, its value unchanged, is not listed as one that could not be put back", async (t) => {

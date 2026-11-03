@@ -301,3 +301,25 @@ test("a box the worker could not plan for says the plugin did not handle it and 
   assert.deepEqual(p.rows(), [{ title: "简历附件", chosen: null, options: [], note: "插件没能处理这个上传框，不能上传。" },
     { title: "证件照", chosen: null, options: [], note: "插件没能处理这个上传框，不能上传。" }]);
 });
+
+test("when handing the yes to the page throws, the yes given to the worker is taken back", async (t) => {
+  const p = await openPanel(t);
+  await p.poll();
+  // 侧栏告诉后台以后，再去找这个标签页时出了错（不是页面回绝，是这一步直接抛错）。
+  const send = p.w.chrome.runtime.sendMessage;
+  const query = p.w.chrome.tabs.query;
+  let failNext = false;
+  p.w.chrome.runtime.sendMessage = async (message) => {
+    if (message.type === "DESKTOP_RESUME_FILES_GRANT") failNext = true;
+    return send(message);
+  };
+  p.w.chrome.tabs.query = async (...args) => {
+    if (failNext) { failNext = false; throw new Error("the tab is gone"); }
+    return query(...args);
+  };
+  p.get("upload-confirm").click();
+  await flush();
+  assert.equal(p.workerCalls("DESKTOP_RESUME_FILES_GRANT").length, 1);
+  assert.deepEqual(p.workerCalls("DESKTOP_RESUME_FILES_REVOKE"), [{ type: "DESKTOP_RESUME_FILES_REVOKE", tabId: 7 }]);
+  assert.equal(p.pageCalls("RESUME_PANEL_UPLOAD").length, 0, "the page never started");
+});

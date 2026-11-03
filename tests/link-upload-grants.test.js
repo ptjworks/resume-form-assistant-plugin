@@ -9,7 +9,9 @@ const SHA = 'a'.repeat(64);
 const OTHER_SHA = 'b'.repeat(64);
 const CARD = 'k3x9-a1b2:4';
 const APPLY = 'https://jobs.example.test/apply';
-const api = { runtime: { id: 'ext', getURL: (file) => `chrome-extension://ext/${file}` }, tabs: { get: async () => null } };
+// 后台取文件时用 tabs.get 看标签页现在的地址（这里默认在 APPLY）。page() 的 url 是消息的 sender.url：
+// Chrome 里它是页面载入时的地址，pushState、改 hash 以后也不变，所以不拿它判断标签页在哪。
+const api = { runtime: { id: 'ext', getURL: (file) => `chrome-extension://ext/${file}` }, tabs: { get: async (id) => ({ id, url: APPLY }) } };
 const PANEL = { id: 'ext', url: 'chrome-extension://ext/sidepanel.html' };
 const page = (tabId, url, frameId = 0) => ({ id: 'ext', tab: { id: tabId }, frameId, url });
 // 取一份文件：给的话是确认时那一版的 sha256，不给是 ''。
@@ -71,9 +73,12 @@ test('a tab that moves to another address or closes loses its yes; other updates
   grants.grant(3, APPLY, CARD, [{ fileId: 'r1', sha256: SHA }, { fileId: 'p1', sha256: OTHER_SHA }]);
   listeners.updated(3, { status: 'complete' });
   listeners.updated(3, { title: '网上申请' });
-  assert.equal(took(grants, 3, APPLY, 'r1', CARD), SHA, 'loading finished, title changed');
+  listeners.updated(3, { url: APPLY });
+  listeners.updated(5, { url: 'https://other.example.test/' });
+  assert.equal(took(grants, 3, APPLY, 'r1', CARD), SHA, 'loading finished, title changed, the same address again, another tab moved');
   // 单页应用换了地址（同一个网站）：剩下的文件也不给了，回到原来的地址也不给。
   listeners.updated(3, { url: `${APPLY}#step2` });
+  listeners.updated(3, { url: APPLY });
   assert.equal(took(grants, 3, APPLY, 'p1', CARD), '');
   grants.grant(4, APPLY, CARD, [{ fileId: 'r1', sha256: SHA }]);
   listeners.removed(4);
@@ -107,20 +112,25 @@ test('only the side panel may grant, and only for the site its tab shows now and
   assert.equal(took(grants, 4, `${APPLY}/form`, 'r1', CARD), SHA, 'for the address the tab showed');
 });
 
-test('a content script gets a file only after the grant, for that card and address, from the top frame, and only the version confirmed', async () => {
+test('a content script gets a file only after the grant, for that card and the address the tab shows, from the top frame, and only the version confirmed', async () => {
   const mod = await load();
   const grants = mod.createUploadGrants();
   const files = desk();
-  const deps = { api, grants, files };
+  let at = APPLY;
+  const deps = { api: { ...api, tabs: { get: async (id) => ({ id, url: at }) } }, grants, files };
   const fetch = { type: mod.RESUME_FILE_FETCH, fileId: 'r1', card: CARD };
   assert.deepEqual(await call(mod, deps, fetch, page(4, APPLY)), { status: 'not_confirmed' });
   grants.grant(4, APPLY, CARD, [{ fileId: 'r1', sha256: SHA }]);
   assert.deepEqual(await call(mod, deps, fetch, page(4, APPLY, 3)), { status: 'forbidden' }, 'a subframe');
   assert.deepEqual(await call(mod, deps, fetch, { ...page(4, APPLY), id: 'another-extension' }), { status: 'forbidden' });
   assert.deepEqual(await call(mod, deps, { ...fetch, card: 'k3x9-a1b2:5' }, page(4, APPLY)), { status: 'not_confirmed' }, 'another card');
-  // 同一个网站里 pushState 跳到下一页：前一页的确认在这一页取不到文件。
-  assert.deepEqual(await call(mod, deps, fetch, page(4, `${APPLY}/step2`)), { status: 'not_confirmed' }, 'after a same-site pushState');
+  // 同一个网站里 pushState 跳到下一页（消息里还是载入时的地址）：前一页的确认在这一页取不到文件，回到前一页也取不到了。
+  at = `${APPLY}/step2`;
+  assert.deepEqual(await call(mod, deps, fetch, page(4, APPLY)), { status: 'not_confirmed' }, 'after a same-site pushState');
+  at = APPLY;
+  assert.deepEqual(await call(mod, deps, fetch, page(4, APPLY)), { status: 'not_confirmed' }, 'and back again');
   assert.deepEqual(files.fetched, [], 'nothing read for any of these');
+  grants.grant(4, APPLY, CARD, [{ fileId: 'r1', sha256: SHA }]);
   // 页面不用再说要哪一版：后台按确认时的那一版给。
   const got = await call(mod, deps, { ...fetch, sha256: OTHER_SHA }, page(4, APPLY));
   assert.deepEqual(got, { status: 'ok', name: '测试用户_简历.pdf', mime: 'application/pdf', kind: 'resume', byteSize: 3,
@@ -259,4 +269,45 @@ test('a read that runs past the worker\'s limit ends in time for the page and do
   assert.equal((await fetch()).status, 'ok', 'tried again without a new yes; the late first read did not use it up');
   assert.deepEqual(await fetch(), { status: 'not_confirmed' });
   assert.equal(mod.FETCH_TIMEOUT_MS < 60000, true, 'shorter than the page waits');
+});
+
+test('once the tab has been at another address, the yes is gone for good, even back on the page it was for', async () => {
+  const mod = await load();
+  const grants = mod.createUploadGrants();
+  const files = desk();
+  const updated = [];
+  let at = APPLY;
+  const tabs = { get: async (id) => ({ id, url: at }), onUpdated: { addListener: (fn) => updated.push(fn) } };
+  const deps = { api: { ...api, tabs }, grants, files };
+  mod.revokeOnNavigation(deps.api, grants);
+  const move = (url) => { at = url; for (const fn of updated) fn(4, { url }); };
+  const fetch = () => call(mod, deps, { type: mod.RESUME_FILE_FETCH, fileId: 'r1', card: CARD }, page(4, APPLY));
+  // 确认以后跳到下一页，再回到原来的地址：旧确认取不到文件。
+  grants.grant(4, APPLY, CARD, [{ fileId: 'r1', sha256: SHA }]);
+  move(`${APPLY}/step2`);
+  move(APPLY);
+  assert.deepEqual(await fetch(), { status: 'not_confirmed' });
+  // 取文件的消息比 tabs.onUpdated 先到：后台取文件时看标签页在哪，不在确认时的地址就作废，回来以后也不再给。
+  grants.grant(4, APPLY, CARD, [{ fileId: 'r1', sha256: SHA }]);
+  at = `${APPLY}/step2`;
+  assert.deepEqual(await fetch(), { status: 'not_confirmed' });
+  at = APPLY;
+  assert.deepEqual(await fetch(), { status: 'not_confirmed' }, 'back again');
+  // 问不到这个标签页（刚关掉）：也不给。
+  grants.grant(4, APPLY, CARD, [{ fileId: 'r1', sha256: SHA }]);
+  tabs.get = async () => { throw new Error('No tab with id: 4'); };
+  assert.deepEqual(await fetch(), { status: 'not_confirmed' });
+  assert.deepEqual(files.fetched, []);
+});
+
+test('a single-page app that moved before the yes gets its files: the worker goes by where the tab is, not where the page loaded', async () => {
+  const mod = await load();
+  const grants = mod.createUploadGrants();
+  const files = desk();
+  // 页面在 APPLY 载入，确认以前 pushState 到了 step2：Chrome 发来的消息里 sender.url 仍是 APPLY，tabs.get 是 step2。
+  const deps = { api: { ...api, tabs: { get: async (id) => ({ id, url: `${APPLY}/step2` }) } }, grants, files };
+  const grant = { type: mod.RESUME_FILES_GRANT, tabId: 4, origin: 'https://jobs.example.test', card: CARD, files: [{ fileId: 'r1', sha256: SHA }] };
+  assert.deepEqual(await call(mod, deps, grant, PANEL), { status: 'ok' });
+  assert.equal((await call(mod, deps, { type: mod.RESUME_FILE_FETCH, fileId: 'r1', card: CARD }, page(4, APPLY))).status, 'ok');
+  assert.deepEqual(files.fetched, ['r1']);
 });

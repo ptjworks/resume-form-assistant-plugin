@@ -1128,6 +1128,9 @@
     const message = { type: "RESUME_PANEL_UPLOAD", action, version: view.version, epoch: view.epoch };
     uploadPending = true;
     renderUpload();
+    // 告诉过后台的那次确认给了哪个标签页；页面没有开始（回绝了，或者这一步出了错），就作废它。
+    let grantedTab = null;
+    let started = false;
     try {
       if (action === "confirm") {
         if (view.phase !== "offer") return;
@@ -1154,16 +1157,20 @@
             toast(granted?.status === "stale" ? "网页已切换，请重新点一键填写。" : "没能开始上传，请重试。");
             return;
           }
+          grantedTab = tab.id;
         }
         message.choices = choices;
       }
       const result = await sendToPage(message);
-      if (!result?.ok) {
-        toast(result?.error || "操作未完成，请重试。");
-        // 页面没有开始：刚才告诉后台的那次确认也作废。
-        if (action === "confirm" && currentTabId) chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_REVOKE", tabId: currentTabId }).catch?.(() => {});
-      }
+      started = Boolean(result?.ok);
+      if (!started) toast(result?.error || "操作未完成，请重试。");
+    } catch {
+      toast("操作未完成，请重试。");
     } finally {
+      // 页面没有开始：刚才告诉后台的那次确认也作废（发给页面时出了错也一样）。
+      if (grantedTab !== null && !started) {
+        Promise.resolve().then(() => chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_REVOKE", tabId: grantedTab })).catch(() => {});
+      }
       uploadPending = false;
       renderUpload();
     }

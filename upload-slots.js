@@ -212,11 +212,15 @@
       const picture = [root, ...root.querySelectorAll?.("[class]") || []].some(el => PICTURE.test(classText(el)));
       const decided = classify({ title, texts: [...rootTexts, ...hintTexts], accept, picture });
       const siteLimit = limitBytes([title, ...rootTexts, ...hintTexts]);
+      // 要中文还是英文简历：和认类别用同一些字、同样的先后：题目说了就按题目，没说再看上传区里的字和提示
+      // （题目写得笼统、提示里写着 English 的也认得出）。
+      const spoken = text => Object.keys(LANGUAGE_WORDS).filter(key => LANGUAGE_WORDS[key].test(text));
+      const titled = spoken(title);
       slots.push({
         input, root, scope: scopeEl, title, accept, picture,
         kind: decided.kind, reason: decided.reason,
         siteLimit, limit: siteLimit === null ? MAX_FILE_BYTES : Math.min(siteLimit, MAX_FILE_BYTES),
-        language: Object.keys(LANGUAGE_WORDS).filter(key => LANGUAGE_WORDS[key].test(title)),
+        language: titled.length ? titled : spoken([...rootTexts, ...hintTexts].join(" ")),
         ...(() => {
           const evidence = fileEvidence({ input, root, scope: scopeEl }, isVisible);
           return { hasFile: Boolean(evidence), fileUnsure: evidence === "text" };
