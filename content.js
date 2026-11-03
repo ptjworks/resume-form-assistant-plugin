@@ -218,7 +218,8 @@
         // `disabled` also covers the controller's pre-read state. Treating that as
         // "busy" deadlocks the native side panel: it cannot send the fill command
         // which performs the desktop reread below. Only an active AI run is busy.
-        busy: state.aiBusy || upload.phase === "running",
+        // 上传那几步（取文件、传、等解析、改回）算上传在忙；到了填写那一步，忙不忙、能不能停照填写自己的。
+        busy: state.aiBusy || uploading,
         phase: button?.textContent || "",
         status: status?.classList.contains("is-visible") ? status.textContent : "",
         statusKind: status?.classList.contains("is-error") ? "error" : "success",
@@ -2334,7 +2335,14 @@
     if (upload.phase === "offer" && location.href !== upload.href) {
       upload.phase = "idle";
       upload.plan = [];
+      releaseUploadCard();
     }
+  }
+
+  // 告诉后台：这张卡片的确认还剩下的都不要了（网页换了地址，或者这次上传结束了）。后台按地址和卡片也会核对，这里是多一道。
+  function releaseUploadCard() {
+    const card = `${upload.epoch}:${upload.version}`;
+    Promise.resolve().then(() => chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_RELEASE", card })).catch(() => {});
   }
 
   // 记下表单现在的样子：每个框的值（比较用）和能写回去的文字（改回用；读不准的控件是 null）。只在这个页面的内存里。
@@ -2422,9 +2430,20 @@
     upload.pending = { href: upload.href, records, at: Date.now(), stopValues };
   }
 
+  // 原来那个框还在网页上、值和记下的一样（框只是暂时对不上，比如分步显示时被藏起来了）：没被改过，不用改回，也不用列出来。
+  // 框已经不在网页上、读不到值的，认不准，照旧当找不到。
+  function uploadUnchanged(record) {
+    try {
+      const now = fillValueSnapshot(record.entry);
+      return now !== null && now === record.snapshot;
+    } catch {
+      return false;
+    }
+  }
+
   // 上次被打断的值，还在这一页、没过期，并且有用户原来填的框被改了：下一次一键填写先改回能改回的（卡片里先说）。分四种：
   // labels 改回（和用户原来填的不一样、和停下那一刻一样：是网站解析改的）；later 不改回（停下以后又变过：可能是用户自己改的，
-  // 也可能是网站后来写的，认不准）；edited 不改回（等解析时用户自己动过）；missed 找不到原来的框。
+  // 也可能是网站后来写的，认不准）；edited 不改回（等解析时用户自己动过）；missed 找不到原来的框、又变过或读不到。
   function pendingRestore() {
     const pending = upload.pending;
     if (!pending || pending.href !== location.href || Date.now() - pending.at > UPLOAD_PENDING_MS) {
@@ -2439,7 +2458,11 @@
     pending.records.forEach((record, index) => {
       if (!record.filled) return;
       const entry = located[index];
-      if (!entry) { missed.push(record.label); return; }
+      if (!entry) {
+        // 找不到原来的框：值没变过（框只是暂时看不见，比如分步显示）就不算，变过或读不到才列出来。
+        if (!uploadUnchanged(record)) missed.push(record.label);
+        return;
+      }
       const now = fillValueSnapshot(entry);
       if (now === record.snapshot) return;
       if (pending.stopValues?.[index] === UPLOAD_EDITED) edited.push(record.label);
@@ -2644,6 +2667,7 @@
     }
     if (location.href !== upload.href) {
       upload.phase = "idle";
+      releaseUploadCard();
       return { ok: false, error: "网页已经变了，请重新点一键填写。" };
     }
     if (action === "cancel") {
@@ -2867,6 +2891,7 @@
       if (!record.filled) continue;
       const entry = located[index];
       if (!entry) {
+        if (uploadUnchanged(record)) continue;
         out.missed.push(record.label);
         continue;
       }
@@ -3151,6 +3176,8 @@
     } finally {
       watcher?.stop();
       files.clear();
+      // 这次上传结束：这张卡片上没取的文件也不要了。
+      releaseUploadCard();
       const slotLines = items.map(uploadLine).filter(Boolean);
       const restoreLines = [
         ...(restored?.restored.length ? [`改回了网站解析改掉的 ${restored.restored.length} 项：${summarizeLabels(restored.restored)}。`] : []),

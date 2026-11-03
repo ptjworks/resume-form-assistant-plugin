@@ -196,7 +196,7 @@ async function page(t, body, { url = "https://app.mokahr.com/campus_apply/exampl
       const offer = (await status()).upload;
       const chosen = choices || offer.slots.filter((slot) => slot.fileId).map((slot) => ({ slot: slot.id, fileId: slot.fileId }));
       const rows = chosen.map((choice) => files.find((file) => file.fileId === choice.fileId)).filter(Boolean);
-      if (rows.length) grants.grant(9, new URL(w.location.href).origin, `${offer.epoch}:${offer.version}`, rows.map((file) => ({ fileId: file.fileId, sha256: file.sha256 })));
+      if (rows.length) grants.grant(9, w.location.href, `${offer.epoch}:${offer.version}`, rows.map((file) => ({ fileId: file.fileId, sha256: file.sha256 })));
       return send({ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: offer.version, epoch: offer.epoch, choices: chosen });
     },
     finished: async () => {
@@ -404,7 +404,7 @@ test("a card is not used once the page has moved on, or when a file is not one t
     choices: [{ slot: "upload-9", fileId: RESUME_FILE.fileId }] });
   assert.deepEqual(refused, { ok: false, error: "选的文件放不进对应的上传框，请重新选。" });
   // 给证件照框选了简历：页面在确认前不知道文件是什么，取到以后按文件本身核对，放不进就不传。
-  p.grants.grant(9, "https://app.mokahr.com", `${third.epoch}:${third.version}`, [{ fileId: RESUME_FILE.fileId, sha256: RESUME_FILE.sha256 }]);
+  p.grants.grant(9, p.w.location.href, `${third.epoch}:${third.version}`, [{ fileId: RESUME_FILE.fileId, sha256: RESUME_FILE.sha256 }]);
   assert.deepEqual(await p.send({ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: third.version, epoch: third.epoch,
     choices: [{ slot: "upload-1", fileId: RESUME_FILE.fileId }] }), { ok: true });
   const last = await p.finished();
@@ -516,7 +516,7 @@ test("on a platform that parses, a resume that never reached the site stops the 
   await p.send({ type: "RESUME_PANEL_FILL" });
   const offer = (await p.status()).upload;
   // 后台只给证件照（简历没有确认）：简历取不到，照片取到了也不传。
-  p.grants.grant(9, "https://app.mokahr.com", `${offer.epoch}:${offer.version}`, [{ fileId: PHOTO_FILE.fileId, sha256: PHOTO_FILE.sha256 }]);
+  p.grants.grant(9, p.w.location.href, `${offer.epoch}:${offer.version}`, [{ fileId: PHOTO_FILE.fileId, sha256: PHOTO_FILE.sha256 }]);
   assert.deepEqual(await p.send({ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: offer.version, epoch: offer.epoch,
     choices: [{ slot: "upload-0", fileId: RESUME_FILE.fileId }, { slot: "upload-1", fileId: PHOTO_FILE.fileId }] }), { ok: true });
   const done = await p.finished();
@@ -734,7 +734,7 @@ test("on a platform that parses, a stop before the resume reaches the site keeps
   await p.send({ type: "RESUME_PANEL_FILL" });
   const offer = (await p.status()).upload;
   // 后台只给证件照（简历没有确认）：简历取不到，停下。
-  p.grants.grant(9, "https://app.mokahr.com", `${offer.epoch}:${offer.version}`, [{ fileId: PHOTO_FILE.fileId, sha256: PHOTO_FILE.sha256 }]);
+  p.grants.grant(9, p.w.location.href, `${offer.epoch}:${offer.version}`, [{ fileId: PHOTO_FILE.fileId, sha256: PHOTO_FILE.sha256 }]);
   await p.send({ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: offer.version, epoch: offer.epoch,
     choices: [{ slot: "upload-0", fileId: RESUME_FILE.fileId }, { slot: "upload-1", fileId: PHOTO_FILE.fileId }] });
   await p.finished();
@@ -1046,4 +1046,99 @@ test("a plan the worker turns down for this sender is not called a desktop that 
   assert.deepEqual(now.upload.lines.slice(0, 2), ["简历附件：插件没能处理这个上传框，没有上传，请自己上传。", "证件照：插件没能处理这个上传框，没有上传，请自己上传。"]);
   assert.equal(now.upload.lines.some((line) => line.includes("连不上")), false);
   assert.match(p.ui.diag.value, /没传的原因 plan_forbidden 3；问桌面 forbidden；/);
+});
+
+test("a page that moves on, or whose upload ends, gives back what is left of its yes", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const offer = (await p.status()).upload;
+  const card = `${offer.epoch}:${offer.version}`;
+  const href = p.w.location.href;
+  p.grants.grant(9, href, card, [{ fileId: RESUME_FILE.fileId, sha256: RESUME_FILE.sha256 }]);
+  // 单页应用在同一个网站里换了地址：页面一发现卡片过期，就告诉后台这张卡片的确认不要了。
+  p.w.history.pushState({}, "", "/campus_apply/example/2");
+  await p.status();
+  await settle();
+  assert.ok(p.seen.messages.some((message) => message.includes("DESKTOP_RESUME_FILES_RELEASE")));
+  assert.equal(p.grants.take(9, href, RESUME_FILE.fileId, card), null);
+  // 上传结束：侧栏确认过、页面没用上的文件（证件照框选了不传）也作废。
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const next = (await p.status()).upload;
+  const nextCard = `${next.epoch}:${next.version}`;
+  p.grants.grant(9, p.w.location.href, nextCard, [RESUME_FILE, PHOTO_FILE].map((file) => ({ fileId: file.fileId, sha256: file.sha256 })));
+  await p.send({ type: "RESUME_PANEL_UPLOAD", action: "confirm", version: next.version, epoch: next.epoch,
+    choices: [{ slot: "upload-0", fileId: RESUME_FILE.fileId }] });
+  await p.finished();
+  await Promise.all(p.fills);
+  await settle();
+  assert.equal(p.w.document.getElementById("resume").files[0].name, RESUME_FILE.name);
+  assert.equal(p.grants.take(9, p.w.location.href, PHOTO_FILE.fileId, nextCard), null, "the unused yes for the photo is gone");
+});
+
+test("a filled box that is only out of sight now, its value unchanged, is not listed as one that could not be put back", async (t) => {
+  const form = FORM + row("city", "期望城市", `<input id="city" value="北京">`);
+  const p = await page(t, form, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  spinAfterResume(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  await p.finished();
+  p.w.document.getElementById("spin").remove();
+  // 网站分步显示：期望城市这一题现在藏起来了，值没变。
+  p.w.document.getElementById("city").closest(".form-item").hidden = true;
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  const done = await p.finished();
+  await Promise.all(p.fills);
+  assert.equal(p.value("hobby"), "看书");
+  assert.equal(p.value("city"), "北京");
+  assert.equal(done.upload.lines.some((line) => line.includes("期望城市")), false, done.upload.lines.join(" | "));
+  assert.match(p.ui.diag.value, /改回 1，没改回 0，/);
+});
+
+test("while the fill runs inside an upload, busy and stop are the fill's own", async (t) => {
+  const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  const hooks = p.w.ResumeProHighlightTest;
+  const seen = [];
+  const status = () => {
+    let reply = null;
+    p.w.__panel({ type: "RESUME_PANEL_STATUS" }, { id: "test-extension" }, (value) => { reply = value; });
+    return reply;
+  };
+  // 填写写到毕业院校时（填写那一步）：看填写自己在忙、和它不忙时侧栏收到的样子。
+  p.w.document.getElementById("school").addEventListener("input", () => {
+    const busy = status();
+    hooks.setAiBusy(false);
+    const idle = status();
+    hooks.setAiBusy(true);
+    seen.push({ busy: busy.busy, label: busy.cancelLabel, idle: idle.busy, upload: busy.upload?.phase });
+  }, { once: true });
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  await p.finished();
+  await Promise.all(p.fills);
+  assert.deepEqual(seen, [{ busy: true, label: "", idle: false, upload: "running" }]);
+});
+
+test("after a stop, a filled box only out of sight with its value unchanged is not listed next time either", async (t) => {
+  const form = FORM + row("city", "期望城市", `<input id="city" value="北京">`);
+  const p = await page(t, form, { answers: { "毕业院校": "示例大学" } });
+  // 网站一直在转圈、没改任何已填的框：等到上限停下，记下的值留到下一次。
+  fakeSite(p, { parse: false });
+  spinAfterResume(p);
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  await p.confirm();
+  await p.finished();
+  p.w.document.getElementById("spin").remove();
+  p.w.document.getElementById("city").closest(".form-item").hidden = true;
+  // 再点一键填写：没有要改回的，期望城市只是藏起来了，不列出来。
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const offer = (await p.status()).upload;
+  assert.equal(offer.restore, null);
+  await p.confirm();
+  const done = await p.finished();
+  await Promise.all(p.fills);
+  assert.equal(done.upload.lines.some((line) => line.includes("期望城市")), false, done.upload.lines.join(" | "));
 });
