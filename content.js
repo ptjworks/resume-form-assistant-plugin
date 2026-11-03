@@ -88,6 +88,8 @@
     control_disabled: "字段不可操作",
     invalid_date: "日期格式或范围不符",
     ai_conflict: "几批 AI 回答对不上",
+    too_many_items: "AI 给的资料项太多",
+    region_unavailable: "地区数据没加载",
     too_long: "超出字数上限",
     range_incomplete: "起止日期缺一头",
     format_mismatch: "只能填数字",

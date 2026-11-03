@@ -225,51 +225,47 @@ function promptBytes(fields, candidates) {
   return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates))).length;
 }
 
-// 每批都配整份资料目录；目录太大时这一批分几次发，每次带目录的一部分（编号是整份目录里的）。
+// 整份资料目录装得下时，按题目分批，每批带整份目录。装不下时（资料项太多），每批题目最多占一半预算，
+// 目录先放和这批题目相关的项、放到装不下为止（relevantEntries）：一批只问一次，请求数只随题目的批数增长。编号仍是整份目录里的。
 function makePromptBatches(formFields, entries) {
   const batches = [];
   let skippedOversized = 0;
-  let skippedNoContext = 0;
+  if (!entries.length) return { batches, skippedOversized, skippedNoContext: formFields.length };
+  const whole = promptBytes([], entries) <= AI_USER_BUDGET;
+  const roomy = fields => (whole ? promptBytes(fields, entries) <= AI_USER_BUDGET : promptBytes(fields, []) <= AI_USER_BUDGET / 2);
   let current = [];
-  const emit = fields => {
-    if (!fields.length) return;
-    const candidates = entries;
-    if (!candidates.length) { skippedNoContext += fields.length; return; }
-    if (promptBytes(fields, candidates) <= AI_USER_BUDGET) {
-      batches.push({ fields, candidates });
-      return;
-    }
-    // One field can still exceed the budget if the resume has many large candidates.
-    // Send subsets of candidates for that field; never truncate JSON or an individual value.
-    let subset = [];
-    let emitted = false;
-    const skippedBefore = skippedOversized;
-    for (const candidate of candidates) {
-      if (promptBytes(fields, [...subset, candidate]) <= AI_USER_BUDGET) {
-        subset.push(candidate);
-      } else {
-        if (subset.length) { batches.push({ fields, candidates: subset }); emitted = true; }
-        subset = [];
-        if (promptBytes(fields, [candidate]) <= AI_USER_BUDGET) subset.push(candidate);
-        else skippedOversized += 1;
-      }
-    }
-    if (subset.length) { batches.push({ fields, candidates: subset }); emitted = true; }
-    if (!emitted && skippedOversized === skippedBefore) skippedOversized += fields.length;
+  const flush = () => {
+    if (!current.length) return;
+    // 一题本身太大、连一项资料都放不下的，不发。
+    const candidates = promptBytes(current, entries) <= AI_USER_BUDGET ? entries : relevantEntries(current, entries);
+    if (candidates.length) batches.push({ fields: current, candidates });
+    else skippedOversized += current.length;
+    current = [];
   };
   for (const field of formFields) {
-    const next = [...current, field];
-    const candidates = entries;
-    if (promptBytes(next, candidates) <= AI_USER_BUDGET) {
-      current = next;
-    } else {
-      emit(current);
-      current = [];
-      emit([field]);
-    }
+    if (current.length && !roomy([...current, field])) flush();
+    current.push(field);
   }
-  emit(current);
-  return { batches, skippedOversized, skippedNoContext };
+  flush();
+  return { batches, skippedOversized, skippedNoContext: 0 };
+}
+
+// 目录装不下时给一批题目挑资料：字段名、分组、别的叫法和题目有两个字（英文一个词）相同的先放，其余照原来的顺序，放到装不下为止。
+// 发出去的仍按目录原来的顺序。
+function relevantEntries(fields, entries) {
+  const asked = new Set(topicWords(fields.map(field => [field.label, field.placeholder, field.group].filter(Boolean).join(" ")).join(" ")));
+  const related = entry => topicWords([entry.key, entry.group, ...(entry.aka || [])].join(" ")).some(word => asked.has(word));
+  const wire = entry => new TextEncoder().encode(JSON.stringify(JSON.stringify(entry))).length - 1;
+  const picked = new Set();
+  let bytes = promptBytes(fields, []);
+  for (const entry of [...entries.filter(related), ...entries.filter(entry => !related(entry))]) {
+    if (bytes + wire(entry) > AI_USER_BUDGET) continue;
+    picked.add(entry);
+    bytes += wire(entry);
+  }
+  const chosen = entries.filter(entry => picked.has(entry));
+  while (chosen.length && promptBytes(fields, chosen) > AI_USER_BUDGET) chosen.pop();
+  return chosen;
 }
 
 const BATCH_LOCAL_FAILURES = new Set(["http", "bad_response", "input_too_large", "response_too_large", "secret_in_prompt"]);
@@ -342,7 +338,7 @@ async function handleAiFill(message, controller = new AbortController()) {
   const diagnostics = {
     ruleMatches: ruleMatches.length, aiFields: remainingFormFields.length,
     candidateFields: selectedCandidates.length, resumeFields: resumeFields.length,
-    apiMs: 0, promptBytes: 0, errorCode: "none", aiMatches: 0,
+    apiMs: 0, promptBytes: 0, requests: 0, errorCode: "none", aiMatches: 0,
     skippedSecret: incomingFormFields.length - formFields.length + incomingResumeFields.length - resumeFields.length,
     secretFormFields,
     skippedOversized: 0, skippedNoContext: 0,
@@ -377,6 +373,7 @@ async function handleAiFill(message, controller = new AbortController()) {
         break;
       }
       if (maxCalls !== undefined) diagnostics.calls += 1;
+      diagnostics.requests += 1;
       const user = buildUserPrompt(batch.fields, batch.candidates);
       diagnostics.promptBytes += new TextEncoder().encode(user).length;
       const result = await sendToDesktop({ purpose: "fill", tier, system: AI_SYSTEM_PROMPT, user, signal: controller.signal });
@@ -481,8 +478,8 @@ function buildCatalog(resumeFields) {
   return { entries, values, items };
 }
 
-// 字段名最多留 200 个字：本网站回答、补充字段的字段名是题目原文，一条极长的会让它所在的那批超出预算、整次报「内容太多」。
-const CATALOG_KEY_LIMIT = 200;
+// 字段名最多留 60 个字：本网站回答、补充字段的字段名是题目原文，可能很长；前 60 个字足够认出是哪道题，目录也不容易超出预算。
+const CATALOG_KEY_LIMIT = 60;
 function shortKey(key) {
   const text = String(key ?? "");
   return text.length > CATALOG_KEY_LIMIT ? `${text.slice(0, CATALOG_KEY_LIMIT)}…` : text;
@@ -509,7 +506,13 @@ function latestSpans(fields) {
 }
 
 const DATE_PARTS = ["year", "month", "day"];
-const DATE_PART_FIELD = /年|月|日|时间|date|year|month|day/i;
+// 问年月日某一部分的题：年份、月份、日期、年月、几月几号、出生年、毕业月……，英文的 year、month、day；题目只写一个「年」「月」「日」的也算。
+// 「年薪」「月薪」「年龄」「年级」「工作年限」和单说「时间」都不算。
+const DATE_PART_WORDS = /年份|月份|日期|年月|[年月]日|几月|几号|几日|(?:出生|毕业|入学|入职|离职)[年月日]|\b(?:year|month|day)\b/i;
+function asksDatePart(field) {
+  return /^\s*[年月日]\s*$/.test(String(field?.label ?? ""))
+    || DATE_PART_WORDS.test([field?.label, field?.placeholder, field?.name, field?.idAttr].filter(Boolean).join(" "));
+}
 const REF_TOKEN = /^(r\d+)(?:\.(year|month|day))?$/;
 
 // 选项读得到的下拉、单选，带上 fits：哪几项资料（或资料里日期的年、月、日）填得进某个选项，只给编号，不说落到哪一项。
@@ -522,13 +525,15 @@ function promptFields(fields, catalog) {
     const choice = (field.inputType === "select" || field.inputType === "radio") && field.cascadeGroup === undefined
       && field.cascade !== true && helpers.hasRealOptions(field);
     if (!choice) { sent.push(field); continue; }
-    const parts = DATE_PART_FIELD.test([field.label, field.placeholder, field.name, field.idAttr].filter(Boolean).join(" ")) ? DATE_PARTS : [];
     // 选项全是数字（年份、月份、几天）时只认数字相同的整项（单位不算，「5」对「5天」）：靠「包含」会把证件号里的「2000」、
     // 手机号里的「12」也算进来。页面上也要选得上（isValueValidForField）。
     const texts = field.options.filter(option => !helpers.isPlaceholderOption(option))
       .map(option => helpers.normalizeText(typeof option === "object" && option !== null ? option.text ?? option.value : option)).filter(Boolean);
     const bare = text => /^0*(\d{1,4})[年月日号天]?$/.exec(text)?.[1];
     const numbers = texts.length > 0 && texts.every(bare) ? new Set(texts.map(bare)) : null;
+    // 年、月、日只给问它们的题，和题目说的是时间、选项全是数字的下拉（「毕业时间」下面列的是年份）；「每周实习天数」这类不算。
+    const timeish = /时间|年度|\b(?:date|time)\b/i.test([field.label, field.placeholder, field.name, field.idAttr].filter(Boolean).join(" "));
+    const parts = asksDatePart(field) || (numbers && timeish) ? DATE_PARTS : [];
     const fits = catalog.entries.flatMap(({ ref }) => {
       const value = catalog.values.get(ref);
       // 长段文字落不到选项上，不必一项一项比。
@@ -556,7 +561,9 @@ function refMatches(payload, fields, catalog) {
     if (!item || typeof item !== "object" || item.value !== undefined) return [];
     const field = byId.get(String(item.fieldId ?? "").trim());
     const list = Array.isArray(item.refs) ? item.refs : item.ref === undefined ? [] : [item.ref];
-    if (!field || !list.length || list.length > 8) return [];
+    if (!field || !list.length) return [];
+    // 多选最多 20 项，别的题最多 8 项：再多的不填，报原因。
+    if (list.length > (field.multiple === true ? 20 : 8)) return [{ fieldId: field.fieldId, value: "", blocked: "too_many_items" }];
     // 日期控件要整个日期：AI 多给了年、月、日也按整项填，一段起止由页面按题目取开始或结束。
     const whole = isDateControl(field);
     const part = DATE_PARTS.includes(item.part) && list.length === 1 && !whole ? item.part : "";
@@ -565,9 +572,9 @@ function refMatches(payload, fields, catalog) {
       if (whole) return token.replace(/\.(?:year|month|day)$/, "");
       return part && !token.includes(".") ? `${token}.${part}` : token;
     });
-    // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框收到的整条不要。
+    // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框（「期望年薪」）收到的整条不要。
     const parted = tokens.some(token => REF_TOKEN.exec(token)?.[2]);
-    if (parted && !field.fits && !DATE_PART_FIELD.test([field.label, field.placeholder, field.name, field.idAttr].filter(Boolean).join(" "))) return [];
+    if (parted && !field.fits && !asksDatePart(field)) return [];
     if (field.fits && tokens.some(token => !field.fits.includes(token))) return [];
     if (isTextAnswer(field) && !answersOpinion(field, tokens, catalog)) return [];
     const values = tokens.map(token => refValue(token, field, catalog));
@@ -578,6 +585,9 @@ function refMatches(payload, fields, catalog) {
       const date = pickerDate(field, joined);
       return [date ? { fieldId: field.fieldId, value: date } : { fieldId: field.fieldId, value: "", blocked: "invalid_date" }];
     }
+    // 级联、联动下拉要靠地区数据截地址；worker 没加载到它时不交整段地址，报原因。
+    const region = field.cascadeGroup !== undefined || field.cascade === true;
+    if (region && !globalThis.ResumeProRegions?.resolve) return [{ fieldId: field.fieldId, value: "", blocked: "region_unavailable" }];
     const value = field.cascadeGroup !== undefined ? levelRegion(field, joined) : field.cascade === true ? regionPrefix(joined) : joined;
     return value ? [{ fieldId: field.fieldId, value }] : [];
   });
@@ -635,16 +645,27 @@ function pickerDate(field, value) {
   if (helpers.isPresentDate(picked)) return picked;
   const day = field.pickerInputType === "month" ? "" : helpers.normalizeDateValue(picked, "date");
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+  // 原生的 date 框只收到日的，只到月的浏览器不收，不交给它。日期控件（Element、antd 这类）收到年月时由填写层补成 1 日。
+  if (field.inputType === "date") return "";
   const month = helpers.normalizeDateValue(picked, "month");
   return /^\d{4}-\d{2}$/.test(month) ? month : "";
 }
 
 // 级联题和联动下拉的各级拿到一整段地址（「广东省深圳市南山区科苑路 8 号」）时，只留前面认得出的地区（至少到市）：
-// 街道门牌级联里选不了，联动下拉按「包含」选时也少一些误选。
+// 街道门牌级联里选不了，联动下拉按「包含」选时也少一些误选。用「/」分开的逐段核对，只留前面认得出的几段
+// （「广东省/深圳市/南山区/科苑路8号」→「广东省/深圳市/南山区」）；一段都认不出的（专业类别这类级联）原样给。
 function regionPrefix(value) {
   const regions = globalThis.ResumeProRegions;
   const text = String(value).trim();
-  if (!regions?.resolve || text.includes("/") || regions.resolve(text)) return text;
+  if (!regions?.resolve || regions.resolve(text)) return text;
+  if (text.includes("/")) {
+    const segments = text.split(/\s*\/\s*/);
+    for (let count = segments.length - 1; count >= 1; count -= 1) {
+      const head = segments.slice(0, count).join("/");
+      if (regions.resolve(head)) return head;
+    }
+    return text;
+  }
   for (let end = Math.min(text.length - 1, 40); end >= 4; end -= 1) {
     const head = text.slice(0, end);
     if (regions.resolve(head)?.path.filter(part => !part.placeholder).length >= 2) return head;

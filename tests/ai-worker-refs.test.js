@@ -17,7 +17,7 @@ const regions = (() => {
 })();
 
 // respond(message, catalog) 返回 AI 的回答（数组或文字）；legacy 接着跑评测用的旧发值方式（scripts/eval-fill-legacy.js）。
-function worker(respond = () => [], { legacy = false } = {}) {
+function worker(respond = () => [], { legacy = false, withRegions = true } = {}) {
   const calls = [];
   let sequence = 0;
   const context = vm.createContext({
@@ -34,6 +34,7 @@ function worker(respond = () => [], { legacy = false } = {}) {
       queueMicrotask(() => context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId, reply: { ok: true, text } } }));
     }
   };
+  if (!withRegions) delete context.ResumeProRegions;
   vm.runInContext(source, context);
   if (legacy) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js"), "utf8"), context);
   return { calls, run: async (input) => JSON.parse(JSON.stringify(await context.handleAiFill(input))) };
@@ -172,6 +173,17 @@ test("a date picker gets the end the question asks for, written the way pickers 
   assert.equal(valueOf(result, "until"), "至今");
 });
 
+test("a native date box takes only a whole day; a date picker takes a month and leaves the day to the page", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "native", ref: catalog[0].ref }, { fieldId: "picker", ref: catalog[0].ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "native", label: "入学日期", inputType: "date", options: [] },
+      { fieldId: "picker", label: "入学日期", inputType: "date-picker", pickerInputType: "date", options: [] }],
+    resumeFields: [{ group: "教育经历", key: "入学时间", value: "2019.09" }]
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches.find((match) => match.fieldId === "native"))), { fieldId: "native", value: "", blocked: "invalid_date" });
+  assert.equal(valueOf(result, "picker"), "2019-09");
+});
+
 test("a date picker given an item that is not a date reports a bad date instead of typing it in", async () => {
   const env = worker((message, catalog) => [{ fieldId: "start", ref: catalog[0].ref }]);
   const result = await env.run({
@@ -193,15 +205,30 @@ test("a date picker given an item that is not a date reports a bad date instead 
 });
 
 test("a text box takes no year, month or day of an item; questions about them and selects with fits do", async () => {
-  const env = worker((message, catalog) => [
-    { fieldId: "school", ref: catalog[0].ref, part: "year" }, { fieldId: "year", ref: catalog[0].ref, part: "year" }
-  ]);
+  const env = worker((message, catalog) => ["school", "year", "salary", "monthly", "when"].map((fieldId) => ({ fieldId, ref: catalog[0].ref, part: "year" })));
   const result = await env.run({
-    formFields: [{ fieldId: "school", label: "毕业院校" }, { fieldId: "year", label: "毕业年份" }],
+    formFields: [{ fieldId: "school", label: "毕业院校" }, { fieldId: "year", label: "毕业年份" },
+      // 「年薪」「月薪」里有年、月，单说「时间」也不是问年月日的某一部分。
+      { fieldId: "salary", label: "期望年薪" }, { fieldId: "monthly", label: "Monthly salary" }, { fieldId: "when", label: "到岗时间" }],
     resumeFields: [{ group: "教育经历", key: "教育经历1-时间", value: "2019.09-2023.06" }]
   });
   assert.equal(valueOf(result, "school"), undefined);
   assert.equal(valueOf(result, "year"), "2023");
+  assert.equal(valueOf(result, "salary"), undefined);
+  assert.equal(valueOf(result, "monthly"), undefined);
+  assert.equal(valueOf(result, "when"), undefined);
+});
+
+test("a select of years under a question about a time takes the year of a span; a select of day counts does not", async () => {
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "grad", label: "毕业时间", inputType: "select", options: ["2023", "2024", "2025"] },
+      { fieldId: "days", label: "每周实习天数", inputType: "select", options: ["3", "4", "5"] }],
+    resumeFields: [{ group: "教育经历", key: "教育经历1-时间", value: "2019.09-2023.06" }, { group: "基本信息", key: "出生日期", value: "2000-03-17" }]
+  });
+  const fields = fieldsOf(env.calls[0]);
+  assert.deepEqual(fields.find((field) => field.fieldId === "grad").fits, ["r1.year"]);
+  assert.equal(fields.some((field) => field.fieldId === "days"), false, "no item fits a day count");
 });
 
 test("a question about motives or plans takes only an item about the same thing, saved answers included", async () => {
@@ -343,6 +370,13 @@ test("the old value prompt lives only in the eval script, which replaces handleA
   assert.equal(refOf(env.calls[0].user, "学校"), undefined, "no catalog in the old prompt");
 });
 
+test("every script the worker imports is packed, the region data included", async () => {
+  const { PLUGIN_ARCHIVE_OPERANDS } = await import(pathToFileURL(path.join(__dirname, "..", "desktop", "scripts", "pack-plugin.js")).href);
+  const imported = [...source.match(/importScripts\(([^)]*)\)/)[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(imported.includes("region-data.js"));
+  for (const file of imported) assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes(file), `${file} is packed`);
+});
+
 test("the shipped worker has no old value prompt and no switch, and the eval script is not packed", async () => {
   assert.doesNotMatch(source, /ResumeProEvalValuePrompt|LEGACY_SYSTEM_PROMPT|buildLegacyUserPrompt|应该填写什么值/);
   assert.equal("selectResumeCandidates" in helpers, false);
@@ -388,6 +422,16 @@ test("a school name written with other punctuation or spaces in the key is still
   assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "实习经历1-公司"]);
 });
 
+test("an edited school name written two ways in two keys of one entry still gets one number", async () => {
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }],
+    resumeFields: [{ group: "教育经历", key: "旧虚构学院（南校区）教育经历-学校", value: "新虚构学院" },
+      { group: "教育经历", key: "旧虚构学院(南校区) 教育经历-专业", value: "虚构专业" }]
+  });
+  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "教育经历1-专业"]);
+});
+
 test("a key in an experience group that starts with a school name is renamed whatever label follows", async () => {
   const env = worker();
   await env.run({
@@ -417,6 +461,43 @@ test("the catalog names the latest of several spans in a group and the other nam
   assert.deepEqual(entry("现居住地").aka, ["现住址", "居住地址", "通讯地址"]);
 });
 
+test("a cascade without the region data in the worker reports it instead of taking a whole address", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "city", ref: catalog[0].ref }], { withRegions: false });
+  const result = await env.run({
+    formFields: [{ fieldId: "city", label: "现居住城市", inputType: "select", cascade: true, options: [] }],
+    resumeFields: [{ group: "户籍与地区", key: "现居住地", value: "广东省深圳市南山区粤海街道科苑路 8 号" }]
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "city", value: "", blocked: "region_unavailable" }]);
+});
+
+test("a path split by slashes keeps only the places it can read, and other paths go as they are", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "city", ref: catalog[0].ref }, { fieldId: "major", ref: catalog[1].ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "city", label: "现居住城市", inputType: "select", cascade: true, options: [] },
+      { fieldId: "major", label: "专业类别", inputType: "select", cascade: true, options: [] }],
+    resumeFields: [{ group: "户籍与地区", key: "现居住地", value: "广东省/深圳市/南山区/科苑路8号" }, { group: "教育经历", key: "专业类别", value: "工学/计算机类/软件工程" }]
+  });
+  assert.equal(valueOf(result, "city"), "广东省/深圳市/南山区");
+  assert.equal(valueOf(result, "major"), "工学/计算机类/软件工程");
+});
+
+test("more items than a field can take are not filled and the reason is kept", async () => {
+  const resume = Array.from({ length: 22 }, (_, i) => ({ group: "技能", key: `技能${i}`, value: `技能项${i}` }));
+  const env = worker((message, catalog) => [
+    { fieldId: "skills", refs: catalog.slice(0, 21).map((entry) => entry.ref) }, { fieldId: "some", refs: catalog.slice(0, 20).map((entry) => entry.ref) },
+    { fieldId: "text", refs: catalog.slice(0, 9).map((entry) => entry.ref) }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "skills", label: "掌握的技能", inputType: "select", multiple: true, options: [] },
+      { fieldId: "some", label: "其他技能", inputType: "select", multiple: true, options: [] }, { fieldId: "text", label: "技能和证书" }],
+    resumeFields: resume
+  });
+  const byId = Object.fromEntries(JSON.parse(JSON.stringify(result.matches)).map((match) => [match.fieldId, match]));
+  assert.deepEqual(byId.skills, { fieldId: "skills", value: "", blocked: "too_many_items" });
+  assert.equal(byId.some.value.split("、").length, 20);
+  assert.deepEqual(byId.text, { fieldId: "text", value: "", blocked: "too_many_items" });
+});
+
 test("a cascade keeps the region at the head of a whole address, and a level of linked selects gets only its own place", async () => {
   const env = worker((message, catalog) => ["city", "text", "province", "town", "district"].map((fieldId) => ({ fieldId, ref: catalog[0].ref })));
   const result = await env.run({
@@ -444,7 +525,7 @@ test("a very long saved question is cut in the catalog, so it does not push its 
   assert.equal(result.diagnostics.skippedOversized, 0);
   assert.equal(result.warning, "");
   assert.equal(valueOf(result, "school"), "虚构大学");
-  assert.equal(catalogOf(env.calls[0].user)[0].key.length, 201);
+  assert.equal(catalogOf(env.calls[0].user)[0].key.length, 61);
 });
 
 test("computer levels and English yes or no are the same option in other words", () => {

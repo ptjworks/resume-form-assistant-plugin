@@ -10,7 +10,7 @@
 // 真实模型（会产生费用，不进 CI）：Key 只从环境变量读，用 1Password 注入，不出现在命令行和结果里：
 //   op-dev run --env-file <只写 RESUME_PRO_EVAL_API_KEY=op://… 的文件> -- node scripts/eval-fill.mjs \
 //     --base-url https://host/v1 --model name --confirm-paid [--runs 3] [--modes keys,values] [--out result.json]
-//   --base-url 只收 https；本机调试的 http 服务另加 --allow-http。
+//   --base-url 只收 https；本机（localhost、127.0.0.1、::1）调试的 http 服务另加 --allow-http。
 // 结果文件只有每题的结论（对、错、没填）、计数、耗时和字节数；不含模型原文。
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -192,10 +192,12 @@ export function mockModel(kind) {
   return async () => ({ ok: true, text: "[]" });
 }
 
+// http 只在 --allow-http 时、而且只发到本机（localhost、127.0.0.1、::1）：Key 在请求头里，不能明文出本机。
 export function baseUrlAllowed(baseUrl, allowHttp = false) {
   let url;
   try { url = new URL(baseUrl); } catch { return false; }
-  return url.protocol === "https:" || (allowHttp && url.protocol === "http:");
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  return url.protocol === "https:" || (allowHttp && url.protocol === "http:" && local);
 }
 
 // OpenAI 兼容接口，和桌面发的同形：system + user，temperature 0，非流式。OpenCode 要带稳定的 x-opencode-session。
@@ -239,7 +241,7 @@ async function main(argv) {
     }
     // Key 放在请求头里：只发到 https。本机调试的 http 服务另加 --allow-http。
     if (!baseUrlAllowed(baseUrl, argv.includes("--allow-http"))) {
-      console.error("--base-url 要用 https（本机调试的 http 服务加 --allow-http）。");
+      console.error("--base-url 要用 https（本机 localhost、127.0.0.1、::1 上的 http 服务加 --allow-http）。");
       process.exit(2);
     }
     if (!argv.includes("--confirm-paid")) {

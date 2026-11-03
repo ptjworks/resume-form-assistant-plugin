@@ -65,6 +65,9 @@ test("the key goes only to https unless http is asked for by name", async () => 
   assert.equal(baseUrlAllowed("https://api.example.test/v1"), true);
   assert.equal(baseUrlAllowed("http://api.example.test/v1"), false);
   assert.equal(baseUrlAllowed("http://127.0.0.1:8080/v1", true), true);
+  assert.equal(baseUrlAllowed("http://localhost:8080/v1", true), true);
+  assert.equal(baseUrlAllowed("http://[::1]:8080/v1", true), true);
+  assert.equal(baseUrlAllowed("http://api.example.test/v1", true), false, "http leaves this machine only never");
   assert.equal(baseUrlAllowed("ftp://api.example.test"), false);
   assert.equal(baseUrlAllowed("not a url"), false);
 });

@@ -1075,7 +1075,7 @@
       for (const label of labels) {
         const at = key.indexOf(label);
         if (at >= 1 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) {
-          return `${label}${numberOf(group, label, key.slice(0, at))}${key.slice(at + label.length)}`;
+          return `${label}${numberOf(group, label, looseText(key.slice(0, at)))}${key.slice(at + label.length)}`;
         }
       }
       return key;
