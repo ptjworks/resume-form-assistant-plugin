@@ -31,7 +31,7 @@
   const SEMANTIC_KEYWORDS = FIELD_SEMANTICS.map((item) => ({ type: item.type, keywords: item.keywords.map(normalizeText) }));
   // 表里没有、但看得出是别的号码的简历字段名：不是手机也不是证件号，不按值去猜。
   const OTHER_NUMBER_KEY = /微信|wechat|qq|学号|学生证|工号|准考证|考生号|报名号|学籍|证书|编号|卡号|账号|帐号|邮编|邮政编码/;
-  // 字段名认不出、只能按值猜手机和证件号时用（isResumeFieldMatch）。
+  // 字段名认不出、只能按值猜手机和证件号时用（isResumeFieldMatch）；核对手机和证件号的值时也拿来互相排除（isValueValidForField）。
   const MOBILE_VALUE = /^(\+?86)?1[3-9]\d{9}$/;
   const CN_ID_VALUE = /^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dxX]$/;
 
@@ -194,16 +194,15 @@
 
   // 只看字段自己的文字：group 是所属区块（「联系方式」「家庭成员」），会把「地址」「QQ」也带成电话。
   // 区块只用来分清是谁的字段（personScope）。
+  // 以题目为准：先只看 label 和 ariaLabel，认不出再看 placeholder，最后才看 name 和 id。
+  // 几样拼在一起按 FIELD_SEMANTICS 的顺序找，题目写「身份证号码」、name 是 mobile 的框会认成电话（排在前面）。
   function inferFieldSemantic(field) {
-    const haystack = normalizeText([
-      field?.label,
-      field?.placeholder,
-      field?.name,
-      field?.idAttr,
-      field?.ariaLabel
-    ].filter(Boolean).join(" "));
-
-    return SEMANTIC_KEYWORDS.find((item) => item.keywords.some((keyword) => haystack.includes(keyword)))?.type || "";
+    for (const parts of [[field?.label, field?.ariaLabel], [field?.placeholder], [field?.name, field?.idAttr]]) {
+      const haystack = normalizeText(parts.filter(Boolean).join(" "));
+      const type = haystack && SEMANTIC_KEYWORDS.find((item) => item.keywords.some((keyword) => haystack.includes(keyword)))?.type;
+      if (type) return type;
+    }
+    return "";
   }
 
   // 简历字段名是哪一类：先查 FIELD_SEMANTICS，再认 DOB 这类缩写（整个名字才算，Adobe 不算）和别的号码。
@@ -705,19 +704,23 @@
       }
     }
 
+    // 手机号和纯数字的身份证号光看位数分不开：手机框不收像 18 位身份证号的，证件号码框不收像大陆手机号的，
+    // 本地认错了框、AI 把两个值对调了都在这里拦下。
+    const compact = text.replace(/[\s-]/g, "");
+
     switch (semantic) {
       case "pinyin":
         return /^[A-Za-z\s]+$/.test(text);
       case "email":
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
       case "phone":
-        return /^[+\d][\d\s-]{6,}$/.test(text);
+        return /^[+\d][\d\s-]{6,}$/.test(text) && !CN_ID_VALUE.test(compact);
       case "birth_date":
         return /(\d{4}[-/.年]\d{1,2}([-/.\月]\d{1,2}日?)?)/.test(text);
       case "gender":
         return /(男|女|male|female)/i.test(text);
       case "id_number":
-        return /^[0-9xX]{8,18}$/.test(text.replace(/\s/g, ""));
+        return /^[0-9xX]{8,18}$/.test(text.replace(/\s/g, "")) && !MOBILE_VALUE.test(compact);
       case "name":
         return text.length <= 20 && !/@/.test(text) && !/\d{5,}/.test(text);
       case "hometown":
