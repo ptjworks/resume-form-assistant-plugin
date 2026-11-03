@@ -163,8 +163,14 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   if (!invoke) return <p className="muted resume-offline">没有连上桌面程序，附件要在桌面程序里管理。</p>;
   const canPick = Boolean(pickers?.openResumeFile);
   const templateName = (id: string) => templates.find((t) => t.id === id)?.name ?? "";
-  const usedBy = (file: ResumeFileView) =>
-    file.templateIds.length ? `用于：${file.templateIds.map(templateName).filter(Boolean).join("、")}` : "用于所有模板";
+  // 删掉的模板的 id 留在绑定里：只绑了它的文件不用于别的模板，等用户重新选。
+  const deletedTemplates = (file: ResumeFileView) => file.templateIds.filter((id) => !templateName(id));
+  const usedBy = (file: ResumeFileView) => {
+    if (!file.templateIds.length) return "用于所有模板";
+    const names = file.templateIds.map(templateName).filter(Boolean);
+    if (!names.length) return "模板已删除，暂不使用";
+    return `用于：${[...names, ...(deletedTemplates(file).length ? ["模板已删除"] : [])].join("、")}`;
+  };
 
   return (
     <section className="resume-card resume-files" aria-labelledby="resume-files-title">
@@ -303,6 +309,20 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
                   {template.name}
                 </label>
               )) : <p className="muted">还没有简历模板。</p>}
+              {deletedTemplates(draft.file).length ? (
+                <label className="resume-files-check">
+                  <input
+                    type="checkbox"
+                    checked={deletedTemplates(draft.file).some((id) => draft.templateIds.includes(id))}
+                    onChange={(event) => {
+                      const gone = deletedTemplates(draft.file);
+                      const rest = draft.templateIds.filter((id) => !gone.includes(id));
+                      setDraft({ ...draft, templateIds: event.target.checked ? [...rest, ...gone] : rest });
+                    }}
+                  />
+                  模板已删除
+                </label>
+              ) : null}
             </fieldset>
           </div>
         ) : null}

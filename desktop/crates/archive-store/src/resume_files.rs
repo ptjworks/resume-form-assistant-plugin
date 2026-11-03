@@ -424,18 +424,29 @@ pub struct ResumeFileListing {
     pub damaged: Vec<DamagedResumeFile>,
 }
 
-/// 存储位置不对、种类认不出、模板绑定读不出的记录不猜：拿去拼路径会读写档案以外的文件，当成「其他材料」
-/// 「所有模板」会把文件用到用户没让用的地方。这样的记录单独列出来，不当文件用。
+/// 存储位置不对、种类认不出、大小或类型不对、模板绑定读不出的记录不猜：拿去拼路径会读写档案以外的文件，
+/// 当成「其他材料」「所有模板」会把文件用到用户没让用的地方。这样的记录单独列出来，不当文件用。
 fn parse_row(raw: RawFile) -> Result<(ResumeFile, String), DamagedResumeFile> {
     let damaged = |reason: &str| DamagedResumeFile { id: raw.file.id.clone(), name: raw.file.name.clone(), reason: reason.into() };
     if !stored_where_expected(&raw.rel, &raw.file.sha256) {
         return Err(damaged("存储位置不对"));
     }
     let kind = ResumeFileKind::parse(&raw.kind).ok_or_else(|| damaged("种类认不出"))?;
+    if !(1..=MAX_RESUME_FILE_BYTES as i64).contains(&raw.file.byte_size) {
+        return Err(damaged("文件大小不对"));
+    }
+    if raw.file.mime.is_empty() {
+        return Err(damaged("没有文件类型"));
+    }
     if !kind.allows(&raw.file.mime) {
         return Err(damaged("文件类型不对"));
     }
-    let template_ids: Vec<String> = serde_json::from_str(&raw.templates).map_err(|_| damaged("模板绑定读不出"))?;
+    // 删掉的模板的 id 留着：只绑了它的文件不用于别的模板，等用户重新选。协议里的模板 id 是带连字符的
+    // 36 位写法，别的写法这里就挡下，免得整个列表发不出去。
+    let template_ids: Vec<String> = serde_json::from_str(&raw.templates)
+        .ok()
+        .filter(|ids: &Vec<String>| ids.len() <= MAX_TEMPLATES && ids.iter().all(|id| id.len() == 36 && crate::identity::is_uuid(id)))
+        .ok_or_else(|| damaged("模板绑定读不出"))?;
     Ok((ResumeFile { kind, template_ids, ..raw.file }, raw.rel))
 }
 
@@ -455,7 +466,6 @@ impl StoreTx<'_> {
 
     /// 能用的记录和读不出来的记录，分开给。
     fn resume_file_rows(&self) -> Result<(Vec<(ResumeFile, String)>, Vec<DamagedResumeFile>), StoreError> {
-        let live = self.template_ids_now()?;
         let mut stmt = self.conn().prepare(&format!(
             "SELECT {FILE_COLUMNS} FROM resume_files \
              ORDER BY CASE kind WHEN 'resume' THEN 0 WHEN 'photo' THEN 1 WHEN 'transcript' THEN 2 ELSE 3 END, position, rowid"
@@ -464,10 +474,7 @@ impl StoreTx<'_> {
         let (mut files, mut damaged) = (Vec::new(), Vec::new());
         for row in rows {
             match parse_row(row) {
-                Ok((mut file, rel)) => {
-                    file.template_ids.retain(|id| live.contains(id));
-                    files.push((file, rel));
-                }
+                Ok(found) => files.push(found),
                 Err(bad) => damaged.push(bad),
             }
         }
@@ -493,13 +500,10 @@ impl StoreTx<'_> {
 
     /// 一条能用的记录；读不出来的按损坏报错。
     fn resume_file_row(&self, id: &str) -> Result<Option<(ResumeFile, String)>, StoreError> {
-        let live = self.template_ids_now()?;
         let Some(raw) = self.resume_file_raw(id)? else {
             return Ok(None);
         };
-        let (mut file, rel) = parse_row(raw).map_err(damaged_error)?;
-        file.template_ids.retain(|id| live.contains(id));
-        Ok(Some((file, rel)))
+        parse_row(raw).map(Some).map_err(damaged_error)
     }
 
     /// 读不出来的记录只删这一行，不碰任何文件：它的存储位置不可信。
@@ -591,7 +595,8 @@ impl StoreTx<'_> {
         updated
     }
 
-    /// 改文件名、说明、默认和模板。
+    /// 改文件名、说明、默认和模板。新选的模板得还在；已经绑着、后来删掉的模板可以留着（界面上标「模板已删除」），
+    /// 用户不取消它，就不把这条绑定变成空的「所有模板」。
     pub fn update_resume_file(&mut self, id: &str, patch: &ResumeFilePatch) -> Result<ResumeFile, StoreError> {
         let (current, _) = self.resume_file_row(id)?.ok_or_else(|| StoreError::NotFound(format!("resume file {id}")))?;
         let name = match &patch.name {
@@ -611,7 +616,7 @@ impl StoreTx<'_> {
                 let live = self.template_ids_now()?;
                 let mut kept: Vec<String> = Vec::new();
                 for template in ids {
-                    if !live.contains(template) {
+                    if !live.contains(template) && !current.template_ids.contains(template) {
                         return Err(invalid("选的模板已经不在了，请重新选。"));
                     }
                     if !kept.contains(template) {
@@ -680,16 +685,18 @@ impl StoreTx<'_> {
     /// 清掉没人引用的字节：`attachments/resume-files/` 里表中没有的文件（崩溃、登记失败留下的），
     /// 以及 `tmp/` 里写到一半、删到一半留下的 `resume-file-*`。这个目录和这些临时文件只归这张表管。
     /// 删到一半的 `resume-file-<哈希>.deleting` 要是还有记录引用、原位置又没有文件（删记录失败、
-    /// 挪回去也失败），就挪回原位，不当孤儿删。记录读不出（损坏）时什么都不删。
+    /// 挪回去也失败），就挪回原位，不当孤儿删。
     pub fn sweep_resume_file_leftovers(&mut self) -> Result<usize, StoreError> {
-        // 每条记录都算引用，读不出来的也算：它的字节等用户删了这条记录再清，一条坏记录也不让清理整个停下。
+        // 存储位置对的记录才算引用（种类、模板这些读不出来的也算，它的字节等用户删了这条记录再清）。
+        // 位置不对的记录不读不写它指的地方，也不算引用；一条坏记录不让清理整个停下。
         let mut referenced = std::collections::HashSet::new();
         {
             let mut stmt = self.conn().prepare("SELECT sha256, stored_rel_path FROM resume_files")?;
             for row in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
                 let (sha256, rel) = row?;
-                referenced.insert(rel.rsplit(['/', '\\']).next().unwrap_or_default().to_string());
-                referenced.insert(sha256);
+                if stored_where_expected(&rel, &sha256) {
+                    referenced.insert(sha256);
+                }
             }
         }
         let folder = self.archive_dir.join(RESUME_FILES_DIR);

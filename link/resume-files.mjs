@@ -106,7 +106,10 @@ export function createResumeFiles({ session, store, sendNative, openChannel, sle
     } catch {
       return { status: 'unavailable' };
     } finally {
-      channel.close();
+      // A port that fails to close changes nothing about what was read; fetch still answers with a status.
+      try {
+        channel.close();
+      } catch {}
     }
   }
 

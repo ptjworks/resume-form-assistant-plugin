@@ -1627,7 +1627,7 @@ export const SCHEMA_DATA = {
                 "type": "boolean"
               },
               "templateIds": {
-                "description": "用于哪些模板；空数组是所有模板",
+                "description": "用于哪些模板；空数组是所有模板。绑定的模板删掉后 id 还留着，这样的文件不用于别的模板",
                 "type": "array",
                 "maxItems": 25,
                 "items": {

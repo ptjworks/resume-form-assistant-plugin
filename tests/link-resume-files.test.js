@@ -39,7 +39,7 @@ function desktop(bytes, { patch = () => ({}), fail = () => null } = {}) {
   return { sent, reply };
 }
 
-async function client(bytes, { capabilities = CAPABILITIES, send, openChannel, ...desk } = {}) {
+async function client(bytes, { capabilities = CAPABILITIES, send, openChannel, closeFails = false, ...desk } = {}) {
   const { createResumeFiles } = await import('../link/resume-files.mjs');
   const { validateRequest } = await import('../link/protocol/validate.mjs');
   const fake = desktop(bytes, desk);
@@ -57,7 +57,7 @@ async function client(bytes, { capabilities = CAPABILITIES, send, openChannel, .
     sleep: async () => {},
     sendNative: answer,
     openChannel: openChannel ?? (() => {
-      const channel = { closed: false, sends: 0, send: async (host, message) => { channel.sends += 1; return answer(host, message); }, close() { channel.closed = true; } };
+      const channel = { closed: false, sends: 0, send: async (host, message) => { channel.sends += 1; return answer(host, message); }, close() { channel.closed = true; if (closeFails) throw new Error('Attempting to use a disconnected port object'); } };
       channels.push(channel);
       return channel;
     })
@@ -191,6 +191,18 @@ test('a port the browser refuses to open is unavailable, not a rejected promise'
   const c = await client(bytes, { openChannel: () => { throw new Error('Specified native messaging host not found.'); } });
   assert.deepEqual(await c.files.fetch({ fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: 'a.pdf', mime: 'application/pdf' }),
     { status: 'unavailable' });
+});
+
+test('a port that throws while closing does not turn the answer into a rejected promise', async () => {
+  const bytes = pdf(CHUNK + 10);
+  const listing = { fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: 'a.pdf', mime: 'application/pdf' };
+  const read = await client(bytes, { closeFails: true });
+  const fetched = await read.files.fetch(listing);
+  assert.equal(fetched.status, 'ok');
+  assert.equal(fetched.bytesBase64, bytes.toString('base64'));
+  const broken = await client(bytes, { closeFails: true, patch: () => ({ chunkSha256: 'c'.repeat(64) }) });
+  assert.deepEqual(await broken.files.fetch(listing), { status: 'corrupt' });
+  assert.deepEqual([read.channels[0].closed, broken.channels[0].closed], [true, true]);
 });
 
 test('only the statuses the module lists come back; any other desktop code is unavailable', async () => {

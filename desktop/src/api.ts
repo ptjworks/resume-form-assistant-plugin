@@ -504,7 +504,7 @@ export interface ResumeFileView {
   byteSize: number;
   sha256: string;
   isDefault: boolean;
-  /** 用于哪些模板；空数组是所有模板。 */
+  /** 用于哪些模板；空数组是所有模板。绑定的模板删掉后 id 还留着，这样的文件不用于别的模板。 */
   templateIds: string[];
   createdAt: string;
   updatedAt: string;

@@ -133,6 +133,46 @@ test("编辑文件名、说明、默认和模板，一次保存", async () => {
   expect(within(resumes).getByText("测试用户-简历.pdf").closest("li")?.textContent).toContain("默认");
 });
 
+test("绑定的模板删掉了不当成所有模板：标「模板已删除」，用户取消了才是所有模板", async () => {
+  const gone = "77777777-7777-4777-8777-777777777799";
+  let list = [
+    file("a1", "resume", "简历.pdf", "application/pdf", { isDefault: true, templateIds: [gone] }),
+    file("a2", "resume", "英文简历.pdf", "application/pdf", { templateIds: [TEMPLATE.id, gone] }),
+  ];
+  const { calls } = mount((command, args) => {
+    if (command === "list_resume_files_cmd") return list;
+    if (command === "update_resume_file_cmd") {
+      const patch = args?.patch as { templateIds: string[] };
+      list = list.map((f) => (f.id === args?.id ? { ...f, ...patch } : f));
+      return list;
+    }
+    return null;
+  });
+  const resumes = await screen.findByRole("region", { name: "简历附件" });
+  expect(within(resumes).getByText("PDF · 1.5 KB · 模板已删除，暂不使用")).toBeTruthy();
+  expect(within(resumes).getByText("PDF · 1.5 KB · 用于：互联网校招、模板已删除")).toBeTruthy();
+  expect(within(resumes).queryByText(/用于所有模板/)).toBeNull();
+
+  // 只改说明：已删除的模板照样带着，不变成空的。
+  const row = within(resumes).getByText("简历.pdf").closest("li")! as HTMLElement;
+  await userEvent.click(within(row).getByRole("button", { name: "编辑" }));
+  let dialog = await screen.findByRole("dialog");
+  expect((within(dialog).getByLabelText("模板已删除") as HTMLInputElement).checked).toBe(true);
+  await userEvent.type(within(dialog).getByLabelText("说明"), "中文");
+  await userEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(calls.filter((c) => c.command === "update_resume_file_cmd").at(-1)?.args).toMatchObject({ id: "a1", patch: { templateIds: [gone] } });
+
+  // 用户自己取消它，才是所有模板。
+  await userEvent.click(within(row).getByRole("button", { name: "编辑" }));
+  dialog = await screen.findByRole("dialog");
+  await userEvent.click(within(dialog).getByLabelText("模板已删除"));
+  await userEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(calls.filter((c) => c.command === "update_resume_file_cmd").at(-1)?.args).toMatchObject({ id: "a1", patch: { templateIds: [] } });
+  expect(within(row).getByText(/用于所有模板/)).toBeTruthy();
+});
+
 test("删除要先确认，替换按原来的种类选文件", async () => {
   let list = [file("b1", "photo", "证件照.jpg", "image/jpeg", { isDefault: true })];
   const { calls, picked } = mount((command, args) => {
