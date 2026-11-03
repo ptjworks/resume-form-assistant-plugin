@@ -43,6 +43,14 @@ test('a gender select read only at fill time takes 男 as M, and a size select d
   assert.equal(size.selectedIndex, 0);
 });
 
+test('a gender select named only by its name attribute takes 男 as M', async () => {
+  const h = harness();
+  const select = new h.Select(); select.tagName = 'SELECT'; select.name = 'gender';
+  select.options = [{value:'',text:'请选择'}, {value:'M',text:'M'}, {value:'F',text:'F'}]; select.selectedIndex = 0;
+  const result = await h.operate({ kind: 'element', element: select, binding: { label: 'Choose one', element: select } }, '男');
+  assert.equal(result.ok, true, result.reason); assert.equal(select.selectedIndex, 1);
+});
+
 test('native date rollback after blur fails without retry or leaking the requested value', async () => {
   const h = harness(); const input = new h.Input(); input.type = 'month';
   let writes = 0;

@@ -994,12 +994,9 @@
     const sameText = (text, value) => h.helpers.isSameOptionText ? h.helpers.isSameOptionText(text, value)
       : h.helpers.normalizeText(text) === h.helpers.normalizeText(value);
     // #429 问性别的题，英文表单的选项只写 M、F，要点开才看得到：worker 拿不到选项，给的是「男」「女」。按点开的列表再换一次
-    // （ai-helpers.js 的 choiceValue，只在问性别的字段上换；字段名取扫描时的对应关系 binding）。级联不换。
-    const wantedIn = (list, level) => {
-      const binding = ctx.entry?.binding;
-      return info.cascade || !binding || !h.helpers.choiceValue ? desired[level]
-        : h.helpers.choiceValue({ label: binding.label, placeholder: binding.placeholder, inputType: 'select', options: list }, desired[level]);
-    };
+    // （ai-helpers.js 的 controlChoiceValue：题目上下文取扫描时的对应关系 binding，只在问性别的字段上换）。级联不换。
+    const wantedIn = (list, level) => info.cascade || !h.helpers.controlChoiceValue ? desired[level]
+      : h.helpers.controlChoiceValue(ctx.entry?.binding, list, desired[level]);
     if (!desired.length || desired.length > 8 || desired.some(value => !value)) return { reason: 'no_option_match' };
     const safeSearch = input => input?.tagName === 'INPUT' && !input.readOnly && !input.disabled
       && ['text', 'search', 'email', 'tel', 'url'].includes(input.type);

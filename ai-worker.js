@@ -515,8 +515,8 @@ function aliasesOf(key) {
 }
 
 // 资料目录：编号、分组、字段名、别的叫法和值的形态。值留在 values 里，只在本地按编号取。空值的资料不进目录。
-// 字段名改名、遮值（catalogKeys）、截短以后，要发出去的字段名和分组名再统一查一遍资料值（maskResumeValues）：
-// 截短、加序号以后也不会带出值；分组名可能是用户自己起的（公司名），也一样换成占位。
+// 顺序：先在完整的字段名上改名、遮值（catalogKeys），值整段换成占位以后再截短、加序号（distinctKeys），截断点落在值中间也只会切到占位；
+// 最后要发出去的字段名和分组名再统一查一遍资料值（maskResumeValues）。分组名可能是用户自己起的（公司名），也一样换成占位。
 function buildCatalog(resumeFields) {
   const helpers = ResumeProAIHelpers;
   refreshAliases();
@@ -546,7 +546,19 @@ function buildCatalog(resumeFields) {
 const CATALOG_KEY_LIMIT = 60;
 function shortKey(key) {
   const text = String(key ?? "");
-  return text.length > CATALOG_KEY_LIMIT ? `${text.slice(0, CATALOG_KEY_LIMIT)}…` : text;
+  return text.length > CATALOG_KEY_LIMIT ? `${headOf(text, CATALOG_KEY_LIMIT)}…` : text;
+}
+
+// 截字段名时不留半个占位「〔…〕」：开头一段截在占位中间就从占位前面截，结尾一段从占位中间开始就从占位后面起。
+function headOf(text, length) {
+  const head = text.slice(0, length);
+  const open = head.lastIndexOf("〔");
+  return open > head.lastIndexOf("〕") ? head.slice(0, open) : head;
+}
+function tailOf(text, length) {
+  const tail = text.slice(-length);
+  const close = tail.indexOf("〕");
+  return close >= 0 && (tail.indexOf("〔") < 0 || close < tail.indexOf("〔")) ? tail.slice(close + 1) : tail;
 }
 
 // 同一组里截短后撞成一样的字段名（前 60 个字相同的两道长题目）：留开头 44 个字和结尾 15 个字；还一样（或本来就重名）加序号。
@@ -556,7 +568,7 @@ function distinctKeys(keys, groups) {
   const short = keys.map(key => shortKey(key));
   short.forEach((key, index) => counted.set(slot(index, key), (counted.get(slot(index, key)) || 0) + 1));
   const tailed = short.map((key, index) => (counted.get(slot(index, key)) > 1 && String(keys[index]).length > CATALOG_KEY_LIMIT
-    ? `${String(keys[index]).slice(0, 44)}…${String(keys[index]).slice(-15)}` : key));
+    ? `${headOf(String(keys[index]), 44)}…${tailOf(String(keys[index]), 15)}` : key));
   const seen = new Map();
   return tailed.map((key, index) => {
     const count = (seen.get(slot(index, key)) || 0) + 1;
@@ -773,17 +785,20 @@ function pickerDate(field, value) {
 // 级联题和联动下拉的各级拿到一整段地址（「广东省深圳市南山区科苑路 8 号」）时，只留前面认得出的地区（至少到市）：
 // 街道门牌级联里选不了，联动下拉按「包含」选时也少一些误选。用「/」分开的逐段核对，只留前面认得出的几段
 // （「广东省/深圳市/南山区/科苑路8号」→「广东省/深圳市/南山区」）；一段都认不出的（专业类别这类级联）原样给。
-// 按「/」截完只剩省一级的（「广东省/科苑路8号」）标 coarse：级联要选到市以下，只交省等于没填对。
+// 认出来只到省一级的（「广东省」「广东省/科苑路8号」）标 coarse：级联要选到市以下，只交省等于没填对。
+// 直辖市、特别行政区本身就是市（「北京市」「香港」），不算。
 function regionPrefix(value) {
   const regions = globalThis.ResumeProRegions;
   const text = String(value).trim();
-  if (!regions?.resolve || regions.resolve(text)) return { value: text, coarse: false };
+  if (!regions?.resolve) return { value: text, coarse: false };
+  const whole = regions.resolve(text);
+  if (whole) return { value: text, coarse: tooCoarse(whole.path) };
   if (text.includes("/")) {
     const segments = text.split(/\s*\/\s*/);
     for (let count = segments.length - 1; count >= 1; count -= 1) {
       const head = segments.slice(0, count).join("/");
       const found = regions.resolve(head);
-      if (found) return { value: head, coarse: found.path.filter(part => !part.placeholder).length < 2 };
+      if (found) return { value: head, coarse: tooCoarse(found.path) };
     }
     return { value: text, coarse: false };
   }
@@ -792,6 +807,11 @@ function regionPrefix(value) {
     if (regions.resolve(head)?.path.filter(part => !part.placeholder).length >= 2) return { value: head, coarse: false };
   }
   return { value: text, coarse: false };
+}
+
+function tooCoarse(path) {
+  const named = path.filter(part => !part.placeholder);
+  return named.length < 2 && !(named.length === 1 && /(?:市|特别行政区)$/.test(named[0].name));
 }
 
 // 联动下拉的一级只要这一级的地名（省、市或区县）：题目里只写了一级的按题目，没写或写了几级的按 cascadeLevel。

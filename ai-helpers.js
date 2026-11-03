@@ -207,6 +207,7 @@
     isValueValidForField,
     hasRealOptions,
     choiceValue,
+    controlChoiceValue,
     valueShape,
     datePart,
     catalogKeys,
@@ -766,6 +767,15 @@
     const text = normalizeText(value);
     const letter = GENDER_LETTERS.find(([, words]) => words.includes(text))?.[0];
     return letter && findSelectOptionIndex(field.options, letter) >= 0 ? letter : value;
+  }
+
+  // 填写层（custom-controls.js、control-adapters.js）：选项这时才读到的下拉、单选，按扫描时的题目上下文再走一次 choiceValue。
+  // 上下文和 content.js 发给 worker 的字段一样：字段名、占位文字，加上控件自己的 name、id、aria-label（英文表的题目可能只写在这些上）。
+  function controlChoiceValue(binding, options, value) {
+    if (!binding) return value;
+    const attr = (name) => binding.element?.getAttribute?.(name) || "";
+    return choiceValue({ label: binding.label, placeholder: binding.placeholder, name: attr("name"), idAttr: binding.element?.id || "",
+      ariaLabel: attr("aria-label"), inputType: "select", options }, value);
   }
 
   function isValueValidForField(field, value) {

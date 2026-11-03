@@ -34,12 +34,8 @@
   function create(deps = {}) {
     const helpers = deps.helpers || scope.ResumeProAIHelpers;
     // #429 问性别的题，英文表单的选项只写 M、F：选项要等页面加载、点开才看得到时，worker 拿不到选项，给的是「男」「女」。
-    // 按这时读到的选项再换一次（ai-helpers.js 的 choiceValue，只在问性别的字段上换；字段名取扫描时的对应关系 binding）。
-    const choiceIn = (ctx, options, value) => {
-      const binding = ctx.entry?.binding;
-      return binding && helpers?.choiceValue
-        ? helpers.choiceValue({ label: binding.label, placeholder: binding.placeholder, inputType: 'select', options }, value) : value;
-    };
+    // 按这时读到的选项再换一次（ai-helpers.js 的 controlChoiceValue：题目上下文取扫描时的对应关系 binding，只在问性别的字段上换）。
+    const choiceIn = (ctx, options, value) => helpers?.controlChoiceValue ? helpers.controlChoiceValue(ctx.entry?.binding, options, value) : value;
     const now = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
     const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     const settleMs = () => deps.getSettleMs ? deps.getSettleMs() : deps.settleMs ?? 250;

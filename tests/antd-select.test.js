@@ -191,6 +191,21 @@ test('a gender select whose M and F options appear only when opened takes 男 as
   assert.deepEqual(size.picked, []);
 });
 
+// 英文性别题的题目只写在控件的 aria-label 上（字段名看不出是性别）：按扫描时的完整上下文认出是性别题，「男」选上 M。
+// 选项写成 Male、Female 的，「男」选上 Male。
+test('a gender select named only by its aria-label takes 男 as M, and Male, Female options take 男 as Male', async () => {
+  const h = antd3(['M', 'F'], { label: 'Choose one', loadAfter: 20 });
+  h.found.element.setAttribute('aria-label', 'Sex');
+  h.target.binding = h.found;
+  const result = await h.api.operate(h.target, '男');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.picked, ['M']);
+  const words = antd3(['Male', 'Female'], { label: 'Gender', loadAfter: 20 });
+  words.target.binding = words.found;
+  assert.equal((await words.api.operate(words.target, '男')).ok, true);
+  assert.deepEqual(words.picked, ['Male']);
+});
+
 test('AntD 3 existing selection is read as the displayed choice', () => {
   const h = antd3(['CET4', 'CET6'], { label: '外语等级', selected: 'CET4' });
   assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ['CET4']);

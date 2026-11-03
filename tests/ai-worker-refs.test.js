@@ -682,6 +682,17 @@ test("one ref given twice is used once, a text answer of more than three items s
   assert.equal(result.diagnostics.regionLevelUnknown, 1);
 });
 
+test("a value across the 60th character of a long key is masked before the key is cut, so no part of it goes out", async () => {
+  const head = "请结合你在".padEnd(57, "甲");
+  const school = "虚构理工大学附属实验学校";
+  const env = worker();
+  await env.run({ formFields: [{ fieldId: "q", label: "其他说明" }], resumeFields: [{ group: "教育经历", key: "学校", value: school },
+    { group: "本网站回答", key: `${head}${school}的学习经历中最难忘的一件事是什么`, value: "暂无可说" }] });
+  const sent = env.calls[0].user;
+  for (let length = 2; length <= school.length; length += 1) assert.ok(!sent.includes(school.slice(0, length)), school.slice(0, length));
+  assert.equal(catalogOf(sent)[1].key, `${head}…`, "the cut leaves no half placeholder");
+});
+
 test("no value of the eval resume is in its catalog but a few short common words", async () => {
   const { loadCorpus } = await import(pathToFileURL(path.join(__dirname, "..", "scripts", "eval-fill.mjs")).href);
   const corpus = loadCorpus();
@@ -771,6 +782,19 @@ test("a slashed address left with only its province goes to no cascade, and a le
   assert.deepEqual(byId.city, { fieldId: "city", value: "", blocked: "region_too_coarse" });
   assert.equal(byId.province.value, "广东省", "a linked province select still takes the province");
   assert.deepEqual(byId.town, { fieldId: "town", value: "", blocked: "region_level_missing" });
+});
+
+test("a cascade given only a province is not filled; a city or a municipality is", async () => {
+  const env = worker((message, catalog) => catalog.map((entry, at) => ({ fieldId: `c${at}`, ref: entry.ref })));
+  const result = await env.run({
+    formFields: [0, 1, 2].map((at) => ({ fieldId: `c${at}`, label: "所在城市", inputType: "select", cascade: true, options: [] })),
+    resumeFields: [{ group: "求职意向", key: "意向省份", value: "广东省" }, { group: "求职意向", key: "意向城市", value: "深圳市" },
+      { group: "求职意向", key: "备选城市", value: "北京市" }]
+  });
+  const byId = Object.fromEntries(JSON.parse(JSON.stringify(result.matches)).map((match) => [match.fieldId, match]));
+  assert.deepEqual(byId.c0, { fieldId: "c0", value: "", blocked: "region_too_coarse" });
+  assert.equal(byId.c1.value, "深圳市");
+  assert.equal(byId.c2.value, "北京市", "a municipality is a city itself");
 });
 
 test("answers that disagree keep the first reason one of them was stopped for", async () => {
