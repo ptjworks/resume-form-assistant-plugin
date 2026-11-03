@@ -1,7 +1,8 @@
 {
-  "note": "#429 网站回答：插件 profile-fields.js（normalizeKey、siteScopedTitle、looksLikeIdentifier）和桌面 site_answers.rs（question_key、site_question_allowed、looks_like_identifier）各自用这份对照测试，两边口径改了要一起改。",
+  "note": "#429 网站回答：插件 profile-fields.js（normalizeKey、siteScopedTitle、looksLikeIdentifier、比回答的 sameValue）和桌面 site_answers.rs（question_key、site_question_allowed、looks_like_identifier、比 previous 的 clean）各自用这份对照测试，两边口径改了要一起改。",
   "keys": [
     [" *是否有亲属在本公司工作： ", "是否有亲属在本公司工作"],
+    ["﻿是否有亲属在 本公司工作　", "是否有亲属在本公司工作"],
     ["是否（曾）在本行 实习", "是否曾在本行实习"],
     ["【必填】是否与贵单位存在劳动关系？", "必填是否与贵单位存在劳动关系？"],
     ["CET-6 成绩", "cet6成绩"],
@@ -36,5 +37,16 @@
   "answers": {
     "identifiers": ["13800138000", "138-0013-8000", "+86 138 0013 8000", "tester@example.com", "https://example.com/a", "www.example.com", "工号 1234567", "（010）8888 6666"],
     "plain": ["否", "是", "5天", "2026年7月", "2026-07-01 至 2026-09-30", "父亲在本公司财务部任职", "2026.07"]
-  }
+  },
+  "sameAnswers": [
+    ["否", " 否 "],
+    ["父亲在本公司  财务部", "父亲在本公司 财务部"],
+    ["父亲在本公司\n财务部", "父亲在本公司 财务部"],
+    ["﻿否　", "否"],
+    ["父亲在本公司 财务部", "父亲在本公司 财务部"]
+  ],
+  "differentAnswers": [
+    ["父亲在本公司财务部", "父亲在本公司 财务部"],
+    ["否", "是"]
+  ]
 }

@@ -29,6 +29,20 @@ fn the_store_judges_questions_and_answers_like_the_plugin() {
             assert_eq!(looks_like_identifier(answer.as_str().unwrap()), expected, "{answer}");
         }
     }
+    // 插件认为和桌面旧回答相同的，桌面核对 previous 时也相同；插件认为不同的，桌面也报冲突。
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    for (kind, same) in [("sameAnswers", true), ("differentAnswers", false)] {
+        for (i, pair) in vectors[kind].as_array().unwrap().iter().enumerate() {
+            let site = format!("{kind}-{i}.example.com").to_lowercase();
+            db.save_site_answers(&site, &[input("是否有亲属在本公司工作", pair[0].as_str().unwrap(), None)]).unwrap();
+            let seen = input("是否有亲属在本公司工作", "改过的回答", pair[1].as_str());
+            match db.save_site_answers(&site, &[seen]) {
+                Ok(_) => assert!(same, "{pair}"),
+                Err(err) => assert!(!same && err.code() == "conflict", "{pair}: {}", err.code()),
+            }
+        }
+    }
 }
 
 #[test]

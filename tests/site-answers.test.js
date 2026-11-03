@@ -68,6 +68,10 @@ test("the plugin judges questions and answers like the desktop store does", () =
   for (const title of vectors.titles.rejected) assert.equal(profileApi.siteScopedTitle(profileApi.normalizeKey(title)), false, title);
   for (const answer of vectors.answers.identifiers) assert.equal(profileApi.looksLikeIdentifier(answer), true, answer);
   for (const answer of vectors.answers.plain) assert.equal(profileApi.looksLikeIdentifier(answer), false, answer);
+  // 这个网站记住的回答和网页上的比：相同的不再列，不同的列出来带上旧回答（桌面按它核对 previous）。
+  const compare = ([stored, seen]) => planOf([web("是否有亲属在本公司工作", seen)], { site: siteOf([{ key: "是否有亲属在本公司工作", value: stored }]) });
+  for (const pair of vectors.sameAnswers) assert.equal(compare(pair).same, 1, JSON.stringify(pair));
+  for (const pair of vectors.differentAnswers) assert.deepEqual(compare(pair).site.map((item) => item.existing), [pair[0]], JSON.stringify(pair));
 });
 
 test("siteScopedTitle takes questions about the company, and still none of the four kept-out kinds", () => {
@@ -133,6 +137,19 @@ test("plan: with this site's answers, company questions go to the site list inst
   assert.deepEqual(family.site.map((item) => item.key), ["是否有亲属在本公司工作"]);
   assert.deepEqual(family.filled, []);
   assert.deepEqual(planOf([web("是否有亲属在本公司工作", "否", { section: "家庭成员" })]).filled, []);
+});
+
+test("plan: while this site's answers are still being read, company questions are held back, not offered as custom fields", () => {
+  const candidates = [web("是否有亲属在本公司工作", "否"), web("是否与本公司签过协议", ""), web("兴趣爱好", "摄影"),
+    web("是否有亲属在本公司工作", "否", { section: "家庭成员" })];
+  const reading = planOf(candidates, { site: { pending: true } });
+  assert.deepEqual(reading.site, []);
+  assert.deepEqual(reading.filled.map((item) => item.key), ["兴趣爱好"]);
+  assert.deepEqual(reading.pending, []);
+  assert.equal(reading.siteWaiting, 2, "kept as waiting so the caller keeps the candidates");
+  // 网页端按同一个名字判断要不要先读：家庭区块里的也算；匹配上的、普通题不算。
+  assert.deepEqual(candidates.map(profileApi.siteScopedCandidate), [true, true, false, true]);
+  assert.equal(profileApi.siteScopedCandidate({ ...web("是否有亲属在本公司工作", "否"), matched: true }), false);
 });
 
 test("plan: a company question the template already answers the same way is not offered again; a different answer is", () => {

@@ -49,12 +49,13 @@ pub struct SiteAnswerInput {
 /// 短横、下划线、斜杠、点），改这里要同步改那边。
 pub fn question_key(question: &str) -> String {
     const DROPPED: &str = ":：*（）()【】[]-_/.·";
-    question
-        .trim()
-        .to_lowercase()
-        .chars()
-        .filter(|c| !c.is_whitespace() && !DROPPED.contains(*c))
-        .collect()
+    question.to_lowercase().chars().filter(|c| !is_space(*c) && !DROPPED.contains(*c)).collect()
+}
+
+/// 和 JS 的 `\s`、`trim()` 认的空白一样：比 Rust 的 `is_whitespace` 多一个 U+FEFF，少一个 U+0085。
+/// 题目归一和比对回答都用它，两边才不会一边当成同一个、一边当成不同。
+fn is_space(c: char) -> bool {
+    c == '\u{feff}' || (c.is_whitespace() && c != '\u{85}')
 }
 
 fn pattern(cell: &'static OnceLock<Regex>, source: &str) -> &'static Regex {
@@ -129,8 +130,9 @@ fn invalid(message: impl Into<String>) -> StoreError {
     StoreError::Validation(message.into())
 }
 
+/// 去掉首尾空白、中间的连续空白并成一个空格：和插件 `sameValue` 比回答时同一口径。
 fn clean(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    text.split(is_space).filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
 impl StoreTx<'_> {

@@ -503,6 +503,13 @@
     return candidateLabel({ ...candidate, section: "" });
   }
 
+  // 没匹配上的候选里是不是有按网站存的题（#429）：和 planProfileOffer 按网站分时取同一个名字。网页端据此决定要不要先读网站回答。
+  function siteScopedCandidate(candidate) {
+    if (candidate?.matched) return false;
+    const label = siteFamilyLabel(candidate) || candidateLabel(candidate);
+    return Boolean(label) && siteScopedTitle(normalizeKey(label));
+  }
+
   // 一次填写之后，网页上既没匹配上、也还空着的字段。密码验证码、文件、勾选框、经历类区块里的字段不算。
   function pickUnansweredLabels(candidates, knownKeys, limit = MAX_OFFERED_LABELS, stats = null) {
     const picked = [];
@@ -559,8 +566,9 @@
   //   notes    不能保存的项和原因；same 桌面已有相同内容的项数（sameIds 是它们的 id）
   //   site     #429：只在这个网站复用的题（siteScopedTitle）和网页上的回答，存到桌面的网站回答；id 带 site: 前缀，
   //            existing 是这个网站已经记住的不同回答（要用户勾选才替换）。只有传了 site（{ answers: 桌面里这个网站的回答 }，
-  //            即桌面支持而且认得出网站）才分出来；不传时这类题照旧按补充字段处理。
-  //   siteWaiting  这类题网页上还空着的个数：只记回答，空着的不列；调用方据此留着候选，用户答了再列出来。
+  //            即桌面支持而且认得出网站）才分出来；传 { pending: true }（还在读这个网站的回答）时这类题先不列，
+  //            读完由调用方按结果重算；不传时这类题照旧按补充字段处理。
+  //   siteWaiting  这类题先不列的个数：网页上还空着（只记回答），或者还在读网站回答；调用方据此留着候选，之后再列出来。
   function planProfileOffer({ candidates, profile: rawProfile, templateFields = [], limit = MAX_OFFERED_CANDIDATES, stats = null, site = null } = {}) {
     const profile = normalizeProfile(rawProfile);
     // 模板和预置字段（含家庭成员）：同名的没法再存成补充字段，存了也会被它们盖住。
@@ -572,7 +580,8 @@
     });
     const fixedKeys = knownFieldKeys(fixedProfile, templateFields);
     const customByKey = new Map(profile.custom.map((item) => [normalizeKey(item.key), item]));
-    const siteAnswers = site ? new Map((Array.isArray(site.answers) ? site.answers : [])
+    const sitePending = Boolean(site?.pending);
+    const siteAnswers = site && !sitePending ? new Map((Array.isArray(site.answers) ? site.answers : [])
       .filter((item) => text(item?.key) && text(item?.value)).map((item) => [normalizeKey(item.key), { key: text(item.key), value: text(item.value) }])) : null;
     let siteRoom = siteAnswers ? MAX_SITE_ANSWERS_PER_SITE - siteAnswers.size : 0;
 
@@ -580,7 +589,7 @@
     const merged = new Map();
     for (const candidate of Array.isArray(candidates) ? candidates : []) {
       if (candidate?.matched) continue;
-      const label = (siteAnswers && siteFamilyLabel(candidate)) || candidateLabel(candidate, stats);
+      const label = ((siteAnswers || sitePending) && siteFamilyLabel(candidate)) || candidateLabel(candidate, stats);
       if (!label) continue;
       const state = candidate.state === "stale" ? "stale" : candidate.state === "unreadable" ? "unreadable" : "ready";
       const entry = { id: normalizeKey(label), key: label, state, value: state === "ready" ? text(candidate.value) : "", ambiguous: false };
@@ -604,9 +613,10 @@
       const hasValue = Boolean(value);
       const unreadable = entry.state === "unreadable";
 
-      if (siteAnswers && siteScopedTitle(id)) {
+      if ((siteAnswers || sitePending) && siteScopedTitle(id)) {
         // 只记题目、不记回答没有用：网页上空着或读不准的不列，只数一下。
-        if (!hasValue) { plan.siteWaiting += 1; continue; }
+        // 还没读到网站回答时不知道该存哪边，也先不列：不能先按补充字段存进「我的信息」。
+        if (!hasValue || sitePending) { plan.siteWaiting += 1; continue; }
         if (value.length > JOB_SPECIFIC_VALUE_CHARS || looksLikeIdentifier(value)) { plan.notes.push(skipNote(id, key, "site-unfit")); continue; }
         // 模板或预置字段里已有同名的题、回答也一样：不用再按网站记一遍。回答不同的照样列，这个网站的答法就是要跟着网站走。
         if (fixedKeys.has(id) && sameValue(fixedValues.get(id) || "", value)) { plan.same += 1; plan.sameIds.push(`site:${id}`); continue; }
@@ -926,6 +936,7 @@
     savedAnswerMatches,
     siteAnswerFields,
     siteKeyOf,
+    siteScopedCandidate,
     siteScopedTitle,
     stripProfileSecrets
   };

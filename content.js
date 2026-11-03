@@ -136,6 +136,8 @@
     profileSaving: false,
     // #429：这个网站记住的回答，{ site, answers } 或读不到时的 { status }；null 是这次填写还没读过。
     siteAnswers: null,
+    // 正在读网站回答时是那次读取（读完就清掉）：候选规划据此先不列问到对方公司的题，保存时等它读完。
+    siteAnswersReading: null,
     // 给出这批候选时页面所在的网站（#429）：网站回答只存到这个网站，页面换了网站就不存。
     profileOfferSite: ""
   };
@@ -5526,6 +5528,16 @@
 
   // 读这个网站记住的回答。网站由后台按本页网址认，这里不传；桌面旧、共享招聘站认不出公司、没连上时记下原因，当作没有。
   async function loadSiteAnswers() {
+    const reading = readSiteAnswers();
+    state.siteAnswersReading = reading;
+    try {
+      return await reading;
+    } finally {
+      if (state.siteAnswersReading === reading) state.siteAnswersReading = null;
+    }
+  }
+
+  async function readSiteAnswers() {
     let reply = null;
     try {
       reply = await chrome.runtime.sendMessage({ type: "DESKTOP_SITE_ANSWERS_READ" });
@@ -5559,10 +5571,12 @@
     return siteAnswers?.site ? self.ResumeProProfile.siteAnswerFields(siteAnswers.answers) : [];
   }
 
-  // 候选规划用：读到了这个网站的回答才按网站分；没读到（桌面旧、共享站点）这类题照旧按补充字段处理。
+  // 候选规划用：读到了这个网站的回答才按网站分；还在读时这类题先不列，读完重算；
+  // 读不到（桌面旧、共享站点、读取失败）这类题照旧按补充字段处理。
   function siteOfferContext() {
     const answers = currentSiteAnswers();
-    return answers ? { answers: answers.answers } : null;
+    if (answers) return { answers: answers.answers };
+    return state.siteAnswersReading && !siteAnswersSettled() ? { pending: true } : null;
   }
 
   // 填完之后，网页上没匹配上的字段（已填的和空着的）和它们此刻的内容，列给用户勾选后存进桌面「我的信息」（#189）。
@@ -5577,8 +5591,9 @@
     state.profileResultCandidateSignature = "";
     state.profileDismissedCandidateSignature = null;
     state.profileOfferVersion += 1;
-    // 问到对方公司的题这次填写时没读过网站回答（比如都没在填写的字段里）：读到后重算一遍，候选换了版本。
-    if (!siteAnswersSettled() && candidates.some((candidate) => !candidate?.matched && siteScopedField(candidate))) {
+    // 问到对方公司的题这次填写时没读过网站回答（比如都没在填写的字段里），或者上次没读成：再读一次。
+    // 读的时候这类题先不列（不然用户这时保存，会按补充字段存进「我的信息」），读完重算一遍，候选换了版本。
+    if (!siteAnswersSettled() && candidates.some((candidate) => api.siteScopedCandidate(candidate))) {
       const version = state.profileOfferVersion;
       loadSiteAnswers().then(() => {
         if (version !== state.profileOfferVersion || !state.profileOfferCandidates?.length) return;
@@ -5590,8 +5605,8 @@
     const plan = currentProfilePlan(state.currentStore, stats);
 
     if (!api.planHasOffer(plan)) {
-      // 问到对方公司的题还空着（#429）：候选留着、卡片先不显示（没有可存的项时 syncProfileOfferCard 把它收起，
-      // 侧栏的快照也是 null），用户在网页上答了，侧栏下一次刷新就列出来。
+      // 问到对方公司的题还空着，或者网站回答还在读（#429）：候选留着、卡片先不显示（没有可存的项时 syncProfileOfferCard 把它收起，
+      // 侧栏的快照也是 null），用户在网页上答了、读完了，侧栏下一次刷新就列出来。
       if (plan.siteWaiting) {
         syncProfileOfferCard(plan);
         return;
@@ -5798,13 +5813,16 @@
     const selected = request ? normalizeProfileSelection(request.selected) : null;
     const siteChosen = selected ? selected.filter((item) => item.id.startsWith("site:")) : null;
     const profileChosen = selected ? selected.filter((item) => !item.id.startsWith("site:")) : null;
+    // 网站回答还在读：等读完再按结果规划，问到对方公司的题不先按补充字段存（#429）。
+    if (state.siteAnswersReading) await state.siteAnswersReading;
     const profile = !selected || profileChosen.length ? await saveProfileFields(profileChosen) : null;
-    const site = (!selected && siteOfferContext()) || siteChosen?.length ? await saveSiteSelection(siteChosen) : null;
+    const site = (!selected && currentSiteAnswers()) || siteChosen?.length ? await saveSiteSelection(siteChosen) : null;
     if (!site) return profile ?? { ...api.describeProfileSave({}), saved: 0 };
     const saved = [...(profile?.savedItems || []), ...site.saved.map(({ key, value, kind }) => ({ key, value, kind }))];
+    const skipped = [...(profile?.skippedItems || []), ...site.skipped];
     const errors = [profile?.kind === "error" ? profile.text : "", site.error].filter(Boolean);
-    if (!saved.length && errors.length) return { kind: "error", text: errors.join(" "), hint: "", details: site.skipped.map((item) => item.text), saved: 0 };
-    const message = api.describeProfileSave({ saved, skipped: [...(profile?.skippedItems || []), ...site.skipped] });
+    if (!saved.length && errors.length) return { kind: "error", text: errors.join(" "), hint: "", details: skipped.map((item) => item.text), saved: 0 };
+    const message = api.describeProfileSave({ saved, skipped });
     if (errors.length) {
       message.kind = "partial";
       message.details = [...errors, ...message.details];
