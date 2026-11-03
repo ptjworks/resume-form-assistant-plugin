@@ -30,7 +30,7 @@ function mount(
     // 删除的结果另外带着删除以后的列表：用例没写的按删干净了算。
     if (command === "delete_resume_file_cmd") {
       const { files, damaged, ...rest } = listing as Record<string, unknown>;
-      return { deleted: true, stuckInTmp: null, leftovers: [], inSubfolders: [], unchecked: null, listing: files ? { files, damaged } : null, ...rest };
+      return { deleted: true, stuckInTmp: null, leftovers: [], manual: [], unchecked: null, listing: files ? { files, damaged } : null, ...rest };
     }
     return listing;
   }) as Invoke;
@@ -258,7 +258,7 @@ test("读不出来的记录单独列出，可以删掉", async () => {
   expect(within(screen.getByRole("region", { name: "简历附件" })).getByText("简历.pdf")).toBeTruthy();
   await userEvent.click(within(broken).getByRole("button", { name: "删除记录" }));
   const dialog = await screen.findByRole("dialog");
-  expect(dialog.textContent).toContain("删掉记录时，能按它的哈希在附件目录里找到、又没有别的记录在用的那份文件会一起删掉，删了不能恢复。附件目录顶层没人用的残留会顺手清掉；清不掉的、子目录里的，删除之后会列出来。档案以外的文件不动。");
+  expect(dialog.textContent).toContain("删掉记录时，能按它的哈希在附件目录里找到、又没有别的记录在用的那份文件会一起删掉，删了不能恢复。附件目录里没人用的文件会顺手清掉；清不掉的、不是文件的（文件夹、链接之类），删除之后会列出来。档案以外的文件不动。");
   await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
   await waitFor(() => expect(screen.queryByRole("region", { name: "读不出来的记录" })).toBeNull());
   expect(calls.find((c) => c.command === "delete_resume_file_cmd")?.args).toEqual({ id: "x1" });
@@ -276,7 +276,7 @@ test("删完没清干净的照实提示：文件没删掉、没能复原、还�
     if (command === "delete_resume_file_cmd") {
       const id = args?.id;
       listing = { ...listing, damaged: listing.damaged.filter((d) => d.id !== id) };
-      if (id === "x1") return { ...listing, leftovers: ["attachments/resume-files/stray"], inSubfolders: ["attachments/resume-files/sub/x"] };
+      if (id === "x1") return { ...listing, leftovers: ["attachments/resume-files/stray"], manual: ["attachments/resume-files/sub"] };
       if (id === "x2") return { ...listing, leftovers: ["attachments/resume-files/seen"], unchecked: "拒绝访问。" };
       if (id === "x3") return { ...listing, stuckInTmp: "not_removed" };
       if (id === "x4") return { ...listing, stuckInTmp: "not_restored" };
@@ -299,7 +299,7 @@ test("删完没清干净的照实提示：文件没删掉、没能复原、还�
   let status = await deleteRecord("旧简历.pdf");
   expect(status.textContent).toBe(
     "已删除「旧简历.pdf」这条读不出来的记录。附件目录里还有 1 个文件没清掉，备份可能仍会被这些残留挡住：attachments/resume-files/stray。"
-      + "附件目录的子目录里有 1 个文件不归任何附件，不进备份，也不会自动清理：attachments/resume-files/sub/x。",
+      + "附件目录里有 1 项不是附件文件（文件夹、链接之类），不进备份，也不会自动清理，需要的话请手动处理：attachments/resume-files/sub。",
   );
   expect(status.className).toContain("warn");
   // 核对到一半出错：已经找到的照样列出来，再说明没能核对完。

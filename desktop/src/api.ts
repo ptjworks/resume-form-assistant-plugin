@@ -526,15 +526,15 @@ export interface ResumeFileListing {
 /**
  * #429：删除的结果和删除以后的列表。`deleted` 是有没有删到记录。`listing` 是删除以后的列表，删除之后读列表失败时
  * 是 null（界面留着原来的）。`stuckInTmp`：这次挪进档案 tmp/ 的文件最后还在那里，`not_removed` 是本该删掉没删掉，
- * `not_restored` 是本该挪回原处没挪回去。`leftovers` 是附件目录顶层还会让备份停下的文件；`inSubfolders` 是
- * 子目录里不归任何记录、备份也不收的文件；核对出错时 `unchecked` 是原因。
+ * `not_restored` 是本该挪回原处没挪回去。`leftovers` 是附件目录顶层还会让备份停下的文件；`manual` 是
+ * 附件目录顶层不是普通文件的东西（目录、链接之类），备份不收也不管，要用户自己处理；核对出错时 `unchecked` 是原因。
  */
 export interface ResumeFileDeleted {
   listing: ResumeFileListing | null;
   deleted: boolean;
   stuckInTmp: "not_removed" | "not_restored" | null;
   leftovers: string[];
-  inSubfolders: string[];
+  manual: string[];
   unchecked: string | null;
 }
 

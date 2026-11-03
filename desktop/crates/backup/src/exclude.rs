@@ -23,6 +23,11 @@ pub const EXCLUDED_PREFIXES: &[(&str, &str)] = &[
 /// 网申用的附件放在哪里（和 archive-store 的 `RESUME_FILES_DIR` 相同），带结尾的斜杠。
 const RESUME_FILES_DIR: &str = "attachments/resume-files/";
 
+/// 这一项在网申附件目录里。那里只有普通文件算附件：链接之类不进包（不跟着链接去读别处），也不挡备份。
+pub fn in_resume_files(rel: &str) -> bool {
+    rel.starts_with(RESUME_FILES_DIR)
+}
+
 /// `settings.json` 里唯一会被带走的那些键（拆分计划 Q2）。
 ///
 /// 整份带走会把将来加进去的任何机器专属设置一起带走；一个不带则换机后配对要

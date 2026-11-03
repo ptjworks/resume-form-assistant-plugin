@@ -94,7 +94,7 @@ fn clean(result: &ResumeFileDeletion) -> bool {
     result.deleted
         && result.stuck_in_tmp.is_none()
         && result.folder.leftovers.is_empty()
-        && result.folder.in_subfolders.is_empty()
+        && result.folder.manual.is_empty()
         && result.folder.unchecked.is_none()
 }
 
@@ -230,18 +230,18 @@ fn a_damaged_record_with_a_bad_hash_is_deleted_and_the_folder_is_checked_by_scan
     std::fs::write(folder.join("sub").join("stray"), b"x").unwrap();
     let result = db.delete_resume_file(&broken.id).unwrap();
     assert!(result.deleted);
-    // 子目录里的不归任何记录：不挡备份，单独列出来。
+    // 子目录不是附件文件：不挡备份，单独列出来让用户自己处理。
     assert!(result.folder.leftovers.is_empty(), "{result:?}");
-    assert_eq!(result.folder.in_subfolders, vec![format!("{RESUME_FILES_DIR}/sub/stray")]);
+    assert_eq!(result.folder.manual, vec![format!("{RESUME_FILES_DIR}/sub")]);
     assert!(result.folder.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
-    assert_eq!(db.check_resume_file_folder().in_subfolders, result.folder.in_subfolders);
+    assert_eq!(db.check_resume_file_folder().manual, result.folder.manual);
     // 没有记录用着的那份字节清掉了，别的附件都在。
     assert!(!folder.join(&broken.sha256).exists());
     assert_eq!(db.read_resume_file(&kept.id).unwrap().1, png());
     // 残留拿掉以后，附件目录里没有备份清单不收的文件。
     std::fs::remove_dir_all(folder.join("sub")).unwrap();
     let check = db.check_resume_file_folder();
-    assert!(check.leftovers.is_empty() && check.in_subfolders.is_empty() && check.unchecked.is_none());
+    assert!(check.leftovers.is_empty() && check.manual.is_empty() && check.unchecked.is_none());
 }
 
 #[test]
@@ -333,20 +333,26 @@ fn a_damaged_record_whose_bytes_are_held_is_not_deleted_and_a_held_stray_is_repo
 }
 
 #[test]
-fn a_home_that_is_not_a_file_is_reported_and_nothing_is_deleted() {
+fn a_record_whose_home_is_not_a_file_is_deleted_and_the_home_is_left_for_the_user() {
     let dir = tempfile::tempdir().unwrap();
     let db = open(dir.path());
     let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
     let home = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
-    // 原位置上不是文件，是一个目录：不挪进 tmp/，不删记录，照实报错。
+    // 原位置上不是文件，是一个目录：那不是这条记录的字节。只删记录，不挪不删那个目录，把它列出来让用户处理。
     std::fs::remove_file(&home).unwrap();
     std::fs::create_dir(&home).unwrap();
     std::fs::write(home.join("inside"), b"x").unwrap();
-    let error = db.delete_resume_file(&file.id).unwrap_err();
-    assert_eq!(code(error), "validation_failed");
-    assert!(db.resume_file(&file.id).unwrap().is_some());
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted && result.stuck_in_tmp.is_none(), "{result:?}");
+    assert_eq!(result.folder.manual, vec![format!("{RESUME_FILES_DIR}/{}", file.sha256)]);
+    assert!(result.folder.leftovers.is_empty() && result.folder.unchecked.is_none(), "{result:?}");
+    assert!(db.resume_file(&file.id).unwrap().is_none());
     assert!(home.join("inside").is_file());
     assert!(!dir.path().join("archive").join("tmp").join(format!("resume-file-{}.deleting", file.sha256)).exists());
+    // 删不存在的记录也照样核对附件目录。
+    let again = db.delete_resume_file(&file.id).unwrap();
+    assert!(!again.deleted);
+    assert_eq!(again.folder.manual, result.folder.manual);
 }
 
 #[test]

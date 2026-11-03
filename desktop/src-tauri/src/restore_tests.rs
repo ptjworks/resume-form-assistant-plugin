@@ -177,11 +177,33 @@ fn files_in_a_subfolder_of_the_attachment_folder_neither_travel_nor_block_a_back
     std::fs::write(folder.join("sub").join("stray"), b"not an attachment").unwrap();
     let check = store.check_resume_file_folder();
     assert!(check.leftovers.is_empty() && check.unchecked.is_none(), "{check:?}");
-    assert_eq!(check.in_subfolders, vec![format!("{}/sub/stray", archive_store::RESUME_FILES_DIR)]);
+    assert_eq!(check.manual, vec![format!("{}/sub", archive_store::RESUME_FILES_DIR)]);
     let package = export_to(&store, &source.paths, "backup.zip");
     let manifest = backup::read_manifest(&package).unwrap();
     assert!(manifest.entries.iter().any(|entry| entry.path.ends_with(&file.sha256)));
     assert!(manifest.entries.iter().all(|entry| !entry.path.contains("sub/stray")));
+    store.close().unwrap();
+}
+
+#[test]
+fn a_record_whose_file_location_is_a_folder_can_be_deleted_and_the_backup_still_runs() {
+    // #429: something other than a file sits where a record's bytes should be. Deleting the record
+    // leaves that folder alone and lists it; the backup neither packs it nor stops on it.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let bytes = [b"%PDF-1.7\n".as_slice(), b"resume bytes"].concat();
+    let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    let home = source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256);
+    std::fs::remove_file(&home).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(home.join("inside"), b"not an attachment").unwrap();
+    let deletion = store.delete_resume_file(&file.id).unwrap();
+    assert!(deletion.deleted, "{deletion:?}");
+    assert_eq!(deletion.folder.manual, vec![format!("{}/{}", archive_store::RESUME_FILES_DIR, file.sha256)]);
+    assert!(home.join("inside").is_file());
+    let package = export_to(&store, &source.paths, "backup.zip");
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains(&file.sha256)));
     store.close().unwrap();
 }
 

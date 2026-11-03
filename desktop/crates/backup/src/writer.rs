@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::exclude::{classify, Disposition};
+use crate::exclude::{classify, in_resume_files, Disposition};
 use crate::manifest::{
     ArchiveCounts, Manifest, ManifestEntry, DATABASE_PATH, FORMAT, FORMAT_VERSION, MANIFEST_PATH,
     SETTINGS_PATH,
@@ -135,8 +135,11 @@ fn build(
                 }
                 Disposition::Include => {}
             }
-            if child.file_type()?.is_dir() {
+            let kind = child.file_type()?;
+            if kind.is_dir() {
                 walk.push(path);
+            } else if !kind.is_file() && in_resume_files(&rel) {
+                skipped.push((rel, "附件目录里不是普通文件".to_string()));
             } else {
                 entries.push(add_file(
                     &mut zip,

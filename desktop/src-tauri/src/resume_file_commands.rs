@@ -72,8 +72,8 @@ pub fn update(store: &ArchiveStore, id: &str, patch: &ResumeFilePatch) -> Result
 
 /// 删除的结果和删除以后的列表。删除已经提交以后再读列表失败，`listing` 是空的（界面留着原来的列表），
 /// 删除的结果照样给。`stuck_in_tmp` 是这次挪进 tmp/ 的文件最后还在那里：`not_removed` 本该删掉没删掉，
-/// `not_restored` 本该挪回原处没挪回去。`leftovers` 是附件目录顶层还会让备份停下的文件，`in_subfolders` 是
-/// 子目录里不归任何记录的文件；核对出错时 `unchecked` 是能给人看的原因（原始错误只写进桌面日志）。
+/// `not_restored` 本该挪回原处没挪回去。`leftovers` 是附件目录顶层还会让备份停下的文件，`manual` 是
+/// 附件目录顶层不是普通文件的东西（目录、链接之类），要用户自己处理；核对出错时 `unchecked` 是能给人看的原因（原始错误只写进桌面日志）。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResumeFileDeleted {
@@ -81,7 +81,7 @@ pub struct ResumeFileDeleted {
     pub deleted: bool,
     pub stuck_in_tmp: Option<&'static str>,
     pub leftovers: Vec<String>,
-    pub in_subfolders: Vec<String>,
+    pub manual: Vec<String>,
     pub unchecked: Option<String>,
 }
 
@@ -103,7 +103,7 @@ pub fn delete(store: &ArchiveStore, id: &str) -> Result<ResumeFileDeleted, Comma
         deleted: deletion.deleted,
         stuck_in_tmp: deletion.stuck_in_tmp.map(|stuck| if stuck.not_restored { "not_restored" } else { "not_removed" }),
         leftovers: deletion.folder.leftovers,
-        in_subfolders: deletion.folder.in_subfolders,
+        manual: deletion.folder.manual,
         unchecked,
     })
 }

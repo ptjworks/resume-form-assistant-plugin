@@ -43,8 +43,8 @@ function deletionNotice(result: ResumeFileDeleted, done: string, name: string): 
   if (result.stuckInTmp === "not_restored") notes.push("还有附件在用的一份文件没能复原，暂时读不了；下次增删附件时会再试着挪回去。");
   const leftovers = result.leftovers ?? [];
   if (leftovers.length) notes.push(`附件目录里还有 ${leftovers.length} 个文件没清掉，备份可能仍会被这些残留挡住：${leftovers.join("、")}。`);
-  const inSubfolders = result.inSubfolders ?? [];
-  if (inSubfolders.length) notes.push(`附件目录的子目录里有 ${inSubfolders.length} 个文件不归任何附件，不进备份，也不会自动清理：${inSubfolders.join("、")}。`);
+  const manual = result.manual ?? [];
+  if (manual.length) notes.push(`附件目录里有 ${manual.length} 项不是附件文件（文件夹、链接之类），不进备份，也不会自动清理，需要的话请手动处理：${manual.join("、")}。`);
   if (result.unchecked) notes.push(`附件目录没能核对完（${result.unchecked}），可能还有没列出来的残留，备份可能仍会被挡住。`);
   if (!result.listing) notes.push("附件列表没能刷新，稍后重新打开这一页。");
   if (!result.deleted) return { tone: "warn", text: notes.join("") };
@@ -370,7 +370,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
         }
       >
         {confirmDelete?.damaged ? (
-          <p>「{confirmDelete.name}」这条记录读不出来。删掉记录时，能按它的哈希在附件目录里找到、又没有别的记录在用的那份文件会一起删掉，删了不能恢复。附件目录顶层没人用的残留会顺手清掉；清不掉的、子目录里的，删除之后会列出来。档案以外的文件不动。</p>
+          <p>「{confirmDelete.name}」这条记录读不出来。删掉记录时，能按它的哈希在附件目录里找到、又没有别的记录在用的那份文件会一起删掉，删了不能恢复。附件目录里没人用的文件会顺手清掉；清不掉的、不是文件的（文件夹、链接之类），删除之后会列出来。档案以外的文件不动。</p>
         ) : (
           <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
         )}
