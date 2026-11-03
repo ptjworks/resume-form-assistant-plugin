@@ -139,7 +139,9 @@
     step: "",
     stop: false,
     result: null,
-    report: null
+    report: null,
+    // 没出卡片时的诊断（report）还没写进这次填写的诊断：下一次侧栏开始的填写带上它。
+    reportForFill: false
   };
   // 网站解析填上的框：控件 → 解析后的值。照常填写时它们不算用户已有的内容，有资料就填，不问要不要覆盖。
   let uploadParsed = new WeakMap();
@@ -2474,6 +2476,7 @@
     const api = self.ResumeProUploadSlots;
     upload.result = null;
     upload.report = null;
+    upload.reportForFill = false;
     upload.phase = "idle";
     upload.plan = [];
     upload.pendingNotes = [];
@@ -2500,7 +2503,11 @@
     }
     const plan = slots.map((slot) => {
       if (slot.hasFile) return { slot, fileId: null, reason: slot.fileUnsure ? "file_unsure" : "has_file" };
-      if (planned.status !== "ok") return { slot, fileId: null, reason: planned.status === "unsupported" ? "desktop_old" : "desktop_unavailable" };
+      // 后台说请求不对（invalid_payload，页面上的框超出它收的范围）：不是桌面连不上，单独记一个原因，诊断里看得到。
+      if (planned.status !== "ok") {
+        return { slot, fileId: null, reason: planned.status === "unsupported" ? "desktop_old"
+          : planned.status === "invalid_payload" ? "plan_invalid" : "desktop_unavailable" };
+      }
       if (!UPLOAD_PLANNED.includes(slot.kind)) return { slot, fileId: null, reason: slot.reason || "unknown_kind" };
       const answer = answers.get(slot.id);
       const fileId = typeof answer?.fileId === "string" && /^[\w-]{1,64}$/.test(answer.fileId) ? answer.fileId : null;
@@ -2526,6 +2533,11 @@
       const lines = [...plan.map((item) => uploadLine(item)).filter(Boolean), ...pendingNotes(pending)];
       upload.result = lines.length ? { lines, tone: pending ? "warn" : "info" } : null;
       upload.phase = upload.result ? "done" : "idle";
+      // 没出卡片也把每个框为什么没传记进这次填写的诊断（框的类别和原因码）。
+      if (plan.length) {
+        upload.report = uploadReport(plan.map((item) => ({ slot: item.slot, file: null, reason: item.reason })), null, null, []);
+        upload.reportForFill = true;
+      }
       return false;
     }
     upload.pendingNotes = restorable ? [] : pendingNotes(pending);
@@ -2593,6 +2605,7 @@
       case "file_unsure": return `${name}：框里像是已经有文件了，没有上传，请看一下网页。`;
       case "desktop_old": return `${name}：桌面程序版本较旧，不能上传文件；更新桌面程序，或者自己上传。`;
       case "desktop_unavailable": return `${name}：桌面暂时连不上，没有上传。`;
+      case "plan_invalid": return `${name}：插件没能处理这个上传框，没有上传，请自己上传。`;
       case "no_file": return `这页要${kinds[item.slot.kind] || "文件"}，桌面里还没有。到桌面「简历资料 › 附件」添加，或者自己上传。`;
       case "too_large": return item.slot.siteLimit
         ? `${name}：网站要求不超过 ${uploadSize(item.slot.limit)}，桌面里的文件 ${uploadSize(item.byteSize || 0)}，没有上传。`
@@ -2625,6 +2638,8 @@
     if (action === "cancel") {
       upload.phase = "idle";
       upload.plan = [];
+      upload.preview = null;
+      upload.platform = null;
       return { ok: true };
     }
     if (action === "fill") {
@@ -2633,12 +2648,15 @@
       upload.pending = null;
       upload.phase = "idle";
       upload.plan = [];
+      upload.preview = null;
+      upload.platform = null;
       const more = (list, count) => `${list.join("、")}${count > list.length ? " 等" : ""}`;
       const lines = [
         ...(skipped ? [`这次没有改回上次被网站改掉的 ${skipped.count} 项，请核对：${more(skipped.labels, skipped.count)}。`] : []),
         ...(skipped?.laterCount ? [`后来又改过的这几项也没有改回，请核对：${more(skipped.later, skipped.laterCount)}。`] : []),
         ...upload.pendingNotes
       ];
+      upload.pendingNotes = [];
       if (lines.length) {
         upload.result = { lines, tone: "warn" };
         upload.phase = "done";
@@ -2654,7 +2672,7 @@
       return { ...item, file: fileId ? { fileId } : null, reason: fileId ? "" : item.reason === "choose" || (item.fileId && !fileId) ? "not_chosen" : item.reason };
     });
     // 选了文件的框要是这张卡片上的、框里还没有文件、桌面连得上。文件放不放得进这个框（类型、大小），取到文件时按它本身再核对。
-    const blocked = ["has_file", "file_unsure", "desktop_old", "desktop_unavailable"];
+    const blocked = ["has_file", "file_unsure", "desktop_old", "desktop_unavailable", "plan_invalid"];
     if ([...picked].some(([slotId, fileId]) => {
       const planned = upload.plan.find((item) => item.slot.id === slotId);
       return !planned || !/^[\w-]{1,64}$/.test(fileId) || planned.slot.hasFile || blocked.includes(planned.reason);
@@ -3136,8 +3154,12 @@
       const fine = items.every((item) => !item.file || item.outcome?.code === "done") && !lines.length && !unrestored;
       upload.result = all.length ? { lines: all, tone: fine ? "ok" : "warn" } : null;
       upload.report = uploadReport(items, parse, restored, parsedLeft);
-      // 上传结束：页面这边只留每个框不传的原因（结果里「打开桌面简历资料」要用），文件编号、文件名、上传框都不留。
+      // 上传结束：页面这边只留结果（几行字和诊断用的计数）和每个框不传的原因（结果里「打开桌面简历资料」要用），
+      // 文件编号、文件名、上传框、卡片上会改回的题目、平台都不留。
       upload.plan = upload.plan.map((item) => ({ reason: item.reason }));
+      upload.preview = null;
+      upload.platform = null;
+      upload.pendingNotes = [];
       for (const item of items) item.file = null;
       upload.phase = upload.result ? "done" : "idle";
       upload.step = "";
@@ -4536,6 +4558,9 @@
       }
       // 侧栏、手动反馈和自动上报用同一份输入，两个通道的诊断块一致。
       const reportInput = { ...summaryInput, unsyncedCount: session === fillSession ? session.unsynced : 0 };
+      // 侧栏的一键填写前看过上传框、没出卡片：上传那一行补在这次填写的诊断后面（只在这一次）。
+      if (entry === "panel" && upload.reportForFill && upload.report) reportInput.upload = upload.report;
+      upload.reportForFill = false;
       writeFillDiagnostics(reportInput);
       // Feedback cannot delay filling, archiving or releasing the busy state.
       try {

@@ -354,11 +354,45 @@ test("an error elsewhere on the page is only a side note; one in the upload area
   const first = slots.before(box, [plain], isVisible);
   plain.getElementById("toast").innerHTML = `<div role="alert">邮箱格式不正确</div>`;
   assert.deepEqual(slots.state(box, "测试用户_简历.pdf", first, [plain], isVisible), { state: "none", message: "邮箱格式不正确" });
+  plain.getElementById("toast").innerHTML = `<div role="alert">测试用户_简历.pdf 上传失败</div>`;
+  assert.deepEqual(slots.state(box, "测试用户_简历.pdf", first, [plain], isVisible), { state: "error", message: "测试用户_简历.pdf 上传失败" });
+  // 只写了去掉扩展名的名字：在别处不算（文件叫「简历.pdf」时，别处写着「简历」的校验提示也会对上）。
   plain.getElementById("toast").innerHTML = `<div role="alert">测试用户_简历 上传失败</div>`;
-  assert.deepEqual(slots.state(box, "测试用户_简历.pdf", first, [plain], isVisible), { state: "error", message: "测试用户_简历 上传失败" });
+  assert.deepEqual(slots.state(box, "测试用户_简历.pdf", first, [plain], isVisible), { state: "none", message: "测试用户_简历 上传失败" });
   plain.getElementById("toast").innerHTML = "";
   (box.scope || box.root).insertAdjacentHTML("beforeend", `<div role="alert">上传失败，请重试</div>`);
   assert.deepEqual(slots.state(box, "测试用户_简历.pdf", first, [plain], isVisible), { state: "error", message: "上传失败，请重试" });
+});
+
+test("a file called 简历.pdf is not failed by a check elsewhere on the page that mentions 简历", () => {
+  const doc = page(`${antd({ id: "a", title: "简历附件" })}<div class="ant-form-item"><label for="intro">自我介绍</label><input id="intro"></div>`);
+  doc.body.insertAdjacentHTML("beforeend", `<div class="ant-message"></div>`);
+  const [slot] = found(doc);
+  const docs = [doc];
+  const seen = slots.before(slot, docs, isVisible);
+  slot.scope.querySelector(".ant-upload-list").innerHTML = `<div class="ant-upload-list-item ant-upload-list-item-done"><span title="简历.pdf">简历.pdf</span></div>`;
+  doc.querySelector(".ant-message").innerHTML = `<div class="ant-message-notice"><span>请先完善简历中的工作经历，格式不正确</span></div>`;
+  assert.deepEqual(slots.state(slot, "简历.pdf", seen, docs, isVisible), { state: "done", message: "" });
+  assert.equal(slots.state(slot, "简历.pdf", seen, docs, isVisible, { withDialogs: false }).state, "done");
+});
+
+test("two boxes side by side: a file shown by one is not taken for the other's", () => {
+  // 两个 antd 上传框并排放在同一个容器里，容器就是它们共同的表单项；只有第一个框里有文件。
+  const doc = page(`<div class="pair">
+    <span class="ant-upload-wrapper" id="wa"><div class="ant-upload"><input id="a" type="file" style="display:none"><button type="button">上传简历</button></div>
+      <div class="ant-upload-list"><div class="ant-upload-list-item ant-upload-list-item-done"><span title="已传的简历.pdf">已传的简历.pdf</span></div></div></span>
+    <span class="ant-upload-wrapper" id="wb"><div class="ant-upload"><input id="b" type="file" style="display:none"><button type="button">上传简历</button></div>
+      <div class="ant-upload-list"></div></span></div>`);
+  const pair = doc.querySelector(".pair");
+  const box = (id) => ({ input: doc.getElementById(id), root: doc.getElementById(`w${id}`), scope: pair });
+  assert.equal(slots.fileEvidence(box("a"), isVisible), "list");
+  assert.equal(slots.fileEvidence(box("b"), isVisible), "", "the other box's file item is not this box's");
+  // Element 的文件列表在组件旁边（组件外面）：只要这一片里没有别的 file 框，照样算这个框的。
+  const el = page(element({ id: "c", title: "证件照", accept: "image/*", picture: true,
+    list: `<li class="el-upload-list__item is-success"><img class="el-upload-list__item-thumbnail" src="blob:https://jobs.example.test/1"></li>` }));
+  const [photo] = found(el);
+  assert.equal(photo.root.contains(el.querySelector(".el-upload-list__item")), false);
+  assert.equal(slots.fileEvidence(photo, isVisible), "list");
 });
 
 test("before a file is handed over the box is checked again: the same control, kind, accept, size limit and group", () => {

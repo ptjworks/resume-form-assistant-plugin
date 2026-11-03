@@ -226,17 +226,29 @@
     return slots;
   }
 
-  // 框里已经有文件：file 框自己带着文件，表单项里有文件项、网页传上去的缩略图，或单独一段文字就是文件名。
-  // 框里已经有文件的根据：files（file 框自己带着文件）、list（表单项里有文件项）、thumb（网站传上去的缩略图），
-  // text（只有一段像文件名的字，认不准：照「已经有文件」处理，不传，原因码单独记）；没有根据是 ""。
+  // 这个框自己的上传区：从上传组件往外，最多到表单项，不越过装着别的 file 框的那一层。Element 的文件列表在组件旁边，
+  // 也在这一片里；并排的另一个框的文件项、缩略图、文件名不算这个框的。表单项那一层只用来读题目和提示。
+  function ownArea(slot) {
+    const root = slot.root || slot.input;
+    const stop = slot.scope || root;
+    let area = root;
+    for (let node = root?.parentElement; node && area !== stop && stop.contains?.(node); node = node.parentElement) {
+      if (Array.from(node.querySelectorAll?.("input[type='file' i]") || []).some(other => other !== slot.input)) break;
+      area = node;
+    }
+    return area;
+  }
+
+  // 框里已经有文件的根据：files（file 框自己带着文件）、list（上传区里有文件项）、thumb（网站传上去的缩略图），
+  // text（只有一段像文件名的字，认不准：照「已经有文件」处理，不传，原因码单独记）；没有根据是 ""。只看这个框自己的上传区。
   function fileEvidence(slot, isVisible = () => true) {
     try {
       if (slot.input?.files?.length) return "files";
     } catch { /* 读不到就看页面 */ }
-    const scopeEl = slot.scope || slot.root;
-    if (listItems(scopeEl).some(el => isVisible(el))) return "list";
-    if (thumbnails(scopeEl).some(el => isVisible(el))) return "thumb";
-    return visibleText(scopeEl, isVisible).some(text => text.length <= 120 && FILE_NAME.test(text) && !NOT_FILE_NAME.test(text)) ? "text" : "";
+    const area = ownArea(slot);
+    if (listItems(area).some(el => isVisible(el))) return "list";
+    if (thumbnails(area).some(el => isVisible(el))) return "thumb";
+    return visibleText(area, isVisible).some(text => text.length <= 120 && FILE_NAME.test(text) && !NOT_FILE_NAME.test(text)) ? "text" : "";
   }
   function hasFile(slot, isVisible = () => true) {
     return Boolean(fileEvidence(slot, isVisible));
@@ -396,11 +408,10 @@
     };
     const newDialog = withDialogs ? dialogs(docs, isVisible).find(el => changedSince(seen.dialogs, el)) : null;
     if (newDialog) return { state: "dialog", message: dialogText(newDialog, isVisible) };
-    // 只有和这个框有关的报错才算它没传上：它的文件项出错、它所在表单项里冒出的报错、提示就在上传区里或写着这个文件名，
+    // 只有和这个框有关的报错才算它没传上：它的文件项出错、它所在表单项里冒出的报错、提示就在上传区里或写着完整的文件名，
     // 或者这个文件的文件项没了、前后不到一秒冒出的报错。页面上别处的报错（别的字段的校验之类）只当参考，
-    // 带在结果里，不单凭它判失败。
-    const stem = String(name || "").replace(/\.[a-z0-9]{1,5}$/i, "");
-    const mentions = el => Boolean(name) && (el.textContent.includes(name) || (stem.length >= 2 && el.textContent.includes(stem)));
+    // 带在结果里，不单凭它判失败。不按去掉扩展名的文件名认：文件叫「简历.pdf」时，别处写着「简历」的校验提示也会对上。
+    const mentions = el => Boolean(name) && el.textContent.includes(name);
     const alerts = visibleAll(docs, MESSAGE, isVisible).filter(el => changedSince(seen.messages, el) && ERROR_WORDS.test(el.textContent || ""));
     // 每条报错第一次看到（或换了字、状态）的时间。
     seen.alertAt = seen.alertAt || new Map();

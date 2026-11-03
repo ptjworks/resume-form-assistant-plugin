@@ -276,3 +276,26 @@ test("an old desktop that cannot list files says so, not that it cannot be reach
   await p.poll();
   assert.deepEqual(p.rows().map((row) => row.note), ["桌面程序版本较旧，不能上传。", "桌面程序版本较旧，不能上传。", "桌面程序版本较旧，不能上传。"]);
 });
+
+test("a card that only puts values back needs no file list: nothing is read and 改回并填写 is ready at once", async (t) => {
+  const restore = { count: 1, labels: ["兴趣爱好"], pending: true, laterCount: 0, later: [] };
+  const p = await openPanel(t, { upload: { ...OFFER, slots: [{ ...OFFER.slots[0], reason: "has_file", fileId: "" }], restore } });
+  await p.poll();
+  assert.equal(p.workerCalls("DESKTOP_RESUME_FILES_LIST").length, 0, "no box can take a file");
+  assert.equal(p.get("upload-confirm").textContent, "改回并填写");
+  assert.equal(p.get("upload-confirm").disabled, false);
+  // 有框能放文件、桌面却一直不回：照样能先改回，不用等。
+  const waiting = await openPanel(t, { files: null, upload: { ...OFFER, restore } });
+  await waiting.poll();
+  assert.equal(waiting.workerCalls("DESKTOP_RESUME_FILES_LIST").length, 1);
+  assert.equal(waiting.rows()[0].note, "正在读取桌面里的文件…");
+  assert.equal(waiting.get("upload-confirm").textContent, "改回并填写");
+  assert.equal(waiting.get("upload-confirm").disabled, false);
+});
+
+test("a box the worker could not plan for says the plugin did not handle it and offers no file", async (t) => {
+  const restore = { count: 1, labels: ["兴趣爱好"], pending: true, laterCount: 0, later: [] };
+  const p = await openPanel(t, { upload: { ...OFFER, slots: [{ ...OFFER.slots[0], reason: "plan_invalid", fileId: "" }], restore } });
+  await p.poll();
+  assert.deepEqual(p.rows(), [{ title: "简历附件", chosen: null, options: [], note: "插件没能处理这个上传框，不能上传。" }]);
+});

@@ -1005,3 +1005,18 @@ test("a hint answer that comes back after a newer one is dropped", async (t) => 
   later += 2100;
   assert.equal((await p.status()).siteHint, "Moka 上传简历后会重新解析并覆盖已填内容。一键填写会先上传简历，等解析完再填写。");
 });
+
+test("when the worker refuses the plan request, the result says the box was not handled, not that the desktop is down, and the diagnostics say why", async (t) => {
+  // 简历框的 accept 长得离谱，后台不收这个请求（invalid_payload）。
+  const accept = Array.from({ length: 500 }, (_, index) => `.x${index}`).join(",") + ",.pdf";
+  assert.ok(accept.length > 2000);
+  const p = await page(t, row("school", "毕业院校", `<input id="school">`) + antdUpload("resume", "简历附件", accept),
+    { url: "https://jobs.example.test/apply", answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  assert.deepEqual(await p.send({ type: "RESUME_PANEL_FILL" }), { ok: true });
+  await Promise.all(p.fills);
+  assert.equal(p.value("school"), "示例大学");
+  const now = await p.status();
+  assert.deepEqual(now.upload.lines, ["简历附件：插件没能处理这个上传框，没有上传，请自己上传。"]);
+  assert.match(p.ui.diag.value, /上传：框 resume 1；结果 skipped 1；没传的原因 plan_invalid 1/);
+});
