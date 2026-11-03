@@ -40,6 +40,10 @@ fn doc() -> Vec<u8> {
 
 /// 不压缩的最小 ZIP：本地文件头、中央目录、目录结尾。CRC 不填，识别时不看。
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    zip_with_comment(entries, b"")
+}
+
+fn zip_with_comment(entries: &[(&str, &[u8])], comment: &[u8]) -> Vec<u8> {
     let le16 = |n: usize| (n as u16).to_le_bytes();
     let le32 = |n: usize| (n as u32).to_le_bytes();
     let (mut out, mut central) = (Vec::new(), Vec::new());
@@ -72,7 +76,8 @@ fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     out.extend(le16(entries.len()));
     out.extend(le32(central.len()));
     out.extend(le32(start));
-    out.extend(le16(0));
+    out.extend(le16(comment.len()));
+    out.extend(comment);
     out
 }
 
@@ -122,6 +127,101 @@ fn files_are_taken_by_their_content_and_kind_not_by_their_name() {
         assert_eq!(code(db.add_resume_file(kind, name, &bytes).unwrap_err()), "validation_failed", "{name}");
     }
     assert_eq!(db.resume_files().unwrap().len(), 5, "nothing refused was kept");
+    // ZIP 注释里也带着目录结尾的签名：只认注释正好延伸到文件末尾的那一条，合法的 DOCX 照收。
+    let commented = zip_with_comment(
+        &[("[Content_Types].xml", b"<Types/>"), ("word/document.xml", b"<w:document/>")],
+        b"note PK\x05\x06 0123456789012345678 end",
+    );
+    assert_eq!(db.add_resume_file(ResumeFileKind::Resume, "带注释.docx", &commented).unwrap().mime, sniff_resume_file(&docx()).unwrap());
+}
+
+#[test]
+fn a_damaged_record_stops_the_list_instead_of_being_guessed() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let fields = vec![TemplateField { key: "姓名".into(), value: "测试用户".into() }];
+    let template = db.create_template("校招", vec![TemplateGroup { name: "基本信息".into(), fields }]).unwrap().template;
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.update_resume_file(&file.id, &ResumeFilePatch { template_ids: Some(vec![template.id.clone()]), ..Default::default() }).unwrap();
+    db.close().unwrap();
+    for (i, damage) in [
+        "UPDATE resume_files SET template_ids_json = 'not json'",
+        "UPDATE resume_files SET template_ids_json = '{\"all\": true}'",
+        "PRAGMA ignore_check_constraints = ON; UPDATE resume_files SET kind = 'cover'",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute_batch(&format!("{damage} WHERE id = '{}'; PRAGMA ignore_check_constraints = OFF;", file.id)).unwrap();
+        drop(raw);
+        let db = open(dir.path());
+        // 不当成「所有模板」「其他材料」：整个列表报错，单个也报错。
+        assert_eq!(code(db.resume_files().unwrap_err()), "internal_error", "{damage}");
+        assert_eq!(code(db.resume_file(&file.id).unwrap_err()), "internal_error", "{damage}");
+        // 读不出记录时，添加之后的清理什么都不删。
+        db.add_resume_file(ResumeFileKind::Photo, &format!("照片{i}.png"), &[png(), vec![i as u8]].concat()).unwrap();
+        assert!(dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256).is_file(), "{damage}");
+        db.close().unwrap();
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute_batch(&format!(
+            "PRAGMA ignore_check_constraints = ON; UPDATE resume_files SET kind = 'resume', template_ids_json = '[\"{}\"]' WHERE id = '{}';",
+            template.id, file.id
+        ))
+        .unwrap();
+    }
+    // 损坏的记录照样能删。
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute_batch(&format!("UPDATE resume_files SET template_ids_json = 'not json' WHERE id = '{}'", file.id)).unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    assert!(db.delete_resume_file(&file.id).unwrap());
+    let left = db.resume_files().unwrap();
+    assert_eq!(left.len(), 3);
+    assert!(left.iter().all(|f| f.kind == ResumeFileKind::Photo));
+    assert!(!dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256).exists());
+}
+
+#[test]
+fn leftovers_in_tmp_are_swept_and_a_locked_file_is_not_reported_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let tmp = dir.path().join("archive").join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    for name in ["resume-file-a.partial", "resume-file-b.deleting", "something-else.partial"] {
+        std::fs::write(tmp.join(name), b"x").unwrap();
+    }
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    let mut names: Vec<_> = std::fs::read_dir(&tmp).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    names.sort();
+    assert_eq!(names, vec!["something-else.partial"], "only this table's own leftovers are swept");
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let stored = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
+        // 别的程序独占着这个文件：什么都不删，照实报错，记录和字节都在。
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&stored).unwrap();
+        let refused = db.delete_resume_file(&file.id).unwrap_err();
+        assert_eq!(code(refused), "validation_failed");
+        assert!(db.resume_file(&file.id).unwrap().is_some());
+        assert!(stored.is_file());
+        // 换文件时旧的被占着：新文件换上了，但不报成干净的成功。
+        let replaced = db.replace_resume_file(&file.id, "新简历.pdf", &pdf(2)).unwrap_err();
+        assert!(replaced.to_string().contains("旧文件正被别的程序占用"), "{replaced}");
+        assert_eq!(db.resume_file(&file.id).unwrap().unwrap().name, "新简历.pdf");
+        drop(held);
+        let now = db.resume_file(&file.id).unwrap().unwrap();
+        assert!(db.delete_resume_file(&now.id).unwrap());
+        assert!(!stored.exists(), "the old bytes are swept once nothing holds them");
+    }
+    #[cfg(not(windows))]
+    assert!(db.delete_resume_file(&file.id).unwrap());
+
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("archive").join(RESUME_FILES_DIR)).unwrap().collect();
+    assert!(leftovers.is_empty());
+    assert!(!std::fs::read_dir(&tmp).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with("resume-file-")));
 }
 
 #[test]

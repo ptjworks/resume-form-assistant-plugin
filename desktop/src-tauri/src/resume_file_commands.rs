@@ -23,7 +23,7 @@ fn fail(code: &str, message: impl Into<String>) -> CommandError {
 /// 存储层的报错带着「invalid input: 」这类前缀，界面上只显示后面那句。
 fn shown(error: archive_store::StoreError) -> CommandError {
     let mut command = CommandError::from(error);
-    for prefix in ["invalid input: ", "conflict: ", "entity not found: "] {
+    for prefix in ["invalid input: ", "conflict: ", "entity not found: ", "internal error: ", "io error: "] {
         if let Some(rest) = command.message.strip_prefix(prefix) {
             command.message = rest.to_string();
         }

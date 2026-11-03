@@ -76,11 +76,14 @@ export function createResumeFiles({ session, store, sendNative, openChannel, sle
         const message = await envelope('resumeFiles.read', { fileId: file.fileId, sha256: file.sha256, chunkIndex: index }, gate.probe);
         // Only the first chunk can meet a desktop that is still starting; a failure later ends the read.
         const result = await send(message, { sendNative: channel.send, sleep, retry: index === 0 });
+        // A reply the validator refused (a chunk of the wrong length, say) is the desktop's data being wrong, not the desktop being away.
+        if (result.status === 'retryable' && result.code === 'invalid_payload') return { status: 'corrupt' };
         if (result.status !== 'ok') return failure(result);
         const chunk = result.response.payload;
         if (chunk.byteSize !== file.byteSize || chunk.chunkCount !== count) return { status: 'conflict' };
         const piece = decodeStandardBase64(chunk.bytesBase64);
-        if (await sha256Hex(piece) !== chunk.chunkSha256) return { status: 'corrupt' };
+        const expected = index + 1 === count ? file.byteSize - index * RESUME_FILE_CHUNK_BYTES : RESUME_FILE_CHUNK_BYTES;
+        if (piece.length !== expected || await sha256Hex(piece) !== chunk.chunkSha256) return { status: 'corrupt' };
         bytes.set(piece, index * RESUME_FILE_CHUNK_BYTES);
         pieces.push(chunk.bytesBase64);
       }

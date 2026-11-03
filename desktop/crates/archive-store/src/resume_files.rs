@@ -189,9 +189,12 @@ fn zip_entry_names(bytes: &[u8]) -> Option<Vec<&[u8]>> {
     const ENTRY: [u8; 4] = [b'P', b'K', 1, 2];
     let u16_at = |at: usize| bytes.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize);
     let u32_at = |at: usize| bytes.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
-    // 目录结尾记录 22 字节，后面最多跟 65535 字节的注释。
+    // 目录结尾记录 22 字节，后面最多跟 65535 字节的注释。注释里也可能出现这串签名，所以只认注释长度
+    // 正好延伸到文件末尾的那一条。
     let last = bytes.len().checked_sub(22)?;
-    let end = (last.saturating_sub(65535)..=last).rev().find(|&at| bytes[at..at + 4] == END)?;
+    let end = (last.saturating_sub(65535)..=last)
+        .rev()
+        .find(|&at| bytes[at..at + 4] == END && u16_at(at + 20) == Some(bytes.len() - at - 22))?;
     let (count, offset) = (u16_at(end + 10)?, u32_at(end + 16)?);
     if count == 0xFFFF || offset == 0xFFFF_FFFF {
         return None;
@@ -355,25 +358,44 @@ fn place_file(archive_dir: &Path, rel: &str, bytes: &[u8]) -> Result<bool, Store
     Ok(true)
 }
 
-fn row_to_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<(ResumeFile, String)> {
-    let kind: String = row.get(1)?;
-    let templates: String = row.get(8)?;
-    Ok((
-        ResumeFile {
+/// 表里一行的原样，种类和模板绑定还没解析。
+struct RawFile {
+    file: ResumeFile,
+    kind: String,
+    templates: String,
+    rel: String,
+}
+
+fn raw_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawFile> {
+    Ok(RawFile {
+        file: ResumeFile {
             id: row.get(0)?,
-            kind: ResumeFileKind::parse(&kind).unwrap_or(ResumeFileKind::Other),
+            kind: ResumeFileKind::Other,
             name: row.get(2)?,
             label: row.get(3)?,
             mime: row.get(4)?,
             byte_size: row.get(5)?,
             sha256: row.get(6)?,
             is_default: row.get::<_, i64>(7)? == 1,
-            template_ids: serde_json::from_str(&templates).unwrap_or_default(),
+            template_ids: Vec::new(),
             created_at: row.get(9)?,
             updated_at: row.get(10)?,
         },
-        row.get(11)?,
-    ))
+        kind: row.get(1)?,
+        templates: row.get(8)?,
+        rel: row.get(11)?,
+    })
+}
+
+/// 种类认不出、模板绑定读不出的记录不猜：当成「其他材料」「所有模板」会把文件用到用户没让用的地方。
+/// 整个列表报错，界面和插件都看得到。
+fn parse_row(raw: RawFile) -> Result<(ResumeFile, String), StoreError> {
+    let damaged = |what: &str| {
+        StoreError::Internal(format!("附件「{}」的记录损坏（{what}），为了不用错文件，附件先不列出。", raw.file.name))
+    };
+    let kind = ResumeFileKind::parse(&raw.kind).ok_or_else(|| damaged("种类认不出"))?;
+    let template_ids: Vec<String> = serde_json::from_str(&raw.templates).map_err(|_| damaged("模板绑定读不出"))?;
+    Ok((ResumeFile { kind, template_ids, ..raw.file }, raw.rel))
 }
 
 const FILE_COLUMNS: &str =
@@ -392,8 +414,8 @@ impl StoreTx<'_> {
             "SELECT {FILE_COLUMNS} FROM resume_files \
              ORDER BY CASE kind WHEN 'resume' THEN 0 WHEN 'photo' THEN 1 WHEN 'transcript' THEN 2 ELSE 3 END, position, rowid"
         ))?;
-        let rows = stmt.query_map([], row_to_file)?;
-        let mut files = rows.collect::<Result<Vec<_>, _>>()?;
+        let rows = stmt.query_map([], raw_row)?.collect::<Result<Vec<_>, _>>()?;
+        let mut files = rows.into_iter().map(parse_row).collect::<Result<Vec<_>, _>>()?;
         for (file, _) in &mut files {
             file.template_ids.retain(|id| live.contains(id));
         }
@@ -409,12 +431,13 @@ impl StoreTx<'_> {
         let live = self.template_ids_now()?;
         let found = self
             .conn()
-            .query_row(&format!("SELECT {FILE_COLUMNS} FROM resume_files WHERE id = ?1"), params![id], row_to_file)
+            .query_row(&format!("SELECT {FILE_COLUMNS} FROM resume_files WHERE id = ?1"), params![id], raw_row)
             .optional()?;
-        Ok(found.map(|(mut file, rel)| {
-            file.template_ids.retain(|id| live.contains(id));
-            (file, rel)
-        }))
+        let Some((mut file, rel)) = found.map(parse_row).transpose()? else {
+            return Ok(None);
+        };
+        file.template_ids.retain(|id| live.contains(id));
+        Ok(Some((file, rel)))
     }
 
     pub fn resume_file(&self, id: &str) -> Result<Option<ResumeFile>, StoreError> {
@@ -543,35 +566,92 @@ impl StoreTx<'_> {
         self.resume_file(id)?.ok_or_else(|| StoreError::Internal("resume file vanished in the same transaction".into()))
     }
 
-    /// 删一个文件的记录。文件本身在提交之后由 [ArchiveStore::delete_resume_file] 删。
-    pub fn delete_resume_file_row(&mut self, id: &str) -> Result<bool, StoreError> {
-        Ok(self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id])? > 0)
+    /// 文件字节的位置，只读这一列：记录损坏时也能删。
+    fn resume_file_rel(&self, id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn()
+            .query_row("SELECT stored_rel_path FROM resume_files WHERE id = ?1", params![id], |r| r.get(0))
+            .optional()?)
     }
 
-    /// 删掉 `attachments/resume-files/` 里没人引用的文件：崩溃、登记失败、替换和删除留下的。
-    /// 这个目录只归这张表管，所以按表里有没有来判断。
+    /// 删一个文件：先把字节挪进 `tmp/` 的 `trash`（不进备份），再删记录。文件被别的程序占着挪不动时
+    /// 什么都不删、照实报错；删记录失败就挪回去。`trash` 里的字节由 [ArchiveStore::delete_resume_file]
+    /// 在提交之后删掉并核对。
+    fn take_resume_file(&mut self, id: &str, rel: &str, trash: &Path) -> Result<bool, StoreError> {
+        if self.resume_file_rel(id)?.as_deref() != Some(rel) {
+            return Err(StoreError::Conflict("这个附件刚在别处改过，请重新打开附件页再删。".into()));
+        }
+        let target = self.archive_dir.join(rel);
+        let moved = target.exists();
+        if moved {
+            std::fs::create_dir_all(trash.parent().unwrap_or(&self.archive_dir))?;
+            std::fs::rename(&target, trash)
+                .map_err(|_| invalid("文件正被别的程序占用，没有删除。关掉占用它的程序后再删一次。"))?;
+        }
+        match self.conn().execute("DELETE FROM resume_files WHERE id = ?1", params![id]) {
+            Ok(count) => Ok(count > 0),
+            Err(error) => {
+                if moved {
+                    let _ = std::fs::rename(trash, &target);
+                }
+                Err(error.into())
+            }
+        }
+    }
+
+    /// 清掉没人引用的字节：`attachments/resume-files/` 里表中没有的文件（崩溃、登记失败留下的），
+    /// 以及 `tmp/` 里写到一半、删到一半留下的 `resume-file-*`。这个目录和这些临时文件只归这张表管。
+    /// 记录读不出（损坏）时什么都不删。
     pub fn sweep_resume_file_leftovers(&mut self) -> Result<usize, StoreError> {
-        let dir = self.archive_dir.join(RESUME_FILES_DIR);
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            return Ok(0);
-        };
         let referenced: std::collections::HashSet<String> = self
             .resume_file_rows()?
             .into_iter()
             .filter_map(|(_, rel)| rel.rsplit('/').next().map(str::to_string))
             .collect();
         let mut removed = 0;
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if entry.file_type().map(|t| t.is_file()).unwrap_or(false)
-                && !referenced.contains(&name)
-                && std::fs::remove_file(entry.path()).is_ok()
-            {
-                removed += 1;
+        let mut sweep = |dir: std::path::PathBuf, leftover: &dyn Fn(&str) -> bool| {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if entry.file_type().map(|t| t.is_file()).unwrap_or(false) && leftover(&name) && remove_verified(&entry.path()) {
+                    removed += 1;
+                }
             }
-        }
+        };
+        sweep(self.archive_dir.join(RESUME_FILES_DIR), &|name| !referenced.contains(name));
+        sweep(self.archive_dir.join("tmp"), &|name| {
+            name.starts_with("resume-file-") && (name.ends_with(".partial") || name.ends_with(".deleting"))
+        });
         Ok(removed)
     }
+}
+
+/// 删一个文件，被占用（杀毒软件扫描之类）时稍等再试几次。返回它最后是不是真的没了。
+fn remove_verified(path: &Path) -> bool {
+    for attempt in 0..5 {
+        match std::fs::remove_file(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound && attempt < 4 => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            _ => break,
+        }
+    }
+    !path.exists()
+}
+
+/// 把不再引用的字节挪进 `tmp/` 再删掉，核对原位置和临时位置都没了；没删干净就报 `message`。
+fn discard(archive_dir: &Path, rel: &str, message: &str) -> Result<(), StoreError> {
+    let target = archive_dir.join(rel);
+    let trash = archive_dir.join("tmp").join(format!("resume-file-{}.deleting", uuid::Uuid::new_v4()));
+    if target.exists() {
+        std::fs::create_dir_all(archive_dir.join("tmp"))?;
+        if std::fs::rename(&target, &trash).is_err() && !remove_verified(&target) {
+            return Err(StoreError::Io(std::io::Error::other(message.to_string())));
+        }
+    }
+    if trash.exists() && !remove_verified(&trash) {
+        return Err(StoreError::Io(std::io::Error::other(message.to_string())));
+    }
+    Ok(())
 }
 
 impl ArchiveStore {
@@ -589,9 +669,14 @@ impl ArchiveStore {
         Ok(added)
     }
 
+    /// 换成新文件以后删掉旧字节并核对；旧字节没删干净时照实报错（新文件已经换上了）。
     pub fn replace_resume_file(&self, id: &str, original_name: &str, bytes: &[u8]) -> Result<ResumeFile, StoreError> {
+        let before = self.transaction(|tx| tx.resume_file_rel(id))?;
         let replaced = self.transaction(|tx| tx.replace_resume_file(id, original_name, bytes))?;
         let _ = self.transaction(|tx| tx.sweep_resume_file_leftovers());
+        if let Some(old) = before.filter(|old| *old != rel_path(&replaced.sha256)) {
+            discard(self.archive_dir(), &old, "已换成新文件，但旧文件正被别的程序占用，还没从磁盘上删掉；下次增删附件时会再清一次。")?;
+        }
         Ok(replaced)
     }
 
@@ -599,9 +684,25 @@ impl ArchiveStore {
         self.transaction(|tx| tx.update_resume_file(id, patch))
     }
 
-    /// 删记录，提交之后再删文件：反过来的话，提交失败会留下一条指向不存在文件的记录。
+    /// 删一个文件。字节先挪进 `tmp/` 再删记录（挪不动就什么都不删），提交之后删掉字节并核对真的没了；
+    /// 没删干净照实报错，不报成删除成功。
     pub fn delete_resume_file(&self, id: &str) -> Result<bool, StoreError> {
-        let deleted = self.transaction(|tx| tx.delete_resume_file_row(id))?;
+        let Some(rel) = self.transaction(|tx| tx.resume_file_rel(id))? else {
+            return Ok(false);
+        };
+        let trash = self.archive_dir().join("tmp").join(format!("resume-file-{}.deleting", uuid::Uuid::new_v4()));
+        let deleted = self.transaction(|tx| tx.take_resume_file(id, &rel, &trash));
+        let target = self.archive_dir().join(&rel);
+        if deleted.is_err() && trash.exists() && !target.exists() {
+            // 提交失败，记录还在：字节放回原处。
+            let _ = std::fs::rename(&trash, &target);
+        }
+        let deleted = deleted?;
+        if (trash.exists() && !remove_verified(&trash)) || target.exists() {
+            return Err(StoreError::Io(std::io::Error::other(
+                "已从附件里删掉，但文件正被别的程序占用，还没从磁盘上删掉；下次增删附件时会再清一次。",
+            )));
+        }
         let _ = self.transaction(|tx| tx.sweep_resume_file_leftovers());
         Ok(deleted)
     }
