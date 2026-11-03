@@ -626,6 +626,62 @@ test("the catalog sent out has no identifying value in any key or group name, wh
   assert.equal(catalog[4].group, "〔工作经历1-公司〕");
 });
 
+test("a name of two characters from any name field is masked wherever it appears", async () => {
+  const resume = [
+    { group: "家庭主要成员", key: "母亲姓名", value: "周丽" }, { group: "基本信息", key: "曾用名", value: "林舟" },
+    { group: "家庭主要成员", key: "紧急联系人", value: "林强" }, { group: "家庭主要成员", key: "紧急联系人关系", value: "父亲" },
+    { group: "本网站回答", key: "周丽女士是否在本单位工作", value: "否" }, { group: "本网站回答", key: "林舟这个名字用到哪一年", value: "高中" },
+    { group: "林强推荐", key: "推荐岗位", value: "管培" }
+  ];
+  const env = worker();
+  await env.run({ formFields: [{ fieldId: "q", label: "其他说明" }], resumeFields: resume });
+  const catalog = catalogOf(env.calls[0].user);
+  assert.ok(!/周丽|林舟|林强/.test(JSON.stringify(catalog)), JSON.stringify(catalog));
+  assert.deepEqual(catalog.slice(4).map((entry) => entry.key), ["〔母亲姓名〕女士是否在本单位工作", "〔曾用名〕这个名字用到哪一年", "推荐岗位"]);
+  assert.equal(catalog[6].group, "〔紧急联系人〕推荐");
+  assert.equal(catalog[3].key, "紧急联系人关系", "a relation like 父亲 stays");
+});
+
+test("a generated label holding regex characters neither throws nor leaves a value in the catalog", () => {
+  const changed = fs.readFileSync(path.join(__dirname, "..", "ai-helpers.js"), "utf8").replace('label: "论文" }', 'label: "论文(+" }');
+  assert.notEqual(changed, fs.readFileSync(path.join(__dirname, "..", "ai-helpers.js"), "utf8"));
+  const scope = {};
+  vm.runInNewContext(changed, { self: scope });
+  const masked = scope.ResumeProAIHelpers.maskResumeValues(["论文(+1-发表于虚构理工学院学报"], [{ group: "教育经历", key: "学校", value: "虚构理工学院" }]);
+  assert.deepEqual(masked, ["论文(+1-发表于〔资料值〕学报"]);
+});
+
+test("a gender initial counts only when the field really offers it", () => {
+  assert.equal(helpers.isValueValidForField({ label: "性别", inputType: "select", options: ["M", "F"] }, "F"), true);
+  // 选项写成 Male、Female 时，「M」两项都沾边、页面上选不上；「F」页面会选 Female，照样算。
+  assert.equal(helpers.isValueValidForField({ label: "性别", inputType: "select", options: ["Male", "Female"] }, "M"), false);
+  assert.equal(helpers.isValueValidForField({ label: "性别", inputType: "select", options: ["男", "女"] }, "F"), false);
+  assert.equal(helpers.isValueValidForField({ label: "性别", inputType: "select", options: [] }, "F"), false, "options shown only when opened are left to the fill");
+  assert.equal(helpers.isValueValidForField({ label: "性别", inputType: "select", options: [] }, "女"), true);
+});
+
+test("one ref given twice is used once, a text answer of more than three items says why, and an unknown level of linked selects takes the whole region", async () => {
+  const env = worker((message, catalog) => [
+    { fieldId: "cities", refs: [catalog[0].ref, catalog[0].ref] },
+    { fieldId: "job", refs: catalog.slice(1, 5).map((entry) => entry.ref) },
+    { fieldId: "home", ref: catalog[5].ref }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "cities", label: "意向城市", inputType: "select", multiple: true, options: [] },
+      { fieldId: "job", label: "工作单位及职务" },
+      { fieldId: "home", label: "常住地", inputType: "select", cascadeGroup: "group-0", options: ["请选择"] }],
+    resumeFields: [{ group: "求职意向", key: "期望城市", value: "虚构港" },
+      { group: "工作经历", key: "工作经历1-公司", value: "甲公司" }, { group: "工作经历", key: "工作经历1-职务", value: "专员" },
+      { group: "工作经历", key: "工作经历1-部门", value: "市场部" }, { group: "工作经历", key: "工作经历1-地点", value: "乙城" },
+      { group: "户籍与地区", key: "现居住地", value: "广东省深圳市南山区" }]
+  });
+  const byId = Object.fromEntries(JSON.parse(JSON.stringify(result.matches)).map((match) => [match.fieldId, match]));
+  assert.equal(byId.cities.value, "虚构港");
+  assert.deepEqual(byId.job, { fieldId: "job", value: "", blocked: "too_many_items" });
+  assert.deepEqual(byId.home, { fieldId: "home", value: "广东省深圳市南山区", note: "region_level_unknown" });
+  assert.equal(result.diagnostics.regionLevelUnknown, 1);
+});
+
 test("no value of the eval resume is in its catalog but a few short common words", async () => {
   const { loadCorpus } = await import(pathToFileURL(path.join(__dirname, "..", "scripts", "eval-fill.mjs")).href);
   const corpus = loadCorpus();

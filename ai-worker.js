@@ -466,6 +466,8 @@ async function handleAiFill(message, controller = new AbortController()) {
   // 拦下不填、只报原因的（blocked：日期不对、几批回答对不上）不算 AI 填上的，另记 aiBlocked：网页把它们记作没写上。
   const aiAnswered = matches.filter(match => !matchedFieldIds.has(match.fieldId));
   diagnostics.aiMatches = aiAnswered.filter(match => !match.blocked).length;
+  // 联动下拉看不出是哪一级、给了整段的。
+  diagnostics.regionLevelUnknown = aiAnswered.filter(match => match.note === "region_level_unknown").length;
   diagnostics.aiBlocked = aiAnswered.length - diagnostics.aiMatches;
   // 开放题（多行文本框、问动机的单行题）AI 看过、资料里没有现成的回答：不让 AI 现写，诊断里单独记一个原因。
   diagnostics.openUnanswered = new Set(answeredFields.filter(field => opinion(field) && !seenMatchIds.has(field.fieldId))
@@ -661,12 +663,16 @@ function refMatches(payload, fields, catalog, allowed) {
     // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框（「期望年薪」）收到的整条不要。
     const parted = tokens.some(token => DATE_PARTS.includes(REF_TOKEN.exec(token)?.[2]));
     if (parted && !field.fits && !asksDatePart(field)) return [];
+    // 同一个编号给了两次（refs: ["r1", "r1"]）只算一次，免得拼出「深圳、深圳」。
+    tokens.splice(0, tokens.length, ...new Set(tokens));
     const usable = token => (!allowed || allowed.has(REF_TOKEN.exec(token)?.[1])) && (!field.fits || field.fits.includes(token));
     if (field.multiple === true) tokens.splice(0, tokens.length, ...tokens.filter(usable));
     else if (tokens.some(token => !usable(token))) return [];
     if (!tokens.length) return [];
     if (isTextAnswer(field) && !answersOnTopic(field, tokens, catalog)) return [];
     const values = tokens.map(token => refValue(token, field, catalog));
+    // 问几样东西的文本题最多拼 3 项（joinRefValues）：再多的不填，报原因。
+    if (isTextAnswer(field) && asksSeveral(field) && values.length > TEXT_JOIN_LIMIT) return [{ fieldId: field.fieldId, value: "", blocked: "too_many_items" }];
     const joined = values.every(Boolean) ? joinRefValues(field, values) : "";
     if (!joined) return [];
     // 日期控件只收写得成「2019-09」「2000-03-17」或「至今」的：别的不交给控件，记作没填上、报日期不对。
@@ -679,8 +685,9 @@ function refMatches(payload, fields, catalog, allowed) {
     const region = field.cascadeGroup !== undefined || field.cascade === true;
     if (region && !globalThis.ResumeProRegions?.resolve) return [{ fieldId: field.fieldId, value: "", blocked: "region_unavailable" }];
     if (field.cascadeGroup !== undefined) {
-      const value = levelRegion(field, joined);
-      return [value ? { fieldId: field.fieldId, value } : { fieldId: field.fieldId, value: "", blocked: "region_level_missing" }];
+      const { value, unknownLevel } = levelRegion(field, joined);
+      if (!value) return [{ fieldId: field.fieldId, value: "", blocked: "region_level_missing" }];
+      return [unknownLevel ? { fieldId: field.fieldId, value, note: "region_level_unknown" } : { fieldId: field.fieldId, value }];
     }
     if (field.cascade === true) {
       const { value, coarse } = regionPrefix(joined);
@@ -789,19 +796,21 @@ function regionPrefix(value) {
 
 // 联动下拉的一级只要这一级的地名（省、市或区县）：题目里只写了一级的按题目，没写或写了几级的按 cascadeLevel。
 // 认不出是地区的照旧给整段（学院、专业这类联动下拉）；直辖市占位的那一级给整段，页面按「包含」选；
-// 值里没有这一级的给空串，refMatches 报 region_level_missing。
+// 值里没有这一级的给空串，refMatches 报 region_level_missing。没有 cascadeLevel、题目也看不出是哪一级的，
+// 给整段由页面按「包含」选，标 unknownLevel（诊断里记 regionLevelUnknown）。
 const LEVEL_WORDS = [[0, /省|自治区|province/i], [1, /市|city/i], [2, /县|区|county|district/i]];
 function levelRegion(field, value) {
   const head = regionPrefix(value).value;
   const path = globalThis.ResumeProRegions?.resolve?.(head)?.path;
-  if (!path) return head;
+  if (!path) return { value: head };
   const own = [field.label, field.placeholder, field.name, field.idAttr, field.ariaLabel].filter(Boolean).join(" ")
     .replace(/地区|区域/g, "").replace(/自治区/g, "省");
   const named = LEVEL_WORDS.filter(([, word]) => word.test(own));
   const level = named.length === 1 ? named[0][0] : field.cascadeLevel;
+  if (!Number.isInteger(level)) return { value: head, unknownLevel: true };
   const part = path.find(item => item.level === level);
-  if (!part) return "";
-  return part.placeholder ? head : part.name;
+  if (!part) return { value: "" };
+  return { value: part.placeholder ? head : part.name };
 }
 
 function refValue(token, field, catalog) {
@@ -820,9 +829,13 @@ function joinRefValues(field, values) {
   if (field.cascade === true) return values.join("/");
   const range = values.length === 2 ? `${values[0].trim()}-${values[1].trim()}` : "";
   if (range && ResumeProAIHelpers.rangeDateParts(range)) return range;
-  // 文本题只在题目本身问的是几样东西（「工作单位及职务」「姓名和电话」）时拼。
-  const several = /[及和与、/＋+]|以及|\band\b/i.test([field.label, field.placeholder].filter(Boolean).join(" "));
-  return isTextAnswer(field) && several && values.length <= 3 ? values.map(value => value.trim()).join(" ") : "";
+  // 文本题只在题目本身问的是几样东西（「工作单位及职务」「姓名和电话」）时拼，最多 3 项。
+  return isTextAnswer(field) && asksSeveral(field) && values.length <= TEXT_JOIN_LIMIT ? values.map(value => value.trim()).join(" ") : "";
+}
+
+const TEXT_JOIN_LIMIT = 3;
+function asksSeveral(field) {
+  return /[及和与、/＋+]|以及|\band\b/i.test([field.label, field.placeholder].filter(Boolean).join(" "));
 }
 
 function isDateControl(field) {

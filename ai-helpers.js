@@ -796,8 +796,9 @@
       case "birth_date":
         return /(\d{4}[-/.年]\d{1,2}([-/.\月]\d{1,2}日?)?)/.test(text);
       case "gender":
-        // 只写首字母的 M、F 是 choiceValue 按选项换出来的。
-        return /(男|女|male|female)/i.test(text) || /^[mf]$/i.test(text);
+        // 只写首字母的 M、F 只在选项里真有这一项时算（choiceValue 按选项换出来的）；选项要点开才看得到的，交给填写层。
+        return /(男|女|male|female)/i.test(text)
+          || (/^[mf]$/i.test(text) && hasRealOptions(field) && findSelectOptionIndex(field.options, text) >= 0);
       case "id_number":
         return /^[0-9xX]{8,18}$/.test(text.replace(/\s/g, ""));
       case "name":
@@ -1117,21 +1118,32 @@
     return maskResumeValues(renamed, resumeFields, { labels: renamed, groups: resumeFields.map((field) => field?.group) });
   }
 
-  // 学校、公司、城市、地址、人名、证件、联系方式这类字段（按字段名认）：值再短也能认出人。
-  const IDENTIFYING_KEY = /姓名|名字|学校|院校|大学|学院|公司|单位|企业|雇主|城市|省份|地区|所在地|居住|籍贯|户籍|户口所在|生源地|地址|住址|证件|身份证|护照|手机|电话|邮箱|微信|qq|联系方式|联系人(?!.*关系)|\b(?:name|school|university|college|company|employer|city|address|phone|mobile|email|wechat)\b/i;
+  // 人名类字段（本人、家庭成员、配偶、紧急联系人、推荐人的姓名，曾用名）：值 2 个字起就遮，出现在哪段文字里都换。
+  const NAME_KEY = /姓名|名字|曾用名|(?:联系|推荐|介绍|证明)人(?!.*(?:关系|电话|手机|邮箱|单位|职务))|\b(?:(?:first|last|given|family|full|middle|maiden)\s*name|surname|name)\b/i;
+  // 学校、公司、城市、地址、证件、联系方式这类字段（按字段名认），和人名类一样：值再短也能认出人。
+  const IDENTIFYING_KEY = /学校|院校|大学|学院|公司|单位|企业|雇主|城市|省份|地区|所在地|居住|籍贯|户籍|户口所在|生源地|地址|住址|证件|身份证|护照|手机|电话|邮箱|微信|qq|联系方式|\b(?:school|university|college|company|employer|city|address|phone|mobile|email|wechat)\b/i;
   const PLACEHOLDER_LIMIT = 20;
   // #429 第 11 项：发给 AI 的目录文字（字段名、分组名）里能认出人的资料值，一律换成占位「〔那项资料的字段名〕」；
   // 那项资料的字段名自己带着资料值或超过 20 个字时用「〔资料值〕」。不按字段豁免，同样的字在哪段文字里都换。
-  // 能认出人的值：带数字的、归一后 4 个字及以上的，或学校、公司、城市、地址、人名、证件、联系方式这类字段的值（IDENTIFYING_KEY）。
+  // 能认出人的值：带数字的、归一后 4 个字及以上的，或人名、学校、公司、城市、地址、证件、联系方式这类字段的值（NAME_KEY、IDENTIFYING_KEY）。
   // 别的是短常用词（是、否、男、本科、汉族、父亲、服从），留在题目里，「是否服从调剂」「父亲姓名」不会被弄坏。
   // 值按 looseText 比，至少 2 个字；只有数字、不到 5 位的（年龄、名次、年份）不算更长一串数字里的一段（「22」不算「2022届」里的）。
   // 几项资料的值都对得上时先换最长的；同样长的先认同一分组的那项（groups[i] 是第 i 段文字所在的分组）。
-  // 开头的「实习经历1」是这里起的名，不在里面找。labels[i] 是第 i 项资料在目录里的字段名，做占位用。
+  // 开头的「实习经历1」是这里起的名，不在里面找（按标签逐个比 startsWith，标签里有正则的特殊字符也不出错）。
+  // labels[i] 是第 i 项资料在目录里的字段名，做占位用。
   function maskResumeValues(texts, resumeFields, { labels = [], groups = [] } = {}) {
-    const generated = new RegExp(`^(?:${[...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))].join("|")})\\d+`);
+    const entityLabels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
+    const generatedLength = (text) => {
+      for (const label of entityLabels) {
+        const digits = text.startsWith(label) ? /^\d+/.exec(text.slice(label.length)) : null;
+        if (digits) return label.length + digits[0].length;
+      }
+      return 0;
+    };
     const values = resumeFields.flatMap((field, owner) => {
       const value = String(field?.value ?? "");
-      const named = IDENTIFYING_KEY.test(String(field?.key ?? ""));
+      const key = String(field?.key ?? "");
+      const named = NAME_KEY.test(key) || IDENTIFYING_KEY.test(key);
       return [...new Set([looseText(value), looseText(sanitizeAnchor(value)), looseText(value.replace(/\s+/g, " ").trim().slice(0, 80))])]
         .filter((text) => text.length >= 2 && (named || /\d/.test(text) || text.length >= 4))
         .map((text) => ({ text, owner, group: field?.group, number: /^\d{2,4}$/.test(text) }));
@@ -1144,7 +1156,7 @@
       return byGroup.get(group);
     };
     const hitsIn = (text, group) => {
-      const from = generated.exec(text)?.[0].length || 0;
+      const from = generatedLength(text);
       const chars = [];
       let loose = "";
       let offset = 0;
