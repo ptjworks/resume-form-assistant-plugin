@@ -165,10 +165,20 @@ test("a date picker gets the end the question asks for, written the way pickers 
     resumeFields: resume
   });
   assert.equal(valueOf(result, "start"), "2019-09");
-  assert.equal(valueOf(result, "span"), undefined, "a span the question picks no side of is not filled");
+  // 题目看不出取哪一头的一段起止不交给控件，记作没填上、报日期不对。
+  assert.deepEqual(result.matches.find((match) => match.fieldId === "span"), { fieldId: "span", value: "2019.09-2023.06", blocked: "invalid_date" });
   assert.equal(valueOf(result, "birth"), "2026-07-01");
   assert.equal(valueOf(result, "birthMonth"), "2026-07");
   assert.equal(valueOf(result, "until"), "至今");
+});
+
+test("a date picker given an item that is not a date reports a bad date instead of typing it in", async () => {
+  const env = worker((message, catalog) => [{ fieldId: "start", ref: catalog[0].ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "start", label: "入职时间", inputType: "date-picker", options: [] }],
+    resumeFields: [{ group: "实习经历", key: "实习经历1-公司", value: "虚构科技" }]
+  });
+  assert.deepEqual(result.matches, [{ fieldId: "start", value: "虚构科技", blocked: "invalid_date" }]);
 });
 
 test("a question about motives or plans takes only an item about the same thing, saved answers included", async () => {
@@ -322,6 +332,17 @@ test("a parsed key whose school name was edited afterwards still leaves the old 
   assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "教育经历1-专业", "请描述你的实习经历-收获"]);
 });
 
+test("an edited English school name longer than 18 characters is left out of the catalog too", async () => {
+  const env = worker();
+  const school = "Massachusetts Institute of Technology";
+  await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }],
+    resumeFields: [{ group: "教育经历", key: `${school}教育经历-学校`, value: "MIT" }, { group: "教育经历", key: `${school}教育经历-专业`, value: "虚构专业" }]
+  });
+  assert.ok(!env.calls[0].user.includes("Massachusetts"));
+  assert.deepEqual(catalogOf(env.calls[0].user).map((entry) => entry.key), ["教育经历1-学校", "教育经历1-专业"]);
+});
+
 test("a key in an experience group that starts with a school name is renamed whatever label follows", async () => {
   const env = worker();
   await env.run({
@@ -351,17 +372,20 @@ test("the catalog names the latest of several spans in a group and the other nam
   assert.deepEqual(entry("现居住地").aka, ["现住址", "居住地址", "通讯地址"]);
 });
 
-test("a cascade or a level of linked selects given a whole address keeps the region at its head", async () => {
-  const env = worker((message, catalog) => ["city", "text", "province", "town"].map((fieldId) => ({ fieldId, ref: catalog[0].ref })));
+test("a cascade keeps the region at the head of a whole address, and a level of linked selects gets only its own place", async () => {
+  const env = worker((message, catalog) => ["city", "text", "province", "town", "district"].map((fieldId) => ({ fieldId, ref: catalog[0].ref })));
   const result = await env.run({
     formFields: [{ fieldId: "city", label: "现居住城市", inputType: "select", cascade: true, options: [] }, { fieldId: "text", label: "通讯地址" },
-      { fieldId: "province", label: "现居住地（省）", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 0, options: ["请选择", "广东省", "湖南省"] },
-      { fieldId: "town", label: "现居住地（市）", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 1, options: ["请选择"] }],
+      { fieldId: "province", label: "现居住地", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 0, options: ["请选择", "广东省", "湖南省"] },
+      { fieldId: "town", label: "现居住地", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 1, options: ["请选择"] },
+      { fieldId: "district", label: "区县", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 1, options: ["请选择"] }],
     resumeFields: [{ group: "户籍与地区", key: "现居住地", value: "广东省深圳市南山区粤海街道科苑路 8 号" }]
   });
   assert.equal(valueOf(result, "city"), "广东省深圳市南山区");
-  assert.equal(valueOf(result, "province"), "广东省深圳市南山区");
-  assert.equal(valueOf(result, "town"), "广东省深圳市南山区");
+  // 联动下拉每一级只给这一级的地名：没写是哪一级的按 cascadeLevel，题目写了的按题目（「区县」排在第二级也是区县）。
+  assert.equal(valueOf(result, "province"), "广东省");
+  assert.equal(valueOf(result, "town"), "深圳市");
+  assert.equal(valueOf(result, "district"), "南山区");
   assert.equal(valueOf(result, "text"), "广东省深圳市南山区粤海街道科苑路 8 号", "a text field keeps the whole address");
 });
 

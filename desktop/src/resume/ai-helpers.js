@@ -1018,7 +1018,7 @@
   // 桌面解析简历时，同一段经历的字段名起成「学校名或公司名 + 教育经历 - 专业」（semanticizeParsedFields），字段名里带着值。
   // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。
   // 经历类分组里，字段名以这一组的某个值开头的，后面不管是什么，前缀都换成编号（「某校社团经历-职位」→「校园经历1-社团经历-职位」）；
-  // 前缀对不上现在的值（解析以后改过学校名）时，「某某 + 教育经历」这样的也换掉。别的字段名原样。
+  // 前缀对不上现在的值（解析以后改过学校名）时，「某某 + 教育经历」这样的也换掉，前面多长都算（英文全称常超过 18 个字）。别的字段名原样。
   function catalogKeys(resumeFields) {
     const labels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
     const numbers = new Map();
@@ -1049,7 +1049,7 @@
       }
       for (const label of labels) {
         const at = key.indexOf(label);
-        if (at >= 1 && at <= 18 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) {
+        if (at >= 1 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) {
           return `${label}${numberOf(group, label, key.slice(0, at))}${key.slice(at + label.length)}`;
         }
       }

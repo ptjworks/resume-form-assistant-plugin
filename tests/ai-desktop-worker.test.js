@@ -389,22 +389,42 @@ test('a later batch failure keeps matches already returned by the desktop', asyn
   assert.match(result.warning, /连不上/);
 });
 
+// 资料项多到整份目录超出预算时，一题分几批问，每批带目录的一部分。
+const BIG_CATALOG = Array.from({ length: 100 }, (_, i) => ({ group: '自定义', key: `资料${i}` + '甲'.repeat(190), value: `结果${i + 1}` }));
+
 test('candidate subsets for one page field produce at most one fill match', async () => {
   let calls = 0;
-  // 每批回这一批目录里的第一项。
+  // 只有第一批回答，回这一批目录里的第一项。
   const env = worker((message) => {
     calls += 1;
-    return { ok: true, text: JSON.stringify([{ fieldId: 'single', ref: catalogOf(message.user)[0].ref }]) };
+    return { ok: true, text: JSON.stringify(calls === 1 ? [{ fieldId: 'single', ref: catalogOf(message.user)[0].ref }] : []) };
   });
-  const result = await env.run({
-    formFields: [{ fieldId: 'single', label: '自我评价', inputType: 'text' }],
-    // 资料项多到整份目录超出预算，分成几批发。
-    resumeFields: Array.from({ length: 100 }, (_, i) => ({ group: '自定义', key: `资料${i}` + '甲'.repeat(190), value: `结果${i + 1}` }))
-  });
+  const result = await env.run({ formFields: [{ fieldId: 'single', label: '自我评价', inputType: 'text' }], resumeFields: BIG_CATALOG });
   assert.ok(calls > 1);
   assert.equal(result.matches.length, 1);
   assert.equal(result.matches[0].value, '结果1');
   assert.equal(result.diagnostics.aiMatches, 1);
+});
+
+test('when the batches of one field answer differently the field is left out and reported', async () => {
+  let calls = 0;
+  const answers = (message) => [{ fieldId: 'single', ref: catalogOf(message.user)[0].ref }];
+  const differing = worker((message) => {
+    calls += 1;
+    return { ok: true, text: JSON.stringify(answers(message)) };
+  });
+  const result = await differing.run({ formFields: [{ fieldId: 'single', label: '自我评价', inputType: 'text' }], resumeFields: BIG_CATALOG });
+  assert.ok(calls > 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: 'single', value: '', blocked: 'ai_conflict' }]);
+  // 同一批里给了两个不同的值也一样；给了两次同一个值不算。
+  const school = (message) => ({ fieldId: 'school', ref: catalogOf(message.user)[0].ref });
+  const twice = worker((message) => ({ ok: true, text: JSON.stringify([school(message), school(message)]) }));
+  const same = await twice.run({ formFields: [{ fieldId: 'school', label: '学校' }], resumeFields: [{ group: '教育', key: '学校', value: '大学乙' }] });
+  assert.equal(same.matches.find((match) => match.fieldId === 'school').value, '大学乙');
+  const two = worker((message) => ({ ok: true, text: JSON.stringify(catalogOf(message.user).map((entry) => ({ fieldId: 'school', ref: entry.ref }))) }));
+  const torn = await two.run({ formFields: [{ fieldId: 'school', label: '学校' }],
+    resumeFields: [{ group: '教育', key: '本科学校', value: '大学甲' }, { group: '教育', key: '硕士学校', value: '大学乙' }] });
+  assert.equal(torn.matches.find((match) => match.fieldId === 'school').blocked, 'ai_conflict');
 });
 
 test('rate limiting stops later prompt batches', async () => {

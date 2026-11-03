@@ -415,7 +415,7 @@ async function handleAiFill(message, controller = new AbortController()) {
     warnings.push(aiFailureMessage({ reason: "cancelled" }));
   }
   const seenMatchIds = new Set();
-  const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...aiMatches])
+  const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...settleAnswers(aiMatches)])
     .filter(match => {
       if (seenMatchIds.has(match.fieldId)) return false;
       seenMatchIds.add(match.fieldId);
@@ -566,10 +566,28 @@ function refMatches(payload, fields, catalog) {
     if (isTextAnswer(field) && !answersOpinion(field, tokens, catalog)) return [];
     const values = tokens.map(token => refValue(token, field, catalog));
     const joined = values.every(Boolean) ? joinRefValues(field, values) : "";
-    const region = field.cascade === true || field.cascadeGroup !== undefined;
-    const value = !joined ? "" : region ? regionPrefix(joined) : isDateControl(field) ? pickerDate(field, joined) : joined;
+    if (!joined) return [];
+    // 日期控件只收写得成「2019-09」「2000-03-17」或「至今」的：别的不交给控件，记作没填上、报日期不对。
+    if (isDateControl(field)) {
+      const date = pickerDate(field, joined);
+      return [date ? { fieldId: field.fieldId, value: date } : { fieldId: field.fieldId, value: joined, blocked: "invalid_date" }];
+    }
+    const value = field.cascadeGroup !== undefined ? levelRegion(field, joined) : field.cascade === true ? regionPrefix(joined) : joined;
     return value ? [{ fieldId: field.fieldId, value }] : [];
   });
+}
+
+// 目录太大、同一题分几批问时，几批给的值不一样（同一批里给了两个不同的值也算）：这一题不填，报原因。
+function settleAnswers(matches) {
+  const settled = new Map();
+  for (const match of matches) {
+    const seen = settled.get(match.fieldId);
+    if (!seen) settled.set(match.fieldId, match);
+    else if (seen.value !== match.value || seen.blocked !== match.blocked) {
+      settled.set(match.fieldId, { fieldId: match.fieldId, value: "", blocked: "ai_conflict" });
+    }
+  }
+  return [...settled.values()];
 }
 
 // 问动机、打算、优缺点、看法的题（多行、单行文本框都算），资料项的字段名要和题目说的是同一件事：去掉「为什么」「优势」
@@ -598,7 +616,7 @@ function topicWords(text) {
 }
 
 // 日期控件：一段起止先按题目取开始或结束，再写成「2019-09」「2000-03-17」。资料原文的「2019.09」有的控件不认（Element 的月份框）。
-// 题目看不出取哪一头的一段起止不填：页面上也填不进去（评测里「参加工作时间」被给过一段实习时间）。
+// 题目看不出取哪一头的一段起止、不是日期的值给空串：页面上也填不进去（评测里「参加工作时间」被给过一段实习时间）。
 function pickerDate(field, value) {
   const helpers = ResumeProAIHelpers;
   const picked = helpers.rangeDateValue(value, [field.label, field.placeholder, field.ariaLabel].filter(Boolean).join(" "));
@@ -607,7 +625,7 @@ function pickerDate(field, value) {
   const day = field.pickerInputType === "month" ? "" : helpers.normalizeDateValue(picked, "date");
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
   const month = helpers.normalizeDateValue(picked, "month");
-  return /^\d{4}-\d{2}$/.test(month) ? month : picked;
+  return /^\d{4}-\d{2}$/.test(month) ? month : "";
 }
 
 // 级联题和联动下拉的各级拿到一整段地址（「广东省深圳市南山区科苑路 8 号」）时，只留前面认得出的地区（至少到市）：
@@ -621,6 +639,22 @@ function regionPrefix(value) {
     if (regions.resolve(head)?.path.filter(part => !part.placeholder).length >= 2) return head;
   }
   return text;
+}
+
+// 联动下拉的一级只要这一级的地名（省、市或区县）：题目里只写了一级的按题目，没写或写了几级的按 cascadeLevel。
+// 认不出是地区的照旧给整段（学院、专业这类联动下拉）；直辖市占位的那一级给整段，页面按「包含」选；值里没有这一级的不填。
+const LEVEL_WORDS = [[0, /省|自治区|province/i], [1, /市|city/i], [2, /县|区|county|district/i]];
+function levelRegion(field, value) {
+  const head = regionPrefix(value);
+  const path = globalThis.ResumeProRegions?.resolve?.(head)?.path;
+  if (!path) return head;
+  const own = [field.label, field.placeholder, field.name, field.idAttr, field.ariaLabel].filter(Boolean).join(" ")
+    .replace(/地区|区域/g, "").replace(/自治区/g, "省");
+  const named = LEVEL_WORDS.filter(([, word]) => word.test(own));
+  const level = named.length === 1 ? named[0][0] : field.cascadeLevel;
+  const part = path.find(item => item.level === level);
+  if (!part) return "";
+  return part.placeholder ? head : part.name;
 }
 
 function refValue(token, field, catalog) {
