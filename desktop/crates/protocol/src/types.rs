@@ -5,12 +5,18 @@ use crate::error::{ErrorCode, Layer, ProtocolError};
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const MIN_PROTOCOL_VERSION: u32 = 1;
-pub const MAX_PROTOCOL_VERSION: u32 = 5;
+pub const MAX_PROTOCOL_VERSION: u32 = 6;
 pub const MAX_ENVELOPE_BYTES: usize = 65536;
 pub const SUGGESTED_RAW_CHUNK_BYTES: usize = 32768;
 pub const MAX_SNAPSHOT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_RECONCILE_ITEMS: usize = 32;
 pub const MAX_CHUNK_COUNT: u32 = 128;
+/// #429：桌面按块把简历附件、证件照交给插件。块大小是 3 的倍数，各块的 base64 能直接拼起来；
+/// base64 后 60072 个字符，整条响应留着约 5 KB 余量，仍在 [MAX_ENVELOPE_BYTES] 以内。
+pub const RESUME_FILE_CHUNK_BYTES: usize = 45054;
+pub const MAX_RESUME_FILE_BYTES: usize = 10 * 1024 * 1024;
+pub const MAX_RESUME_FILE_CHUNK_COUNT: u32 = 233;
+pub const MAX_RESUME_FILES: usize = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageType {
@@ -50,6 +56,10 @@ pub enum MessageType {
     SiteAnswersRead,
     #[serde(rename = "siteAnswers.save")]
     SiteAnswersSave,
+    #[serde(rename = "resumeFiles.list")]
+    ResumeFilesList,
+    #[serde(rename = "resumeFiles.read")]
+    ResumeFilesRead,
 }
 
 impl MessageType {
@@ -71,6 +81,8 @@ impl MessageType {
             Self::MailImport => "mail.import",
             Self::SiteAnswersRead => "siteAnswers.read",
             Self::SiteAnswersSave => "siteAnswers.save",
+            Self::ResumeFilesList => "resumeFiles.list",
+            Self::ResumeFilesRead => "resumeFiles.read",
             Self::UsageTouch => "usage.touch",
             Self::UsageSettings => "usage.settings",
         }
@@ -94,6 +106,8 @@ impl MessageType {
             "mail.import" => Ok(Self::MailImport),
             "siteAnswers.read" => Ok(Self::SiteAnswersRead),
             "siteAnswers.save" => Ok(Self::SiteAnswersSave),
+            "resumeFiles.list" => Ok(Self::ResumeFilesList),
+            "resumeFiles.read" => Ok(Self::ResumeFilesRead),
             "usage.touch" => Ok(Self::UsageTouch),
             "usage.settings" => Ok(Self::UsageSettings),
             "SaveIntent" | "saveIntent" | "save.intent" => Err(ProtocolError::new(
@@ -130,6 +144,7 @@ impl MessageType {
 
     pub fn min_envelope_version(self) -> u32 {
         match self {
+            Self::ResumeFilesList | Self::ResumeFilesRead => 6,
             Self::SiteAnswersRead | Self::SiteAnswersSave => 5,
             Self::MailImport => 4,
             Self::UsageTouch | Self::UsageSettings => 3,

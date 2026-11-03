@@ -526,6 +526,100 @@ test("rules: an ID number listed before the mobile does not fill the phone field
   assert.deepEqual(byId, { phone: "13800138000", id: "110101199003071234" });
 });
 
+// 群里反映的手机号和身份证号填反：题目写着证件号码，name、id 或占位文字里却带着 mobile、phone、手机。
+// 几样拼在一起找时电话排在证件号前面，这种框被认成了电话。以题目为准，题目认不出再依次看 aria-label、占位文字、name、id。
+test("field kind goes by the question before the aria-label, placeholder, name and id", () => {
+  const kind = (field) => helpers.inferFieldSemantic(field);
+  assert.equal(kind({ label: "身份证号码", name: "mobile" }), "id_number");
+  assert.equal(kind({ label: "证件号码", placeholder: "请输入手机号码" }), "id_number");
+  assert.equal(kind({ label: "证件号码", idAttr: "contactPhone" }), "id_number");
+  assert.equal(kind({ label: "证件号码", placeholder: "请输入手机号码", name: "mobile", idAttr: "contactPhone" }), "id_number");
+  assert.equal(kind({ label: "身份证号码", ariaLabel: "请输入手机号码" }), "id_number");
+  assert.equal(kind({ ariaLabel: "身份证号码", name: "mobile" }), "id_number");
+  assert.equal(kind({ label: "手机号码", name: "idNumber", placeholder: "请输入身份证号" }), "phone");
+  // 题目认不出时，依次看后面几样。
+  assert.equal(kind({ label: "号码", ariaLabel: "身份证号", placeholder: "请输入手机号" }), "id_number");
+  assert.equal(kind({ label: "号码", placeholder: "请输入身份证号", name: "mobile" }), "id_number");
+  assert.equal(kind({ label: "号码", placeholder: "请输入手机号", name: "idNumber" }), "phone");
+  assert.equal(kind({ label: "请填写", placeholder: "请输入", name: "idNumber", idAttr: "mobile" }), "id_number");
+  assert.equal(kind({ name: "mobile", idAttr: "idNumber" }), "phone");
+  assert.equal(kind({ idAttr: "mobile" }), "phone");
+  assert.equal(kind({ label: "备注", placeholder: "选填" }), "");
+});
+
+// 「联系方式」是泛称：只靠它认成电话的，后面几样写明了邮箱就是邮箱，写明了手机就是手机，都没写才按电话。
+// 后面认出的是别的类（name 是 contactName）不算，还按电话。
+test("a 联系方式 question is a phone unless what follows says email", () => {
+  const kind = (field) => helpers.inferFieldSemantic(field);
+  assert.equal(kind({ label: "联系方式", placeholder: "请输入邮箱" }), "email");
+  assert.equal(kind({ label: "联系方式", placeholder: "请输入手机号" }), "phone");
+  assert.equal(kind({ label: "联系方式" }), "phone");
+  assert.equal(kind({ label: "联系方式", ariaLabel: "联系方式", name: "email" }), "email");
+  assert.equal(kind({ label: "联系方式", name: "contactName" }), "phone");
+  assert.equal(kind({ label: "联系方式", name: "contactName", idAttr: "contactEmail" }), "email");
+  // 同一样文字里泛称和明确的词都有，按明确的算。
+  assert.equal(kind({ label: "联系方式（邮箱）", placeholder: "请输入手机号" }), "email");
+  assert.equal(kind({ label: "联系方式/Email" }), "email");
+  assert.equal(kind({ label: "联系方式（手机）", placeholder: "请输入邮箱" }), "phone");
+  assert.equal(kind({ label: "联系电话", placeholder: "请输入邮箱" }), "phone");
+
+  assert.deepEqual(ruleValues(
+    [textField("contact", "联系方式", { placeholder: "请输入邮箱" }), textField("phone", "联系方式", { placeholder: "请输入手机号" })],
+    [{ group: "基本信息", key: "手机号码", value: "13812345678" }, { group: "基本信息", key: "邮箱", value: "tester@example.com" }]
+  ), { contact: "tester@example.com", phone: "13812345678" });
+});
+
+// 同一个原因：name 是 schoolName、majorName 的框，拼在一起找会先碰上「name」，认成姓名，本人的姓名填进了毕业学校。
+test("a school or major question is not taken for the name because of its name attribute", () => {
+  assert.equal(helpers.inferFieldSemantic({ label: "毕业学校", name: "schoolName" }), "school");
+  assert.equal(helpers.inferFieldSemantic({ label: "所学专业", name: "majorName" }), "major");
+  assert.deepEqual(ruleValues(
+    [textField("school", "毕业学校", { name: "schoolName" }), textField("name", "姓名", { name: "realName" })],
+    [{ group: "基本信息", key: "姓名", value: "测试用户" }, { group: "教育经历", key: "学校", value: "示例大学" }]
+  ), { name: "测试用户" });
+});
+
+const MOBILE = "13812345678";
+const ID_18 = "110101199003071233";
+
+test("value validation keeps mobiles out of ID fields and 18-digit ID numbers out of phone fields", () => {
+  const fields = [{ fieldId: "phone", label: "手机号码" }, { fieldId: "id", label: "身份证号码" }];
+  const kept = (matches) => helpers.filterValidMatches(fields, matches);
+
+  // AI 把两个值对调了，或本地认错了框。
+  assert.deepEqual(kept([{ fieldId: "phone", value: ID_18 }, { fieldId: "id", value: MOBILE }]), []);
+  assert.deepEqual(kept([{ fieldId: "phone", value: "110101 19900307 1233" }, { fieldId: "id", value: "138 1234 5678" }]), []);
+  assert.deepEqual(kept([{ fieldId: "id", value: "8613812345678" }]), []);
+  // 带短横的不当证件号：去掉短横就成了 8 到 18 位数字的座机、日期也不收；带短横的身份证号进不了手机框。
+  assert.deepEqual(kept([
+    { fieldId: "id", value: "010-12345678" }, { fieldId: "id", value: "2001-05-07" }, { fieldId: "id", value: "138-1234-5678" },
+    { fieldId: "phone", value: "110101-19900307-1233" }
+  ]), []);
+  // AI 回的值不是字符串时照样核对，不抛错。
+  assert.deepEqual(kept([{ fieldId: "id", value: 13812345678 }, { fieldId: "phone", value: null }, { fieldId: "id", value: undefined }]), []);
+  assert.deepEqual(kept([{ fieldId: "phone", value: 13812345678 }]), [{ fieldId: "phone", value: 13812345678 }]);
+  // 对的照旧收下：手机、座机、带 X 的身份证号，别的证件的 8 位号码。
+  const right = [
+    { fieldId: "phone", value: MOBILE }, { fieldId: "phone", value: "+86 138 1234 5678" }, { fieldId: "phone", value: "010-12345678" },
+    { fieldId: "id", value: ID_18 }, { fieldId: "id", value: "11010519491231002X" }, { fieldId: "id", value: "12345678" }
+  ];
+  assert.deepEqual(kept(right), right);
+});
+
+test("rules: crossed name, id and placeholder attributes still put each number in its own field", () => {
+  const forms = [
+    textField("id", "证件号码", { name: "mobile", idAttr: "contactPhone", placeholder: "请输入手机号码" }),
+    textField("phone", "手机号码", { name: "idcard" })
+  ];
+  const mine = [{ group: "基本信息", key: "手机号码", value: MOBILE }, { group: "基本信息", key: "身份证号", value: ID_18 }];
+  const unnamed = [{ group: "补充字段", key: "号码1", value: MOBILE }, { group: "补充字段", key: "号码2", value: ID_18 }];
+
+  for (const resume of [mine, [...mine].reverse(), unnamed, [...unnamed].reverse()]) {
+    assert.deepEqual(ruleValues(forms, resume), { id: ID_18, phone: MOBILE }, resume.map((field) => field.key).join(","));
+    assert.deepEqual(ruleValues([...forms].reverse(), resume), { id: ID_18, phone: MOBILE });
+  }
+});
+
 test("rules: a named field of another kind is not taken for its look-alike value", () => {
   const byId = ruleValues(
     [textField("id", "身份证号"), textField("phone", "联系电话"), textField("gender", "性别"), textField("birth", "出生日期")],

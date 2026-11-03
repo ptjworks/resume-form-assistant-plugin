@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
-import type { ImportResultView, ResumeOverview, ResumeTemplateView, TemplateSummary } from "../api.ts";
+import type { ImportResultView, ResumeFileKind, ResumeOverview, ResumeTemplateView, TemplateSummary } from "../api.ts";
 import { useInvoke } from "../react/invoke.tsx";
 import type { Listen } from "./LegacyImport.tsx";
 import { ResumeDialog } from "./ResumeDialog.tsx";
@@ -14,6 +14,8 @@ import type { Notice } from "./resume-text.ts";
 export interface FilePickers {
   open(): Promise<string | null>;
   save(suggested: string): Promise<string | null>;
+  /** #429：选一个要存进「附件」的文件，按种类限定扩展名。没有这个能力时附件页不能添加。 */
+  openResumeFile?(kind: ResumeFileKind): Promise<string | null>;
 }
 
 /** 外层要求重新读列表（恢复备份、导入旧数据、AI 新建了模板）；select 是读完后要选中的模板。 */

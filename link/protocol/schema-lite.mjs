@@ -27,6 +27,8 @@ const PAYLOAD_KEYS = {
   "mail.import": "mail-import",
   "siteAnswers.read": "site-answers-read",
   "siteAnswers.save": "site-answers-save",
+  "resumeFiles.list": "resume-files-list",
+  "resumeFiles.read": "resume-files-read",
   "legacy.import": "legacy-import",
 };
 
@@ -48,6 +50,8 @@ const RESPONSE_PAYLOAD_KEYS = {
   "mail.import": "mail-import",
   "siteAnswers.read": "site-answers-read",
   "siteAnswers.save": "site-answers-save",
+  "resumeFiles.list": "resume-files-list",
+  "resumeFiles.read": "resume-files-read",
   "legacy.import": "legacy-import",
 };
 

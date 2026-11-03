@@ -627,15 +627,21 @@ impl StoreTx<'_> {
             }
         }
         let mut invalid_files = Vec::new();
-        let mut stmt = self.conn().prepare("SELECT stored_rel_path, size_bytes, sha256 FROM attachment_blobs UNION ALL SELECT stored_rel_path, byte_size, sha256 FROM resume_snapshots")?;
+        let mut stmt = self.conn().prepare("SELECT stored_rel_path, size_bytes, sha256, 0 FROM attachment_blobs UNION ALL SELECT stored_rel_path, byte_size, sha256, 0 FROM resume_snapshots UNION ALL SELECT stored_rel_path, byte_size, sha256, 1 FROM resume_files")?;
         for row in stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)? == 1,
             ))
         })? {
-            let (rel, size, sha) = row?;
+            let (rel, size, sha, resume_file) = row?;
+            // 附件记录的存储位置不对：照样报成有问题，但不按它记的路径去读文件（可能在档案外面）。
+            if resume_file && !crate::resume_files::stored_where_expected(&rel, &sha) {
+                invalid_files.push(rel);
+                continue;
+            }
             if crate::tx::verify_file(&self.archive_dir, &rel, size, &sha).is_err() {
                 invalid_files.push(rel);
             }

@@ -90,6 +90,11 @@ pub fn snapshot_chunk_identity_sha256(payload: &Value) -> Result<String, Protoco
     Ok(sha256_hex(&bytes))
 }
 
+/// Standard padded Base64, the form `decode_standard_base64` accepts.
+pub fn encode_standard_base64(bytes: &[u8]) -> String {
+    STANDARD.encode(bytes)
+}
+
 pub fn decode_standard_base64(text: &str) -> Result<Vec<u8>, ProtocolError> {
     if text.as_bytes().iter().any(|b| b.is_ascii_whitespace()) {
         return Err(ProtocolError::new(

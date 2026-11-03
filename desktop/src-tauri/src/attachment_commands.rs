@@ -112,7 +112,7 @@ impl OpenedAttachments {
         Ok(())
     }
 
-    fn open(
+    pub(crate) fn open(
         &mut self,
         root: &Path,
         item: &AttachmentSummary,

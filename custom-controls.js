@@ -535,32 +535,27 @@
   // 量不出高度（没有排版，jsdom）时只看虚拟列表的类名；真浏览器里画出的选项都有高度，走不到这里。
   // antd 不管长短都套着 rc-virtual-list，只有滚动条说明在虚拟滚动。
   const VIRTUAL_MARKS = '[class*="virtual" i]:not(.rc-virtual-list):not(.rc-virtual-list-holder):not(.rc-virtual-list-holder-inner), .el-vl__wrapper, [class*="recycle-scroller" i]';
-  function partialList(list, popup, layer) {
-    const nodes = list.map(option => option.node).filter(node => node?.isConnected);
-    if (!nodes.length || !popup?.isConnected) return false;
-    const marked = [popup, layer].some(node => node?.isConnected && (node.matches(VIRTUAL_MARKS) || Boolean(node.querySelector(VIRTUAL_MARKS))));
-    const rows = nodes.map(node => node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
-    if (!rows.length) return marked;
-    const limit = layer?.isConnected && layer.contains(popup) ? layer : popup;
-    const View = popup.ownerDocument.defaultView;
+  // 装着这些选项、能滚动的那一层：从装着全部选项的最小一层往上找，到 limit 为止。没有就返回 null。
+  function listScroller(nodes, limit) {
+    const View = limit.ownerDocument.defaultView;
     let box = nodes[0].parentElement;
     while (box && box !== limit && !nodes.every(node => box.contains(node))) box = box.parentElement;
-    let scroller = null;
-    for (let node = limit.contains(box) ? box : null; node && !scroller; node = node === limit ? null : node.parentElement) {
+    for (let node = limit.contains(box) ? box : null; node; node = node === limit ? null : node.parentElement) {
       const overflow = View.getComputedStyle(node).overflowY;
       if (!overflow || overflow === 'visible') continue;
-      if (node.scrollHeight > node.clientHeight + 1) scroller = node;
+      if (node.scrollHeight > node.clientHeight + 1) return node;
       // 先碰到原生滚动区（auto、scroll）而它自己不用滚：选项在里面画全了。外面 overflow:hidden 的一层多出来的
       // 可能只是被推到外面的滚动条（Element UI 2 的 el-scrollbar 用负外边距藏原生滚动条，Windows 上多出 15px 左右）。
-      else if (/^(?:auto|scroll|overlay)$/.test(overflow)) return false;
+      if (/^(?:auto|scroll|overlay)$/.test(overflow)) return null;
     }
-    if (!scroller) return false;
-    // 画出来的一段：选项，加上里面的文字（分组标题）和输入框。按排版位置量（offsetTop），
-    // 弹层打开动画从 scale(0) 起（antd 刚画出选项时就是），看到的大小是 0，排版位置不受影响。
-    // 滚动层里面各层自己的平移也算上：TanStack Virtual、vue-virtual-scroller 每项都在 top:0，靠 transform 排开。
-    // 滚动层外面的变换（打开动画）对每一项都一样，不用管。
-    const parts = [...nodes, ...Array.from(scroller.querySelectorAll('*')).filter(el => el.matches('input, textarea, select')
-      || (trim(el.textContent) && !Array.from(el.children).some(child => trim(child.textContent))))];
+    return null;
+  }
+  // 滚动层里元素的排版位置：按排版位置量（offsetTop），弹层打开动画从 scale(0) 起（antd 刚画出选项时就是），
+  // 看到的大小是 0，排版位置不受影响。滚动层里面各层自己的平移也算上：TanStack Virtual、vue-virtual-scroller 每项都在 top:0，
+  // 靠 transform 排开；rc-virtual-list 整屏一起 translateY。滚动层外面的变换（打开动画）对每一项都一样，不用管。
+  // 同一项滚到哪里量都一样（2026-11-03 在 antd 4.24.16、6.6.8 和 Element Plus 2.8.8 的 el-select-v2 上看到）。
+  function layoutTops(scroller) {
+    const View = scroller.ownerDocument.defaultView;
     const shifts = new Map();
     const shift = node => {
       if (!node || node === scroller) return 0;
@@ -571,7 +566,21 @@
       }
       return shifts.get(node);
     };
-    const layoutTop = el => { let y = shift(el); for (let node = el; node; node = node.offsetParent) y += node.offsetTop || 0; return y; };
+    return el => { let y = shift(el); for (let node = el; node; node = node.offsetParent) y += node.offsetTop || 0; return y; };
+  }
+  const listLimit = (popup, layer) => layer?.isConnected && layer.contains(popup) ? layer : popup;
+  function partialList(list, popup, layer) {
+    const nodes = list.map(option => option.node).filter(node => node?.isConnected);
+    if (!nodes.length || !popup?.isConnected) return false;
+    const marked = [popup, layer].some(node => node?.isConnected && (node.matches(VIRTUAL_MARKS) || Boolean(node.querySelector(VIRTUAL_MARKS))));
+    const rows = nodes.map(node => node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
+    if (!rows.length) return marked;
+    const scroller = listScroller(nodes, listLimit(popup, layer));
+    if (!scroller) return false;
+    // 画出来的一段：选项，加上里面的文字（分组标题）和输入框。
+    const parts = [...nodes, ...Array.from(scroller.querySelectorAll('*')).filter(el => el.matches('input, textarea, select')
+      || (trim(el.textContent) && !Array.from(el.children).some(child => trim(child.textContent))))];
+    const layoutTop = layoutTops(scroller);
     let top = Infinity, bottom = -Infinity;
     for (const el of parts) {
       if (!(el.offsetHeight > 0)) continue;
@@ -580,12 +589,123 @@
     }
     if (!(bottom > top)) return marked;
     // 滚动层自己的上下内边距不算没画出来。没画出来的选项按整行留位置，比一行略少的空白（底部的加载图标位）也不算。
-    const css = View.getComputedStyle(scroller);
+    const css = scroller.ownerDocument.defaultView.getComputedStyle(scroller);
     const padding = (parseFloat(css.paddingTop) || 0) + (parseFloat(css.paddingBottom) || 0);
     return scroller.scrollHeight - padding - (bottom - top) > Math.max(rows[Math.floor(rows.length / 2)] * 0.8, 20);
   }
-  // partial：列表不全（见 partialList）。只认完全相同、归一化相同或同一个意思的另一种写法（#429，ai-helpers.js 的 OPTION_SYNONYMS）的一项，
-  // 不靠「包含」去猜，几项都沾边也按没有匹配，好去搜索。联想框的建议不走这里，见 sameOption。
+  // #429 不能搜索的虚拟列表（antd 4/5/6 的 rc-virtual-list、Element Plus 的 el-select-v2）只画出一屏，屏外的选项不在页面上。
+  // 把装着选项的滚动层从头往下一屏一屏地滚（每次少滚一行，前后两屏叠着一行），每滚一次等画出来的选项停住 SCAN_STEADY_MS，
+  // 按排版位置记下见过的每一项（文字相同、位置差不到半行的算同一项）。滚到底以后再等 SCAN_TAIL_MS，列表变长了就接着滚。
+  // 滚完了也说不准看全了没有：懒加载的下一页可能过了 SCAN_TAIL_MS 才接上，到底时也没有靠得住的结束标记
+  // （rc-select、el-select-v2 的选项都没有 aria-setsize，onPopupScroll 懒加载不留痕迹，加载圈也不一定有）。
+  // 所以和列表不全时一样（见 match 的 partial）：只认完全相同、归一化相同或同一个意思的另一种写法的一项，
+  // 不靠「包含」去猜（要「北京大学」，不选先看到的「北京大学医学部」），几项都对得上也不选。
+  // 对上的一项滚回它那一屏，按文字和位置认出来交回去；点之前用 again() 按同样的办法再认一次（滚动后重画换了节点也认得出），
+  // 当场认不出就等列表停住再认，还认不出报 options_not_rendered、滚回原处。
+  // 找到以后这两次等列表停住各自最多等 SCAN_SETTLE_MS，不受 SCAN_MS 限制：扫描可能刚好把时间用完。
+  // 一开始量不出行高、找不到滚动层（列表刚画出来），也先等列表停住再量一次。
+  // 下面这些都按没有匹配的选项报：滚了以后画出来的选项盖不住看得见的这一段（列表不跟着滚动重画）、滚不动、
+  // 滚了 SCAN_SCREENS 屏或 SCAN_MS 还没到底（越滚越长的懒加载、一直在变的列表；等列表停住的时间也算在里面）。
+  // 滚着滚着这个滚动层里没有画出来的选项了（弹层中途收起、换了一个），按 options_not_rendered 报。
+  // 没找到、出错时都滚回原处。
+  // read 读弹层里当前画出来的选项。
+  const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000, SCAN_TAIL_MS = 500, SCAN_SETTLE_MS = 400;
+  async function scanList(ctx, h, read, popup, layer, value) {
+    if (!popup?.isConnected) return { reason: 'no_option_match' };
+    const started = Date.now();
+    const left = () => SCAN_MS - (Date.now() - started);
+    const keyOf = option => `${option.value}\u0000${option.text}`;
+    // 等画出来的选项停住 SCAN_STEADY_MS，最多等 limit。
+    const settle = limit => {
+      let last = null, since = Date.now();
+      return h.waitUntil(ctx, popup.ownerDocument.documentElement, () => {
+        const list = read(), key = list.map(keyOf).join('\n');
+        if (key !== last) { last = key; since = Date.now(); }
+        return list;
+      }, () => Date.now() - since >= SCAN_STEADY_MS, Math.max(0, limit));
+    };
+    // 装着选项的滚动层，和一行的高度（画出来的选项取中间的高度）。
+    const measure = list => {
+      const nodes = list.map(option => option.node).filter(node => node?.isConnected);
+      const heights = nodes.map(node => node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
+      return { scroller: nodes.length ? listScroller(nodes, listLimit(popup, layer)) : null, row: heights[Math.floor(heights.length / 2)] || 0 };
+    };
+    let { scroller, row } = measure(read());
+    if (!scroller || !row) {
+      const settled = await settle(SCAN_SETTLE_MS);
+      if (settled.reason && settled.reason !== 'verification_timeout') return { reason: settled.reason };
+      ({ scroller, row } = measure(read()));
+      if (!scroller || !row) return { reason: 'no_option_match' };
+    }
+    const home = scroller.scrollTop;
+    // 画出来的选项和它们在滚动内容里的位置。
+    const placed = list => {
+      const top = layoutTops(scroller), base = top(scroller);
+      return list.filter(option => option.node?.isConnected && scroller.contains(option.node)).map(option => ({ option, at: top(option.node) - base }));
+    };
+    let found = null;
+    try {
+      const seen = [];
+      let previous = -1;
+      for (let screen = 0, target = 0; ; screen++) {
+        // 剩下的时间不够等列表停住一次，也算滚满了上限。
+        if (screen >= SCAN_SCREENS || left() < SCAN_STEADY_MS) return { reason: 'no_option_match' };
+        scroller.scrollTop = target;
+        const settled = await settle(Math.min(h.timeoutMs ?? 2000, left()));
+        if (settled.reason) return { reason: settled.reason === 'verification_timeout' ? 'no_option_match' : settled.reason };
+        // 这个滚动层里没有画出来的选项了：弹层中途收起或换了一个，不再滚。
+        const shown = placed(settled.value);
+        if (!shown.length) return { reason: 'options_not_rendered' };
+        const view = scroller.scrollTop, bottom = Math.min(view + scroller.clientHeight, scroller.scrollHeight);
+        if (view <= previous) return { reason: 'no_option_match' };
+        previous = view;
+        // 看得见的这一段从上到下都有画出来的选项（两头各差不到一行，留给分组标题这类不是选项的一行）。
+        if (Math.min(...shown.map(item => item.at)) > view + row
+          || Math.max(...shown.map(item => item.at + (item.option.node.offsetHeight || row))) < bottom - row) return { reason: 'no_option_match' };
+        for (const { option, at } of shown) {
+          if (!seen.some(entry => entry.key === keyOf(option) && Math.abs(entry.at - at) < row / 2)) {
+            seen.push({ key: keyOf(option), at, text: option.text, value: option.value, full: option.full, disabled: option.disabled });
+          }
+        }
+        target = view + Math.max(scroller.clientHeight - row, row);
+        if (bottom < scroller.scrollHeight - 1) continue;
+        // 到底了：再等 SCAN_TAIL_MS 看列表还变不变长（懒加载接上了下一页），变长了接着往下滚。
+        const height = scroller.scrollHeight;
+        const tail = await h.waitUntil(ctx, scroller.ownerDocument.documentElement, () => scroller.scrollHeight, now => now > height, Math.max(0, Math.min(SCAN_TAIL_MS, left())));
+        if (tail.reason && tail.reason !== 'verification_timeout') return { reason: tail.reason };
+        if (tail.value > height) continue;
+        break;
+      }
+      const list = seen.sort((a, b) => a.at - b.at);
+      const matched = match(list, value, h.helpers, true);
+      if (!matched.option) return { reason: matched.reason };
+      const wanted = matched.option;
+      const locate = list => placed(list).find(({ option, at }) => keyOf(option) === wanted.key && Math.abs(at - wanted.at) < row / 2)?.option || null;
+      // 等列表停住再认这一项；等满了还在变，就按当时画出来的认。
+      const settledHit = async () => {
+        const settled = await settle(SCAN_SETTLE_MS);
+        if (settled.reason && settled.reason !== 'verification_timeout') return { reason: settled.reason };
+        const hit = locate(settled.value || read());
+        return hit ? { option: hit } : { reason: 'options_not_rendered' };
+      };
+      // 滚回这一项所在的一屏（放在中间），按文字和位置认出它。
+      scroller.scrollTop = Math.max(0, wanted.at - (scroller.clientHeight - row) / 2);
+      const shown = await settledHit();
+      if (!shown.option) return shown;
+      found = { option: shown.option, again: async () => {
+        const now = locate(read());
+        const checked = now ? { option: now } : await settledHit();
+        if (!checked.option) scroller.scrollTop = home;
+        return checked;
+      } };
+      return found;
+    } finally {
+      if (!found) scroller.scrollTop = home;
+    }
+  }
+  // partial：列表不全（见 partialList），或滚着看过、说不准看全了没有（见 scanList）。只认完全相同、归一化相同或同一个意思的
+  // 另一种写法（#429，ai-helpers.js 的 OPTION_SYNONYMS）的一项，不靠「包含」去猜，几项都沾边也按没有匹配，好去搜索或滚着往下找。
+  // 联想框的建议不走这里，见 sameOption。
   function match(list, value, helpers, partial = false) {
     const same = option => [option.value, option.text].some(text => trim(text) === trim(value)
       || (helpers.isSameOptionText ? helpers.isSameOptionText(text, value) : helpers.normalizeText(text) === helpers.normalizeText(value)));
@@ -1474,9 +1594,18 @@
         if (updated.reason) return { reason: updated.reason === 'verification_timeout' ? 'options_timeout' : updated.reason };
         list = updated.value; found = pick(list);
       }
+      // #429 不能搜索的虚拟列表：第一屏里没有同名的一项时滚着看完整张列表（见 scanList）。
+      let scanned = false;
+      if (!searchable && !region && !info.cascade && !info.freeText && ['antd', 'element'].includes(info.library)
+        && found.reason === 'no_option_match' && partial(list)) {
+        found = await scanList(ctx, h, () => readOptions(level), popup, ctx.popup, desired[level]);
+        scanned = Boolean(found.option);
+      }
       if (found.reason) return found;
       // Re-read immediately before activation: async renders can replace an option.
-      const latest = region ? regionPick(readOptions(level)) : pick(readOptions(level));
+      // 滚着找到的一项按文字和位置再认一次（scanList 的 again，认不出时它滚回原处）：它可能是按「包含」对上的，当前这一屏又不全，按 pick 比只认同名。
+      const latest = scanned ? await found.again()
+        : region ? regionPick(readOptions(level)) : pick(readOptions(level));
       if (multiplePopup()) return { reason: 'unsupported_control' };
       if (latest.reason) return latest;
       if (!info.pathNodes) info.pathNodes = [];
@@ -1660,6 +1789,11 @@
           list = searched.list;
           if (!list.length) return fail({ reason: 'no_option_match' });
           found = match(list, value, helpers, partialList(list, popup, ctx.popup));
+        } else if (['antd', 'element'].includes(info.library) && found.reason === 'no_option_match' && partialList(list, popup, ctx.popup)) {
+          // 没有能打字的搜索框：滚着看完整张列表（见 scanList），点之前按文字和位置再认一次。
+          // pickMultiple 只从 antd、Element 进来（两个调用处都先判断了库），这里照单选的门槛再写一遍。
+          found = await scanList(ctx, h, listOf, popup, ctx.popup, value);
+          if (found.option) found = await found.again();
         }
       }
       if (found.reason) return fail(found);

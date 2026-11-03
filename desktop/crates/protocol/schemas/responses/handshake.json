@@ -56,7 +56,9 @@
           "usage.settings",
           "mail.import",
           "siteAnswers.read",
-          "siteAnswers.save"
+          "siteAnswers.save",
+          "resumeFiles.list",
+          "resumeFiles.read"
         ]
       }
     }

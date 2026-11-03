@@ -233,3 +233,48 @@ test("a site key is a host, a port from 1 to 65535 and at most one company segme
     assert.equal(isSiteKey(bad), false, String(bad));
   }
 });
+
+// #429: resume files, read in chunks.
+const FILE = "66666666-6666-4666-8666-666666666601";
+const SHA = "a".repeat(64);
+function chunkResponse(payload) {
+  return { protocolVersion: 6, correlationId: MSG, ok: true, payload: {
+    fileId: FILE, sha256: SHA, byteSize: 3, chunkIndex: 0, chunkCount: 1, chunkSha256: "b".repeat(64), bytesBase64: "AAAA", ...payload } };
+}
+
+test("only a resume file's bytes skip the secret scan; every other field of that response is scanned (#429)", () => {
+  // Text that is refused everywhere else gets past the scan in bytesBase64 ...
+  assert.doesNotThrow(() => validateResponse(chunkResponse({ bytesBase64: "token: abc" }), "resumeFiles.read"));
+  // ... and is then refused as Base64 by the check that knows the request.
+  const request = { messageType: "resumeFiles.read", messageId: MSG, protocolVersion: 6, payload: { fileId: FILE, sha256: SHA, chunkIndex: 0 } };
+  assert.equal(codeSync(() => validateResponseForRequest(chunkResponse({ bytesBase64: "token: abc" }), request)), "invalid_payload");
+  // The same text in any other field of the same response is refused as a secret.
+  for (const field of ["fileId", "sha256", "chunkSha256"]) {
+    assert.equal(codeSync(() => validateResponse(chunkResponse({ [field]: "token: abc" }), "resumeFiles.read")), "secret_forbidden", field);
+  }
+  assert.equal(codeSync(() => validateResponse({ ...chunkResponse({}), extra: "password=hunter2" }, "resumeFiles.read")), "secret_forbidden");
+  const failed = { protocolVersion: 6, correlationId: MSG, ok: false, error: { code: "conflict", retryable: false, message: "token: abc" }, payload: {} };
+  assert.equal(codeSync(() => validateResponse(failed, "resumeFiles.read")), "secret_forbidden");
+  // The exemption belongs to resumeFiles.read alone: the same path in another response is scanned.
+  assert.equal(codeSync(() => validateResponse({ protocolVersion: 6, correlationId: MSG, ok: true,
+    payload: { files: [], bytesBase64: "token: abc" } }, "resumeFiles.list")), "secret_forbidden");
+});
+
+test("a resume file chunk must be the one asked for, as long as that chunk is (#429)", () => {
+  const request = { messageType: "resumeFiles.read", messageId: MSG, protocolVersion: 6, payload: { fileId: FILE, sha256: SHA, chunkIndex: 0 } };
+  assert.doesNotThrow(() => validateResponseForRequest(chunkResponse({}), request));
+  for (const wrong of [{ fileId: "66666666-6666-4666-8666-666666666602" }, { sha256: "c".repeat(64) }, { chunkIndex: 1, chunkCount: 2, byteSize: 45057 },
+    { byteSize: 4 }, { chunkCount: 2 }, { bytesBase64: "AAAAAA==" }]) {
+    assert.equal(codeSync(() => validateResponseForRequest(chunkResponse(wrong), request)), "invalid_payload", JSON.stringify(wrong));
+  }
+  assert.equal(codeSync(() => validateResponseForRequest({ ...chunkResponse({}), protocolVersion: 5 }, { ...request, protocolVersion: 5 })), "protocol_incompatible");
+});
+
+function codeSync(fn) {
+  try {
+    fn();
+    return null;
+  } catch (e) {
+    return e.code;
+  }
+}

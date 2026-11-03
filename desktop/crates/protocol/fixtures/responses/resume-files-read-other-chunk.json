@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 6,
+  "correlationId": "66666666-6666-4666-8666-666666666616",
+  "ok": true,
+  "payload": {
+    "fileId": "66666666-6666-4666-8666-666666666601",
+    "sha256": "9dd01e3eb33e42c51a68154ff025ede9d4a061fb2b837d5231c7de8e144c4beb",
+    "byteSize": 45066,
+    "chunkIndex": 1,
+    "chunkCount": 2,
+    "chunkSha256": "6622ef112d8427bb2746b872e4f5db2d1580d2d410f4819a070615dd394fc385",
+    "bytesBase64": "8vkABw4VHCMqMTg/"
+  }
+}

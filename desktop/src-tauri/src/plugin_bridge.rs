@@ -43,6 +43,8 @@ pub fn apply(request: &Request, store: &ArchiveStore) -> Result<Answer, ErrorCod
         MessageType::ResumeUpdate => resume_update(request, store),
         MessageType::SiteAnswersRead => site_answers_read(request, store),
         MessageType::SiteAnswersSave => site_answers_save(request, store),
+        MessageType::ResumeFilesList => resume_files_list(request, store),
+        MessageType::ResumeFilesRead => resume_files_read(request, store),
         MessageType::Health | MessageType::Handshake => Err(ErrorCode::UnknownMessageType),
         MessageType::AiComplete | MessageType::UiOpen | MessageType::UsageTouch | MessageType::UsageSettings | MessageType::LegacyImport => Err(ErrorCode::ProtocolIncompatible),
     }
@@ -177,6 +179,60 @@ fn site_answers_answer(
         "site": site,
         "answers": answers.into_iter().map(|a| json!({"key": a.question, "value": a.answer})).collect::<Vec<_>>()
     });
+    let response = json!({
+        "protocolVersion": request.protocol_version,
+        "correlationId": request.message_id,
+        "ok": true,
+        "payload": payload
+    });
+    resume_pro_protocol::validate_response_for_request(&response, request).map_err(|err| err.code)?;
+    Ok(Answer { result_id: None, payload })
+}
+
+/// #429: the files kept for upload — metadata only; the bytes go out in chunks.
+fn resume_files_list(request: &Request, store: &ArchiveStore) -> Result<Answer, ErrorCode> {
+    ensure_current_identity(request, store)?;
+    let files = store.resume_files().map_err(code_of)?;
+    let payload = json!({
+        "files": files.into_iter().map(|file| json!({
+            "fileId": file.id,
+            "kind": file.kind.as_str(),
+            "name": file.name,
+            "label": file.label,
+            "mime": file.mime,
+            "byteSize": file.byte_size,
+            "sha256": file.sha256,
+            "isDefault": file.is_default,
+            "templateIds": file.template_ids,
+            "updatedAt": file.updated_at
+        })).collect::<Vec<_>>()
+    });
+    checked_answer(request, payload)
+}
+
+/// #429: one chunk of one version of a file. A file replaced or deleted on the desktop
+/// since the plugin listed it, or one whose bytes no longer match the record, is a
+/// `conflict`: the plugin stops and says so rather than uploading something else.
+fn resume_files_read(request: &Request, store: &ArchiveStore) -> Result<Answer, ErrorCode> {
+    ensure_current_identity(request, store)?;
+    let id = request.payload["fileId"].as_str().ok_or(ErrorCode::InvalidPayload)?.to_ascii_lowercase();
+    let sha256 = request.payload["sha256"].as_str().ok_or(ErrorCode::InvalidPayload)?;
+    let index = request.payload["chunkIndex"].as_u64().ok_or(ErrorCode::InvalidPayload)? as u32;
+    let chunk = store.read_resume_file_chunk(&id, sha256, index).map_err(code_of)?;
+    let payload = json!({
+        "fileId": request.payload["fileId"],
+        "sha256": chunk.file.sha256,
+        "byteSize": chunk.file.byte_size,
+        "chunkIndex": chunk.chunk_index,
+        "chunkCount": chunk.chunk_count,
+        "chunkSha256": resume_pro_protocol::sha256_hex(&chunk.bytes),
+        "bytesBase64": resume_pro_protocol::encode_standard_base64(&chunk.bytes)
+    });
+    checked_answer(request, payload)
+}
+
+/// The answer exactly as the extension will check it: same validator, same size limit.
+fn checked_answer(request: &Request, payload: Value) -> Result<Answer, ErrorCode> {
     let response = json!({
         "protocolVersion": request.protocol_version,
         "correlationId": request.message_id,
@@ -1783,5 +1839,94 @@ mod tests {
         identity.restore_epoch = "dddddddd-dddd-4ddd-8ddd-dddddddddddd".into();
         let read = v5_request("siteAnswers.read", &identity, json!({"site": "campus.example.com"}));
         assert!(matches!(apply(&read, &store), Err(ErrorCode::RestoreEpochMismatch)));
+    }
+
+    fn v6_request(message_type: &str, identity: &ArchiveIdentity, payload: Value) -> Request {
+        let envelope = json!({
+            "protocolVersion": 6,
+            "messageId": "33333333-3333-4333-8333-333333333333",
+            "clientInstanceId": CLIENT,
+            "messageType": message_type,
+            "occurredAt": "2026-11-03T00:00:00.000Z",
+            "archiveId": identity.archive_id,
+            "restoreEpoch": identity.restore_epoch,
+            "payload": payload
+        });
+        validate_request_bytes(&serde_json::to_vec(&envelope).unwrap()).unwrap()
+    }
+
+    fn checked_v6_response(request: &Request, answer: &Answer) -> Value {
+        let response = json!({"protocolVersion": 6, "correlationId": request.message_id, "ok": true, "payload": answer.payload});
+        resume_pro_protocol::validate_response_for_request(&response, request).unwrap();
+        response
+    }
+
+    fn pdf(len: usize) -> Vec<u8> {
+        let mut bytes = b"%PDF-1.7\n".to_vec();
+        bytes.extend((0..len.saturating_sub(9)).map(|i| (i % 253) as u8));
+        bytes
+    }
+
+    #[test]
+    fn resume_files_are_listed_and_read_back_chunk_by_chunk() {
+        let (_dir, store) = store();
+        let identity = store.identity();
+        // Two full chunks and one more byte: the fullest response the desktop sends, then the shortest.
+        let bytes = pdf(archive_store::RESUME_FILE_CHUNK_BYTES * 2 + 1);
+        let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "测试用户_简历.pdf", &bytes).unwrap();
+        let list = v6_request("resumeFiles.list", &identity, json!({}));
+        let listed = checked_v6_response(&list, &apply(&list, &store).unwrap());
+        assert_eq!(listed["payload"]["files"][0]["fileId"], file.id.as_str());
+        assert_eq!(listed["payload"]["files"][0]["kind"], "resume");
+        assert_eq!(listed["payload"]["files"][0]["isDefault"], true);
+        let mut joined = Vec::new();
+        for index in 0..3u32 {
+            // The extension may send the id in upper case; the answer echoes it as sent.
+            let read = v6_request("resumeFiles.read", &identity,
+                json!({"fileId": file.id.to_ascii_uppercase(), "sha256": file.sha256, "chunkIndex": index}));
+            let response = checked_v6_response(&read, &apply(&read, &store).unwrap());
+            assert!(serde_json::to_vec(&response).unwrap().len() <= MAX_ENVELOPE_BYTES);
+            let chunk = resume_pro_protocol::decode_standard_base64(response["payload"]["bytesBase64"].as_str().unwrap()).unwrap();
+            assert_eq!(response["payload"]["chunkSha256"], sha256_hex(&chunk));
+            assert_eq!(response["payload"]["chunkCount"], 3);
+            joined.extend(chunk);
+        }
+        assert_eq!(joined, bytes);
+        assert_eq!(sha256_hex(&joined), file.sha256);
+    }
+
+    #[test]
+    fn a_resume_file_replaced_or_unknown_is_a_conflict_and_old_epochs_are_refused() {
+        let (_dir, store) = store();
+        let identity = store.identity();
+        let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "简历.pdf", &pdf(100)).unwrap();
+        store.replace_resume_file(&file.id, "简历.pdf", &pdf(120)).unwrap();
+        let stale = v6_request("resumeFiles.read", &identity, json!({"fileId": file.id, "sha256": file.sha256, "chunkIndex": 0}));
+        assert!(matches!(apply(&stale, &store), Err(ErrorCode::Conflict)));
+        let unknown = v6_request("resumeFiles.read", &identity,
+            json!({"fileId": "11111111-1111-4111-8111-111111111111", "sha256": file.sha256, "chunkIndex": 0}));
+        assert!(matches!(apply(&unknown, &store), Err(ErrorCode::Conflict)));
+        let current = store.resume_file(&file.id).unwrap().unwrap();
+        let past_the_end = v6_request("resumeFiles.read", &identity, json!({"fileId": file.id, "sha256": current.sha256, "chunkIndex": 1}));
+        assert!(matches!(apply(&past_the_end, &store), Err(ErrorCode::InvalidPayload)));
+        let mut old = identity.clone();
+        old.restore_epoch = "dddddddd-dddd-4ddd-8ddd-dddddddddddd".into();
+        let list = v6_request("resumeFiles.list", &old, json!({}));
+        assert!(matches!(apply(&list, &store), Err(ErrorCode::RestoreEpochMismatch)));
+    }
+
+    #[test]
+    fn the_store_and_the_protocol_agree_on_which_types_each_kind_holds() {
+        use archive_store::ResumeFileKind::*;
+        let types = ["application/pdf", "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/jpeg", "image/png", "application/zip"];
+        for kind in [Resume, Photo, Transcript, Other] {
+            for mime in types {
+                assert_eq!(kind.allows(mime), resume_pro_protocol::resume_file_mime_allowed(kind.as_str(), mime), "{} {mime}", kind.as_str());
+            }
+        }
+        assert_eq!(archive_store::RESUME_FILE_CHUNK_BYTES, resume_pro_protocol::RESUME_FILE_CHUNK_BYTES);
+        assert_eq!(archive_store::MAX_RESUME_FILE_BYTES, resume_pro_protocol::MAX_RESUME_FILE_BYTES);
+        assert_eq!(archive_store::MAX_RESUME_FILES, resume_pro_protocol::MAX_RESUME_FILES);
     }
 }
