@@ -430,16 +430,34 @@ pub struct ResumeFileListing {
     pub damaged: Vec<DamagedResumeFile>,
 }
 
-/// 删一个附件的结果。记录删掉了就算成功，其余几项照实说没清干净的地方：
-/// - `stuck_in_tmp`：这次删的文件挪进了 `tmp/`，却删不掉（被别的程序占着之类），相对档案根的位置。
-///   `tmp/` 不进备份，下一次清理会再删，但文件还在磁盘上。
-/// - `leftovers`：清理之后附件目录里备份清单不收的文件（相对档案根），备份会因为它们停下。
-/// - `unchecked`：核对附件目录时出的错，不当成已经清干净。原始错误，给界面前要转成能给人看的说法。
+/// 删一个附件的结果。记录删掉了就算成功（`deleted`），其余几项照实说没清干净的地方。
 #[derive(Debug, Default)]
 pub struct ResumeFileDeletion {
     pub deleted: bool,
-    pub stuck_in_tmp: Option<String>,
+    /// 这次挪进 `tmp/` 的文件最后还在那里。
+    pub stuck_in_tmp: Option<StuckInTmp>,
+    /// 清理之后附件目录的核对结果。
+    pub folder: ResumeFileFolderCheck,
+}
+
+/// 删除时挪进 `tmp/`、最后还在那里的文件。`tmp/` 不进备份，下一次增删附件时清理会再试。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StuckInTmp {
+    /// 相对档案根的位置。
+    pub path: String,
+    /// `true`：还有记录用着它，本该挪回原处却没挪回去（这时那条记录读不了文件）；
+    /// `false`：本该删掉，没删掉（被别的程序占着之类），文件还在磁盘上。
+    pub not_restored: bool,
+}
+
+/// 附件目录的核对结果。核对时出错，出错之前找到的照样列着，错误在 `unchecked` 里，不当成已经清干净。
+#[derive(Debug, Default)]
+pub struct ResumeFileFolderCheck {
+    /// 顶层备份清单不收的文件（相对档案根）：备份会因为它们停下。
     pub leftovers: Vec<String>,
+    /// 子目录里的文件（相对档案根）：不归任何记录，备份不收也不因为它们停下，清理也不动，只列出来给人看。
+    pub in_subfolders: Vec<String>,
+    /// 核对时出的第一个错。原始错误，给界面前要转成能给人看的说法。
     pub unchecked: Option<StoreError>,
 }
 
@@ -718,6 +736,8 @@ thread_local! {
     static TMP_REMOVALS_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// 让附件目录里的文件查不清在不在，模拟没有权限之类。
     static HOME_CHECKS_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// 让叫这个名字的目录读不了。
+    static UNREADABLE_DIR: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
     /// 在删除的几步之间插进别的改动，模拟并发。
     #[allow(clippy::type_complexity)]
     static BETWEEN_STEPS: std::cell::RefCell<Vec<(&'static str, Box<dyn FnOnce(&rusqlite::Connection)>)>> =
@@ -751,6 +771,11 @@ fn remove_verified(path: &Path) -> std::io::Result<()> {
 
 /// 一个目录里的项。目录不存在就是空的；读目录、读目录项出的错记进 `failure`（只留第一个），能读到的照样给。
 fn entries_of(dir: &Path, failure: &mut Option<std::io::Error>) -> Vec<std::fs::DirEntry> {
+    #[cfg(test)]
+    if UNREADABLE_DIR.with(|name| name.get()).is_some_and(|name| dir.file_name() == Some(name.as_ref())) {
+        failure.get_or_insert(std::io::Error::other("unreadable for the test"));
+        return Vec::new();
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
@@ -922,32 +947,43 @@ impl ArchiveStore {
             }),
             _ => true,
         };
+        // 挪走的字节接下来怎么样了：挪回去了就不用再管；挪不回去、删不掉的继续跟着（第二项是本该挪回去）。
         let staged = match moved {
-            Some((target, trash)) if keep(&forgotten) => {
-                // 挪不回去时它还叫 resume-file-<哈希>.deleting，清理时有记录用着就挪回来。
-                if let Err(error) = std::fs::rename(&trash, &target) {
+            Some((target, trash)) if keep(&forgotten) => match std::fs::rename(&trash, &target) {
+                Ok(()) => None,
+                // 它还叫 resume-file-<哈希>.deleting，下面的清理在有记录用着、原位置又确定没有时会再挪回去。
+                Err(error) => {
                     eprintln!("resume-files: put-back-failed · {error}");
+                    Some((trash, true))
                 }
-                None
+            },
+            Some((_, trash)) => {
+                if let Err(error) = remove_verified(&trash) {
+                    eprintln!("resume-files: trash-kept · {error}");
+                }
+                Some((trash, false))
             }
-            other => other,
+            None => None,
         };
-        if let Some((_, trash)) = &staged {
-            if let Err(error) = remove_verified(trash) {
-                eprintln!("resume-files: trash-kept · {error}");
-            }
-        }
-        let (deleted, _) = forgotten?;
+        // 删记录失败也清一次：上面没挪回去的字节，清理会再试着挪回去。
         self.sweep_resume_files_noting_errors();
-        // 清理时还会再试一次；之后还在（或者查不清）的，就是卡在 tmp/ 里了。
-        let stuck_in_tmp = staged.and_then(|(_, trash)| {
-            (!matches!(present(&trash), Ok(false))).then(|| self.relative(&trash))
+        // 清理之后还在（或者查不清）的，就是卡在 tmp/ 里了。
+        let stuck_in_tmp = staged.and_then(|(trash, not_restored)| {
+            (!matches!(present(&trash), Ok(false))).then(|| StuckInTmp { path: self.relative(&trash), not_restored })
         });
-        let (leftovers, unchecked) = match self.resume_file_backup_leftovers() {
-            Ok(found) => (found, None),
-            Err(error) => (Vec::new(), Some(error)),
+        let deleted = match forgotten {
+            Ok((deleted, _)) => deleted,
+            Err(error) => {
+                return Err(match stuck_in_tmp {
+                    Some(stuck) if stuck.not_restored => StoreError::Io(std::io::Error::other(format!(
+                        "没有删除，而且附件文件没能挪回原处，还在档案的 {}；下次增删附件时会再试。",
+                        stuck.path
+                    ))),
+                    _ => error,
+                });
+            }
         };
-        Ok(ResumeFileDeletion { deleted, leftovers, stuck_in_tmp, unchecked })
+        Ok(ResumeFileDeletion { deleted, stuck_in_tmp, folder: self.check_resume_file_folder() })
     }
 
     /// 档案里的一个位置，相对档案根、用正斜杠。
@@ -955,32 +991,43 @@ impl ArchiveStore {
         path.strip_prefix(self.archive_dir()).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default()
     }
 
-    /// 附件目录里备份清单不收的文件（相对档案根）：备份会把它们当孤立文件停下。清单的规则和
-    /// [ArchiveStore::backup_inventory_from_snapshot] 一样，只收存储位置对的记录。读目录出错照实报错。
-    pub fn resume_file_backup_leftovers(&self) -> Result<Vec<String>, StoreError> {
-        let listed = self.transaction(|tx| tx.resume_file_backup_paths())?;
-        let mut leftovers = Vec::new();
-        let mut walk = vec![self.archive_dir().join(RESUME_FILES_DIR)];
+    /// 核对附件目录：顶层备份清单不收的文件（清单的规则和 [ArchiveStore::backup_inventory_from_snapshot]
+    /// 一样，只收存储位置对的记录），备份会把它们当孤立文件停下；子目录里的文件备份不收也不管，单独列出来。
+    /// 读目录、目录项出错时能看的照样看完，找到的照样列出，第一个错误放在 `unchecked` 里。
+    pub fn check_resume_file_folder(&self) -> ResumeFileFolderCheck {
+        let mut check = ResumeFileFolderCheck::default();
+        let listed = match self.transaction(|tx| tx.resume_file_backup_paths()) {
+            Ok(listed) => listed,
+            Err(error) => {
+                check.unchecked = Some(error);
+                return check;
+            }
+        };
+        let mut failure = None;
+        let top = self.archive_dir().join(RESUME_FILES_DIR);
+        let mut walk = vec![top.clone()];
         while let Some(dir) = walk.pop() {
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
-            };
-            for entry in entries {
-                let entry = entry?;
-                if entry.file_type()?.is_dir() {
-                    walk.push(entry.path());
-                    continue;
-                }
-                let rel = self.relative(&entry.path());
-                if !listed.contains(&rel) {
-                    leftovers.push(rel);
+            for entry in entries_of(&dir, &mut failure) {
+                match entry.file_type() {
+                    Ok(kind) if kind.is_dir() => walk.push(entry.path()),
+                    Ok(_) => {
+                        let rel = self.relative(&entry.path());
+                        if dir != top {
+                            check.in_subfolders.push(rel);
+                        } else if !listed.contains(&rel) {
+                            check.leftovers.push(rel);
+                        }
+                    }
+                    Err(error) => {
+                        failure.get_or_insert(error);
+                    }
                 }
             }
         }
-        leftovers.sort();
-        Ok(leftovers)
+        check.leftovers.sort();
+        check.in_subfolders.sort();
+        check.unchecked = failure.map(StoreError::from);
+        check
     }
 
     /// 顺手的清理：失败不改变这次增删的结果（下一次增删还会再清），原始错误写进桌面日志。
@@ -1035,8 +1082,13 @@ impl ArchiveStore {
                             }
                             continue;
                         }
-                        // 原位置还在：这一份是多出来的，照常删。
-                        Ok(true) => {}
+                        // 原位置有这份文件：这一份是多出来的，照常删。
+                        Ok(true) if folder.join(sha256).is_file() => {}
+                        // 原位置是别的东西（比如一个目录）：不能当成已经复原，不删。
+                        Ok(true) => {
+                            eprintln!("resume-files: deleting-kept · its home is not a file");
+                            continue;
+                        }
                         Err(error) => {
                             eprintln!("resume-files: deleting-kept · {error}");
                             continue;
@@ -1188,7 +1240,7 @@ mod tests {
             .unwrap();
         });
         let result = store.delete_resume_file(renamed).unwrap();
-        assert!(result.deleted && result.stuck_in_tmp.is_none() && result.leftovers.is_empty(), "{result:?}");
+        assert!(result.deleted && result.stuck_in_tmp.is_none() && result.folder.leftovers.is_empty(), "{result:?}");
         assert!(home.is_file());
         assert_eq!(store.read_resume_file(again).unwrap().1, BYTES);
         store.close().unwrap();
@@ -1203,7 +1255,7 @@ mod tests {
         let gone = home.clone();
         between_steps("checked", move |_| std::fs::remove_file(&gone).unwrap());
         let result = store.delete_resume_file(&file.id).unwrap();
-        assert!(result.deleted && result.stuck_in_tmp.is_none() && result.leftovers.is_empty(), "{result:?}");
+        assert!(result.deleted && result.stuck_in_tmp.is_none() && result.folder.leftovers.is_empty(), "{result:?}");
         assert!(store.resume_file(&file.id).unwrap().is_none() && !home.exists());
         store.close().unwrap();
     }
@@ -1212,6 +1264,8 @@ mod tests {
     fn a_folder_the_sweep_cannot_read_is_reported_not_skipped() {
         let (dir, store) = test_store();
         let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+        // 不管打开档案时有没有建好这个目录，都换成一个文件：读目录一定失败。
+        let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(folder.parent().unwrap()).unwrap();
         std::fs::write(&folder, b"not a folder").unwrap();
         assert!(store.sweep_resume_file_leftovers().is_err());
@@ -1229,14 +1283,87 @@ mod tests {
         TMP_REMOVALS_FAIL.with(|fail| fail.set(false));
         let result = result.unwrap();
         assert!(result.deleted);
-        assert_eq!(result.stuck_in_tmp.as_deref(), Some(format!("tmp/resume-file-{}.deleting", file.sha256).as_str()));
-        assert!(result.leftovers.is_empty() && result.unchecked.is_none(), "{result:?}");
+        let stuck = result.stuck_in_tmp.clone().expect("the bytes are reported as stuck");
+        assert_eq!((stuck.path.as_str(), stuck.not_restored), (format!("tmp/resume-file-{}.deleting", file.sha256).as_str(), false));
+        assert!(result.folder.leftovers.is_empty() && result.folder.unchecked.is_none(), "{result:?}");
         assert!(store.resume_file(&file.id).unwrap().is_none());
-        let trash = dir.path().join("archive").join(result.stuck_in_tmp.unwrap());
+        let trash = dir.path().join("archive").join(&stuck.path);
         assert!(trash.is_file());
         // 能删了以后，下一次增删附件时清掉。
         store.add_resume_file(ResumeFileKind::Photo, "照片.png", &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1]).unwrap();
         assert!(!trash.exists());
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn bytes_that_cannot_go_back_are_tracked_and_reported_as_not_restored() {
+        let (dir, store) = test_store();
+        let file = store.add_resume_file(ResumeFileKind::Resume, "简历.pdf", BYTES).unwrap();
+        let archive = dir.path().join("archive");
+        let home = archive.join(rel_path(&file.sha256));
+        let trash = trash_for(&archive, &rel_path(&file.sha256));
+        // 字节挪走以后，这条记录换成了另一条用同一份字节的（要挪回去），原位置却被一个目录占了：挪不回去。
+        let renamed = "11111111-1111-4111-8111-111111111144";
+        let id = file.id.clone();
+        between_steps("moved", move |conn| {
+            conn.execute("UPDATE resume_files SET id = ?1 WHERE id = ?2", params![renamed, id]).unwrap();
+        });
+        let blocker = home.clone();
+        between_steps("forgotten", move |_| std::fs::create_dir_all(&blocker).unwrap());
+        let result = store.delete_resume_file(&file.id).unwrap();
+        assert!(!result.deleted);
+        let stuck = result.stuck_in_tmp.clone().expect("the bytes that could not go back are reported");
+        assert_eq!((stuck.path.as_str(), stuck.not_restored), (format!("tmp/resume-file-{}.deleting", file.sha256).as_str(), true));
+        // 清理也没有把它当成多出来的删掉。
+        assert!(trash.is_file());
+        // 原位置空出来以后，下一次清理挪回去。
+        std::fs::remove_dir(&home).unwrap();
+        store.sweep_resume_file_leftovers().unwrap();
+        assert!(home.is_file() && !trash.exists());
+        assert_eq!(store.read_resume_file(renamed).unwrap().1, BYTES);
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn a_failed_delete_says_so_when_its_bytes_could_not_go_back() {
+        let (dir, store) = test_store();
+        let file = store.add_resume_file(ResumeFileKind::Resume, "简历.pdf", BYTES).unwrap();
+        let home = dir.path().join("archive").join(rel_path(&file.sha256));
+        // 挪走以后，这条记录换了文件（删记录报冲突），另一条记录用着原来那份字节，原位置又被一个目录占了。
+        let (id, sha256, size, at) = (file.id.clone(), file.sha256.clone(), file.byte_size, file.created_at.clone());
+        let blocker = home.clone();
+        between_steps("moved", move |conn| {
+            let other = "f".repeat(64);
+            conn.execute("UPDATE resume_files SET sha256 = ?1, stored_rel_path = ?2 WHERE id = ?3", params![other, rel_path(&other), id]).unwrap();
+            conn.execute(
+                "INSERT INTO resume_files (id, kind, name, label, mime, byte_size, sha256, stored_rel_path, is_default, \
+                 template_ids_json, position, created_at, updated_at) \
+                 VALUES ('11111111-1111-4111-8111-111111111155', 'other', '又一份.pdf', '', 'application/pdf', ?1, ?2, ?3, 0, '[]', 9, ?4, ?4)",
+                params![size, sha256, rel_path(&sha256), at],
+            )
+            .unwrap();
+            std::fs::create_dir_all(&blocker).unwrap();
+        });
+        let error = store.delete_resume_file(&file.id).unwrap_err();
+        assert!(error.to_string().contains("没能挪回原处"), "{error}");
+        std::fs::remove_dir(&home).unwrap();
+        store.sweep_resume_file_leftovers().unwrap();
+        assert_eq!(store.read_resume_file("11111111-1111-4111-8111-111111111155").unwrap().1, BYTES);
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn a_check_that_fails_halfway_keeps_what_it_found() {
+        let (dir, store) = test_store();
+        store.add_resume_file(ResumeFileKind::Resume, "简历.pdf", BYTES).unwrap();
+        let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+        std::fs::write(folder.join("stray"), b"x").unwrap();
+        std::fs::create_dir_all(folder.join("sub")).unwrap();
+        UNREADABLE_DIR.with(|name| name.set(Some("sub")));
+        let check = store.check_resume_file_folder();
+        UNREADABLE_DIR.with(|name| name.set(None));
+        assert_eq!(check.leftovers, vec![format!("{RESUME_FILES_DIR}/stray")]);
+        assert!(check.unchecked.is_some());
         store.close().unwrap();
     }
 

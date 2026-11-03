@@ -151,13 +151,37 @@ fn a_resume_file_record_pointing_outside_the_archive_stays_out_of_backups_and_de
     // The user deletes the broken record on the attachments page: the bytes nobody refers to any
     // more are cleared with it, so the next backup goes through, without the outside file.
     let deletion = store.delete_resume_file(&file.id).unwrap();
-    assert!(deletion.deleted && deletion.leftovers.is_empty() && deletion.unchecked.is_none(), "{deletion:?}");
+    assert!(
+        deletion.deleted && deletion.stuck_in_tmp.is_none() && deletion.folder.leftovers.is_empty() && deletion.folder.unchecked.is_none(),
+        "{deletion:?}"
+    );
     assert!(!source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256).exists());
     let package = export_to(&store, &source.paths, "backup.zip");
     let manifest = backup::read_manifest(&package).unwrap();
     assert!(manifest.entries.iter().all(|entry| !entry.path.contains("outside") && !entry.path.contains(&file.sha256)));
     assert!(store.check_attachment_refs().unwrap().invalid_files.is_empty());
     assert_eq!(std::fs::read(&outside).unwrap(), b"%PDF-1.7\nnot part of the archive");
+    store.close().unwrap();
+}
+
+#[test]
+fn files_in_a_subfolder_of_the_attachment_folder_neither_travel_nor_block_a_backup() {
+    // #429: attachments live at the top of attachments/resume-files/. Anything in a subfolder
+    // belongs to no record: the backup leaves it out instead of stopping on it as an orphan.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let bytes = [b"%PDF-1.7\n".as_slice(), b"resume bytes"].concat();
+    let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    let folder = source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR);
+    std::fs::create_dir_all(folder.join("sub")).unwrap();
+    std::fs::write(folder.join("sub").join("stray"), b"not an attachment").unwrap();
+    let check = store.check_resume_file_folder();
+    assert!(check.leftovers.is_empty() && check.unchecked.is_none(), "{check:?}");
+    assert_eq!(check.in_subfolders, vec![format!("{}/sub/stray", archive_store::RESUME_FILES_DIR)]);
+    let package = export_to(&store, &source.paths, "backup.zip");
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().any(|entry| entry.path.ends_with(&file.sha256)));
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains("sub/stray")));
     store.close().unwrap();
 }
 

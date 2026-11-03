@@ -27,8 +27,11 @@ function mount(
     if (result instanceof Error) throw result;
     // 桌面回的是「能用的文件 + 读不出来的记录」；用例里只给文件时补上空的后者。
     const listing = Array.isArray(result) ? { files: result, damaged: [] } : result;
-    // 删除另外带着结果：用例没写的按删干净了算。
-    if (command === "delete_resume_file_cmd") return { deleted: true, stuckInTmp: false, leftovers: [], unchecked: null, ...(listing as object) };
+    // 删除的结果另外带着删除以后的列表：用例没写的按删干净了算。
+    if (command === "delete_resume_file_cmd") {
+      const { files, damaged, ...rest } = listing as Record<string, unknown>;
+      return { deleted: true, stuckInTmp: null, leftovers: [], inSubfolders: [], unchecked: null, listing: files ? { files, damaged } : null, ...rest };
+    }
     return listing;
   }) as Invoke;
   const picked: ResumeFileKind[] = [];
@@ -262,24 +265,23 @@ test("读不出来的记录单独列出，可以删掉", async () => {
   expect(screen.getByRole("status").textContent).toBe("已删除「旧简历.pdf」这条读不出来的记录。");
 });
 
-test("删完没清干净的照实提示：文件卡在 tmp/ 里、附件目录里还有会挡住备份的文件、没能核对；没删到的不说已删除", async () => {
+test("删完没清干净的照实提示：文件没删掉、没能复原、还会挡住备份、在子目录里、没能核对、列表没刷新；没删到的不说已删除", async () => {
+  const names = ["旧简历.pdf", "旧照片.png", "旧成绩单.pdf", "旧证书.pdf", "旧作品.pdf", "旧材料.pdf"];
   let listing = {
     files: [file("a1", "resume", "简历.pdf", "application/pdf", { isDefault: true })],
-    damaged: [
-      { id: "x1", name: "旧简历.pdf", reason: "存储位置不对" },
-      { id: "x2", name: "旧照片.png", reason: "种类认不出" },
-      { id: "x3", name: "旧成绩单.pdf", reason: "文件类型不对" },
-      { id: "x4", name: "旧材料.pdf", reason: "文件大小不对" },
-    ],
+    damaged: names.map((name, i) => ({ id: `x${i + 1}`, name, reason: "存储位置不对" })),
   };
   mount((command, args) => {
     if (command === "list_resume_files_cmd") return listing;
     if (command === "delete_resume_file_cmd") {
       const id = args?.id;
       listing = { ...listing, damaged: listing.damaged.filter((d) => d.id !== id) };
-      if (id === "x1") return { ...listing, leftovers: ["attachments/resume-files/stray"] };
-      if (id === "x2") return { ...listing, unchecked: "拒绝访问。" };
-      if (id === "x3") return { ...listing, stuckInTmp: true };
+      if (id === "x1") return { ...listing, leftovers: ["attachments/resume-files/stray"], inSubfolders: ["attachments/resume-files/sub/x"] };
+      if (id === "x2") return { ...listing, leftovers: ["attachments/resume-files/seen"], unchecked: "拒绝访问。" };
+      if (id === "x3") return { ...listing, stuckInTmp: "not_removed" };
+      if (id === "x4") return { ...listing, stuckInTmp: "not_restored" };
+      // 删除已经提交以后读列表失败：删除的结果照样有，列表留着原来的。
+      if (id === "x5") return { deleted: true };
       return { ...listing, deleted: false };
     }
     return null;
@@ -294,18 +296,27 @@ test("删完没清干净的照实提示：文件卡在 tmp/ 里、附件目录�
   };
   let status = await deleteRecord("旧简历.pdf");
   expect(status.textContent).toBe(
-    "已删除「旧简历.pdf」这条读不出来的记录。附件目录里还有 1 个文件没清掉，备份可能仍会被这些残留挡住：attachments/resume-files/stray。",
+    "已删除「旧简历.pdf」这条读不出来的记录。附件目录里还有 1 个文件没清掉，备份可能仍会被这些残留挡住：attachments/resume-files/stray。"
+      + "附件目录的子目录里有 1 个文件不归任何附件，不进备份，也不会自动清理：attachments/resume-files/sub/x。",
   );
   expect(status.className).toContain("warn");
+  // 核对到一半出错：已经找到的照样列出来，再说明没能核对完。
   status = await deleteRecord("旧照片.png");
   expect(status.textContent).toBe(
-    "已删除「旧照片.png」这条读不出来的记录。没能核对附件目录里还有没有残留（拒绝访问。），备份可能仍会被挡住。",
+    "已删除「旧照片.png」这条读不出来的记录。附件目录里还有 1 个文件没清掉，备份可能仍会被这些残留挡住：attachments/resume-files/seen。"
+      + "附件目录没能核对完（拒绝访问。），可能还有没列出来的残留，备份可能仍会被挡住。",
   );
   status = await deleteRecord("旧成绩单.pdf");
   expect(status.textContent).toBe(
     "已删除「旧成绩单.pdf」这条读不出来的记录。附件文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再删一次。",
   );
-  expect(status.className).toContain("warn");
+  status = await deleteRecord("旧证书.pdf");
+  expect(status.textContent).toBe(
+    "已删除「旧证书.pdf」这条读不出来的记录。还有附件在用的一份文件没能复原，暂时读不了；下次增删附件时会再试着挪回去。",
+  );
+  status = await deleteRecord("旧作品.pdf");
+  expect(status.textContent).toBe("已删除「旧作品.pdf」这条读不出来的记录。附件列表没能刷新，稍后重新打开这一页。");
+  expect(within(screen.getByRole("region", { name: "读不出来的记录" })).getByText("旧作品.pdf")).toBeTruthy();
   // 桌面说没删到（已经不在了）：不说「已删除」。
   status = await deleteRecord("旧材料.pdf");
   expect(status.textContent).toBe("没有找到「旧材料.pdf」，可能已经删掉了。");

@@ -39,10 +39,14 @@ function describe(error: unknown): Notice {
 function deletionNotice(result: ResumeFileDeleted, done: string, name: string): Notice {
   if (!result.deleted) return { tone: "warn", text: `没有找到「${name}」，可能已经删掉了。` };
   const notes: string[] = [];
-  if (result.stuckInTmp) notes.push("附件文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再删一次。");
+  if (result.stuckInTmp === "not_removed") notes.push("附件文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再删一次。");
+  if (result.stuckInTmp === "not_restored") notes.push("还有附件在用的一份文件没能复原，暂时读不了；下次增删附件时会再试着挪回去。");
   const leftovers = result.leftovers ?? [];
-  if (result.unchecked) notes.push(`没能核对附件目录里还有没有残留（${result.unchecked}），备份可能仍会被挡住。`);
-  else if (leftovers.length) notes.push(`附件目录里还有 ${leftovers.length} 个文件没清掉，备份可能仍会被这些残留挡住：${leftovers.join("、")}。`);
+  if (leftovers.length) notes.push(`附件目录里还有 ${leftovers.length} 个文件没清掉，备份可能仍会被这些残留挡住：${leftovers.join("、")}。`);
+  const inSubfolders = result.inSubfolders ?? [];
+  if (inSubfolders.length) notes.push(`附件目录的子目录里有 ${inSubfolders.length} 个文件不归任何附件，不进备份，也不会自动清理：${inSubfolders.join("、")}。`);
+  if (result.unchecked) notes.push(`附件目录没能核对完（${result.unchecked}），可能还有没列出来的残留，备份可能仍会被挡住。`);
+  if (!result.listing) notes.push("附件列表没能刷新，稍后重新打开这一页。");
   return notes.length ? { tone: "warn", text: done + notes.join("") } : { tone: "ok", text: done };
 }
 
@@ -109,12 +113,18 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   }, [files, invoke, previews]);
 
   /** 成功返回 true；失败时原因在 notice 里，打开着的对话框不关，用户填的东西还在。 */
-  const run = async <T extends ResumeFileListing>(work: () => Promise<T>, done: string | ((result: T) => Notice)): Promise<boolean> => {
+  /** `listingOf` 从结果里取出新的列表；取不到（删除以后读列表失败）就留着原来的列表。 */
+  const run = async <T,>(
+    work: () => Promise<T>,
+    done: string | ((result: T) => Notice),
+    listingOf: (result: T) => ResumeFileListing | null = (result) => result as ResumeFileListing,
+  ): Promise<boolean> => {
     if (!invoke || busy) return false;
     setBusy(true);
     try {
       const result = await work();
-      show(result);
+      const listing = listingOf(result);
+      if (listing) show(listing);
       setNotice(typeof done === "string" ? { tone: "ok", text: done } : done(result));
       return true;
     } catch (error) {
@@ -157,8 +167,9 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
     const answered = await run(
       () => invoke<ResumeFileDeleted>("delete_resume_file_cmd", { id: target.id }),
       (result) => deletionNotice(result, done, target.name),
+      (result) => result.listing,
     );
-    // 没删到的（已经不在了）也关掉对话框：列表已经按桌面现在的样子更新，没有可以再试的。
+    // 没删到的（已经不在了）也关掉对话框：没有可以再试的。
     if (answered) setConfirmDelete(null);
   };
 

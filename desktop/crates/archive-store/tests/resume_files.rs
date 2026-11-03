@@ -91,7 +91,11 @@ fn code(error: StoreError) -> &'static str {
 
 /// 删掉了，也清干净了：没有卡在 tmp/ 里的，没有会挡住备份的残留，核对也没出错。
 fn clean(result: &ResumeFileDeletion) -> bool {
-    result.deleted && result.stuck_in_tmp.is_none() && result.leftovers.is_empty() && result.unchecked.is_none()
+    result.deleted
+        && result.stuck_in_tmp.is_none()
+        && result.folder.leftovers.is_empty()
+        && result.folder.in_subfolders.is_empty()
+        && result.folder.unchecked.is_none()
 }
 
 #[test]
@@ -226,15 +230,18 @@ fn a_damaged_record_with_a_bad_hash_is_deleted_and_the_folder_is_checked_by_scan
     std::fs::write(folder.join("sub").join("stray"), b"x").unwrap();
     let result = db.delete_resume_file(&broken.id).unwrap();
     assert!(result.deleted);
-    assert_eq!(result.leftovers, vec![format!("{RESUME_FILES_DIR}/sub/stray")]);
-    assert!(result.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
-    assert_eq!(db.resume_file_backup_leftovers().unwrap(), result.leftovers);
+    // 子目录里的不归任何记录：不挡备份，单独列出来。
+    assert!(result.folder.leftovers.is_empty(), "{result:?}");
+    assert_eq!(result.folder.in_subfolders, vec![format!("{RESUME_FILES_DIR}/sub/stray")]);
+    assert!(result.folder.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
+    assert_eq!(db.check_resume_file_folder().in_subfolders, result.folder.in_subfolders);
     // 没有记录用着的那份字节清掉了，别的附件都在。
     assert!(!folder.join(&broken.sha256).exists());
     assert_eq!(db.read_resume_file(&kept.id).unwrap().1, png());
     // 残留拿掉以后，附件目录里没有备份清单不收的文件。
     std::fs::remove_dir_all(folder.join("sub")).unwrap();
-    assert!(db.resume_file_backup_leftovers().unwrap().is_empty());
+    let check = db.check_resume_file_folder();
+    assert!(check.leftovers.is_empty() && check.in_subfolders.is_empty() && check.unchecked.is_none());
 }
 
 #[test]
@@ -254,9 +261,9 @@ fn a_folder_that_cannot_be_checked_is_never_reported_clean() {
     let db = open(dir.path());
     let result = db.delete_resume_file(&broken.id).unwrap();
     assert!(result.deleted, "the record is gone");
-    assert!(result.leftovers.is_empty());
-    assert!(result.unchecked.is_some(), "a failed check is not a clean result");
-    assert!(db.resume_file_backup_leftovers().is_err());
+    assert!(result.folder.leftovers.is_empty());
+    assert!(result.folder.unchecked.is_some(), "a failed check is not a clean result");
+    assert!(db.check_resume_file_folder().unchecked.is_some());
 }
 
 #[test]
@@ -316,13 +323,13 @@ fn a_damaged_record_whose_bytes_are_held_is_not_deleted_and_a_held_stray_is_repo
     let stray = std::fs::OpenOptions::new().read(true).share_mode(0).open(folder.join("stray")).unwrap();
     let result = db.delete_resume_file(&file.id).unwrap();
     assert!(result.deleted);
-    assert_eq!(result.leftovers, vec![format!("{RESUME_FILES_DIR}/stray")]);
-    assert!(result.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
+    assert_eq!(result.folder.leftovers, vec![format!("{RESUME_FILES_DIR}/stray")]);
+    assert!(result.folder.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
     assert!(!folder.join(&file.sha256).exists());
     drop(stray);
     // 放开以后，下一次增删附件时清掉。
     db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
-    assert!(db.resume_file_backup_leftovers().unwrap().is_empty());
+    assert!(db.check_resume_file_folder().leftovers.is_empty());
 }
 
 #[test]
