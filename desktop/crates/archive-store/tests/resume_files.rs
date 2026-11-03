@@ -89,6 +89,11 @@ fn code(error: StoreError) -> &'static str {
     error.code()
 }
 
+/// 删掉了，也清干净了：没有卡在 tmp/ 里的，没有会挡住备份的残留，核对也没出错。
+fn clean(result: &ResumeFileDeletion) -> bool {
+    result.deleted && result.stuck_in_tmp.is_none() && result.leftovers.is_empty() && result.unchecked.is_none()
+}
+
 #[test]
 fn files_are_taken_by_their_content_and_kind_not_by_their_name() {
     let dir = tempfile::tempdir().unwrap();
@@ -189,7 +194,8 @@ fn a_damaged_record_is_listed_apart_never_guessed_and_the_rest_still_work() {
     let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
     let bytes = folder.join(&file.sha256);
     assert!(bytes.is_file());
-    assert_eq!(db.delete_resume_file(&file.id).unwrap(), ResumeFileDeletion { deleted: true, ..Default::default() });
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(clean(&result), "{result:?}");
     assert!(!bytes.exists());
     let listing = db.resume_file_listing().unwrap();
     assert!(listing.damaged.is_empty());
@@ -221,7 +227,7 @@ fn a_damaged_record_with_a_bad_hash_is_deleted_and_the_folder_is_checked_by_scan
     let result = db.delete_resume_file(&broken.id).unwrap();
     assert!(result.deleted);
     assert_eq!(result.leftovers, vec![format!("{RESUME_FILES_DIR}/sub/stray")]);
-    assert_eq!(result.unchecked, None);
+    assert!(result.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
     assert_eq!(db.resume_file_backup_leftovers().unwrap(), result.leftovers);
     // 没有记录用着的那份字节清掉了，别的附件都在。
     assert!(!folder.join(&broken.sha256).exists());
@@ -278,7 +284,8 @@ fn deleting_a_damaged_record_keeps_bytes_another_record_still_uses() {
     let listing = db.resume_file_listing().unwrap();
     assert_eq!(listing.damaged.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), vec![damaged]);
     // 删掉坏记录：另一条记录还用着这份字节，留着就对，算成功，也没有残留。
-    assert_eq!(db.delete_resume_file(damaged).unwrap(), ResumeFileDeletion { deleted: true, ..Default::default() });
+    let result = db.delete_resume_file(damaged).unwrap();
+    assert!(clean(&result), "{result:?}");
     let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
     assert!(folder.join(&healthy.sha256).is_file());
     assert_eq!(db.read_resume_file(&healthy.id).unwrap().1, pdf(1));
@@ -310,7 +317,7 @@ fn a_damaged_record_whose_bytes_are_held_is_not_deleted_and_a_held_stray_is_repo
     let result = db.delete_resume_file(&file.id).unwrap();
     assert!(result.deleted);
     assert_eq!(result.leftovers, vec![format!("{RESUME_FILES_DIR}/stray")]);
-    assert_eq!(result.unchecked, None);
+    assert!(result.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
     assert!(!folder.join(&file.sha256).exists());
     drop(stray);
     // 放开以后，下一次增删附件时清掉。

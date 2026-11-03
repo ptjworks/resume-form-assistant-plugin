@@ -523,8 +523,13 @@ export interface ResumeFileListing {
   damaged: DamagedResumeFileView[];
 }
 
-/** #429：删除以后的列表。`leftovers` 是清理之后附件目录里还会让备份停下的文件；核对出错时 `unchecked` 是原因。 */
+/**
+ * #429：删除以后的列表和删除的结果。`deleted` 是有没有删到记录；`stuckInTmp` 是这次删的文件卡在档案的 tmp/ 里、
+ * 还没从磁盘上删掉；`leftovers` 是清理之后附件目录里还会让备份停下的文件；核对出错时 `unchecked` 是原因。
+ */
 export interface ResumeFileDeleted extends ResumeFileListing {
+  deleted: boolean;
+  stuckInTmp: boolean;
   leftovers: string[];
   unchecked: string | null;
 }

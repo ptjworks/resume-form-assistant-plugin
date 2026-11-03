@@ -32,12 +32,18 @@ function describe(error: unknown): Notice {
   return { tone: "error", text: err?.message ?? "操作失败，请重试。" };
 }
 
-/** 删除以后附件目录里还有会让备份停下的文件，或者没能核对：照实说出来，不说成已经清干净。 */
-function leftoverWarning(result: ResumeFileDeleted): string {
-  if (result.unchecked) return `没能核对附件目录里还有没有残留（${result.unchecked}），备份可能仍会被挡住。`;
+/**
+ * 删除的结果照实说：没删到记录的不说「已删除」；删了但没清干净的（这次的文件卡在 tmp/ 里、附件目录里还有会让
+ * 备份停下的文件、没能核对）说出来，不说成已经清干净。
+ */
+function deletionNotice(result: ResumeFileDeleted, done: string, name: string): Notice {
+  if (!result.deleted) return { tone: "warn", text: `没有找到「${name}」，可能已经删掉了。` };
+  const notes: string[] = [];
+  if (result.stuckInTmp) notes.push("附件文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再删一次。");
   const leftovers = result.leftovers ?? [];
-  if (!leftovers.length) return "";
-  return `附件目录里还有 ${leftovers.length} 个文件没清掉，备份可能仍会被这些残留挡住：${leftovers.join("、")}。`;
+  if (result.unchecked) notes.push(`没能核对附件目录里还有没有残留（${result.unchecked}），备份可能仍会被挡住。`);
+  else if (leftovers.length) notes.push(`附件目录里还有 ${leftovers.length} 个文件没清掉，备份可能仍会被这些残留挡住：${leftovers.join("、")}。`);
+  return notes.length ? { tone: "warn", text: done + notes.join("") } : { tone: "ok", text: done };
 }
 
 const opensHere = (file: ResumeFileView) => file.mime === "application/pdf" || file.mime.startsWith("image/");
@@ -148,14 +154,12 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   const remove = async (target: { id: string; name: string; damaged: boolean }) => {
     if (!invoke) return;
     const done = target.damaged ? `已删除「${target.name}」这条读不出来的记录。` : `已删除「${target.name}」。`;
-    const deleted = await run(
+    const answered = await run(
       () => invoke<ResumeFileDeleted>("delete_resume_file_cmd", { id: target.id }),
-      (result) => {
-        const warning = leftoverWarning(result);
-        return warning ? { tone: "warn", text: `${done}${warning}` } : { tone: "ok", text: done };
-      },
+      (result) => deletionNotice(result, done, target.name),
     );
-    if (deleted) setConfirmDelete(null);
+    // 没删到的（已经不在了）也关掉对话框：列表已经按桌面现在的样子更新，没有可以再试的。
+    if (answered) setConfirmDelete(null);
   };
 
   const openDialog = (open: () => void) => {
@@ -354,7 +358,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
         }
       >
         {confirmDelete?.damaged ? (
-          <p>「{confirmDelete.name}」这条记录读不出来。删掉记录会连它的附件文件一起删掉，删了不能恢复；附件目录里没有记录再用的文件也一起清掉。档案以外的文件不动。</p>
+          <p>「{confirmDelete.name}」这条记录读不出来。删掉记录时，能按它的哈希在附件目录里找到、又没有别的记录在用的那份文件会一起删掉，删了不能恢复；附件目录里没人用的残留也会顺手清掉，清不掉的删除之后会提示。档案以外的文件不动。</p>
         ) : (
           <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
         )}
