@@ -29,7 +29,6 @@
   "link/reconcile.mjs",
   "link/redact.mjs",
   "link/resume.mjs",
-  "link/resume-files.mjs",
   "link/router.mjs",
   "link/save-flow.mjs",
   "link/secret-fields.mjs",
