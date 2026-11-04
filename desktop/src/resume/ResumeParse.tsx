@@ -5,7 +5,7 @@ import { useInvoke } from "../react/invoke.tsx";
 import { extractText } from "./extract-text.ts";
 import { MAX_TEMPLATE_BYTES, MAX_TEMPLATES, MAX_USER_CHARS } from "./parse-limits.ts";
 import { buildRequest, fieldsToGroups, parseModelReply, templateNameFor } from "./parse-resume.ts";
-import { fieldCountOf, formatBytes, groupBytes, setGroupKept, templateBytes, trimDraft, trimmedGroups, updateField } from "./parse-trim.ts";
+import { fieldCountOf, formatBytes, groupBytes, secretCountOf, setGroupKept, templateBytes, trimDraft, trimmedGroups, updateField } from "./parse-trim.ts";
 import type { TrimGroup } from "./parse-trim.ts";
 import { ResumeDialog } from "./ResumeDialog.tsx";
 import { exportFileName } from "./resume-text.ts";
@@ -104,6 +104,9 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
   invokeRef.current = invoke;
   const onCreatedRef = useRef(onCreated);
   onCreatedRef.current = onCreated;
+  // 当前还没存成模板的那份解析结果，导出落地时拿它核对是不是还是同一次解析。
+  const resultRef = useRef<TemplateGroupView[] | null>(null);
+  resultRef.current = "result" in stage ? stage.result : null;
 
   useEffect(() => {
     // StrictMode 开发构建会先跑一次 cleanup 再重新执行 effect：这里要把标记改回来，
@@ -221,19 +224,24 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
       return { ...current, expanded: open ? current.expanded.filter((i) => i !== index) : [...current.expanded, index] };
     });
 
-  // 导出的是 AI 返回的完整结果，不是删减后的草稿；在 Excel 里改完可以用「导入」读回。
+  // 导出的是 AI 返回的结果，不是删减后的草稿；像密码的字段和存档时一样不写进文件。
+  // 在 Excel 里改完可以用「导入」读回。
   const exportResult = async (fileName: string, result: TemplateGroupView[]) => {
     if (!invoke || !pickers || exporting) return;
+    // 导出落地前这次结果已经放弃或存好、又开始了新的解析：提示不能落到新结果的弹窗里。
+    const current = () => mountedRef.current && resultRef.current === result;
     setExporting(true);
     setExportNote(null);
     try {
       const path = await pickers.save(exportFileName(templateNameFor(fileName)));
       if (!path) return;
-      await invoke("export_resume_groups_cmd", { groups: result, path });
-      if (!mountedRef.current) return;
-      setExportNote({ tone: "ok", text: "已导出。在 Excel 里改完后，可以在模板列表用「导入」读回。" });
+      const skipped = await invoke<number>("export_resume_groups_cmd", { groups: result, path });
+      if (!current()) return;
+      setExportNote(skipped
+        ? { tone: "warn", text: `已导出，${skipped} 个像密码或验证码的字段没有导出。在 Excel 里改完后，可以在模板列表用「导入」读回。` }
+        : { tone: "ok", text: "已导出。在 Excel 里改完后，可以在模板列表用「导入」读回。" });
     } catch (error) {
-      if (!mountedRef.current) return;
+      if (!current()) return;
       setExportNote({ tone: "error", text: errorText(error) });
     } finally {
       if (mountedRef.current) setExporting(false);
@@ -474,6 +482,7 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
       const bytes = templateBytes(groups);
       const over = bytes > MAX_TEMPLATE_BYTES;
       const kept = fieldCountOf(groups);
+      const secrets = secretCountOf(groups);
       const locked = stage.saving;
       return (
         <ResumeDialog
@@ -505,6 +514,7 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
                 : over
                   ? `保留 ${kept} 个字段，${formatBytes(bytes)}，还要减少 ${formatBytes(bytes - MAX_TEMPLATE_BYTES)}。`
                   : `保留 ${kept} 个字段，${formatBytes(bytes)}，可以保存。`}
+              {secrets ? `另有 ${secrets} 个像密码或验证码的字段不会存，没算在内。` : ""}
             </p>
             <button type="button" disabled={locked} onClick={() => editDraft(() => trimDraft(stage.result))}>恢复原结果</button>
           </div>

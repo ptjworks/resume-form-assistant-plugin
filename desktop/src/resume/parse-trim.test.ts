@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MAX_TEMPLATE_BYTES } from "./parse-limits.ts";
-import { formatBytes, groupBytes, setGroupKept, templateBytes, trimDraft, trimmedGroups, updateField } from "./parse-trim.ts";
+import { fieldCountOf, formatBytes, groupBytes, secretCountOf, setGroupKept, templateBytes, trimDraft, trimmedGroups, updateField } from "./parse-trim.ts";
 
 // 用三字节的汉字把分组撑到正好 target 字节，和 archive-store tests/resume.rs 的同名做法一致。
 function chineseGroupsOf(target: number) {
@@ -35,6 +35,19 @@ test("计算前按后端的规则规范化：去空白、丢空字段名和空�
     { name: "未分类", fields: [{ key: "备注", value: "x" }] },
   ];
   assert.equal(templateBytes(raw), new TextEncoder().encode(JSON.stringify(expected)).length);
+});
+
+test("像密码、验证码的字段和后端一样不存，也不算进大小和字段数", () => {
+  const raw = [
+    { name: "基本信息", fields: [{ key: "姓名", value: "张三" }, { key: "邮箱密码", value: "x".repeat(5000) }] },
+    { name: "账号", fields: [{ key: "备注", value: "密码：abc123" }] },
+  ];
+  const expected = [{ name: "基本信息", fields: [{ key: "姓名", value: "张三" }] }];
+  assert.equal(templateBytes(raw), new TextEncoder().encode(JSON.stringify(expected)).length);
+  assert.equal(fieldCountOf(raw), 1);
+  assert.equal(secretCountOf(raw), 2);
+  // 「密码学」这类正常文字不算。
+  assert.equal(secretCountOf([{ name: "课程", fields: [{ key: "选修", value: "密码学" }] }]), 0);
 });
 
 test("删减只改草稿：去掉整组、去掉字段、缩短内容，原结果不变", () => {

@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { expect, test, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AiSettingsView, Invoke } from "../api.ts";
 import { InvokeProvider } from "../react/invoke.tsx";
@@ -488,7 +488,25 @@ test("逐个字段删减和缩短内容；恢复原结果回到 AI 返回的样�
   // 30 个长文本框、来回点十几下，jsdom 里单跑约 2 秒；和别的测试文件并发时留足余量。
 }, 15_000);
 
-test("超限的结果可以导出成 Excel，导出的是完整的原结果", async () => {
+test("像密码的字段不存，也不算进大小：删到存得下就能保存", async () => {
+  const user = userEvent.setup();
+  const backend = sizedBackend();
+  const withSecret = JSON.stringify([...bigFields, { group: "账号", key: "邮箱密码", value: "x".repeat(3000) }]);
+  const { calls } = mount((command, args) => (command === "ai_complete_cmd" ? withSecret : backend(command, args)));
+  const dialog = await reachTrim(user);
+  expect(within(dialog).getByText(new RegExp(`还要减少 ${fmt(templateBytes(resultGroups()) - MAX_TEMPLATE_BYTES)}。另有 1 个像密码或验证码的字段不会存，没算在内。`))).toBeTruthy();
+  const list = within(dialog).getByRole("list", { name: "解析出的分组" });
+  const projects = within(list).getAllByRole("listitem").find((item) => item.textContent?.startsWith("项目经历"))!;
+  await user.click(within(projects).getByRole("button", { name: "逐个字段" }));
+  // 不算密码那 3 KB 时，去掉 4 条项目就存得下；算上的话还差得远。
+  for (let i = 1; i <= 4; i += 1) await user.click(within(projects).getByRole("checkbox", { name: `项目${i}` }));
+  expect(within(dialog).getByText(/保留 29 个字段，.*可以保存。另有 1 个/)).toBeTruthy();
+  await user.click(within(dialog).getByRole("button", { name: "保存为模板" }));
+  await waitFor(() => expect(screen.getByText(/已存为模板/)).toBeTruthy());
+  expect(calls.filter((c) => c.command === "ai_complete_cmd")).toHaveLength(1);
+}, 15_000);
+
+test("超限的结果可以导出成 Excel，导出的是 AI 返回的结果，不是删减后的草稿", async () => {
   const user = userEvent.setup();
   const save = vi.fn(async (suggested: string) => `/tmp/${suggested}`);
   const { calls } = mount(sizedBackend(), false, { open: async () => null, save });
@@ -503,6 +521,33 @@ test("超限的结果可以导出成 Excel，导出的是完整的原结果", as
   // 导出不建模板，弹窗和草稿都还在。
   expect(calls.filter((c) => c.command === "create_resume_template_cmd")).toHaveLength(1);
   expect(within(dialog).getByRole("checkbox", { name: "自我评价" })).toHaveProperty("checked", false);
+});
+
+test("导出时剔掉的密码类字段要说出来", async () => {
+  const user = userEvent.setup();
+  mount(sizedBackend((command) => (command === "export_resume_groups_cmd" ? 2 : null)), false, { open: async () => null, save: async (s) => `/tmp/${s}` });
+  const dialog = await reachTrim(user);
+  await user.click(within(dialog).getByRole("button", { name: "导出解析结果" }));
+  expect(await within(dialog).findByText(/已导出，2 个像密码或验证码的字段没有导出。/)).toBeTruthy();
+});
+
+test("导出还没落地就放弃、又解析了一份：旧的导出提示不出现在新结果里", async () => {
+  const user = userEvent.setup();
+  let finish: (path: string | null) => void = () => {};
+  const save = vi.fn(() => new Promise<string | null>((resolve) => { finish = resolve; }));
+  mount(sizedBackend(), false, { open: async () => null, save });
+  const first = await reachTrim(user);
+  await user.click(within(first).getByRole("button", { name: "导出解析结果" }));
+  await user.click(within(first).getByRole("button", { name: "稍后处理" }));
+  await user.click(within(screen.getByRole("group", { name: "AI 解析进度" })).getByRole("button", { name: "放弃这次结果" }));
+  const second = await reachTrim(user);
+  await act(async () => {
+    finish("/tmp/张三简历（AI 解析）.xlsx");
+    await flush();
+  });
+  expect(within(second).queryByText(/已导出/)).toBeNull();
+  // 旧的那次落地后，新结果照样能导出。
+  await waitFor(() => expect(within(second).getByRole("button", { name: "导出解析结果" })).toHaveProperty("disabled", false));
 });
 
 test("导出时取消选择位置：什么都不写", async () => {

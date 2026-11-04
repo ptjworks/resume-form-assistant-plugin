@@ -187,12 +187,14 @@ pub fn export_template(store: &ArchiveStore, id: &str, path: &Path) -> Result<()
 
 /// AI 解析出来、还没存成模板的分组（#301 U1）：不进档案，也不查大小，存不下的结果也能
 /// 先留一份。和存进档案前一样规范化、剔掉密码类字段，导出的表能用「导入」读回来。
-pub fn export_groups(groups: Vec<TemplateGroup>, path: &Path) -> Result<(), CommandError> {
-    let (groups, _) = archive_store::storable_groups(groups);
+/// 返回剔掉的字段数，界面要告诉用户文件里少了这些。
+pub fn export_groups(groups: Vec<TemplateGroup>, path: &Path) -> Result<usize, CommandError> {
+    let (groups, skipped) = archive_store::storable_groups(groups);
     if groups.is_empty() {
         return Err(error("VALIDATION", "没有可导出的字段。"));
     }
-    write_groups(&groups, path)
+    write_groups(&groups, path)?;
+    Ok(skipped)
 }
 
 /// 先写同目录里一个带随机后缀的临时文件再改名，导出到一半失败不会留下半个 xlsx
@@ -477,11 +479,11 @@ mod tests {
     fn an_unsaved_parse_result_exports_and_reads_back() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("张三（AI 解析）.xlsx");
-        export_groups(oversized_parse_result(), &out).unwrap();
+        let skipped = export_groups(oversized_parse_result(), &out).unwrap();
         let (name, groups) = read_sheet(&out).unwrap();
         assert_eq!(name, "张三（AI 解析）");
-        // 和存进档案时一样，像密码的字段不写进文件。
-        let (expected, skipped) = archive_store::storable_groups(oversized_parse_result());
+        // 和存进档案时一样，像密码的字段不写进文件，剔掉几个如实报回去。
+        let (expected, _) = archive_store::storable_groups(oversized_parse_result());
         assert_eq!(skipped, 1);
         assert_eq!(groups, expected);
         let empty = vec![TemplateGroup { name: "g".into(), fields: vec![] }];

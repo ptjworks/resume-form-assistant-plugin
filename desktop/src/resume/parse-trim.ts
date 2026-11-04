@@ -1,4 +1,5 @@
 import type { TemplateGroupView } from "../api.ts";
+import { profileApi } from "./profile.ts";
 
 // AI 解析结果超过模板大小上限时的删减（#301 U1）。原结果不动，删减只改这份草稿，
 // 保存时再折回分组；大小按后端同一口径算 UTF-8 字节，不用 JS 字符串长度。
@@ -31,18 +32,37 @@ function normalized(groups: TemplateGroupView[]): TemplateGroupView[] {
     .filter((group) => group.fields.length);
 }
 
-const encoder = new TextEncoder();
+const isSecret = (field: { key: string; value: string }) =>
+  profileApi.SECRET_LABEL.test(field.key) || profileApi.SECRET_VALUE.test(field.value);
 
-/**
- * 这份分组存进档案时的字节数。后端还会剔掉像密码的字段，所以实际存的只会更小：
- * 这里不超过上限，后端的大小检查就一定通过。
- */
-export function templateBytes(groups: TemplateGroupView[]): number {
-  return encoder.encode(JSON.stringify(normalized(groups))).length;
+// 与 archive-store 的 storable_groups 一致：规范化之后剔掉像密码、验证码的字段，剔空的组不留。
+function storable(groups: TemplateGroupView[]): { groups: TemplateGroupView[]; secrets: number } {
+  let secrets = 0;
+  const kept = normalized(groups)
+    .map((group) => {
+      const fields = group.fields.filter((field) => !isSecret(field));
+      secrets += group.fields.length - fields.length;
+      return { name: group.name, fields };
+    })
+    .filter((group) => group.fields.length);
+  return { groups: kept, secrets };
 }
 
+const encoder = new TextEncoder();
+
+/** 这份分组存进档案时拿去和上限比的字节数，像密码的字段后端不存，也不算在内。 */
+export function templateBytes(groups: TemplateGroupView[]): number {
+  return encoder.encode(JSON.stringify(storable(groups).groups)).length;
+}
+
+/** 存进档案时会留下的字段数。 */
 export function fieldCountOf(groups: TemplateGroupView[]): number {
-  return groups.reduce((sum, group) => sum + group.fields.length, 0);
+  return storable(groups).groups.reduce((sum, group) => sum + group.fields.length, 0);
+}
+
+/** 存进档案时会剔掉的、像密码或验证码的字段数。 */
+export function secretCountOf(groups: TemplateGroupView[]): number {
+  return storable(groups).secrets;
 }
 
 export function trimDraft(groups: TemplateGroupView[]): TrimGroup[] {
