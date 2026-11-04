@@ -70,6 +70,7 @@ function ResumeWorkspace({
   const parse = useResumeParse({
     onCreated: (templateId) => setListSignal((signal) => ({ token: signal.token + 1, select: templateId })),
     extract,
+    pickers,
   });
 
   // 重新进入简历页 / 恢复备份：模板列表重读；「我的信息」整块重挂，从档案重新开始。

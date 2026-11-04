@@ -180,11 +180,25 @@ fn write_error(err: &std::io::Error) -> CommandError {
     }
 }
 
-/// 先写同目录里一个带随机后缀的临时文件再改名，导出到一半失败不会留下半个 xlsx
-/// 盖掉用户原来的文件；随机后缀避免并发导出撞名。
 pub fn export_template(store: &ArchiveStore, id: &str, path: &Path) -> Result<(), CommandError> {
     let template = get_template(store, id)?;
-    let bytes = resume_sheet::write_xlsx(&to_sheet(&template.groups))
+    write_groups(&template.groups, path)
+}
+
+/// AI 解析出来、还没存成模板的分组（#301 U1）：不进档案，也不查大小，存不下的结果也能
+/// 先留一份。和存进档案前一样规范化、剔掉密码类字段，导出的表能用「导入」读回来。
+pub fn export_groups(groups: Vec<TemplateGroup>, path: &Path) -> Result<(), CommandError> {
+    let (groups, _) = archive_store::storable_groups(groups);
+    if groups.is_empty() {
+        return Err(error("VALIDATION", "没有可导出的字段。"));
+    }
+    write_groups(&groups, path)
+}
+
+/// 先写同目录里一个带随机后缀的临时文件再改名，导出到一半失败不会留下半个 xlsx
+/// 盖掉用户原来的文件；随机后缀避免并发导出撞名。
+fn write_groups(groups: &[TemplateGroup], path: &Path) -> Result<(), CommandError> {
+    let bytes = resume_sheet::write_xlsx(&to_sheet(groups))
         .map_err(|e| error("SHEET_WRITE_FAILED", e.to_string()))?;
     let path = ensure_xlsx_extension(path);
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("简历模板.xlsx");
@@ -200,7 +214,13 @@ pub fn export_template(store: &ArchiveStore, id: &str, path: &Path) -> Result<()
 }
 
 /// 简历解析的结果：插到最前、设为当前，照常剔除密码类字段、编号重名、检查大小。
+/// 超过大小上限单独返回 `TEMPLATE_TOO_LARGE`：同一份结果再存多少次都不会成，界面据此
+/// 改成让用户删减或导出，而不是只给「重新保存」（#301 U1）。
 pub fn create_from_groups(store: &ArchiveStore, name: &str, groups: Vec<TemplateGroup>) -> Result<ImportResult, CommandError> {
+    let bytes = archive_store::stored_template_bytes(groups.clone());
+    if bytes > archive_store::MAX_TEMPLATE_BYTES {
+        return Err(error("TEMPLATE_TOO_LARGE", archive_store::template_too_large_message(bytes)));
+    }
     store.create_template(name, groups).map(ImportResult::from).map_err(resume_error)
 }
 
@@ -426,6 +446,47 @@ mod tests {
         let out = dir.path().join("foo.csv");
         export_template(&db, &t.id, &out).unwrap();
         assert!(dir.path().join("foo.csv.xlsx").is_file());
+    }
+
+    fn oversized_parse_result() -> Vec<TemplateGroup> {
+        let field = |key: &str, value: String| TemplateField { key: key.into(), value };
+        vec![
+            TemplateGroup { name: "基本信息".into(), fields: vec![field("姓名", "张三".into()), field("邮箱密码", "abc123".into())] },
+            TemplateGroup {
+                name: "项目经历".into(),
+                fields: (0..30).map(|i| field(&format!("项目{i}"), "负责数据清洗与报表".repeat(40))).collect(),
+            },
+        ]
+    }
+
+    #[test]
+    fn an_oversized_parse_result_is_reported_as_too_large_with_its_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = store(dir.path());
+        let groups = oversized_parse_result();
+        let bytes = archive_store::stored_template_bytes(groups.clone());
+        assert!(bytes > archive_store::MAX_TEMPLATE_BYTES);
+        let err = create_from_groups(&db, "张三（AI 解析）", groups).unwrap_err();
+        assert_eq!(err.code, "TEMPLATE_TOO_LARGE");
+        assert_eq!(err.message, archive_store::template_too_large_message(bytes));
+        assert!(err.message.contains(&format!("{bytes} 字节")), "{}", err.message);
+        assert!(db.resume_overview().unwrap().templates.is_empty());
+    }
+
+    #[test]
+    fn an_unsaved_parse_result_exports_and_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("张三（AI 解析）.xlsx");
+        export_groups(oversized_parse_result(), &out).unwrap();
+        let (name, groups) = read_sheet(&out).unwrap();
+        assert_eq!(name, "张三（AI 解析）");
+        // 和存进档案时一样，像密码的字段不写进文件。
+        let (expected, skipped) = archive_store::storable_groups(oversized_parse_result());
+        assert_eq!(skipped, 1);
+        assert_eq!(groups, expected);
+        let empty = vec![TemplateGroup { name: "g".into(), fields: vec![] }];
+        assert_eq!(export_groups(empty, &dir.path().join("空.xlsx")).unwrap_err().code, "VALIDATION");
+        assert!(!dir.path().join("空.xlsx").exists());
     }
 
     #[test]

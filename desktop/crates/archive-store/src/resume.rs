@@ -213,13 +213,18 @@ fn truncate_chars(name: String, max: usize) -> String {
     if name.chars().count() > max { name.chars().take(max).collect() } else { name }
 }
 
+/// 超过 [MAX_TEMPLATE_BYTES] 时的提示，带上实际字节数：只说「超过 24 KB」，用户不知道要删多少。
+pub fn template_too_large_message(bytes: usize) -> String {
+    format!(
+        "模板太大：{bytes} 字节，上限 {MAX_TEMPLATE_BYTES} 字节（{} KB）。请删掉一些内容或拆成几个模板。",
+        MAX_TEMPLATE_BYTES / 1024
+    )
+}
+
 fn groups_json(groups: &[TemplateGroup]) -> Result<String, StoreError> {
     let json = serde_json::to_string(groups)?;
     if json.len() > MAX_TEMPLATE_BYTES {
-        return Err(invalid(format!(
-            "模板太大（超过 {} KB），请拆成几个模板。",
-            MAX_TEMPLATE_BYTES / 1024
-        )));
+        return Err(invalid(template_too_large_message(json.len())));
     }
     Ok(json)
 }
@@ -244,9 +249,22 @@ fn without_secrets(groups: Vec<TemplateGroup>) -> (Vec<TemplateGroup>, usize) {
     (kept, skipped)
 }
 
+/// 存进档案前的同一套处理：规范化，再剔除像密码、验证码的字段。返回剩下的分组和剔掉的字段数。
+/// 导出还没存成模板的分组（#301 U1）也走这里，导出的文件和存进去的内容一致。
+pub fn storable_groups(groups: Vec<TemplateGroup>) -> (Vec<TemplateGroup>, usize) {
+    without_secrets(normalize_groups(groups))
+}
+
+/// 这份分组存进档案时拿去和 [MAX_TEMPLATE_BYTES] 比的字节数：[storable_groups] 之后
+/// 序列化成 JSON 的 UTF-8 长度。
+pub fn stored_template_bytes(groups: Vec<TemplateGroup>) -> usize {
+    let (groups, _) = storable_groups(groups);
+    serde_json::to_string(&groups).expect("template groups always serialize").len()
+}
+
 /// 返回要存的 JSON 和剔掉的密码类字段数。
 pub(crate) fn checked_groups(groups: Vec<TemplateGroup>) -> Result<(String, usize), StoreError> {
-    let (groups, skipped) = without_secrets(normalize_groups(groups));
+    let (groups, skipped) = storable_groups(groups);
     if groups.is_empty() {
         return Err(invalid("未解析到任何字段，请检查 Excel 格式。"));
     }

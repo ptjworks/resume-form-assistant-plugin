@@ -108,6 +108,53 @@ fn an_oversized_template_is_refused() {
     assert!(matches!(err, StoreError::Validation(m) if m.contains("模板太大")));
 }
 
+/// 用三字节的汉字把分组撑到正好 `target` 字节（余数用 ASCII 补齐）。
+fn chinese_groups_of(target: usize) -> Vec<TemplateGroup> {
+    let base = serde_json::to_string(&vec![group("教育经历", vec![field("在校经历", "")])]).unwrap().len();
+    let room = target - base;
+    let value = format!("{}{}", "字".repeat(room / 3), "a".repeat(room % 3));
+    let groups = vec![group("教育经历", vec![field("在校经历", &value)])];
+    assert_eq!(serde_json::to_string(&groups).unwrap().len(), target);
+    groups
+}
+
+#[test]
+fn the_size_limit_counts_utf8_bytes_of_chinese_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+
+    let under = chinese_groups_of(MAX_TEMPLATE_BYTES - 300);
+    assert_eq!(stored_template_bytes(under.clone()), MAX_TEMPLATE_BYTES - 300);
+    db.create_template("上限内", under).unwrap();
+
+    let exact = chinese_groups_of(MAX_TEMPLATE_BYTES);
+    // 按字符数只有约三分之一，按字节正好等于上限：等于上限仍然存得下。
+    let chars = serde_json::to_string(&exact).unwrap().chars().count();
+    assert!(chars < MAX_TEMPLATE_BYTES / 2, "{chars}");
+    assert_eq!(stored_template_bytes(exact.clone()), MAX_TEMPLATE_BYTES);
+    db.create_template("正好上限", exact).unwrap();
+
+    let over = chinese_groups_of(MAX_TEMPLATE_BYTES + 1);
+    assert_eq!(stored_template_bytes(over.clone()), MAX_TEMPLATE_BYTES + 1);
+    let err = db.create_template("超过上限", over).unwrap_err();
+    let expected = template_too_large_message(MAX_TEMPLATE_BYTES + 1);
+    assert!(expected.contains(&format!("{} 字节", MAX_TEMPLATE_BYTES + 1)), "{expected}");
+    assert!(matches!(err, StoreError::Validation(m) if m == expected));
+    assert_eq!(db.resume_overview().unwrap().templates.len(), 2);
+}
+
+#[test]
+fn stored_bytes_ignore_what_the_store_drops() {
+    let groups = vec![
+        group("  基本信息 ", vec![field(" 姓名 ", "张三"), field("  ", "丢掉")]),
+        group("空组", vec![]),
+        group("账号", vec![field("邮箱密码", "abc123")]),
+    ];
+    let kept = vec![group("基本信息", vec![field("姓名", "张三")])];
+    assert_eq!(stored_template_bytes(groups.clone()), serde_json::to_string(&kept).unwrap().len());
+    assert_eq!(storable_groups(groups), (kept, 1));
+}
+
 #[test]
 fn a_template_reads_back_whole() {
     let dir = tempfile::tempdir().unwrap();

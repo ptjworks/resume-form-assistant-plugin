@@ -3,10 +3,14 @@ import type { ReactNode } from "react";
 import type { AiProviderView, AiSettingsView, ImportResultView, ResumeOverview, TemplateGroupView } from "../api.ts";
 import { useInvoke } from "../react/invoke.tsx";
 import { extractText } from "./extract-text.ts";
-import { MAX_TEMPLATES, MAX_USER_CHARS } from "./parse-limits.ts";
+import { MAX_TEMPLATE_BYTES, MAX_TEMPLATES, MAX_USER_CHARS } from "./parse-limits.ts";
 import { buildRequest, fieldsToGroups, parseModelReply, templateNameFor } from "./parse-resume.ts";
+import { fieldCountOf, formatBytes, groupBytes, setGroupKept, templateBytes, trimDraft, trimmedGroups, updateField } from "./parse-trim.ts";
+import type { TrimGroup } from "./parse-trim.ts";
 import { ResumeDialog } from "./ResumeDialog.tsx";
+import { exportFileName } from "./resume-text.ts";
 import type { Notice } from "./resume-text.ts";
+import type { FilePickers } from "./TemplateList.tsx";
 
 type Stage =
   | { kind: "idle" }
@@ -23,8 +27,20 @@ type Stage =
       userCharCount: number;
     }
   | { kind: "sending"; requestId: string; fileName: string; startedAt: number; cancelling: boolean }
-  | { kind: "saving"; fileName: string; groups: TemplateGroupView[] }
-  | { kind: "save-failed"; fileName: string; groups: TemplateGroupView[]; error: string }
+  // result 是 AI 返回的原样结果，之后每一步都带着它：删减、导出都从它出发，不再调用 AI。
+  | { kind: "saving"; fileName: string; result: TemplateGroupView[] }
+  | { kind: "save-failed"; fileName: string; result: TemplateGroupView[]; error: string; code: string }
+  // 超过模板大小上限（#301 U1）：同一份结果再存多少次都不会成，只能删减后保存，或者先导出。
+  | {
+      kind: "trim";
+      fileName: string;
+      result: TemplateGroupView[];
+      draft: TrimGroup[];
+      /** 展开到逐个字段的分组下标。 */
+      expanded: number[];
+      saving: boolean;
+      error: string | null;
+    }
   | { kind: "done" };
 
 function errorText(error: unknown): string {
@@ -33,12 +49,18 @@ function errorText(error: unknown): string {
   return (error as { message?: string } | null)?.message ?? "解析失败，请重试。";
 }
 
-const ACTIVE_STAGES = new Set(["reading", "confirm", "sending", "saving", "save-failed"]);
+function errorCode(error: unknown): string {
+  return (error as { code?: string } | null)?.code ?? "";
+}
+
+const ACTIVE_STAGES = new Set(["reading", "confirm", "sending", "saving", "save-failed", "trim"]);
 
 export interface ResumeParseOptions {
   /** 新模板已建好并设为当前，带上它的 id，列表据此刷新并选中它。 */
   onCreated(templateId: string): void;
   extract?: (file: File) => Promise<string>;
+  /** 导出解析结果要用系统的保存窗口；没有（浏览器里直接打开）时不显示导出。 */
+  pickers?: FilePickers | null;
 }
 
 export interface ResumeParseControls {
@@ -57,11 +79,14 @@ export interface ResumeParseControls {
  *
  * 状态放在简历页这一层（#257）：切到「我的信息」再切回来，进行中的解析仍在，可以接着看或取消。
  */
-export function useResumeParse({ onCreated, extract = extractText }: ResumeParseOptions): ResumeParseControls {
+export function useResumeParse({ onCreated, extract = extractText, pickers = null }: ResumeParseOptions): ResumeParseControls {
   const invoke = useInvoke();
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  // 导出解析结果的提示，只在保存失败 / 删减的弹窗里显示。
+  const [exportNote, setExportNote] = useState<Notice | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const input = useRef<HTMLInputElement>(null);
   const counter = useRef(0);
@@ -111,6 +136,7 @@ export function useResumeParse({ onCreated, extract = extractText }: ResumeParse
     if (!file || !invoke) return;
     const token = ++pickToken.current;
     setNotice(null);
+    setExportNote(null);
     setStage({ kind: "reading", fileName: file.name });
     setDialogOpen(true);
     try {
@@ -136,27 +162,81 @@ export function useResumeParse({ onCreated, extract = extractText }: ResumeParse
     }
   };
 
+  const created = (result: ImportResultView) => {
+    const skipped = result.skippedSecretFields
+      ? `另有 ${result.skippedSecretFields} 个像密码或验证码的字段没有存。`
+      : "";
+    setNotice({
+      tone: skipped ? "warn" : "ok",
+      text: `已存为模板「${result.template.name}」并设为当前，共 ${result.template.fieldCount} 个字段。${skipped}`,
+    });
+    setStage({ kind: "done" });
+    setDialogOpen(false);
+    setExportNote(null);
+    onCreatedRef.current(result.template.id);
+  };
+
   // 保存这一步单独抽出来：AI 解析成功但建模板失败时，重试只再调一次这个函数，
   // 不必（也不该）为了重试再花一次 AI 调用。
-  const trySave = async (fileName: string, groups: TemplateGroupView[]) => {
+  const trySave = async (fileName: string, result: TemplateGroupView[]) => {
     if (!invoke) return;
-    setStage({ kind: "saving", fileName, groups });
+    setStage({ kind: "saving", fileName, result });
     try {
-      const result = await invoke<ImportResultView>("create_resume_template_cmd", { name: templateNameFor(fileName), groups });
+      const saved = await invoke<ImportResultView>("create_resume_template_cmd", { name: templateNameFor(fileName), groups: result });
       if (!mountedRef.current) return;
-      const skipped = result.skippedSecretFields
-        ? `另有 ${result.skippedSecretFields} 个像密码或验证码的字段没有存。`
-        : "";
-      setNotice({
-        tone: skipped ? "warn" : "ok",
-        text: `已存为模板「${result.template.name}」并设为当前，共 ${result.template.fieldCount} 个字段。${skipped}`,
-      });
-      setStage({ kind: "done" });
-      setDialogOpen(false);
-      onCreatedRef.current(result.template.id);
+      created(saved);
     } catch (error) {
       if (!mountedRef.current) return;
-      setStage({ kind: "save-failed", fileName, groups, error: errorText(error) });
+      if (errorCode(error) === "TEMPLATE_TOO_LARGE") {
+        setStage({ kind: "trim", fileName, result, draft: trimDraft(result), expanded: [], saving: false, error: null });
+        return;
+      }
+      setStage({ kind: "save-failed", fileName, result, error: errorText(error), code: errorCode(error) });
+    }
+  };
+
+  // 删减后的保存。失败时停在删减界面，草稿原样留着。
+  const saveTrimmed = async () => {
+    if (!invoke || stage.kind !== "trim" || stage.saving) return;
+    const groups = trimmedGroups(stage.draft);
+    if (!groups.length || templateBytes(groups) > MAX_TEMPLATE_BYTES) return;
+    setStage({ ...stage, saving: true, error: null });
+    try {
+      const saved = await invoke<ImportResultView>("create_resume_template_cmd", { name: templateNameFor(stage.fileName), groups });
+      if (!mountedRef.current) return;
+      created(saved);
+    } catch (error) {
+      if (!mountedRef.current) return;
+      setStage((current) => (current.kind === "trim" ? { ...current, saving: false, error: errorText(error) } : current));
+    }
+  };
+
+  const editDraft = (change: (draft: TrimGroup[]) => TrimGroup[]) =>
+    setStage((current) => (current.kind === "trim" && !current.saving ? { ...current, draft: change(current.draft) } : current));
+
+  const toggleExpanded = (index: number) =>
+    setStage((current) => {
+      if (current.kind !== "trim") return current;
+      const open = current.expanded.includes(index);
+      return { ...current, expanded: open ? current.expanded.filter((i) => i !== index) : [...current.expanded, index] };
+    });
+
+  // 导出的是 AI 返回的完整结果，不是删减后的草稿；在 Excel 里改完可以用「导入」读回。
+  const exportResult = async (fileName: string, result: TemplateGroupView[]) => {
+    if (!invoke || !pickers || exporting) return;
+    setExporting(true);
+    setExportNote(null);
+    try {
+      const path = await pickers.save(exportFileName(templateNameFor(fileName)));
+      if (!path) return;
+      await invoke("export_resume_groups_cmd", { groups: result, path });
+      if (!mountedRef.current) return;
+      setExportNote({ tone: "ok", text: "已导出。在 Excel 里改完后，可以在模板列表用「导入」读回。" });
+    } catch (error) {
+      if (!mountedRef.current) return;
+      setExportNote({ tone: "error", text: errorText(error) });
+    } finally {
+      if (mountedRef.current) setExporting(false);
     }
   };
 
@@ -209,6 +289,7 @@ export function useResumeParse({ onCreated, extract = extractText }: ResumeParse
     pickToken.current += 1;
     setStage({ kind: "idle" });
     setDialogOpen(false);
+    setExportNote(null);
   };
 
   const active = ACTIVE_STAGES.has(stage.kind);
@@ -230,40 +311,49 @@ export function useResumeParse({ onCreated, extract = extractText }: ResumeParse
   );
 
   const waited = stage.kind === "sending" ? Math.max(0, Math.round((now - stage.startedAt) / 1000)) : 0;
-  const background = !dialogOpen && (stage.kind === "sending" || stage.kind === "saving" || stage.kind === "save-failed");
+  const background =
+    !dialogOpen && (stage.kind === "sending" || stage.kind === "saving" || stage.kind === "save-failed" || stage.kind === "trim");
+  const trimSaving = stage.kind === "trim" && stage.saving;
+  const unsaved = stage.kind === "save-failed" || (stage.kind === "trim" && !stage.saving);
 
   const panel = (
     <>
       {background ? (
-        <div className={`resume-task${stage.kind === "save-failed" ? " is-error" : ""}`} role="group" aria-label="AI 解析进度">
+        <div className={`resume-task${unsaved ? " is-error" : ""}`} role="group" aria-label="AI 解析进度">
           <p>
             {stage.kind === "sending"
               ? stage.cancelling
                 ? `正在取消《${stage.fileName}》的解析…`
                 : `AI 正在解析《${stage.fileName}》，已等待 ${waited} 秒。`
-              : stage.kind === "saving"
+              : stage.kind === "saving" || trimSaving
                 ? "正在保存解析出的模板…"
-                : "解析结果还没存成模板。可以重新保存，不会再次发送简历。"}
+                : stage.kind === "trim"
+                  ? "解析结果超过模板大小上限，还没存成模板。删减后才能保存。"
+                  : "解析结果还没存成模板。可以重新保存，不会再次发送简历。"}
           </p>
           <div className="row">
             <button type="button" onClick={() => setDialogOpen(true)}>
-              {stage.kind === "save-failed" ? "查看" : "查看进度"}
+              {stage.kind === "save-failed" ? "查看" : stage.kind === "trim" && !stage.saving ? "删减后保存" : "查看进度"}
             </button>
             {stage.kind === "sending" ? (
               <button type="button" disabled={stage.cancelling} onClick={cancel}>取消解析</button>
             ) : null}
             {stage.kind === "save-failed" ? (
-              <>
-                <button type="button" className="primary" onClick={() => void trySave(stage.fileName, stage.groups)}>重新保存</button>
-                <button type="button" onClick={dismiss}>放弃这次结果</button>
-              </>
+              <button type="button" className="primary" onClick={() => void trySave(stage.fileName, stage.result)}>重新保存</button>
             ) : null}
+            {unsaved ? <button type="button" onClick={dismiss}>放弃这次结果</button> : null}
           </div>
         </div>
       ) : null}
       {notice ? <p role="status" className={`note ${notice.tone}`}>{notice.text}</p> : null}
     </>
   );
+
+  const exportButton = (fileName: string, result: TemplateGroupView[]) =>
+    pickers ? (
+      <button type="button" disabled={exporting} onClick={() => void exportResult(fileName, result)}>导出解析结果</button>
+    ) : null;
+  const exportStatus = exportNote ? <p role="status" className={`note ${exportNote.tone}`}>{exportNote.text}</p> : null;
 
   const dialog = (() => {
     if (!dialogOpen) return null;
@@ -352,6 +442,8 @@ export function useResumeParse({ onCreated, extract = extractText }: ResumeParse
       );
     }
     if (stage.kind === "save-failed") {
+      // 校验没过（比如模板满了）要先处理掉原因再存；其余是存储出错这类临时问题，可以直接重试。
+      const rejected = stage.code === "VALIDATION";
       return (
         <ResumeDialog
           open
@@ -361,13 +453,112 @@ export function useResumeParse({ onCreated, extract = extractText }: ResumeParse
           onCancel={() => setDialogOpen(false)}
           footer={
             <>
+              {exportButton(stage.fileName, stage.result)}
               <button type="button" onClick={() => setDialogOpen(false)}>稍后处理</button>
-              <button type="button" className="primary" data-autofocus onClick={() => void trySave(stage.fileName, stage.groups)}>重新保存</button>
+              <button type="button" className="primary" data-autofocus onClick={() => void trySave(stage.fileName, stage.result)}>重新保存</button>
             </>
           }
         >
-          <p>AI 已返回字段，但新模板尚未创建。可以直接重试保存；不会再次向 AI 发送简历。</p>
+          <p>
+            {rejected
+              ? "AI 已返回字段，但新模板没有建成。处理好下面的问题后再保存，不会再次向 AI 发送简历。"
+              : "AI 已返回字段，保存时出错，新模板没有建成。可以重新保存，不会再次向 AI 发送简历。"}
+          </p>
           <p className="note error" role="alert">{stage.error}</p>
+          {exportStatus}
+        </ResumeDialog>
+      );
+    }
+    if (stage.kind === "trim") {
+      const groups = trimmedGroups(stage.draft);
+      const bytes = templateBytes(groups);
+      const over = bytes > MAX_TEMPLATE_BYTES;
+      const kept = fieldCountOf(groups);
+      const locked = stage.saving;
+      return (
+        <ResumeDialog
+          open
+          wide
+          tone="warn"
+          title="解析结果超过模板大小上限"
+          focusKey="trim"
+          onCancel={() => setDialogOpen(false)}
+          footer={
+            <>
+              {exportButton(stage.fileName, stage.result)}
+              <button type="button" data-autofocus onClick={() => setDialogOpen(false)}>稍后处理</button>
+              <button type="button" className="primary" disabled={locked || over || !kept} onClick={() => void saveTrimmed()}>
+                {locked ? "正在保存…" : "保存为模板"}
+              </button>
+            </>
+          }
+        >
+          <p>
+            {`AI 解析出 ${fieldCountOf(stage.result)} 个字段，共 ${formatBytes(templateBytes(stage.result))}，`
+              + `超过模板上限 ${formatBytes(MAX_TEMPLATE_BYTES)}（${MAX_TEMPLATE_BYTES / 1024} KB）。`
+              + "取消勾选或缩短一些内容后再保存；原结果留着，不会再次向 AI 发送简历。"}
+          </p>
+          <div className="parse-trim-meter">
+            <p role="status" className={`note ${over || !kept ? "error" : "ok"}`}>
+              {!kept
+                ? "至少保留一个字段。"
+                : over
+                  ? `保留 ${kept} 个字段，${formatBytes(bytes)}，还要减少 ${formatBytes(bytes - MAX_TEMPLATE_BYTES)}。`
+                  : `保留 ${kept} 个字段，${formatBytes(bytes)}，可以保存。`}
+            </p>
+            <button type="button" disabled={locked} onClick={() => editDraft(() => trimDraft(stage.result))}>恢复原结果</button>
+          </div>
+          <ul className="parse-trim-groups" aria-label="解析出的分组">
+            {stage.draft.map((group, gi) => {
+              const open = group.keep && stage.expanded.includes(gi);
+              const keptHere = group.keep ? group.fields.filter((field) => field.keep).length : 0;
+              return (
+                <li key={gi} className={group.keep ? "parse-trim-group" : "parse-trim-group is-dropped"}>
+                  <div className="parse-trim-head">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={group.keep}
+                        disabled={locked}
+                        onChange={(event) => editDraft((draft) => setGroupKept(draft, gi, event.target.checked))}
+                      />
+                      {group.name || "未分类"}
+                    </label>
+                    <span className="muted">{keptHere}/{group.fields.length} 个字段 · {formatBytes(groupBytes(group))}</span>
+                    <button type="button" aria-expanded={open} disabled={!group.keep} onClick={() => toggleExpanded(gi)}>
+                      {open ? "收起" : "逐个字段"}
+                    </button>
+                  </div>
+                  {open ? (
+                    <ul className="parse-trim-fields">
+                      {group.fields.map((field, fi) => (
+                        <li key={fi}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={field.keep}
+                              disabled={locked}
+                              onChange={(event) => editDraft((draft) => updateField(draft, gi, fi, { keep: event.target.checked }))}
+                            />
+                            {field.key}
+                          </label>
+                          <textarea
+                            aria-label={`${group.name} · ${field.key}`}
+                            rows={2}
+                            value={field.value}
+                            disabled={locked || !field.keep}
+                            onChange={(event) => editDraft((draft) => updateField(draft, gi, fi, { value: event.target.value }))}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          {stage.error ? <p className="note error" role="alert">{stage.error}</p> : null}
+          {exportStatus}
         </ResumeDialog>
       );
     }
@@ -378,7 +569,7 @@ export function useResumeParse({ onCreated, extract = extractText }: ResumeParse
 }
 
 /** 独立使用（测试）时的整块：入口、进度与提示、弹窗。简历页里由 TemplateList 分开摆放。 */
-export function ResumeParse(options: { onCreated(templateId: string): void; extract?: (file: File) => Promise<string> }) {
+export function ResumeParse(options: ResumeParseOptions) {
   const parse = useResumeParse(options);
   if (!parse.trigger) return null;
   return (
