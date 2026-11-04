@@ -173,7 +173,7 @@ test("match and fill drops are counted separately, and ai_called tells 'not call
   assert.match(report, /^ai_latency_ms: 2100$/m);
   assert.match(report, /^custom_libraries: antd=2,other=1$/m);
   assert.match(report, /^timings_ms: scan=12,match=2301,fill=410,total=2730$/m);
-  assert.match(report, /^\[未填字段\]\n- 姓名: input\[text\] role=textbox readonly lib=antd reason=value_reverted\n- （字段名已隐藏）: select$/m);
+  assert.match(report, /^\[未填字段\]\nreasons: value_reverted=1,other=1\n- 姓名: input\[text\] role=textbox readonly lib=antd reason=value_reverted\n- （字段名已隐藏）: select$/m);
   assert.ok(!report.includes("张三"));
 
   const notCalled = core.fillReport({ ...IFRAME_PAGE, requested: true,
