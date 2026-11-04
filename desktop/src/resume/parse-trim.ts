@@ -18,22 +18,40 @@ export interface TrimGroup {
 
 const UNGROUPED = "未分类";
 
+// Rust 的 str::trim 和正则的 \s 认的是 Unicode White_Space；JS 的 trim 和 \s 多认 U+FEFF、
+// 少认 U+0085。两边要算出同一份内容，这里按 Rust 的来。
+const WHITE_SPACE = "\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000";
+const EDGE_SPACE = new RegExp(`^[${WHITE_SPACE}]+|[${WHITE_SPACE}]+$`, "gu");
+const trim = (text: string) => text.replace(EDGE_SPACE, "");
+
 // 与 archive-store 的 normalize_groups 一致：组名与字段名 trim，值原样；空字段名丢弃，
 // 空组丢弃，空组名记为「未分类」。键的顺序也要和 serde 的结构体一致（name、fields；key、value），
 // 序列化出来才逐字节相同。
 function normalized(groups: TemplateGroupView[]): TemplateGroupView[] {
   return groups
     .map((group) => ({
-      name: group.name.trim() || UNGROUPED,
+      name: trim(group.name) || UNGROUPED,
       fields: group.fields
-        .map((field) => ({ key: field.key.trim(), value: field.value }))
+        .map((field) => ({ key: trim(field.key), value: field.value }))
         .filter((field) => field.key),
     }))
     .filter((group) => group.fields.length);
 }
 
-const isSecret = (field: { key: string; value: string }) =>
-  profileApi.SECRET_LABEL.test(field.key) || profileApi.SECRET_VALUE.test(field.value);
+/**
+ * 插件的 SECRET_LABEL / SECRET_VALUE 换成 Rust regex 的语义：Rust 的 (?i) 按 Unicode 大小写折叠
+ * （「ſ」也算 s），JS 要带 u 标志才一样；\s / \S 换成上面那组空白。源码与 resume_secrets.rs
+ * 逐字相同，由 parse-trim.test.ts 核对。
+ */
+export function rustSemantics(pattern: RegExp): RegExp {
+  const source = pattern.source.replaceAll("\\s", `[${WHITE_SPACE}]`).replaceAll("\\S", `[^${WHITE_SPACE}]`);
+  return new RegExp(source, "iu");
+}
+
+const SECRET_LABEL = rustSemantics(profileApi.SECRET_LABEL);
+const SECRET_VALUE = rustSemantics(profileApi.SECRET_VALUE);
+
+const isSecret = (field: { key: string; value: string }) => SECRET_LABEL.test(field.key) || SECRET_VALUE.test(field.value);
 
 // 与 archive-store 的 storable_groups 一致：规范化之后剔掉像密码、验证码的字段，剔空的组不留。
 function storable(groups: TemplateGroupView[]): { groups: TemplateGroupView[]; secrets: number } {

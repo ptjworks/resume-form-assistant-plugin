@@ -155,6 +155,28 @@ fn stored_bytes_ignore_what_the_store_drops() {
     assert_eq!(storable_groups(groups), (kept, 1));
 }
 
+/// 桌面删减界面（`parse-trim.ts`）照着这里算大小，两边读同一份向量（#301 U1）：
+/// 规范化、剔除密码类字段之后剩什么、剔掉几个、JSON 多少字节都要一样。
+#[derive(serde::Deserialize)]
+struct SizeVector {
+    name: String,
+    groups: Vec<TemplateGroup>,
+    stored: Vec<TemplateGroup>,
+    skipped: usize,
+    bytes: usize,
+}
+
+#[test]
+fn stored_size_matches_the_shared_vectors() {
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/template-size-vectors.json")).unwrap();
+    let vectors: Vec<SizeVector> = serde_json::from_str(&text).unwrap();
+    assert!(!vectors.is_empty());
+    for v in vectors {
+        assert_eq!(storable_groups(v.groups.clone()), (v.stored, v.skipped), "{}", v.name);
+        assert_eq!(stored_template_bytes(v.groups), v.bytes, "{}", v.name);
+    }
+}
+
 #[test]
 fn a_template_reads_back_whole() {
     let dir = tempfile::tempdir().unwrap();

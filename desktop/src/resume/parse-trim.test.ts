@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import type { TemplateGroupView } from "../api.ts";
 import { MAX_TEMPLATE_BYTES } from "./parse-limits.ts";
-import { fieldCountOf, formatBytes, groupBytes, secretCountOf, setGroupKept, templateBytes, trimDraft, trimmedGroups, updateField } from "./parse-trim.ts";
+import { fieldCountOf, formatBytes, groupBytes, rustSemantics, secretCountOf, setGroupKept, templateBytes, trimDraft, trimmedGroups, updateField } from "./parse-trim.ts";
+import { profileApi } from "./profile.ts";
 
 // 用三字节的汉字把分组撑到正好 target 字节，和 archive-store tests/resume.rs 的同名做法一致。
 function chineseGroupsOf(target: number) {
@@ -48,6 +51,28 @@ test("像密码、验证码的字段和后端一样不存，也不算进大小�
   assert.equal(secretCountOf(raw), 2);
   // 「密码学」这类正常文字不算。
   assert.equal(secretCountOf([{ name: "课程", fields: [{ key: "选修", value: "密码学" }] }]), 0);
+});
+
+// 与 archive-store tests/resume.rs 的 stored_size_matches_the_shared_vectors 读同一份向量。
+test("大小、剔除的字段数和后端读同一份向量，结果一致", () => {
+  const url = new URL("../../crates/archive-store/tests/fixtures/template-size-vectors.json", import.meta.url);
+  const vectors = JSON.parse(readFileSync(url, "utf8")) as Array<{
+    name: string; groups: TemplateGroupView[]; stored: TemplateGroupView[]; skipped: number; bytes: number;
+  }>;
+  assert.ok(vectors.length);
+  for (const v of vectors) {
+    assert.equal(templateBytes(v.groups), v.bytes, v.name);
+    assert.equal(secretCountOf(v.groups), v.skipped, v.name);
+    assert.equal(fieldCountOf(v.groups), fieldCountOf(v.stored), v.name);
+  }
+});
+
+test("密码类的两条正则与 resume_secrets.rs 逐字相同，不带 g 标志", () => {
+  const rust = readFileSync(new URL("../../crates/archive-store/src/resume_secrets.rs", import.meta.url), "utf8");
+  const patterns = [...rust.matchAll(/Regex::new\(r"\(\?i\)(.*)"\)/g)].map((m) => m[1]);
+  assert.deepEqual(patterns, [profileApi.SECRET_LABEL.source, profileApi.SECRET_VALUE.source]);
+  for (const re of [profileApi.SECRET_LABEL, profileApi.SECRET_VALUE]) assert.equal(re.flags, "i");
+  assert.equal(rustSemantics(profileApi.SECRET_LABEL).flags, "iu");
 });
 
 test("删减只改草稿：去掉整组、去掉字段、缩短内容，原结果不变", () => {

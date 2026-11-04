@@ -40,6 +40,8 @@ type Stage =
       expanded: number[];
       saving: boolean;
       error: string | null;
+      /** 后端核对后仍判超限的那份草稿和它的提示：前端算着存得下、后端不认时，以后端为准。 */
+      rejected: { draft: TrimGroup[]; message: string } | null;
     }
   | { kind: "done" };
 
@@ -191,7 +193,8 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
     } catch (error) {
       if (!mountedRef.current) return;
       if (errorCode(error) === "TEMPLATE_TOO_LARGE") {
-        setStage({ kind: "trim", fileName, result, draft: trimDraft(result), expanded: [], saving: false, error: null });
+        const draft = trimDraft(result);
+        setStage({ kind: "trim", fileName, result, draft, expanded: [], saving: false, error: null, rejected: { draft, message: errorText(error) } });
         return;
       }
       setStage({ kind: "save-failed", fileName, result, error: errorText(error), code: errorCode(error) });
@@ -202,7 +205,7 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
   const saveTrimmed = async () => {
     if (!invoke || stage.kind !== "trim" || stage.saving) return;
     const groups = trimmedGroups(stage.draft);
-    if (!groups.length || templateBytes(groups) > MAX_TEMPLATE_BYTES) return;
+    if (!groups.length || templateBytes(groups) > MAX_TEMPLATE_BYTES || stage.rejected?.draft === stage.draft) return;
     setStage({ ...stage, saving: true, error: null });
     try {
       const saved = await invoke<ImportResultView>("create_resume_template_cmd", { name: templateNameFor(stage.fileName), groups });
@@ -210,7 +213,14 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
       created(saved);
     } catch (error) {
       if (!mountedRef.current) return;
-      setStage((current) => (current.kind === "trim" ? { ...current, saving: false, error: errorText(error) } : current));
+      const message = errorText(error);
+      const tooLarge = errorCode(error) === "TEMPLATE_TOO_LARGE";
+      setStage((current) =>
+        current.kind !== "trim"
+          ? current
+          : tooLarge
+            ? { ...current, saving: false, rejected: { draft: current.draft, message } }
+            : { ...current, saving: false, error: message });
     }
   };
 
@@ -228,13 +238,14 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
   // 在 Excel 里改完可以用「导入」读回。
   const exportResult = async (fileName: string, result: TemplateGroupView[]) => {
     if (!invoke || !pickers || exporting) return;
-    // 导出落地前这次结果已经放弃或存好、又开始了新的解析：提示不能落到新结果的弹窗里。
+    // 保存框开着的时候这次结果可能已经放弃或存好、又开始了新的解析：这时不写文件，
+    // 写完之后才变的也不把提示落到新结果的弹窗里。
     const current = () => mountedRef.current && resultRef.current === result;
     setExporting(true);
     setExportNote(null);
     try {
       const path = await pickers.save(exportFileName(templateNameFor(fileName)));
-      if (!path) return;
+      if (!path || !current()) return;
       const skipped = await invoke<number>("export_resume_groups_cmd", { groups: result, path });
       if (!current()) return;
       setExportNote(skipped
@@ -483,6 +494,8 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
       const over = bytes > MAX_TEMPLATE_BYTES;
       const kept = fieldCountOf(groups);
       const secrets = secretCountOf(groups);
+      // 前端算着存得下、后端却判超限（两边规则没对齐）：显示后端的数字，草稿改动之后才能再存。
+      const refused = !over && stage.rejected?.draft === stage.draft ? stage.rejected.message : null;
       const locked = stage.saving;
       return (
         <ResumeDialog
@@ -496,7 +509,7 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
             <>
               {exportButton(stage.fileName, stage.result)}
               <button type="button" data-autofocus onClick={() => setDialogOpen(false)}>稍后处理</button>
-              <button type="button" className="primary" disabled={locked || over || !kept} onClick={() => void saveTrimmed()}>
+              <button type="button" className="primary" disabled={locked || over || !kept || refused !== null} onClick={() => void saveTrimmed()}>
                 {locked ? "正在保存…" : "保存为模板"}
               </button>
             </>
@@ -508,12 +521,14 @@ export function useResumeParse({ onCreated, extract = extractText, pickers = nul
               + "取消勾选或缩短一些内容后再保存；原结果留着，不会再次向 AI 发送简历。"}
           </p>
           <div className="parse-trim-meter">
-            <p role="status" className={`note ${over || !kept ? "error" : "ok"}`}>
+            <p role="status" className={`note ${over || !kept || refused ? "error" : "ok"}`}>
               {!kept
                 ? "至少保留一个字段。"
-                : over
-                  ? `保留 ${kept} 个字段，${formatBytes(bytes)}，还要减少 ${formatBytes(bytes - MAX_TEMPLATE_BYTES)}。`
-                  : `保留 ${kept} 个字段，${formatBytes(bytes)}，可以保存。`}
+                : refused
+                  ? refused
+                  : over
+                    ? `保留 ${kept} 个字段，${formatBytes(bytes)}，还要减少 ${formatBytes(bytes - MAX_TEMPLATE_BYTES)}。`
+                    : `保留 ${kept} 个字段，${formatBytes(bytes)}，可以保存。`}
               {secrets ? `另有 ${secrets} 个像密码或验证码的字段不会存，没算在内。` : ""}
             </p>
             <button type="button" disabled={locked} onClick={() => editDraft(() => trimDraft(stage.result))}>恢复原结果</button>

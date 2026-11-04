@@ -531,11 +531,11 @@ test("导出时剔掉的密码类字段要说出来", async () => {
   expect(await within(dialog).findByText(/已导出，2 个像密码或验证码的字段没有导出。/)).toBeTruthy();
 });
 
-test("导出还没落地就放弃、又解析了一份：旧的导出提示不出现在新结果里", async () => {
+test("保存框还开着就放弃、又解析了一份：选好位置后不写旧结果，提示也不出现", async () => {
   const user = userEvent.setup();
   let finish: (path: string | null) => void = () => {};
   const save = vi.fn(() => new Promise<string | null>((resolve) => { finish = resolve; }));
-  mount(sizedBackend(), false, { open: async () => null, save });
+  const { calls } = mount(sizedBackend(), false, { open: async () => null, save });
   const first = await reachTrim(user);
   await user.click(within(first).getByRole("button", { name: "导出解析结果" }));
   await user.click(within(first).getByRole("button", { name: "稍后处理" }));
@@ -545,10 +545,60 @@ test("导出还没落地就放弃、又解析了一份：旧的导出提示不�
     finish("/tmp/张三简历（AI 解析）.xlsx");
     await flush();
   });
+  expect(calls.some((c) => c.command === "export_resume_groups_cmd")).toBe(false);
   expect(within(second).queryByText(/已导出/)).toBeNull();
-  // 旧的那次落地后，新结果照样能导出。
+  // 旧的那次作废后，新结果照样能导出。
   await waitFor(() => expect(within(second).getByRole("button", { name: "导出解析结果" })).toHaveProperty("disabled", false));
 });
+
+test("文件已经在写时放弃、又解析了一份：写完的提示不出现在新结果里", async () => {
+  const user = userEvent.setup();
+  let written: (skipped: number) => void = () => {};
+  const backend = sizedBackend((command) =>
+    command === "export_resume_groups_cmd" ? new Promise<number>((resolve) => { written = resolve; }) : null);
+  const { calls } = mount(backend, false, { open: async () => null, save: async (s) => `/tmp/${s}` });
+  const first = await reachTrim(user);
+  await user.click(within(first).getByRole("button", { name: "导出解析结果" }));
+  await waitFor(() => expect(calls.some((c) => c.command === "export_resume_groups_cmd")).toBe(true));
+  await user.click(within(first).getByRole("button", { name: "稍后处理" }));
+  await user.click(within(screen.getByRole("group", { name: "AI 解析进度" })).getByRole("button", { name: "放弃这次结果" }));
+  const second = await reachTrim(user);
+  await act(async () => {
+    written(0);
+    await flush();
+  });
+  expect(within(second).queryByText(/已导出/)).toBeNull();
+});
+
+test("前端算着存得下、后端仍判超限：显示后端的数字，再删一些就能存", async () => {
+  const user = userEvent.setup();
+  // 模拟两边规则没对齐：后端比前端多算 600 字节。
+  const backend = sizedBackend();
+  const { calls } = mount((command, args) => {
+    if (command === "create_resume_template_cmd") {
+      const bytes = templateBytes(args?.groups as Groups) + 600;
+      if (bytes > MAX_TEMPLATE_BYTES) throw { code: "TEMPLATE_TOO_LARGE", message: `模板太大：${bytes} 字节，上限 ${MAX_TEMPLATE_BYTES} 字节（24 KB）。请删掉一些内容或拆成几个模板。` };
+    }
+    return backend(command, args);
+  });
+  const dialog = await reachTrim(user);
+  const list = within(dialog).getByRole("list", { name: "解析出的分组" });
+  const projects = within(list).getAllByRole("listitem").find((item) => item.textContent?.startsWith("项目经历"))!;
+  await user.click(within(projects).getByRole("button", { name: "逐个字段" }));
+  for (let i = 1; i <= 4; i += 1) await user.click(within(projects).getByRole("checkbox", { name: `项目${i}` }));
+  const save = () => within(dialog).getByRole("button", { name: "保存为模板" });
+  const bytes = templateBytes(resultGroups().map((g) => (g.name === "项目经历" ? { ...g, fields: g.fields.slice(4) } : g)));
+  expect(within(dialog).getByText(/可以保存/)).toBeTruthy();
+  await user.click(save());
+  expect(await within(dialog).findByText(new RegExp(`模板太大：${bytes + 600} 字节`))).toBeTruthy();
+  expect(save()).toHaveProperty("disabled", true);
+  // 再去掉一条，后端那边也降到上限内。
+  await user.click(within(projects).getByRole("checkbox", { name: "项目5" }));
+  expect(save()).toHaveProperty("disabled", false);
+  await user.click(save());
+  await waitFor(() => expect(screen.getByText(/已存为模板/)).toBeTruthy());
+  expect(calls.filter((c) => c.command === "ai_complete_cmd")).toHaveLength(1);
+}, 15_000);
 
 test("导出时取消选择位置：什么都不写", async () => {
   const user = userEvent.setup();
