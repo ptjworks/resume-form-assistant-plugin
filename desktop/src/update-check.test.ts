@@ -7,6 +7,7 @@ import {
   formatCheckedAt,
   parseCheckedAt,
   shouldCheck,
+  updateNotice,
 } from "./update-check.ts";
 
 test("版本号按三段数字比，不按字符串比", () => {
@@ -67,4 +68,24 @@ test("检查时间按本机时间显示，今天的写「今天」", () => {
   const now = new Date(2026, 9, 9, 18, 0);
   assert.equal(formatCheckedAt(new Date(2026, 9, 9, 14, 5), now), "今天 14:05");
   assert.equal(formatCheckedAt(new Date(2026, 9, 8, 9, 5), now), "2026-10-08 09:05");
+});
+
+test("主界面提示：查到新版本就提示", () => {
+  const available = { version: "0.5.0", url: "https://example.test/r" };
+  assert.deepEqual(updateNotice({ enabled: true, available }, "0.4.2"), available);
+});
+
+test("主界面提示：关掉的那一版不再提示，出了更新的再提示", () => {
+  const pref = { enabled: true, dismissedVersion: "0.5.0" };
+  assert.equal(updateNotice({ ...pref, available: { version: "0.5.0", url: "u" } }, "0.4.2"), null);
+  assert.equal(updateNotice({ ...pref, available: { version: "0.6.0", url: "u" } }, "0.4.2")?.version, "0.6.0");
+});
+
+test("主界面提示：自动检查关着、没查到、已经装上了，都不提示", () => {
+  const available = { version: "0.5.0", url: "u" };
+  assert.equal(updateNotice({ enabled: false, available }, "0.4.2"), null);
+  assert.equal(updateNotice({ enabled: true }, "0.4.2"), null);
+  assert.equal(updateNotice({ enabled: true, available: null }, "0.4.2"), null);
+  assert.equal(updateNotice({ enabled: true, available }, "0.5.0"), null);
+  assert.equal(updateNotice({ enabled: true, available }, "开发版"), null, "认不出当前版本就不提示");
 });

@@ -1547,19 +1547,25 @@ async fn check_update_cmd(
     app: AppHandle,
 ) -> Result<Option<update_check::UpdateInfo>, CommandError> {
     let data_root = ai_data_root(&state).ok();
-    let latest = update_check::fetch_latest().await;
+    // 比自己新才算数：本地跑的可能是没发过的开发版。
+    let current = app.package_info().version.to_string();
+    let outcome = update_check::fetch_latest()
+        .await
+        .map(|latest| latest.filter(|info| newer_than(&info.version, &current)));
     // 查过了就记一笔，无论查到没查到——失败也不该让它每次开窗都重试。
+    // 查到的版本也记下：同一天重启不再查，主界面还要接着提示。
     if let Some(root) = &data_root {
         let mut pref = update_check::load(root);
-        pref.last_checked_at = Some(time::OffsetDateTime::now_utc().to_string());
+        update_check::record_check(
+            &mut pref,
+            time::OffsetDateTime::now_utc().to_string(),
+            &outcome,
+        );
         if let Err(problem) = update_check::save(root, &pref) {
             eprintln!("update: 偏好没写成：{problem}");
         }
     }
-    let latest = latest?;
-    // 比自己新才算数：本地跑的可能是没发过的开发版。
-    let current = app.package_info().version.to_string();
-    let offer = latest.filter(|info| newer_than(&info.version, &current));
+    let offer = outcome?;
     if let Ok(mut slot) = state.latest_update.lock() {
         *slot = offer.clone();
     }
@@ -1569,6 +1575,7 @@ async fn check_update_cmd(
 /// 打开上一次查到的那个下载页。
 ///
 /// 不收前端传来的地址：那等于给界面开了一个「用系统浏览器打开任意 URL」的口子。
+/// 这次启动还没查过时，用偏好里记下的那条（同一天重启不再查）；下面照样再核一次地址。
 #[tauri::command]
 fn open_update_page_cmd(state: State<AppState>, app: AppHandle) -> Result<(), CommandError> {
     let url = state
@@ -1576,6 +1583,14 @@ fn open_update_page_cmd(state: State<AppState>, app: AppHandle) -> Result<(), Co
         .lock()
         .ok()
         .and_then(|slot| slot.as_ref().map(|info| info.url.clone()))
+        .or_else(|| {
+            let current = app.package_info().version.to_string();
+            ai_data_root(&state)
+                .ok()
+                .and_then(|root| update_check::load(&root).available)
+                .filter(|info| newer_than(&info.version, &current))
+                .map(|info| info.url)
+        })
         .ok_or_else(|| CommandError {
             code: "UPDATE_NOT_CHECKED".into(),
             message: "还没查到可下载的版本。".into(),
@@ -1626,6 +1641,25 @@ fn set_update_preference_cmd(
     let root = ai_data_root(&state)?;
     let mut pref = update_check::load(&root);
     pref.enabled = enabled;
+    update_check::save(&root, &pref).map_err(|message| CommandError {
+        code: "UPDATE_PREF_FAILED".into(),
+        message,
+    })?;
+    Ok(pref)
+}
+
+/// 主界面上关掉某一版的提示。只记这一版，出了更新的版本还会再提示。
+#[tauri::command]
+fn dismiss_update_cmd(
+    state: State<AppState>,
+    version: String,
+) -> Result<update_check::UpdatePreference, CommandError> {
+    let root = ai_data_root(&state)?;
+    let mut pref = update_check::load(&root);
+    update_check::dismiss(&mut pref, &version).map_err(|message| CommandError {
+        code: "UPDATE_PREF_FAILED".into(),
+        message,
+    })?;
     update_check::save(&root, &pref).map_err(|message| CommandError {
         code: "UPDATE_PREF_FAILED".into(),
         message,
@@ -2164,6 +2198,7 @@ pub fn run() {
             open_update_page_cmd,
             get_update_preference_cmd,
             set_update_preference_cmd,
+            dismiss_update_cmd,
             hide_main_window_cmd,
             take_requested_view_cmd,
             quit_app,
