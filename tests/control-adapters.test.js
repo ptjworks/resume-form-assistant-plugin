@@ -51,6 +51,14 @@ test('a gender select named only by its name attribute takes 男 as M', async ()
   assert.equal(result.ok, true, result.reason); assert.equal(select.selectedIndex, 1);
 });
 
+test('a native date-time box keeps the hours and minutes it is given', async () => {
+  const h = harness(); const input = new h.Input(); input.type = 'datetime-local';
+  const result = await h.operate(input, '2026-07-15T14:30');
+  assert.equal(result.ok, true, result.reason); assert.equal(input.value, '2026-07-15T14:30');
+  const day = new h.Input(); day.type = 'datetime-local';
+  assert.equal((await h.operate(day, '2026-07-16')).ok, true); assert.equal(day.value, '2026-07-16T00:00');
+});
+
 test('native date rollback after blur fails without retry or leaking the requested value', async () => {
   const h = harness(); const input = new h.Input(); input.type = 'month';
   let writes = 0;

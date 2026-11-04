@@ -521,14 +521,15 @@ function aliasesOf(key) {
 // 资料目录：编号、分组、字段名、别的叫法和值的形态。值留在 values 里，只在本地按编号取。空值的资料不进目录。
 // 顺序：先在完整的字段名上改名、遮值（catalogKeys），值整段换成占位以后再截短、加序号（distinctKeys），截断点落在值中间也只会切到占位；
 // 最后要发出去的字段名和分组名再统一查一遍资料值（maskResumeValues）。分组名可能是用户自己起的（公司名），也一样换成占位。
+// 只有 catalogKeys 这次起的编号（prefixes）不在里面找；原样的字段名、分组名从头找。
 function buildCatalog(resumeFields) {
   const helpers = ResumeProAIHelpers;
   refreshAliases();
   const filled = resumeFields.filter(field => String(field?.value ?? "").trim());
-  const keys = helpers.catalogKeys(filled);
+  const { keys, prefixes } = helpers.catalogKeys(filled, { withPrefixes: true });
   const rawGroups = filled.map(field => String(field.group ?? ""));
   const masked = helpers.maskResumeValues([...distinctKeys(keys, rawGroups), ...rawGroups], filled,
-    { labels: keys, groups: [...rawGroups, ...rawGroups] });
+    { labels: keys, groups: [...rawGroups, ...rawGroups], prefixes });
   const shortKeys = masked.slice(0, filled.length);
   const groupNames = masked.slice(filled.length);
   const latest = latestSpans(filled);
@@ -637,13 +638,14 @@ function promptFields(fields, catalog) {
     const bare = text => /^0*(\d{1,4})[年月日号天]?$/.exec(text)?.[1];
     const numbers = texts.length > 0 && texts.every(bare) ? new Set(texts.map(bare)) : null;
     // 选项都是短文本（不超过 30 个字）时，长段文字落不到选项上，超过 100 个字的值不必一项一项比；有长选项（一句声明）的照比。
+    // 多选照比：几项拼成的一长串也可能每一项都落得到选项上（isValueValidForField 先拆开再核对）。
     const shortOptions = texts.every(text => text.length <= 30);
     // 年、月、日只给问它们的题，和题目说的是时间、选项全是数字的下拉（「毕业时间」下面列的是年份）；「每周实习天数」这类不算。
     const timeish = /时间|年度|\b(?:date|time)\b/i.test([field.label, field.placeholder, field.name, field.idAttr].filter(Boolean).join(" "));
     const parts = asksDatePart(field) || (numbers && timeish) ? DATE_PARTS : [];
     const fits = catalog.entries.flatMap(({ ref }) => {
       const value = catalog.values.get(ref);
-      if (shortOptions && value.length > 100) return [];
+      if (shortOptions && field.multiple !== true && value.length > 100) return [];
       const whole = (!numbers || numbers.has(bare(helpers.normalizeText(value)))) && helpers.isValueValidForField(field, value);
       const list = whole ? [ref] : [];
       for (const part of parts) {
@@ -737,12 +739,12 @@ function settleAnswers(matches) {
 
 // 多行文本框（长回答）和问动机、打算、优缺点、看法的单行题，资料项要和题目说的是同一件事：资料项自己的字段名、别的叫法，
 // 和题目、题目所在的分组，去掉「为什么」「你」「公司」「信息」「经历」「工作」「能力」「个人」「在校期间」「三到五年」这类
-// 哪道题都有的词以后，比相同的词（两个字一段；「获奖」「奖励」「荣誉」这类当成同一个词，见 TOPIC_SYNONYMS；英文是一个四个字母以上的词）：
+// 哪道题都有的词以后（「原因」「规划」「看法」「优势」这类说明题目问的是什么的词留着：「离职原因」不能拿「离职时间」答），比相同的词（两个字一段；「获奖」「奖励」「荣誉」这类当成同一个词，见 TOPIC_SYNONYMS；英文是一个四个字母以上的词）：
 // 至少两个不同的词相同；只有一个相同时，题目本身剩下的字都要落在这个词上，题目还说着别的（「请评价你的团队」的「团队」）就不算。
 // 字段名和题目归一后一模一样的（本网站回答存的原题）照算。资料项的分组不算：「社会实践」分组下的「工作描述」答不了「社会实践中的收获和看法」。
 // AI 看不到值时会随手挑一项：浏览器验收里「为什么选择我们公司」被填成过最高学历、期望工作地点，评测里被填成自我评价。
 const OPINION_QUESTION = /为什么|为何|动机|原因|理由|规划|打算|优势|劣势|不足|缺点|优点|困难|挑战|看法|理解|认识|谈谈|说说|举例|\b(?:why|plans?|goals?|strengths?|weakness(?:es)?|challenges?|motivat\w*|reasons?)\b/i;
-const COMMON_WORDS = new RegExp(`${OPINION_QUESTION.source}|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下|信息|基本|其他|补充|情况|经历|工作|发展|能力|学习|经验|方面|相关|个人|自己|本人|在校|期间|获得|取得|主要|未来|今后|目前|如何|怎样|怎么|哪些|什么|[一二三四五六七八九十两几0-9]+(?:到|至)?[一二三四五六七八九十两几0-9]*年`, "gi");
+const COMMON_WORDS = new RegExp(`为什么|为何|谈谈|说说|举例|请|你们|你|您|我们|我|贵司|贵|本|公司|单位|的|是否|简要|简述|描述|说明|一下|信息|基本|其他|补充|情况|经历|工作|发展|能力|学习|经验|方面|相关|个人|自己|本人|在校|期间|获得|取得|主要|未来|今后|目前|如何|怎样|怎么|哪些|什么|[一二三四五六七八九十两几0-9]+(?:到|至)?[一二三四五六七八九十两几0-9]*年`, "gi");
 // 意思一样、字不一样的几组词，比的时候当成同一个。
 const TOPIC_SYNONYMS = Object.fromEntries([
   [["获奖", "奖励", "荣誉", "奖项", "得奖"], "奖"], [["简介", "评价", "介绍", "自评"], "评"], [["技能", "特长", "专长"], "技"], [["爱好", "兴趣"], "趣"]
@@ -782,7 +784,7 @@ function coveredBy(text, hits) {
     }
     return covered.every(Boolean);
   });
-  const english = (source.match(/[a-z]{4,}/g) || []).filter(word => !COMMON_ENGLISH.has(word) && !OPINION_QUESTION.test(word));
+  const english = (source.match(/[a-z]{4,}/g) || []).filter(word => !COMMON_ENGLISH.has(word));
   return han && english.every(word => hits.has(word));
 }
 
@@ -791,7 +793,7 @@ function topicWords(text) {
   const source = String(text ?? "").toLowerCase();
   const han = source.replace(COMMON_WORDS, " ").replace(/[^\u4e00-\u9fa5]+/g, " ").split(" ").filter(Boolean)
     .flatMap(part => Array.from({ length: Math.max(0, part.length - 1) }, (_, i) => part.slice(i, i + 2)));
-  const english = (source.match(/[a-z]{4,}/g) || []).filter(word => !COMMON_ENGLISH.has(word) && !OPINION_QUESTION.test(word));
+  const english = (source.match(/[a-z]{4,}/g) || []).filter(word => !COMMON_ENGLISH.has(word));
   return [...han, ...english];
 }
 
@@ -803,6 +805,11 @@ function pickerDate(field, value) {
   if (helpers.rangeDateParts(picked)) return "";
   // 原生的 date、month、datetime-local 框写不进「至今」。
   if (helpers.isPresentDate(picked)) return ["date", "month", "datetime-local"].includes(field.inputType) ? "" : picked;
+  // 原生 datetime-local 框和认出是选日期时间的控件：资料里有时分就带上（「2026-07-15T14:30」）；没有时分的只给日期，由填写层补 00:00。
+  if (field.inputType === "datetime-local" || field.pickerInputType === "datetime-local") {
+    const full = helpers.normalizeDateValue(picked, "datetime-local");
+    if (/\d{1,2}\s*[:：]\s*\d{2}/.test(picked) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(full)) return full;
+  }
   // 原生 month 框和认出是选月的日期控件只给年月。
   const day = field.pickerInputType === "month" || field.inputType === "month" ? "" : helpers.normalizeDateValue(picked, "date");
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
@@ -834,12 +841,17 @@ function regionPrefix(value) {
     }
     return { value: text, coarse: false };
   }
-  for (let end = Math.min(text.length - 1, 40); end >= 4; end -= 1) {
+  // 不按「/」分开的：从长到短找认得出、至少到市（直辖市、特别行政区本身就算，见 tooCoarse）的前缀。四个字以上、有两级地名的照旧直接截；
+  // 更短的（「深圳市」「北京市」）只在后面像街道门牌时截（「深圳市科苑路8号」），「北京大学」「深圳大学」这类不截。
+  for (let end = Math.min(text.length - 1, 40); end >= 2; end -= 1) {
     const head = text.slice(0, end);
-    if (regions.resolve(head)?.path.filter(part => !part.placeholder).length >= 2) return { value: head.trim(), coarse: false };
+    const path = regions.resolve(head)?.path;
+    if (!path || tooCoarse(path)) continue;
+    if ((head.length >= 4 && path.filter(part => !part.placeholder).length >= 2) || ADDRESS_REST.test(text.slice(end))) return { value: head.trim(), coarse: false };
   }
   return { value: text, coarse: false };
 }
+const ADDRESS_REST = /[路街道巷弄号村镇乡栋楼室区县]|\d/;
 
 function tooCoarse(path) {
   const named = path.filter(part => !part.placeholder);
@@ -869,8 +881,14 @@ function refValue(token, field, catalog) {
   const [, ref, part] = REF_TOKEN.exec(token) || [];
   const value = ref ? catalog.values.get(ref) : undefined;
   if (value === undefined) return "";
-  // 开始、结束：一段起止取那一头，不是一段起止的照原值。
-  if (SPAN_SIDES.includes(part)) return ResumeProAIHelpers.rangeDateParts(value)?.[part === "start" ? 0 : 1] ?? value;
+  // 开始、结束：一段起止取那一头，不是一段起止的照原值。题目写明了要哪一头（开始、入学、结束、毕业、离职）以题目为准，
+  // AI 给反了也取题目要的那一头；题目看不出才用 AI 给的。
+  if (SPAN_SIDES.includes(part)) {
+    const parts = ResumeProAIHelpers.rangeDateParts(value);
+    if (!parts) return value;
+    const side = ResumeProAIHelpers.spanSide([field.label, field.placeholder, field.ariaLabel].filter(Boolean).join(" ")) || part;
+    return parts[side === "start" ? 0 : 1];
+  }
   return part ? ResumeProAIHelpers.datePart(value, part, field) : value;
 }
 
