@@ -107,7 +107,7 @@ test('a migration action is reported from the status it returns, never from the 
   assert.match(view('resend', null).text, /^没有重新发送/);
 });
 
-// #429「AI 填写时发送资料原文」：开关默认关，读不到时不能点；改动交给后台存，这一页不写存储。
+// #429「AI 填写时发送资料原文」：开关默认关；读不到时不能点，也不说按关闭处理，给一个重新读取；改动交给后台存，这一页不写存储。
 test('the send-values switch starts off, follows the stored setting and saves through the service worker', async () => {
   const { JSDOM } = require('jsdom');
   const html = fs.readFileSync(path.join(__dirname, '..', 'popup.html'), 'utf8');
@@ -131,7 +131,9 @@ test('the send-values switch starts off, follows the stored setting and saves th
     dom.window.eval(fs.readFileSync(path.join(__dirname, '..', 'resume-data.js'), 'utf8'));
     dom.window.eval(source);
     await new Promise((resolve) => setTimeout(resolve, 20));
-    return { dom, sent, toggle: dom.window.document.getElementById('send-values-toggle'), result: dom.window.document.getElementById('send-values-result') };
+    const doc = dom.window.document;
+    return { dom, sent, toggle: doc.getElementById('send-values-toggle'), result: doc.getElementById('send-values-result'),
+      retry: doc.getElementById('send-values-retry'), actions: doc.getElementById('send-values-actions') };
   };
   const off = await open({ ok: true, enabled: false });
   assert.equal(off.toggle.checked, false);
@@ -142,8 +144,19 @@ test('the send-values switch starts off, follows the stored setting and saves th
   assert.deepEqual(off.sent.filter((message) => message.type === 'AI_SEND_VALUES_SET').map((message) => message.enabled), [true]);
   assert.equal(off.toggle.checked, true);
   assert.match(off.result.textContent, /已打开/);
-  const unknown = await open({ ok: false, enabled: false });
+  assert.equal(off.actions.hidden, true);
+  // 读不到：开关锁住，不说按关闭处理（一键填写会自己再读），给重新读取；读到了就照实显示，提示收起来。
+  let reads = 0;
+  const unknown = await open(() => (++reads === 1 ? { ok: false, enabled: false } : { ok: true, enabled: true }));
   assert.equal(unknown.toggle.checked, false);
-  assert.equal(unknown.toggle.disabled, true, 'a setting that cannot be read stays off and locked');
-  assert.match(unknown.result.textContent, /按关闭处理/);
+  assert.equal(unknown.toggle.disabled, true);
+  assert.equal(unknown.actions.hidden, false);
+  assert.match(unknown.result.textContent, /无法确认/);
+  assert.doesNotMatch(unknown.result.textContent, /按关闭/);
+  unknown.retry.dispatchEvent(new unknown.dom.window.Event('click'));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(unknown.toggle.checked, true, 'the stored setting shows once it can be read');
+  assert.equal(unknown.toggle.disabled, false);
+  assert.equal(unknown.actions.hidden, true);
+  assert.equal(unknown.result.hidden, true);
 });

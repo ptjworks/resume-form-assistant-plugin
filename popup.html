@@ -52,6 +52,7 @@
           <label class="feedback-switch"><input type="checkbox" id="send-values-toggle" disabled>发送资料原文</label>
         </div>
         <p class="info-box">关闭时，AI 只收到网页上的题目和你资料的字段名，资料内容留在本机，由插件按 AI 选的字段填进去。打开后，一键填写时会把资料原文一起发给你在桌面配置的模型服务商，更容易填上；像密码、验证码的字段照旧不发。</p>
+        <div class="actions" id="send-values-actions" hidden><button type="button" id="send-values-retry">重新读取</button></div>
         <p id="send-values-result" class="result" role="status" aria-live="polite" hidden></p>
       </section>
       <section class="card" id="migration" aria-labelledby="migration-title" hidden>

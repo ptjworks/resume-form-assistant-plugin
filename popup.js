@@ -266,13 +266,22 @@
     try { await renderDesktop(); } finally { $("desktop-recheck").disabled = false; }
   });
 
-  // 「AI 填写时发送资料原文」（#429）：设置由后台存，这一页不自己写存储；读不到时开关不能点，按关着。
+  // 「AI 填写时发送资料原文」（#429）：设置由后台存，这一页不自己写存储。
+  // 读不到时不知道实际是开是关（一键填写会自己再读一次）：不说按关闭处理，开关不能点，给一个重新读取。
+  const UNKNOWN_SEND_VALUES = "没读到这项设置，现在无法确认是开是关。请点「重新读取」。";
   async function renderSendValues() {
     const status = await send({ type: "AI_SEND_VALUES_STATUS" });
-    $("send-values-toggle").checked = status?.ok === true && status.enabled === true;
-    $("send-values-toggle").disabled = status?.ok !== true;
-    if (status?.ok !== true) report("send-values-result", "没读到这项设置，按关闭处理。", "warn");
+    const known = status?.ok === true;
+    $("send-values-toggle").checked = known && status.enabled === true;
+    $("send-values-toggle").disabled = !known;
+    $("send-values-actions").hidden = known;
+    if (!known) report("send-values-result", UNKNOWN_SEND_VALUES, "warn");
+    else if ($("send-values-result").textContent === UNKNOWN_SEND_VALUES) report("send-values-result", "");
   }
+  $("send-values-retry").addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try { await renderSendValues(); } finally { $("send-values-retry").disabled = false; }
+  });
   $("send-values-toggle").addEventListener("change", async (event) => {
     const enabled = event.currentTarget.checked;
     event.currentTarget.disabled = true;
