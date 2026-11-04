@@ -418,6 +418,20 @@ test("one shared word passes only when the question says nothing else", async ()
   assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["hobby", "how", "self", "skill"]);
 });
 
+test("a word saying what the question asks stays: a date is no reason and a skill is no plan", async () => {
+  const resume = [{ group: "工作经历", key: "工作经历1-离职时间", value: "2024.06" }, { group: "求职意向", key: "职业技能", value: "虚构建模" },
+    { group: "工作经历", key: "工作经历1-离职原因", value: "合同到期" }, { group: "求职意向", key: "职业规划", value: "三年内成为数据分析师" }];
+  const env = worker((message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key).ref;
+    return [{ fieldId: "leave", ref: ref("工作经历1-离职时间") }, { fieldId: "plan", ref: ref("职业技能") },
+      { fieldId: "leave2", ref: ref("工作经历1-离职原因") }, { fieldId: "plan2", ref: ref("职业规划") }];
+  });
+  const box = (fieldId, label) => ({ fieldId, label, tagName: "textarea", inputType: "textarea" });
+  const result = await env.run({ formFields: [box("leave", "离职原因"), box("plan", "职业规划"), box("leave2", "离职原因说明"), box("plan2", "未来三到五年的职业规划")],
+    resumeFields: resume });
+  assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["leave2", "plan2"]);
+});
+
 test("an open question whose answer is held back counts as having no ready answer, not as unwritten", async () => {
   const resume = Array.from({ length: 10 }, (_, i) => ({ group: "自我评价", key: `自我评价${i}`, value: `评价${i}` }));
   const env = worker((message, catalog) => [{ fieldId: "self", refs: catalog.map((entry) => entry.ref) }]);
@@ -756,6 +770,29 @@ test("a value across the 60th character of a long key is masked before the key i
   assert.equal(catalogOf(sent)[1].key, `${head}…`, "the cut leaves no half placeholder");
 });
 
+test("a raw key or group that starts like a generated number still has its phone or ID number masked", async () => {
+  const resume = [{ group: "基本信息", key: "手机号码", value: "13912345678" }, { group: "基本信息", key: "证件号码", value: "11010519491231002X" },
+    { group: "实习经历13912345678", key: "备注", value: "无" }, { group: "教育经历", key: "教育经历11010519491231002X-说明", value: "无" },
+    { group: "实习经历", key: "实习经历1-公司", value: "虚构云计算有限公司" }];
+  const env = worker();
+  await env.run({ formFields: [{ fieldId: "q", label: "其他说明" }], resumeFields: resume });
+  const catalog = catalogOf(env.calls[0].user);
+  assert.ok(!/13912345678|11010519491231002X/i.test(JSON.stringify(catalog)), JSON.stringify(catalog));
+  // 这次起的编号照旧留着。
+  assert.ok(catalog.some((entry) => entry.key === "实习经历1-公司"));
+});
+
+test("a name written in NFD is masked like its NFC value, and the other way round", () => {
+  const zoe = "Zoë Lin".normalize("NFC");
+  const jose = "José Ruiz";
+  const keys = helpers.catalogKeys([
+    { group: "基本信息", key: "姓名", value: zoe }, { group: "本网站回答", key: `${zoe.normalize("NFD")}的推荐信`, value: "无" },
+    { group: "家庭主要成员", key: "母亲姓名", value: jose.normalize("NFD") }, { group: "本网站回答", key: `${jose.normalize("NFC")}是否同意`, value: "是" }
+  ]);
+  assert.equal(keys[1], "〔姓名〕的推荐信");
+  assert.equal(keys[3], "〔母亲姓名〕是否同意");
+});
+
 test("no value of the eval resume is in its catalog but a few short common words", async () => {
   const { loadCorpus } = await import(pathToFileURL(path.join(__dirname, "..", "scripts", "eval-fill.mjs")).href);
   const corpus = loadCorpus();
@@ -870,6 +907,62 @@ test("an address region data reads in full goes as it is, and one with a street 
     resumeFields: values.map((value, at) => ({ group: "户籍与地区", key: `地址${at}`, value }))
   });
   assert.deepEqual(values.map((_, at) => valueOf(result, `c${at}`)), values);
+});
+
+test("a city or a municipality followed by a street is cut to the city; a province with a street and a school name are not", async () => {
+  const values = ["深圳市科苑路8号", "北京市中关村大街1号", "广东省科苑路8号", "北京大学"];
+  const env = worker((message, catalog) => catalog.map((entry, at) => ({ fieldId: `c${at}`, ref: entry.ref })));
+  const result = await env.run({
+    formFields: values.map((_, at) => ({ fieldId: `c${at}`, label: "所在地", inputType: "select", cascade: true, options: [] })),
+    resumeFields: values.map((value, at) => ({ group: "补充字段", key: `地点${at}`, value }))
+  });
+  assert.deepEqual(values.map((_, at) => valueOf(result, `c${at}`)), ["深圳市", "北京市", "广东省科苑路8号", "北京大学"]);
+});
+
+test("a start or end the AI picks gives way to the side the question names", async () => {
+  const env = worker((message, catalog) => [
+    { fieldId: "grad", ref: `${catalog[0].ref}.start` }, { fieldId: "enrol", ref: catalog[0].ref, part: "end" },
+    { fieldId: "span", ref: `${catalog[0].ref}.start` }, { fieldId: "gradText", ref: `${catalog[0].ref}.start` }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "grad", label: "毕业时间", inputType: "date-picker", pickerInputType: "month", options: [] },
+      { fieldId: "enrol", label: "入学时间", inputType: "date-picker", pickerInputType: "month", options: [] },
+      { fieldId: "span", label: "在校时间", inputType: "date-picker", pickerInputType: "month", options: [] },
+      { fieldId: "gradText", label: "毕业年月" }],
+    resumeFields: [{ group: "教育经历", key: "教育经历1-时间", value: "2019.09-2023.06" }]
+  });
+  // 题目写明了要哪一头的以题目为准；看不出的（在校时间）才用 AI 给的。
+  assert.equal(valueOf(result, "grad"), "2023-06");
+  assert.equal(valueOf(result, "enrol"), "2019-09");
+  assert.equal(valueOf(result, "span"), "2019-09");
+  assert.equal(valueOf(result, "gradText"), "2023.06");
+});
+
+test("a date-time box keeps the hours and minutes of the resume, and gets a date alone when there are none", async () => {
+  const env = worker((message, catalog) => [
+    { fieldId: "native", ref: catalog[0].ref }, { fieldId: "picker", ref: catalog[0].ref }, { fieldId: "dayOnly", ref: catalog[1].ref }
+  ]);
+  const result = await env.run({
+    formFields: [{ fieldId: "native", label: "面试时间", inputType: "datetime-local", options: [] },
+      { fieldId: "picker", label: "面试时间", inputType: "date-picker", pickerInputType: "datetime-local", options: [] },
+      { fieldId: "dayOnly", label: "可面试日期", inputType: "datetime-local", options: [] }],
+    resumeFields: [{ group: "补充字段", key: "面试安排", value: "2026.07.15 14:30" }, { group: "补充字段", key: "可面试日", value: "2026.07.16" }]
+  });
+  assert.equal(valueOf(result, "native"), "2026-07-15T14:30");
+  assert.equal(valueOf(result, "picker"), "2026-07-15T14:30");
+  assert.equal(valueOf(result, "dayOnly"), "2026-07-16", "the page adds 00:00 to a date alone");
+});
+
+test("a multi-select takes a long list of short options it can split", async () => {
+  const skills = ["Python", "SQL", "Tableau", "Excel", "PowerBI", "Spark", "Hive", "Flink", "Kafka", "Docker", "Git", "Linux", "MATLAB", "SPSS", "Stata", "R语言", "机器学习建模", "数据可视化", "统计分析"];
+  const value = skills.join("、");
+  assert.ok(value.length > 100 && skills.every((skill) => skill.length <= 30));
+  const env = worker();
+  await env.run({
+    formFields: [{ fieldId: "skills", label: "掌握的技能", inputType: "select", multiple: true, options: skills }],
+    resumeFields: [{ group: "技能", key: "专业技能", value }]
+  });
+  assert.deepEqual(fieldsOf(env.calls[0]).find((field) => field.fieldId === "skills").fits, [refOf(env.calls[0].user, "专业技能")]);
 });
 
 test("a cascade given only a province is not filled; a city or a municipality is", async () => {

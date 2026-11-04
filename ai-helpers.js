@@ -211,6 +211,7 @@
     hasRealOptions,
     choiceValue,
     controlChoiceValue,
+    spanSide,
     valueShape,
     datePart,
     catalogKeys,
@@ -959,9 +960,15 @@
     const raw = String(rawValue ?? "").trim();
     const parts = rangeDateParts(raw);
     if (!parts) return raw;
+    const side = spanSide(hint);
+    return side ? parts[side === "start" ? 0 : 1] : raw;
+  }
+
+  // 题目要一段起止的哪一头：写明开始、入学这类的给 start，写明结束、毕业、离职这类的给 end；两样都写了、都没写给空串。
+  function spanSide(hint) {
     const text = String(hint ?? "");
     const start = SPAN_START.test(text), end = SPAN_END.test(text);
-    return start === end ? raw : parts[start ? 0 : 1];
+    return start === end ? "" : start ? "start" : "end";
   }
 
   // #429 「至今」「现在」这类写法（和 custom-controls.js 日历认的一样）。
@@ -1065,13 +1072,17 @@
     return String(text ?? "").normalize("NFKC").replace(/[\s\p{P}\p{S}]/gu, "").toLowerCase();
   }
 
+  // 逐字归一时的一个字：字母连同后面跟着的组合附加符（NFD 写法的「é」是「e」加一个附加符）算一个，
+  // 这样逐字归一（NFKC）拼起来和整串归一的结果一样，资料值和字段名用的是同一种归一。
+  const LOOSE_UNIT = /\P{M}\p{M}*|\p{M}+/gu;
+
   // 字段名逐字归一一次（looseText）：loose 是归一后的整串，ends[i] 是归一后第 i 个字在原字段名里结束的位置，
   // 紧跟着的标点、空格（归一后没有字）算进它。前缀比较只对 loose 做 startsWith，不再逐个前缀重新归一。
   function looseIndex(key) {
     let loose = "";
     const ends = [];
     let at = 0;
-    for (const char of String(key ?? "")) {
+    for (const char of String(key ?? "").match(LOOSE_UNIT) || []) {
       at += char.length;
       const part = looseText(char);
       for (let i = 0; i < part.length; i += 1) ends.push(at);
@@ -1085,9 +1096,11 @@
   // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。
   // 经历类分组里，字段名以这一组的某个值开头的，后面不管是什么，前缀都换成编号（「某校社团经历-职位」→「校园经历1-社团经历-职位」）；
   // 前缀对不上现在的值（解析以后改过学校名）时，「某某 + 教育经历」这样的也换掉，前面多长都算（英文全称常超过 18 个字）。别的字段名原样。
-  function catalogKeys(resumeFields) {
+  // withPrefixes：同时给出每个字段名开头这次起的编号有几个字（prefixes，原样的字段名是 0），遮值时只有这一段不找。
+  function catalogKeys(resumeFields, { withPrefixes = false } = {}) {
     const labels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
     const numbers = new Map();
+    const made = (label, number, rest) => ({ key: `${label}${number}${rest}`, prefix: `${label}${number}`.length });
     const numberOf = (group, label, anchor) => {
       const slot = `${group}\u0000${label}`;
       if (!numbers.has(slot)) numbers.set(slot, new Map());
@@ -1128,22 +1141,25 @@
         // 经历类以外的分组只换同一段自己的前缀：给出这个值的那项，字段名也是这个前缀加同一个标签（解析出来的「某奖项名奖项信息」）；
         // 以别的字段的值开头的字段名原样留着。
         if (!groupLabel && !owner.startsWith(key.slice(0, length) + label)) continue;
-        return `${label}${numberOf(group, label, entryOf(length))}${tail(rest.slice(label.length))}`;
+        return made(label, numberOf(group, label, entryOf(length)), tail(rest.slice(label.length)));
       }
-      if (!groupLabel) return key;
+      if (!groupLabel) return { key, prefix: 0 };
       if (anchors.length) {
         const rest = tail(key.slice(anchors[0].length)).replace(/^[\s\-_:：]+/, "");
-        return `${groupLabel}${numberOf(group, groupLabel, entryOf(anchors[0].length))}${rest ? `-${rest}` : ""}`;
+        return made(groupLabel, numberOf(group, groupLabel, entryOf(anchors[0].length)), rest ? `-${rest}` : "");
       }
       for (const label of labels) {
         const at = key.indexOf(label);
         if (at >= 1 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) {
-          return `${label}${numberOf(group, label, `${looseText(key.slice(0, at))}#${suffix}`)}${tail(key.slice(at + label.length))}`;
+          return made(label, numberOf(group, label, `${looseText(key.slice(0, at))}#${suffix}`), tail(key.slice(at + label.length)));
         }
       }
-      return key;
+      return { key, prefix: 0 };
     });
-    return maskResumeValues(renamed, resumeFields, { labels: renamed, groups: resumeFields.map((field) => field?.group) });
+    const prefixes = renamed.map((item) => item.prefix);
+    const keys = maskResumeValues(renamed.map((item) => item.key), resumeFields,
+      { labels: renamed.map((item) => item.key), groups: resumeFields.map((field) => field?.group), prefixes });
+    return withPrefixes ? { keys, prefixes } : keys;
   }
 
   // 人名类字段（本人、家庭成员、配偶、紧急联系人、推荐人的姓名，曾用名）：值 2 个字起就遮，出现在哪段文字里都换。
@@ -1157,17 +1173,11 @@
   // 别的是短常用词（是、否、男、本科、汉族、父亲、服从），留在题目里，「是否服从调剂」「父亲姓名」不会被弄坏。
   // 值按 looseText 比，至少 2 个字；只有数字、不到 5 位的（年龄、名次、年份）不算更长一串数字里的一段（「22」不算「2022届」里的）。
   // 几项资料的值都对得上时先换最长的；同样长的先认同一分组的那项（groups[i] 是第 i 段文字所在的分组）。
-  // 开头的「实习经历1」是这里起的名，不在里面找（按标签逐个比 startsWith，标签里有正则的特殊字符也不出错）。
+  // prefixes[i]：第 i 段开头这么多字是 catalogKeys 这次起的编号（「实习经历1」），不在里面找；
+  // 原样的字段名、分组名没有这一段，从头找（以「实习经历」开头、后面跟着手机号的原样文字也遮）。
+  // 资料值和要找的文字按同一种方式归一（looseText，逐字时字母连同组合附加符算一个字），记着归一后每个字在原文里的位置。
   // labels[i] 是第 i 项资料在目录里的字段名，做占位用。
-  function maskResumeValues(texts, resumeFields, { labels = [], groups = [] } = {}) {
-    const entityLabels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
-    const generatedLength = (text) => {
-      for (const label of entityLabels) {
-        const digits = text.startsWith(label) ? /^\d+/.exec(text.slice(label.length)) : null;
-        if (digits) return label.length + digits[0].length;
-      }
-      return 0;
-    };
+  function maskResumeValues(texts, resumeFields, { labels = [], groups = [], prefixes = [] } = {}) {
     const values = resumeFields.flatMap((field, owner) => {
       const value = String(field?.value ?? "");
       const key = String(field?.key ?? "");
@@ -1183,12 +1193,11 @@
       }
       return byGroup.get(group);
     };
-    const hitsIn = (text, group) => {
-      const from = generatedLength(text);
+    const hitsIn = (text, group, from = 0) => {
       const chars = [];
       let loose = "";
       let offset = 0;
-      for (const char of text) {
+      for (const char of text.match(LOOSE_UNIT) || []) {
         const part = looseText(char);
         for (let i = 0; i < part.length; i += 1) chars.push([offset, offset + char.length]);
         loose += part;
@@ -1217,9 +1226,9 @@
     };
     const done = new Map();
     return texts.map((text, at) => {
-      const slot = JSON.stringify([String(text ?? ""), groups[at] ?? null]);
+      const slot = JSON.stringify([String(text ?? ""), groups[at] ?? null, prefixes[at] || 0]);
       if (!done.has(slot)) {
-        done.set(slot, hitsIn(String(text ?? ""), groups[at])
+        done.set(slot, hitsIn(String(text ?? ""), groups[at], prefixes[at] || 0)
           .reduce((out, { start, end, owner }) => `${out.slice(0, start)}〔${nameOf(owner)}〕${out.slice(end)}`, String(text ?? "")));
       }
       return done.get(slot);
