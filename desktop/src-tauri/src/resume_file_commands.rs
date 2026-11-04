@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::Path;
 
 use archive_store::{ArchiveStore, ResumeFileKind, ResumeFileListing, ResumeFilePatch, MAX_RESUME_FILE_BYTES};
+use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::attachment_commands::AttachmentSummary;
@@ -47,7 +48,7 @@ fn read_picked(path: &Path) -> Result<(String, Vec<u8>), CommandError> {
     Ok((name, bytes))
 }
 
-/// 能用的文件和读不出来的记录：后者界面上单独列出来，只能删掉那一行。
+/// 能用的文件和读不出来的记录：后者界面上单独列出来，只能删掉。
 pub fn list(store: &ArchiveStore) -> Result<ResumeFileListing, CommandError> {
     store.resume_file_listing().map_err(shown)
 }
@@ -69,9 +70,42 @@ pub fn update(store: &ArchiveStore, id: &str, patch: &ResumeFilePatch) -> Result
     list(store)
 }
 
-pub fn delete(store: &ArchiveStore, id: &str) -> Result<ResumeFileListing, CommandError> {
-    store.delete_resume_file(id).map_err(shown)?;
-    list(store)
+/// 删除的结果和删除以后的列表。删除已经提交以后再读列表失败，`listing` 是空的（界面留着原来的列表），
+/// 删除的结果照样给。`stuck_in_tmp` 是这次挪进 tmp/ 的文件最后还在那里：`not_removed` 本该删掉没删掉，
+/// `not_restored` 本该挪回原处没挪回去。`leftovers` 是附件目录顶层还会让备份停下的文件，`manual` 是
+/// 附件目录顶层不是普通文件的东西（目录、链接之类），要用户自己处理；核对出错时 `unchecked` 是能给人看的原因（原始错误只写进桌面日志）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeFileDeleted {
+    pub listing: Option<ResumeFileListing>,
+    pub deleted: bool,
+    pub stuck_in_tmp: Option<&'static str>,
+    pub leftovers: Vec<String>,
+    pub manual: Vec<String>,
+    pub unchecked: Option<String>,
+}
+
+pub fn delete(store: &ArchiveStore, id: &str) -> Result<ResumeFileDeleted, CommandError> {
+    let deletion = store.delete_resume_file(id).map_err(shown)?;
+    let unchecked = deletion.folder.unchecked.map(|error| {
+        eprintln!("resume-files: leftover-check-failed · {error}");
+        shown(error).message
+    });
+    let listing = match list(store) {
+        Ok(listing) => Some(listing),
+        Err(error) => {
+            eprintln!("resume-files: list-after-delete-failed · {}", error.message);
+            None
+        }
+    };
+    Ok(ResumeFileDeleted {
+        listing,
+        deleted: deletion.deleted,
+        stuck_in_tmp: deletion.stuck_in_tmp.map(|stuck| if stuck.not_restored { "not_restored" } else { "not_removed" }),
+        leftovers: deletion.folder.leftovers,
+        manual: deletion.folder.manual,
+        unchecked,
+    })
 }
 
 /// 照片的缩略图。不是图片、太大或读不出来时是 `None`。
@@ -107,7 +141,7 @@ pub async fn update_resume_file_cmd(app: AppHandle, id: String, patch: ResumeFil
 }
 
 #[tauri::command]
-pub async fn delete_resume_file_cmd(app: AppHandle, id: String) -> Result<ResumeFileListing, CommandError> {
+pub async fn delete_resume_file_cmd(app: AppHandle, id: String) -> Result<ResumeFileDeleted, CommandError> {
     archive_worker(app, move |state| with_store(state, |store| delete(store, &id))).await
 }
 
@@ -194,5 +228,49 @@ mod tests {
         assert!(preview(&store, &id_of(ResumeFileKind::Photo)).unwrap().unwrap().starts_with("data:image/png;base64,"));
         assert_eq!(preview(&store, &id_of(ResumeFileKind::Resume)).unwrap(), None);
         assert_eq!(preview(&store, "11111111-1111-4111-8111-111111111111").unwrap(), None);
+    }
+
+    #[test]
+    fn a_deletion_says_what_it_could_not_clean_without_raw_errors() {
+        let (dir, store) = store();
+        let picked = dir.path().join("简历.pdf");
+        std::fs::write(&picked, b"%PDF-1.7\nbody").unwrap();
+        let id = add(&store, ResumeFileKind::Resume, &picked).unwrap().files[0].id.clone();
+        // 没有这条记录：没删到，界面据此不说「已删除」。
+        let missing = delete(&store, "11111111-1111-4111-8111-111111111111").unwrap();
+        assert!(!missing.deleted && missing.stuck_in_tmp.is_none() && missing.leftovers.is_empty() && missing.unchecked.is_none());
+        // 附件目录读不了：记录照删，带上能给人看的原因，不带存储层的前缀。
+        let archive = dir.path().join("archive");
+        let cfg = archive_store::ArchiveConfig::new(archive.clone(), dir.path().join("current.json"));
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute("UPDATE resume_files SET sha256 = 'not-a-hash' WHERE id = ?1", rusqlite::params![id]).unwrap();
+        drop(raw);
+        let folder = archive.join(archive_store::RESUME_FILES_DIR);
+        std::fs::remove_dir_all(&folder).unwrap();
+        std::fs::write(&folder, b"not a folder").unwrap();
+        let deleted = delete(&store, &id).unwrap();
+        assert!(deleted.deleted && deleted.listing.unwrap().damaged.is_empty());
+        let reason = deleted.unchecked.expect("a failed check is reported");
+        assert!(!reason.starts_with("io error"), "{reason}");
+    }
+
+    #[test]
+    fn a_list_that_fails_after_the_delete_still_returns_what_the_delete_did() {
+        let (dir, store) = store();
+        let first = dir.path().join("简历.pdf");
+        std::fs::write(&first, b"%PDF-1.7\nbody").unwrap();
+        let second = dir.path().join("英文简历.pdf");
+        std::fs::write(&second, b"%PDF-1.7\nenglish").unwrap();
+        add(&store, ResumeFileKind::Resume, &first).unwrap();
+        let files = add(&store, ResumeFileKind::Resume, &second).unwrap().files;
+        let (gone, other) = (files[0].id.clone(), files[1].id.clone());
+        // 另一条记录的大小列存成了文字：删除用不到这一列，读列表时会出错。
+        let cfg = archive_store::ArchiveConfig::new(dir.path().join("archive"), dir.path().join("current.json"));
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute("UPDATE resume_files SET byte_size = 'abc' WHERE id = ?1", rusqlite::params![other]).unwrap();
+        drop(raw);
+        assert!(list(&store).is_err());
+        let deleted = delete(&store, &gone).unwrap();
+        assert!(deleted.deleted && deleted.listing.is_none() && deleted.stuck_in_tmp.is_none() && deleted.unchecked.is_none());
     }
 }

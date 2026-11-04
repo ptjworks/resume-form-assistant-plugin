@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { DamagedResumeFileView, ResumeFileKind, ResumeFileListing, ResumeFileView, ResumeOverview, TemplateSummary } from "../api.ts";
+import type { DamagedResumeFileView, ResumeFileDeleted, ResumeFileKind, ResumeFileListing, ResumeFileView, ResumeOverview, TemplateSummary } from "../api.ts";
 import { formatSize } from "../backup.ts";
 import { useInvoke } from "../react/invoke.tsx";
 import { ResumeDialog } from "./ResumeDialog.tsx";
@@ -30,6 +30,25 @@ const GROUPS: Array<{ title: string; kinds: ResumeFileKind[]; empty: string }> =
 function describe(error: unknown): Notice {
   const err = error as { message?: string } | null;
   return { tone: "error", text: err?.message ?? "操作失败，请重试。" };
+}
+
+/**
+ * 删除的结果照实说：没删到记录的不说「已删除」；删了但没清干净的（这次的文件卡在 tmp/ 里、附件目录里还有会让
+ * 备份停下的文件、没能核对）说出来，不说成已经清干净。
+ */
+function deletionNotice(result: ResumeFileDeleted, done: string, name: string): Notice {
+  // 没删到也照样把没清干净的地方接在后面：这一步动过的文件、附件目录里的残留都可能有。
+  const notes: string[] = result.deleted ? [] : [`没有找到「${name}」，可能已经删掉了。`];
+  if (result.stuckInTmp === "not_removed") notes.push("附件文件还没从磁盘上删掉，可能正被别的程序占用；下次增删附件时会再删一次。");
+  if (result.stuckInTmp === "not_restored") notes.push("还有附件在用的一份文件没能复原，暂时读不了；下次增删附件时会再试着挪回去。");
+  const leftovers = result.leftovers ?? [];
+  if (leftovers.length) notes.push(`附件目录里还有 ${leftovers.length} 个文件没清掉，备份可能仍会被这些残留挡住：${leftovers.join("、")}。`);
+  const manual = result.manual ?? [];
+  if (manual.length) notes.push(`附件目录里有 ${manual.length} 项不是附件文件（文件夹、链接之类），不进备份，也不会自动清理，需要的话请手动处理：${manual.join("、")}。`);
+  if (result.unchecked) notes.push(`附件目录没能核对完（${result.unchecked}），可能还有没列出来的残留，备份可能仍会被挡住。`);
+  if (!result.listing) notes.push("附件列表没能刷新，稍后重新打开这一页。");
+  if (!result.deleted) return { tone: "warn", text: notes.join("") };
+  return notes.length ? { tone: "warn", text: done + notes.join("") } : { tone: "ok", text: done };
 }
 
 const opensHere = (file: ResumeFileView) => file.mime === "application/pdf" || file.mime.startsWith("image/");
@@ -95,12 +114,19 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   }, [files, invoke, previews]);
 
   /** 成功返回 true；失败时原因在 notice 里，打开着的对话框不关，用户填的东西还在。 */
-  const run = async (work: () => Promise<ResumeFileListing>, done: string): Promise<boolean> => {
+  /** `listingOf` 从结果里取出新的列表；取不到（删除以后读列表失败）就留着原来的列表。 */
+  const run = async <T,>(
+    work: () => Promise<T>,
+    done: string | ((result: T) => Notice),
+    listingOf: (result: T) => ResumeFileListing | null = (result) => result as ResumeFileListing,
+  ): Promise<boolean> => {
     if (!invoke || busy) return false;
     setBusy(true);
     try {
-      show(await work());
-      setNotice({ tone: "ok", text: done });
+      const result = await work();
+      const listing = listingOf(result);
+      if (listing) show(listing);
+      setNotice(typeof done === "string" ? { tone: "ok", text: done } : done(result));
       return true;
     } catch (error) {
       setNotice(describe(error));
@@ -139,9 +165,13 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
   const remove = async (target: { id: string; name: string; damaged: boolean }) => {
     if (!invoke) return;
     const done = target.damaged ? `已删除「${target.name}」这条读不出来的记录。` : `已删除「${target.name}」。`;
-    if (await run(() => invoke<ResumeFileListing>("delete_resume_file_cmd", { id: target.id }), done)) {
-      setConfirmDelete(null);
-    }
+    const answered = await run(
+      () => invoke<ResumeFileDeleted>("delete_resume_file_cmd", { id: target.id }),
+      (result) => deletionNotice(result, done, target.name),
+      (result) => result.listing,
+    );
+    // 没删到的（已经不在了）也关掉对话框：没有可以再试的。
+    if (answered) setConfirmDelete(null);
   };
 
   const openDialog = (open: () => void) => {
@@ -237,7 +267,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
             <div className="resume-files-group-head">
               <h3>读不出来的记录</h3>
             </div>
-            <p className="note warn">有 {damaged.length} 个附件的记录读不出来，不会拿去上传。可以删掉这些记录，不动任何文件。</p>
+            <p className="note warn">有 {damaged.length} 个附件的记录读不出来，不会拿去上传。可以删掉这些记录。</p>
             <ul>
               {damaged.map((item) => (
                 <li key={item.id}>
@@ -340,7 +370,7 @@ export function ResumeFiles({ pickers, active }: { pickers: FilePickers | null; 
         }
       >
         {confirmDelete?.damaged ? (
-          <p>「{confirmDelete.name}」这条记录读不出来。删掉的只是这条记录，不动任何文件。</p>
+          <p>「{confirmDelete.name}」这条记录读不出来。删掉记录时，能按它的哈希在附件目录里找到、又没有别的记录在用的那份文件会一起删掉，删了不能恢复。附件目录里没人用的文件会顺手清掉；清不掉的、不是文件的（文件夹、链接之类），删除之后会列出来。档案以外的文件不动。</p>
         ) : (
           <p>「{confirmDelete?.name}」会从桌面档案里删掉。你电脑上的原文件不受影响。</p>
         )}

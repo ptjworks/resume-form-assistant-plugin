@@ -20,6 +20,19 @@ pub const EXCLUDED_PREFIXES: &[(&str, &str)] = &[
     ("backups/", "迁移前的库备份，属于这台机器"),
 ];
 
+/// 网申用的附件放在哪里（和 archive-store 的 `RESUME_FILES_DIR` 相同），带结尾的斜杠。
+const RESUME_FILES_DIR: &str = "attachments/resume-files/";
+
+/// 这一项在网申附件目录里。那里只有普通文件算附件：链接之类不进包（不跟着链接去读别处），也不挡备份。
+pub fn in_resume_files(rel: &str) -> bool {
+    rel.starts_with(RESUME_FILES_DIR)
+}
+
+/// 这一项就是网申附件目录本身。它得是一个普通目录才往里走。
+pub fn is_resume_files_dir(rel: &str) -> bool {
+    RESUME_FILES_DIR.strip_suffix('/') == Some(rel)
+}
+
 /// `settings.json` 里唯一会被带走的那些键（拆分计划 Q2）。
 ///
 /// 整份带走会把将来加进去的任何机器专属设置一起带走；一个不带则换机后配对要
@@ -38,6 +51,11 @@ pub enum Disposition {
 
 /// 档案目录里的一个相对路径该怎么处理。`rel` 用正斜杠，不带前导斜杠。
 pub fn classify(rel: &str) -> Disposition {
+    // 网申用的附件（#429）只放在这个目录的顶层，文件名就是哈希。它的子目录里的东西不归任何记录：
+    // 不进包，也不当成孤立文件挡住备份（附件页删除附件时会把它们列出来）。
+    if rel.strip_prefix(RESUME_FILES_DIR).is_some_and(|rest| rest.contains('/')) {
+        return Disposition::Exclude("附件目录的子目录不归任何记录");
+    }
     for (prefix, reason) in EXCLUDED_PREFIXES {
         if matches(rel, prefix) {
             return Disposition::Exclude(reason);
