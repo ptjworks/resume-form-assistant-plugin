@@ -251,3 +251,27 @@ test("a failed check shows nothing on the main screen", async () => {
   expect(notice().hidden).toBe(true);
   expect(dots().every((dot) => dot.hidden)).toBe(true);
 });
+
+test("when the preference file cannot be written, this run still shows what was found and keeps a closed version closed", async () => {
+  // 宿主照常返回结果，但 update-check.json 一直写不进去：读回来的永远是旧文件。
+  const stale: UpdatePreference = { enabled: true };
+  const calls: string[] = [];
+  await start(async (command) => {
+    calls.push(command);
+    if (command === "get_runtime_status") return status("0.4.2");
+    if (command === "get_update_preference_cmd") return { ...stale };
+    if (command === "check_update_cmd") return release("0.5.0");
+    if (command === "dismiss_update_cmd") throw { code: "UPDATE_PREF_FAILED", message: "disk full" };
+    return null;
+  });
+  expect(notice().hidden).toBe(false);
+  fireEvent.click(document.getElementById("update-notice-close")!);
+  await settle();
+  expect(notice().hidden).toBe(true);
+  // 再手动查一次，查到的还是同一版：这次运行里已经关掉了，不再冒出来。
+  fireEvent.click(document.getElementById("update-check")!);
+  await settle();
+  expect(calls.filter((call) => call === "check_update_cmd")).toHaveLength(2);
+  expect(notice().hidden).toBe(true);
+  expect(dots().every((dot) => dot.hidden)).toBe(true);
+});

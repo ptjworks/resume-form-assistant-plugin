@@ -16,7 +16,7 @@ import {
   registrationCompleted,
 } from "./browser-link.ts";
 import type { NativeMessagingRegistrationOutcome } from "./browser-link.ts";
-import { describeCheckFailure, describeUpdate, formatCheckedAt, parseCheckedAt, shouldCheck, updateNotice } from "./update-check.ts";
+import { compareVersions, describeCheckFailure, describeUpdate, formatCheckedAt, parseCheckedAt, shouldCheck, updateNotice } from "./update-check.ts";
 import type { UpdateInfo, UpdatePreference } from "./update-check.ts";
 import { mountApplications } from "./applications-ui.ts";
 import { mountInbox } from "./inbox-ui.ts";
@@ -633,9 +633,27 @@ function showUpdate(message: { tone: string; text: string; available: boolean })
 
 /** 主界面顶栏下的提示条，以及「设置」「关于与诊断」上的小圆点。 */
 let shownNotice: UpdateInfo | null = null;
+let lastPref: UpdatePreference | null = null;
+// 这次运行里查成的结果（undefined 是还没查成过）和关掉的版本。偏好文件写不进去时，
+// 不能让读回来的旧文件把它们盖掉；文件只管跨启动接着提示。
+let checkedThisRun: UpdateInfo | null | undefined;
+let dismissedThisRun: string | null = null;
+
+function withThisRun(pref: UpdatePreference): UpdatePreference {
+  const saved = pref.dismissedVersion ?? null;
+  const dismissed = saved && dismissedThisRun
+    ? (compareVersions(saved, dismissedThisRun) >= 0 ? saved : dismissedThisRun)
+    : saved ?? dismissedThisRun;
+  return {
+    ...pref,
+    available: checkedThisRun === undefined ? pref.available : checkedThisRun,
+    dismissedVersion: dismissed,
+  };
+}
 
 function showNotice(pref: UpdatePreference | null) {
-  const notice = pref && currentAppVersion ? updateNotice(pref, currentAppVersion) : null;
+  lastPref = pref;
+  const notice = pref && currentAppVersion ? updateNotice(withThisRun(pref), currentAppVersion) : null;
   shownNotice = notice;
   must("update-notice").hidden = !notice;
   must("update-notice-text").textContent = notice ? describeUpdate(currentAppVersion, notice).text : "";
@@ -658,6 +676,7 @@ async function checkUpdate(currentVersion: string) {
   showUpdate({ tone: "pending", text: "正在检查更新…", available: false });
   try {
     pendingUpdate = (await invoke<UpdateInfo | null>("check_update_cmd")) ?? null;
+    checkedThisRun = pendingUpdate;
     showUpdate(describeUpdate(currentVersion, pendingUpdate));
   } catch (error) {
     pendingUpdate = null;
@@ -706,9 +725,11 @@ must("update-notice-open").addEventListener("click", async () => {
 
 must("update-notice-close").addEventListener("click", async () => {
   const version = shownNotice?.version;
-  // 先收起来：存不上也不该让一条提示关不掉，最多下次启动再出现一次。
-  showNotice(null);
-  if (!invoke || !version) return;
+  if (!version) return;
+  // 先在这次运行里记下并收起：存不上也不该让一条提示关不掉，最多下次启动再出现一次。
+  dismissedThisRun = version;
+  showNotice(lastPref);
+  if (!invoke) return;
   try {
     showNotice(await invoke<UpdatePreference>("dismiss_update_cmd", { version }));
   } catch {
