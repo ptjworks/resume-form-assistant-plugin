@@ -2410,7 +2410,7 @@
   }
 
   // 停下来时记下的值留到下一次一键填写：records 是传简历之前的样子，stopValues 是停下那一刻每个框的值。
-  // edited(index, entry) 为真的框是用户等解析时自己动过的，记成 UPLOAD_EDITED，下一次不改回。
+  // edited(index, entry, record) 为真的框是用户等解析时自己动过的，记成 UPLOAD_EDITED，下一次不改回。
   // 接着上次的记录又停下时，上次停下以后变过的框认不准是谁改的，记成 UPLOAD_UNSURE，也不改回。
   function keepPending(records, edited = () => false) {
     const earlier = upload.pending?.records === records ? upload.pending.stopValues || null : null;
@@ -2422,7 +2422,7 @@
     }
     const stopValues = records.map((record, index) => {
       if ([UPLOAD_EDITED, UPLOAD_UNSURE].includes(earlier?.[index])) return earlier[index];
-      if (edited(index, located[index])) return UPLOAD_EDITED;
+      if (edited(index, located[index], record)) return UPLOAD_EDITED;
       let value = null;
       try { value = located[index] ? fillValueSnapshot(located[index]) : null; } catch { value = null; }
       return earlier && earlier[index] !== value ? UPLOAD_UNSURE : value;
@@ -2833,7 +2833,9 @@
     const onPage = (entry) => Boolean(uploadNode(entry)?.isConnected) && !documentGone(entryDocument(entry));
     let bound = records.map((record) => record.entry);
     let boundAt = -Infinity;
-    return () => {
+    // 每个记录先后对到过的框，第一个是传简历之前那个：用户在网站重画之前的旧框里动过，也认得出（见 runUpload 的 edited）。
+    const history = new Map(records.map((record) => [record, record.entry ? [record.entry] : []]));
+    const values = () => {
       const lost = bound.some((entry) => entry && !onPage(entry));
       const unbound = bound.some((entry) => !entry) && uploadClock.now() - boundAt >= 1000;
       if (lost || unbound) {
@@ -2843,6 +2845,10 @@
           bound = records.map(() => null);
         }
         boundAt = uploadClock.now();
+        bound.forEach((entry, index) => {
+          const seen = history.get(records[index]);
+          if (entry && seen && !seen.some((old) => uploadNode(old) === uploadNode(entry))) seen.push(entry);
+        });
       }
       return bound.map((entry) => {
         if (!entry) return "?";
@@ -2853,6 +2859,8 @@
         }
       }).join("\u0001");
     };
+    values.history = (record) => history.get(record) || (record?.entry ? [record.entry] : []);
+    return values;
   }
 
   // 等解析时每 200ms 读一次：记下的框现在的值（见 parseValues，加上页面上输入框的个数）、网页忙不忙、
@@ -2877,7 +2885,7 @@
   }
 
   // 把网站解析改掉的、用户原来填的值写回去。只写认得准的框；读不准原值的控件（多选、级联、勾选）、找不到的框列出来请用户核对。
-  // edited(index, entry) 为真的框是用户等解析时自己动过的：不写，列出来（edited）。
+  // edited(index, entry, record) 为真的框是用户等解析时自己动过的：不写，列出来（edited）。
   // stopValues：上次停下那一刻每个框的值（接着上次被打断的改回时才有）。停下以后又变过的框，可能是用户自己改的，
   // 也可能是网站后来写的，认不准：不写，列出来（later）。中途停下时，还没看的已填项列出来（left）。
   async function restoreFormValues(records, stopValues = null, edited = () => false) {
@@ -2897,7 +2905,7 @@
       }
       const now = fillValueSnapshot(entry);
       if (now === null || now === record.snapshot) continue;
-      if (stopValues?.[index] === UPLOAD_EDITED || edited(index, entry)) {
+      if (stopValues?.[index] === UPLOAD_EDITED || edited(index, entry, record)) {
         out.edited.push(record.label);
         continue;
       }
@@ -3003,6 +3011,8 @@
     let parsed = [];
     let parsedLeft = [];
     let watcher = null;
+    // 记下的框先后对到过的框（传简历之前那个，等解析时重画出来的新框，见 parseValues）。
+    let boundBefore = (record) => (record?.entry ? [record.entry] : []);
     upload.phase = "running";
     upload.stop = false;
     upload.result = null;
@@ -3010,9 +3020,10 @@
       upload.step = stage;
       if (button) { button.textContent = text; button.disabled = true; }
     };
-    // 用户等解析时自己动过的框（见 watchUserEdits）：不改回，停下时也记成不改回。
-    const edited = (index, entry) => Boolean(watcher?.touched(entry));
-    // 交给框之前再扫一遍要传的框：换了控件、类别、收的格式、大小上限或所在分组，这张卡片就作废，一个都不再传，请用户重新确认。
+    // 用户等解析时自己动过的框（见 watchUserEdits）：不改回，停下时也记成不改回。用户动的是网站重画之前的旧框也算：
+    // 网站把这一题整个重画了、留着用户写的值，现在的框里没有用户点过的节点，只看它会把用户刚写的改回去。
+    const edited = (index, entry, record = null) => Boolean(watcher?.touched(entry) || boundBefore(record).some((old) => watcher?.touched(old)));
+    // 交给框之前再扫一遍要传的框：换了控件、类别、要的中英文、收的格式、大小上限或所在分组，这张卡片就作废，一个都不再传，请用户重新确认。
     // 框里已经有文件的，只是那个框不传。
     // 网站重画了框、还认得出是哪个：接着用现在页面上的那个（见 recheck）。
     const cardVoid = (list) => {
@@ -3098,7 +3109,14 @@
           }
           step("正在上传简历…");
           watcher = watchUserEdits(docs);
-          for (const item of first) {
+          for (const [index, item] of first.entries()) {
+            // 前一份简历交出去以后，网站可能改了后面的框：每交一份之前都再扫一遍还没交的，对不上就作废这张卡片。
+            if (sent.length && cardVoid(first.slice(index).filter((rest) => !rest.outcome))) {
+              for (const done of sent) done.outcome = uploadOutcome(api.state(done.slot, done.file.name, done.seen, docs, isVisible, { withDialogs: false, now: uploadClock.now() }));
+              holdRecords(records);
+              voidCard("上传框和确认时不一样了，这张卡片作废，后面的文件没有上传，也没有填写。请重新点一键填写，再确认一次。");
+              return;
+            }
             if (item.outcome) continue;
             item.seen = api.before(item.slot, docs, isVisible);
             const put = api.put(item.slot, files.get(item.file.fileId).file);
@@ -3114,6 +3132,7 @@
           const timing = self.ResumeProSiteKnowledge?.parseTiming?.(upload.platform)
             || { known: false, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000 };
           const values = parseValues(records);
+          boundBefore = values.history;
           parse = await api.waitForParse(() => readParse(values, sent, docs, busyBaseline), {
             ...timing, now: uploadClock.now, sleep: uploadClock.sleep,
             stopped: () => upload.stop || location.href !== upload.href,

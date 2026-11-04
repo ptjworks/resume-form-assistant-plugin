@@ -519,7 +519,7 @@ test("words in scripts, styles and noscript are not a 'parsing' line", () => {
   assert.equal(slots.busy([doc], isVisible, () => false, baseline), true, "the same words shown on the page count");
 });
 
-test("whether a box wants a Chinese or an English resume is read from its title, button and hints alike", () => {
+test("whether a box wants a Chinese or an English resume is read from its title, button and hints alike, and checked again before the file goes in", () => {
   // 题目只写了「附件」，提示里说要英文简历：认成简历框、要英文的，选英文那份。
   const doc = page(antd({ id: "a", title: "附件", accept: ".pdf", extra: "请上传英文简历（English CV）" }));
   const [slot] = found(doc);
@@ -531,6 +531,12 @@ test("whether a box wants a Chinese or an English resume is read from its title,
   const [english] = found(titled);
   assert.deepEqual(english.language, ["en"]);
   assert.equal(slots.chooseFile(english, FILES).fileId, "r2");
+  // 确认以后提示改成要中文简历（题目、类别、accept、大小上限都没变）：不是确认时那个框了，卡片作废。
+  const options = { isVisible, describe };
+  assert.equal(slots.recheck(slot, options).state, "");
+  doc.querySelector(".ant-form-item-extra").textContent = "请上传中文简历";
+  assert.deepEqual(found(doc)[0].language, ["zh"]);
+  assert.equal(slots.recheck(slot, options).state, "changed");
   // 题目、提示都没说：不按语言挑，用默认的那份。
   const plain = page(antd({ id: "b", title: "简历附件", accept: ".pdf", extra: "支持 PDF" }));
   const [other] = found(plain);

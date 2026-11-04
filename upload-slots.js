@@ -446,7 +446,7 @@
     return { state: "none", message: said(aside) };
   }
 
-  // 交给框之前再看一眼：还是确认时那个框，题目、认成的类别、收的格式、大小上限都没变，框里也还没有文件。
+  // 交给框之前再看一眼：还是确认时那个框，题目、认成的类别、要中文还是英文、收的格式、大小上限都没变，框里也还没有文件。
   // 认框不只看节点：网站把这个框重画了（file 框、上传区、表单项换成了新节点）也不要紧，原来的表单项里、或者整页只有一个
   // 题目、类别、accept、大小上限都一样的框，就是它，接着用新的。原来的 file 框还在、却挪到了别的表单项，也要整页只有它一个
   // 这样的框才认。返回 { state, slot }：state 为 "" 可以传，slot 是现在页面上的这个框；"changed" 框变了或认不准是哪个
@@ -459,8 +459,10 @@
     } catch {
       slots = [];
     }
+    // 要的语言也要一样：题目没说时它来自提示，提示改了要的语言（英文改成中文），按原来的要求挑的文件就不对了。
+    const spoken = item => String(item.language || []);
     const alike = slots.filter(item => item.title === slot.title && item.kind === slot.kind
-      && item.accept === slot.accept && item.limit === slot.limit);
+      && item.accept === slot.accept && item.limit === slot.limit && spoken(item) === spoken(slot));
     const same = slots.find(item => item.input === slot.input) || null;
     let fresh = null;
     if (same) {

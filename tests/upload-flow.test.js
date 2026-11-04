@@ -692,6 +692,33 @@ test("a box the user changes while the site parses is not put back, and the resu
   assert.match(p.ui.diag.value, /改回 0，没改回 0，停下后又变过 0，等解析时用户改过 1，/);
 });
 
+// 网站把这一题整个重画：换成新节点，框里留着现在的值。
+function redrawQuestion(p, id) {
+  const value = p.w.document.getElementById(id).value;
+  const item = p.w.document.getElementById(id).closest(".form-item");
+  item.outerHTML = item.outerHTML;
+  p.w.document.getElementById(id).value = value;
+}
+
+for (const [name, redrawn] of [["after it", [6000]], ["before it and again after it", [4000, 6000]]]) {
+  test(`a box the user changed while the site parses stays the user's when the site draws that question again ${name}`, async (t) => {
+    const p = await page(t, FORM, { answers: { "毕业院校": "示例大学" } });
+    fakeSite(p);
+    // 网站 3 秒时清空兴趣爱好；用户 5 秒时写了游泳；网站在这之前、之后把兴趣爱好这一题整个重画，新框里留着用户写的游泳。
+    p.w.document.getElementById("resume").addEventListener("change", () => {
+      p.time.after(5000, () => typeAsUser(p, "hobby", "游泳"));
+      for (const at of redrawn) p.time.after(at, () => redrawQuestion(p, "hobby"));
+    });
+    await p.send({ type: "RESUME_PANEL_FILL" });
+    await p.confirm();
+    const done = await p.finished();
+    await Promise.all(p.fills);
+    assert.equal(p.value("hobby"), "游泳", "not put back");
+    assert.ok(done.upload.lines.includes("等网站解析时你改过这几项，没有改回，请核对：兴趣爱好。"), done.upload.lines.join(" | "));
+    assert.equal(done.upload.lines.some((line) => line.startsWith("改回了")), false);
+  });
+}
+
 test("after a stop, a box the user changed while the site was parsing is not put back either", async (t) => {
   const form = FORM + row("city", "期望城市", `<input id="city" value="北京">`);
   const p = await page(t, form, { answers: { "毕业院校": "示例大学" } });
@@ -746,6 +773,27 @@ test("a photo box that changed by the time it is reached is not uploaded; the ca
   assert.equal(p.value("school"), "示例大学");
   assert.equal(p.w.document.getElementById("photo").files.length, 0);
   assert.ok(done.upload.lines.includes("上传框和确认时不一样了，这张卡片作废，后面的文件没有上传。请重新点一键填写，再确认一次。"), done.upload.lines.join(" | "));
+});
+
+test("with two resume boxes, a change the first upload makes to the second box voids the card before the second goes in", async (t) => {
+  const p = await page(t, FORM + antdUpload("resume2", "英文简历"), { answers: { "毕业院校": "示例大学" } });
+  fakeSite(p);
+  // 第一份简历交给网站时，网站把第二个简历框改成只收 Word。
+  p.w.document.getElementById("resume").addEventListener("change", () => p.w.document.getElementById("resume2").setAttribute("accept", ".doc,.docx"));
+  await p.send({ type: "RESUME_PANEL_FILL" });
+  const offer = (await p.status()).upload;
+  // 会覆盖的平台只自动给一个简历框配文件：第二个简历框是用户在卡片上自己选的。
+  const second = offer.slots.find((slot) => slot.title === "英文简历");
+  assert.equal(second.reason, "one_resume");
+  await p.confirm([...offer.slots.filter((slot) => slot.fileId).map((slot) => ({ slot: slot.id, fileId: slot.fileId })),
+    { slot: second.id, fileId: RESUME_FILE.fileId }]);
+  const done = await p.finished();
+  assert.equal(p.w.document.getElementById("resume").files[0].name, RESUME_FILE.name);
+  assert.equal(p.w.document.getElementById("resume2").files.length, 0, "not into a box that no longer matches the yes");
+  assert.equal(p.w.document.getElementById("photo").files.length, 0);
+  assert.equal(p.fills.length, 0);
+  assert.equal(p.value("school"), "");
+  assert.ok(done.upload.lines.includes("上传框和确认时不一样了，这张卡片作废，后面的文件没有上传，也没有填写。请重新点一键填写，再确认一次。"), done.upload.lines.join(" | "));
 });
 
 test("on a platform that parses, a stop before the resume reaches the site keeps the record; the next fill lists what changed since", async (t) => {
