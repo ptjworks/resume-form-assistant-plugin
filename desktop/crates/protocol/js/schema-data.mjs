@@ -3,13 +3,17 @@ export const SCHEMA_DATA = {
   "rules": {
     "protocolVersion": 2,
     "minProtocolVersion": 1,
-    "maxProtocolVersion": 4,
+    "maxProtocolVersion": 6,
     "maxEnvelopeBytes": 65536,
     "suggestedRawChunkBytes": 32768,
     "maxSnapshotBytes": 2097152,
     "maxReconcileItems": 32,
     "maxChunkCount": 128,
     "maxAssemblerSessions": 16,
+    "resumeFileChunkBytes": 45054,
+    "maxResumeFileBytes": 10485760,
+    "maxResumeFileChunkCount": 233,
+    "maxResumeFiles": 30,
     "occurredAtSubset": "UTC RFC3339: YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS.fractionZ with a real calendar date and clock; Z only, no numeric offsets.",
     "identityForbidden": [
       "health",
@@ -29,7 +33,11 @@ export const SCHEMA_DATA = {
       "resume.read",
       "resume.update",
       "legacy.import",
-      "mail.import"
+      "mail.import",
+      "siteAnswers.read",
+      "siteAnswers.save",
+      "resumeFiles.list",
+      "resumeFiles.read"
     ],
     "writeTypes": [
       "job.save",
@@ -53,7 +61,11 @@ export const SCHEMA_DATA = {
       "legacy.import",
       "usage.touch",
       "usage.settings",
-      "mail.import"
+      "mail.import",
+      "siteAnswers.read",
+      "siteAnswers.save",
+      "resumeFiles.list",
+      "resumeFiles.read"
     ],
     "v2MessageTypes": [
       "resume.read",
@@ -119,6 +131,14 @@ export const SCHEMA_DATA = {
     ],
     "v4MessageTypes": [
       "mail.import"
+    ],
+    "v5MessageTypes": [
+      "siteAnswers.read",
+      "siteAnswers.save"
+    ],
+    "v6MessageTypes": [
+      "resumeFiles.list",
+      "resumeFiles.read"
     ]
   },
   "envelope": {
@@ -166,7 +186,11 @@ export const SCHEMA_DATA = {
           "legacy.import",
           "usage.touch",
           "usage.settings",
-          "mail.import"
+          "mail.import",
+          "siteAnswers.read",
+          "siteAnswers.save",
+          "resumeFiles.list",
+          "resumeFiles.read"
         ]
       },
       "occurredAt": {
@@ -817,6 +841,40 @@ export const SCHEMA_DATA = {
         }
       }
     },
+    "resume-files-list": {
+      "$id": "https://resumepro.local/protocol/payloads/resume-files-list.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {}
+    },
+    "resume-files-read": {
+      "$id": "https://resumepro.local/protocol/payloads/resume-files-read.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fileId",
+        "sha256",
+        "chunkIndex"
+      ],
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "sha256": {
+          "description": "要读的那一版文件的 SHA-256：桌面里这个文件换过、删过就回 conflict",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "chunkIndex": {
+          "description": "第几块，每块 resumeFileChunkBytes 字节",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 232
+        }
+      }
+    },
     "resume-read": {
       "$id": "https://resumepro.local/protocol/payloads/resume-read.json",
       "type": "object",
@@ -936,6 +994,70 @@ export const SCHEMA_DATA = {
         "expectedRevision": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "site-answers-read": {
+      "$id": "https://resumepro.local/protocol/payloads/site-answers-read.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site"
+      ],
+      "properties": {
+        "site": {
+          "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "site-answers-save": {
+      "$id": "https://resumepro.local/protocol/payloads/site-answers-save.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site",
+        "answers"
+      ],
+      "properties": {
+        "site": {
+          "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "answers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "previous": {
+                "description": "用户确认时看到的桌面旧回答；不带表示桌面里本来没有这道题",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            }
+          }
         }
       }
     },
@@ -1167,7 +1289,7 @@ export const SCHEMA_DATA = {
         "capabilities": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 16,
+          "maxItems": 32,
           "items": {
             "type": "string",
             "enum": [
@@ -1186,7 +1308,11 @@ export const SCHEMA_DATA = {
               "legacy.import",
               "usage.touch",
               "usage.settings",
-              "mail.import"
+              "mail.import",
+              "siteAnswers.read",
+              "siteAnswers.save",
+              "resumeFiles.list",
+              "resumeFiles.read"
             ]
           }
         }
@@ -1427,6 +1553,146 @@ export const SCHEMA_DATA = {
         }
       }
     },
+    "resume-files-list": {
+      "$id": "https://resumepro.local/protocol/responses/resume-files-list.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fileId",
+              "kind",
+              "name",
+              "label",
+              "mime",
+              "byteSize",
+              "sha256",
+              "isDefault",
+              "templateIds",
+              "updatedAt"
+            ],
+            "properties": {
+              "fileId": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "resume",
+                  "photo",
+                  "transcript",
+                  "other"
+                ]
+              },
+              "name": {
+                "description": "上传时用的文件名",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "label": {
+                "description": "用户写的说明，比如「英文简历」；没写是空串",
+                "type": "string",
+                "maxLength": 30
+              },
+              "mime": {
+                "type": "string",
+                "enum": [
+                  "application/pdf",
+                  "application/msword",
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                  "image/jpeg",
+                  "image/png"
+                ]
+              },
+              "byteSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10485760
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "isDefault": {
+                "type": "boolean"
+              },
+              "templateIds": {
+                "description": "用于哪些模板；空数组是所有模板。绑定的模板删掉后 id 还留着，这样的文件不用于别的模板",
+                "type": "array",
+                "maxItems": 25,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              },
+              "updatedAt": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "resume-files-read": {
+      "$id": "https://resumepro.local/protocol/responses/resume-files-read.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fileId",
+        "sha256",
+        "byteSize",
+        "chunkIndex",
+        "chunkCount",
+        "chunkSha256",
+        "bytesBase64"
+      ],
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10485760
+        },
+        "chunkIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 232
+        },
+        "chunkCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 233
+        },
+        "chunkSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytesBase64": {
+          "description": "这一块的字节，标准 base64；45054 字节是 60072 个字符",
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 60072
+        }
+      }
+    },
     "resume-read": {
       "$id": "https://resumepro.local/protocol/responses/resume-read.json",
       "type": "object",
@@ -1597,6 +1863,88 @@ export const SCHEMA_DATA = {
         "profileRevision": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "site-answers-read": {
+      "$id": "https://resumepro.local/protocol/responses/site-answers-read.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site",
+        "answers"
+      ],
+      "properties": {
+        "site": {
+          "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "answers": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            }
+          }
+        }
+      }
+    },
+    "site-answers-save": {
+      "$id": "https://resumepro.local/protocol/responses/site-answers-save.json",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site",
+        "answers"
+      ],
+      "properties": {
+        "site": {
+          "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "answers": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            }
+          }
         }
       }
     },

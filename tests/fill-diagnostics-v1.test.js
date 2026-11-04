@@ -233,6 +233,14 @@ test("fields the AI never saw are not counted as AI misses", () => {
   // 只有一部分字段送了 AI：AI 未匹配的数量以 aiFields 为上限，其余算没送 AI。
   assert.deepEqual(core.fillDrops({ ...base, diagnostics: { errorCode: "none", ruleMatches: 0, aiFields: 1,
     promptBytes: 50, aiMatches: 0, skippedNoContext: 0 } }), [["ai_unmatched", 1], ["not_sent", 2]]);
+  // #429 第 11 项：AI 看过、资料里没有现成回答的开放题单独记；请求失败时照旧算没拿到结果。
+  assert.deepEqual(core.fillDrops({ ...base, diagnostics: { errorCode: "none", ruleMatches: 0, aiFields: 3,
+    promptBytes: 300, aiMatches: 1, skippedNoContext: 0, openUnanswered: 1 } }), [["ai_unmatched", 1], ["open_question", 1]]);
+  assert.deepEqual(core.fillDrops({ ...base, diagnostics: { errorCode: "timeout", ruleMatches: 0, aiFields: 3,
+    promptBytes: 300, aiMatches: 0, skippedNoContext: 0, openUnanswered: 2 } }), [["no_result", 3]]);
+  // AI 的回答被拦下、只报原因的（aiBlocked）：网页记作没写上，不再算 AI 未匹配。
+  assert.deepEqual(core.fillDrops({ ...base, unfilledCount: 1, diagnostics: { errorCode: "none", ruleMatches: 0, aiFields: 3,
+    promptBytes: 300, aiMatches: 1, aiBlocked: 1, skippedNoContext: 0 } }), [["ai_unmatched", 1], ["not_written", 1]]);
 });
 
 test("the longest valid lines still pass the allowlist instead of being dropped whole", () => {
@@ -243,14 +251,15 @@ test("the longest valid lines still pass the allowlist instead of being dropped 
       popup: big, pageChrome: big, siteSearch: big, outsideForm: big, noLabel: big,
       sources: { explicit: big, item: big, table: big, sibling: big, placeholder: big }, offerSkipped: { ambiguous: big, entry: big } },
     fieldCount: big, matched: big, filledCount: big, unfilledCount: big, unconfirmedCount: big, unsyncedCount: big, keptCount: big, requested: true,
-    diagnostics: { ruleMatches: 1, aiFields: big, aiMatches: 1, promptBytes: 10, apiMs: 1, secretFormFields: 1, skippedNoContext: 1, errorCode: "none" },
+    diagnostics: { ruleMatches: 1, aiFields: big, aiMatches: 1, promptBytes: 10, apiMs: 1, secretFormFields: 1, skippedNoContext: 1, errorCode: "none",
+      openUnanswered: 500000 },
     probe: { ...IFRAME_PAGE.probe, custom: { total: big, byLibrary: Object.fromEntries(
       ["antd", "element", "arco", "iview", "semi", "vant", "layui", "mui", "其他"].map(name => [name, big])) } },
     genericCustom: big,
     unfilledControls: [{ label: "参加工作时间", reasonCode: "framework_state_unsynced", observed: { opened: "component", hasOptions: true },
       control: { tag: "input", type: "checkbox", role: "checkbox", popup: "listbox", readOnly: true, picker: "element", library: "element" } }] });
   const drops = /^drop_reasons: (.*)$/m.exec(report);
-  assert.ok(drops && drops[1].split(",").length === 18, report);
+  assert.ok(drops && drops[1].split(",").length === 19, report);
   assert.match(report, /^label_sources: (?:[a-z]+=999999,){4}placeholder=999999$/m);
   assert.match(report, /^offer_skipped: ambiguous=999999,entry=999999$/m);
   assert.match(report, /^custom_libraries: (?:[a-z]+=999999,){8}generic=999999,other=999999$/m);

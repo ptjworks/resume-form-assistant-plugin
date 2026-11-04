@@ -482,6 +482,62 @@ export interface ProfileRecordView {
   revision: number;
 }
 
+/** 按网站记住的一个回答（#429）。`site` 是插件按网址算的网站，`question` 是用户看到的题目原文。 */
+export interface SiteAnswerView {
+  site: string;
+  question: string;
+  answer: string;
+  updatedAt: string;
+}
+
+/** #429：网申时上传的文件的种类。 */
+export type ResumeFileKind = "resume" | "photo" | "transcript" | "other";
+
+/** #429：「简历资料 › 附件」里的一个文件。只有元数据，字节不下发到界面。 */
+export interface ResumeFileView {
+  id: string;
+  kind: ResumeFileKind;
+  /** 上传时用的文件名。 */
+  name: string;
+  label: string;
+  mime: string;
+  byteSize: number;
+  sha256: string;
+  isDefault: boolean;
+  /** 用于哪些模板；空数组是所有模板。绑定的模板删掉后 id 还留着，这样的文件不用于别的模板。 */
+  templateIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** #429：读不出来的一条附件记录（存储位置不对、种类认不出、模板绑定读不出）。不当文件用，只能删掉。 */
+export interface DamagedResumeFileView {
+  id: string;
+  name: string;
+  reason: string;
+}
+
+/** #429：附件页的内容：能用的文件，和读不出来的记录。 */
+export interface ResumeFileListing {
+  files: ResumeFileView[];
+  damaged: DamagedResumeFileView[];
+}
+
+/**
+ * #429：删除的结果和删除以后的列表。`deleted` 是有没有删到记录。`listing` 是删除以后的列表，删除之后读列表失败时
+ * 是 null（界面留着原来的）。`stuckInTmp`：这次挪进档案 tmp/ 的文件最后还在那里，`not_removed` 是本该删掉没删掉，
+ * `not_restored` 是本该挪回原处没挪回去。`leftovers` 是附件目录顶层还会让备份停下的文件；`manual` 是
+ * 附件目录顶层不是普通文件的东西（目录、链接之类），备份不收也不管，要用户自己处理；核对出错时 `unchecked` 是原因。
+ */
+export interface ResumeFileDeleted {
+  listing: ResumeFileListing | null;
+  deleted: boolean;
+  stuckInTmp: "not_removed" | "not_restored" | null;
+  leftovers: string[];
+  manual: string[];
+  unchecked: string | null;
+}
+
 /** 插件旧数据的一批导入（#130 PR 5）。只有状态与计数，不含任何内容。 */
 export interface LegacyImportPending {
   importId: string;

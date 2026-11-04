@@ -1,0 +1,21 @@
+{
+  "protocolVersion": 6,
+  "correlationId": "66666666-6666-4666-8666-666666666611",
+  "ok": true,
+  "payload": {
+    "files": [
+      {
+        "fileId": "66666666-6666-4666-8666-666666666602",
+        "kind": "photo",
+        "name": "证件照.pdf",
+        "label": "",
+        "mime": "application/pdf",
+        "byteSize": 5,
+        "sha256": "55c64d0fcd6f9d5f7c828093857e3fdfda68478bb4e9bd24d481ef391c7804e8",
+        "isDefault": false,
+        "templateIds": [],
+        "updatedAt": "2026-11-03T08:00:00Z"
+      }
+    ]
+  }
+}

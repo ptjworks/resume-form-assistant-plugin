@@ -9,10 +9,10 @@ fn open(root: &std::path::Path) -> ArchiveStore {
 }
 
 #[test]
-fn a_new_archive_is_on_schema_v7() {
+fn a_new_archive_is_on_schema_v9() {
     let dir = tempfile::tempdir().unwrap();
     let _db = open(dir.path());
-    assert_eq!(current_schema_version(), 7);
+    assert_eq!(current_schema_version(), 9);
     let raw = rusqlite::Connection::open(config(dir.path()).db_path()).unwrap();
     let tables: Vec<String> = raw
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'resume_%' ORDER BY name")
@@ -23,7 +23,8 @@ fn a_new_archive_is_on_schema_v7() {
         .unwrap();
     // `resume_snapshots` predates #130 (v1 schema, resume snapshot metadata unrelated to
     // templates/profile); the plan's assertion assumed no other `resume_%` table existed.
-    assert_eq!(tables, vec!["resume_snapshots", "resume_state", "resume_templates"]);
+    // `resume_files` (v9, #429) holds the files uploaded to job sites.
+    assert_eq!(tables, vec!["resume_files", "resume_snapshots", "resume_state", "resume_templates"]);
 }
 
 fn field(key: &str, value: &str) -> TemplateField {

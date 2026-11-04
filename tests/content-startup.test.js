@@ -131,7 +131,7 @@ for (const [name, options] of [
 
 test("#275: the scripts with a CommonJS export still export their api under Node", () => {
   const exporting = SCRIPTS.filter((file) => SOURCES[file].includes("module.exports ="));
-  assert.equal(exporting.length, 14);
+  assert.equal(exporting.length, 16);
   for (const file of exporting) {
     assert.ok(Object.keys(require(path.join(root, file))).length > 0, `${file} exports its api`);
   }
@@ -267,8 +267,9 @@ test("a missing helper leaves the page not ready and is reported once, without i
 });
 
 test("startup checks for every helper, not only the one #275 lost", async () => {
-  // Mail has its own listener and is not a prerequisite of the filling controller.
-  for (const file of SCRIPTS.filter((name) => name !== "content.js" && name !== "webmail.js")) {
+  // Mail has its own listener and is not a prerequisite of the filling controller. Upload boxes
+  // (#429) are not one either: without them uploading is off and filling works (see below).
+  for (const file of SCRIPTS.filter((name) => !["content.js", "webmail.js", "upload-slots.js"].includes(name))) {
     const page = await openPage({ scripts: SCRIPTS.filter((name) => name !== file) });
     assert.deepEqual(page.rejections, [], file);
     assert.equal(page.hosts(), 0, file);
@@ -279,6 +280,13 @@ test("startup checks for every helper, not only the one #275 lost", async () => 
   const withoutMail = await openPage({ scripts: SCRIPTS.filter((name) => name !== "webmail.js") });
   assertStarted(withoutMail);
   assert.equal((await withoutMail.status()).ready, true);
+  const withoutUploads = await openPage({ scripts: SCRIPTS.filter((name) => name !== "upload-slots.js") });
+  assert.deepEqual(withoutUploads.thrown, []);
+  assert.deepEqual(withoutUploads.missing(), ["ResumeProUploadSlots"]);
+  assert.deepEqual(withoutUploads.rejections, []);
+  assert.equal(withoutUploads.hosts(), 1);
+  assert.equal((await withoutUploads.status()).ready, true);
+  assert.equal(withoutUploads.reports.length, 0, "nothing to report: only uploading is off");
 });
 
 test("a failure while the controller is being built hides what was already put on the page", async () => {

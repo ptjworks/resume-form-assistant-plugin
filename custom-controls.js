@@ -184,6 +184,8 @@
   // #429 多选下拉的已选标签：文字和标签上的删除按钮。按 2026-10-31 在 Chromium 里跑的 antd 5.21.6、ant-design-vue 1.7.8、
   // Element UI 2.15.14、Element Plus 2.8.8 看到的结构：antd 4/5 是 .ant-select-selection-item（在 overflow 的条目里），
   // antd 3 和 ant-design-vue 1.x 是 .ant-select-selection__choice，Element 是 .el-tag（文字在 .el-select__tags-text 里）。
+  // antd 6（@rc-component/select 1.x，2026-11-02 在 antd 6.6.8 上看到）的条目外层换成了 .ant-select-content-item，
+  // 折起来的一格是 .ant-select-content-item-rest，标签本身还是 .ant-select-selection-item。
   // 折起来的标签（antd 的 maxTagCount 留下「+ 2 ...」，Element 的 collapse-tags 留下「+ 2」）读不全，返回 null。
   // 折起来的那一格：写着「+ 2」「+ 2 ...」「+2…」，没有删除按钮（真组件上都是这样）。选项本身叫「+86」的标签带删除按钮，不算。
   const COLLAPSED_TAG = /^\+\s*\d+\s*(?:\.\.\.|…)?$/;
@@ -193,12 +195,13 @@
     if (!root?.isConnected) return null;
     if (library === 'antd') {
       // 不折起来的时候 antd 也可能留着这一格，只是看不见（rc-overflow 给 opacity: 0）：看得见、写着「+ N」才算折起来。
-      const rest = root.querySelector(antd(root, '.ant-select-selection-overflow-item-rest'));
+      const rest = root.querySelector(antd(root, '.ant-select-selection-overflow-item-rest, .ant-select-content-item-rest'));
       const css = rest?.ownerDocument?.defaultView?.getComputedStyle?.(rest);
       if (rest && !rest.hidden && css?.display !== 'none' && css?.visibility !== 'hidden' && parseFloat(css?.opacity ?? '1') !== 0
         && /^\+\s*\d/.test(trim(rest.textContent))) return null;
       // antd 3 和 ant-design-vue 1.x 的 maxTagCount 把多出来的折成一个写着「+ 2 ...」的 choice（2026-11-01 在 ant-design-vue 1.7.8 上看到）。
-      const tags = Array.from(root.querySelectorAll(antd(root, '.ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix):not(.ant-select-selection-overflow-item-rest) .ant-select-selection-item, .ant-select-selection__choice')), node => ({
+      const tags = Array.from(root.querySelectorAll(antd(root, '.ant-select-selection-overflow-item:not(.ant-select-selection-overflow-item-suffix):not(.ant-select-selection-overflow-item-rest) .ant-select-selection-item, '
+        + '.ant-select-content-item:not(.ant-select-content-item-suffix):not(.ant-select-content-item-rest) .ant-select-selection-item, .ant-select-selection__choice')), node => ({
         node, text: trim((node.querySelector(antd(node, '.ant-select-selection-item-content, .ant-select-selection__choice__content')) || node).textContent),
         remove: node.querySelector(antd(node, '.ant-select-selection-item-remove, .ant-select-selection__choice__remove')) })).filter(tag => tag.text);
       return tags.some(collapsedTag) ? null : tags;
@@ -261,6 +264,13 @@
     }
     if (selector) {
       const values = Array.from(root.querySelectorAll(selector), node => trim(node.textContent)).filter(Boolean);
+      // antd 6（@rc-component/select 1.x，2026-11-02 在 antd 6.6.8 上看到）的单选和级联不再套 selection-item：
+      // 已选文字直接写在根下面的 .ant-select-content 里（选项带样式时套一层 .ant-select-content-value），旁边是输入框，
+      // 搜索时打的字在输入框里；没选时是 .ant-select-placeholder。
+      const content = library === 'antd' && !info.multiple && !values.length ? root.querySelector(antd(root, ':scope > .ant-select-content')) : null;
+      const shown = content ? trim(Array.from(content.childNodes).filter(node => node.nodeType === 3
+        || (node.nodeType === 1 && !node.matches(antd(node, 'input, .ant-select-placeholder')))).map(node => node.textContent).join('')) : '';
+      if (shown) values.push(shown);
       if (values.length) return cascade ? values.join(' / ').split(/\s*(?:\/|>|→)\s*/).filter(Boolean) : values;
       // Element UI (Vue 2) stores the committed label directly in its input. Its readonly flag
       // flips while the dropdown opens (#269 智联), so only Element Plus (wrapper markup) stops here.
@@ -520,37 +530,32 @@
         disabled: node.getAttribute('aria-disabled') === 'true' || node.matches(antd(node, '.ant-select-item-option-disabled, .ant-cascader-menu-item-disabled, .is-disabled, .arco-select-option-disabled, .arco-cascader-list-item-disabled, .layui-disabled')) || Boolean(node.disabled) };
     });
   }
-  // #301 虚拟列表（antd 4/5 默认、Element Plus el-select-v2）只画出看得见的十来项，同名的一项可能还在屏外。
+  // #301 虚拟列表（antd 4/5/6 默认、Element Plus el-select-v2）只画出看得见的十来项，同名的一项可能还在屏外。
   // 装着选项、能滚动的那一层，内容比画出来的选项和文字高出大半行以上，就算列表不全；里面画全了的（短的、不虚拟的长列表）不算。
   // 量不出高度（没有排版，jsdom）时只看虚拟列表的类名；真浏览器里画出的选项都有高度，走不到这里。
   // antd 不管长短都套着 rc-virtual-list，只有滚动条说明在虚拟滚动。
   const VIRTUAL_MARKS = '[class*="virtual" i]:not(.rc-virtual-list):not(.rc-virtual-list-holder):not(.rc-virtual-list-holder-inner), .el-vl__wrapper, [class*="recycle-scroller" i]';
-  function partialList(list, popup, layer) {
-    const nodes = list.map(option => option.node).filter(node => node?.isConnected);
-    if (!nodes.length || !popup?.isConnected) return false;
-    const marked = [popup, layer].some(node => node?.isConnected && (node.matches(VIRTUAL_MARKS) || Boolean(node.querySelector(VIRTUAL_MARKS))));
-    const rows = nodes.map(node => node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
-    if (!rows.length) return marked;
-    const limit = layer?.isConnected && layer.contains(popup) ? layer : popup;
-    const View = popup.ownerDocument.defaultView;
+  // 装着这些选项、能滚动的那一层：从装着全部选项的最小一层往上找，到 limit 为止。没有就返回 null。
+  function listScroller(nodes, limit) {
+    const View = limit.ownerDocument.defaultView;
     let box = nodes[0].parentElement;
     while (box && box !== limit && !nodes.every(node => box.contains(node))) box = box.parentElement;
-    let scroller = null;
-    for (let node = limit.contains(box) ? box : null; node && !scroller; node = node === limit ? null : node.parentElement) {
+    for (let node = limit.contains(box) ? box : null; node; node = node === limit ? null : node.parentElement) {
       const overflow = View.getComputedStyle(node).overflowY;
       if (!overflow || overflow === 'visible') continue;
-      if (node.scrollHeight > node.clientHeight + 1) scroller = node;
+      if (node.scrollHeight > node.clientHeight + 1) return node;
       // 先碰到原生滚动区（auto、scroll）而它自己不用滚：选项在里面画全了。外面 overflow:hidden 的一层多出来的
       // 可能只是被推到外面的滚动条（Element UI 2 的 el-scrollbar 用负外边距藏原生滚动条，Windows 上多出 15px 左右）。
-      else if (/^(?:auto|scroll|overlay)$/.test(overflow)) return false;
+      if (/^(?:auto|scroll|overlay)$/.test(overflow)) return null;
     }
-    if (!scroller) return false;
-    // 画出来的一段：选项，加上里面的文字（分组标题）和输入框。按排版位置量（offsetTop），
-    // 弹层打开动画从 scale(0) 起（antd 刚画出选项时就是），看到的大小是 0，排版位置不受影响。
-    // 滚动层里面各层自己的平移也算上：TanStack Virtual、vue-virtual-scroller 每项都在 top:0，靠 transform 排开。
-    // 滚动层外面的变换（打开动画）对每一项都一样，不用管。
-    const parts = [...nodes, ...Array.from(scroller.querySelectorAll('*')).filter(el => el.matches('input, textarea, select')
-      || (trim(el.textContent) && !Array.from(el.children).some(child => trim(child.textContent))))];
+    return null;
+  }
+  // 滚动层里元素的排版位置：按排版位置量（offsetTop），弹层打开动画从 scale(0) 起（antd 刚画出选项时就是），
+  // 看到的大小是 0，排版位置不受影响。滚动层里面各层自己的平移也算上：TanStack Virtual、vue-virtual-scroller 每项都在 top:0，
+  // 靠 transform 排开；rc-virtual-list 整屏一起 translateY。滚动层外面的变换（打开动画）对每一项都一样，不用管。
+  // 同一项滚到哪里量都一样（2026-11-03 在 antd 4.24.16、6.6.8 和 Element Plus 2.8.8 的 el-select-v2 上看到）。
+  function layoutTops(scroller) {
+    const View = scroller.ownerDocument.defaultView;
     const shifts = new Map();
     const shift = node => {
       if (!node || node === scroller) return 0;
@@ -561,7 +566,21 @@
       }
       return shifts.get(node);
     };
-    const layoutTop = el => { let y = shift(el); for (let node = el; node; node = node.offsetParent) y += node.offsetTop || 0; return y; };
+    return el => { let y = shift(el); for (let node = el; node; node = node.offsetParent) y += node.offsetTop || 0; return y; };
+  }
+  const listLimit = (popup, layer) => layer?.isConnected && layer.contains(popup) ? layer : popup;
+  function partialList(list, popup, layer) {
+    const nodes = list.map(option => option.node).filter(node => node?.isConnected);
+    if (!nodes.length || !popup?.isConnected) return false;
+    const marked = [popup, layer].some(node => node?.isConnected && (node.matches(VIRTUAL_MARKS) || Boolean(node.querySelector(VIRTUAL_MARKS))));
+    const rows = nodes.map(node => node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
+    if (!rows.length) return marked;
+    const scroller = listScroller(nodes, listLimit(popup, layer));
+    if (!scroller) return false;
+    // 画出来的一段：选项，加上里面的文字（分组标题）和输入框。
+    const parts = [...nodes, ...Array.from(scroller.querySelectorAll('*')).filter(el => el.matches('input, textarea, select')
+      || (trim(el.textContent) && !Array.from(el.children).some(child => trim(child.textContent))))];
+    const layoutTop = layoutTops(scroller);
     let top = Infinity, bottom = -Infinity;
     for (const el of parts) {
       if (!(el.offsetHeight > 0)) continue;
@@ -570,12 +589,123 @@
     }
     if (!(bottom > top)) return marked;
     // 滚动层自己的上下内边距不算没画出来。没画出来的选项按整行留位置，比一行略少的空白（底部的加载图标位）也不算。
-    const css = View.getComputedStyle(scroller);
+    const css = scroller.ownerDocument.defaultView.getComputedStyle(scroller);
     const padding = (parseFloat(css.paddingTop) || 0) + (parseFloat(css.paddingBottom) || 0);
     return scroller.scrollHeight - padding - (bottom - top) > Math.max(rows[Math.floor(rows.length / 2)] * 0.8, 20);
   }
-  // partial：列表不全（见 partialList）。只认完全相同、归一化相同或同一个意思的另一种写法（#429，ai-helpers.js 的 OPTION_SYNONYMS）的一项，
-  // 不靠「包含」去猜，几项都沾边也按没有匹配，好去搜索。联想框的建议不走这里，见 sameOption。
+  // #429 不能搜索的虚拟列表（antd 4/5/6 的 rc-virtual-list、Element Plus 的 el-select-v2）只画出一屏，屏外的选项不在页面上。
+  // 把装着选项的滚动层从头往下一屏一屏地滚（每次少滚一行，前后两屏叠着一行），每滚一次等画出来的选项停住 SCAN_STEADY_MS，
+  // 按排版位置记下见过的每一项（文字相同、位置差不到半行的算同一项）。滚到底以后再等 SCAN_TAIL_MS，列表变长了就接着滚。
+  // 滚完了也说不准看全了没有：懒加载的下一页可能过了 SCAN_TAIL_MS 才接上，到底时也没有靠得住的结束标记
+  // （rc-select、el-select-v2 的选项都没有 aria-setsize，onPopupScroll 懒加载不留痕迹，加载圈也不一定有）。
+  // 所以和列表不全时一样（见 match 的 partial）：只认完全相同、归一化相同或同一个意思的另一种写法的一项，
+  // 不靠「包含」去猜（要「北京大学」，不选先看到的「北京大学医学部」），几项都对得上也不选。
+  // 对上的一项滚回它那一屏，按文字和位置认出来交回去；点之前用 again() 按同样的办法再认一次（滚动后重画换了节点也认得出），
+  // 当场认不出就等列表停住再认，还认不出报 options_not_rendered、滚回原处。
+  // 找到以后这两次等列表停住各自最多等 SCAN_SETTLE_MS，不受 SCAN_MS 限制：扫描可能刚好把时间用完。
+  // 一开始量不出行高、找不到滚动层（列表刚画出来），也先等列表停住再量一次。
+  // 下面这些都按没有匹配的选项报：滚了以后画出来的选项盖不住看得见的这一段（列表不跟着滚动重画）、滚不动、
+  // 滚了 SCAN_SCREENS 屏或 SCAN_MS 还没到底（越滚越长的懒加载、一直在变的列表；等列表停住的时间也算在里面）。
+  // 滚着滚着这个滚动层里没有画出来的选项了（弹层中途收起、换了一个），按 options_not_rendered 报。
+  // 没找到、出错时都滚回原处。
+  // read 读弹层里当前画出来的选项。
+  const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000, SCAN_TAIL_MS = 500, SCAN_SETTLE_MS = 400;
+  async function scanList(ctx, h, read, popup, layer, value) {
+    if (!popup?.isConnected) return { reason: 'no_option_match' };
+    const started = Date.now();
+    const left = () => SCAN_MS - (Date.now() - started);
+    const keyOf = option => `${option.value}\u0000${option.text}`;
+    // 等画出来的选项停住 SCAN_STEADY_MS，最多等 limit。
+    const settle = limit => {
+      let last = null, since = Date.now();
+      return h.waitUntil(ctx, popup.ownerDocument.documentElement, () => {
+        const list = read(), key = list.map(keyOf).join('\n');
+        if (key !== last) { last = key; since = Date.now(); }
+        return list;
+      }, () => Date.now() - since >= SCAN_STEADY_MS, Math.max(0, limit));
+    };
+    // 装着选项的滚动层，和一行的高度（画出来的选项取中间的高度）。
+    const measure = list => {
+      const nodes = list.map(option => option.node).filter(node => node?.isConnected);
+      const heights = nodes.map(node => node.offsetHeight).filter(height => height > 0).sort((a, b) => a - b);
+      return { scroller: nodes.length ? listScroller(nodes, listLimit(popup, layer)) : null, row: heights[Math.floor(heights.length / 2)] || 0 };
+    };
+    let { scroller, row } = measure(read());
+    if (!scroller || !row) {
+      const settled = await settle(SCAN_SETTLE_MS);
+      if (settled.reason && settled.reason !== 'verification_timeout') return { reason: settled.reason };
+      ({ scroller, row } = measure(read()));
+      if (!scroller || !row) return { reason: 'no_option_match' };
+    }
+    const home = scroller.scrollTop;
+    // 画出来的选项和它们在滚动内容里的位置。
+    const placed = list => {
+      const top = layoutTops(scroller), base = top(scroller);
+      return list.filter(option => option.node?.isConnected && scroller.contains(option.node)).map(option => ({ option, at: top(option.node) - base }));
+    };
+    let found = null;
+    try {
+      const seen = [];
+      let previous = -1;
+      for (let screen = 0, target = 0; ; screen++) {
+        // 剩下的时间不够等列表停住一次，也算滚满了上限。
+        if (screen >= SCAN_SCREENS || left() < SCAN_STEADY_MS) return { reason: 'no_option_match' };
+        scroller.scrollTop = target;
+        const settled = await settle(Math.min(h.timeoutMs ?? 2000, left()));
+        if (settled.reason) return { reason: settled.reason === 'verification_timeout' ? 'no_option_match' : settled.reason };
+        // 这个滚动层里没有画出来的选项了：弹层中途收起或换了一个，不再滚。
+        const shown = placed(settled.value);
+        if (!shown.length) return { reason: 'options_not_rendered' };
+        const view = scroller.scrollTop, bottom = Math.min(view + scroller.clientHeight, scroller.scrollHeight);
+        if (view <= previous) return { reason: 'no_option_match' };
+        previous = view;
+        // 看得见的这一段从上到下都有画出来的选项（两头各差不到一行，留给分组标题这类不是选项的一行）。
+        if (Math.min(...shown.map(item => item.at)) > view + row
+          || Math.max(...shown.map(item => item.at + (item.option.node.offsetHeight || row))) < bottom - row) return { reason: 'no_option_match' };
+        for (const { option, at } of shown) {
+          if (!seen.some(entry => entry.key === keyOf(option) && Math.abs(entry.at - at) < row / 2)) {
+            seen.push({ key: keyOf(option), at, text: option.text, value: option.value, full: option.full, disabled: option.disabled });
+          }
+        }
+        target = view + Math.max(scroller.clientHeight - row, row);
+        if (bottom < scroller.scrollHeight - 1) continue;
+        // 到底了：再等 SCAN_TAIL_MS 看列表还变不变长（懒加载接上了下一页），变长了接着往下滚。
+        const height = scroller.scrollHeight;
+        const tail = await h.waitUntil(ctx, scroller.ownerDocument.documentElement, () => scroller.scrollHeight, now => now > height, Math.max(0, Math.min(SCAN_TAIL_MS, left())));
+        if (tail.reason && tail.reason !== 'verification_timeout') return { reason: tail.reason };
+        if (tail.value > height) continue;
+        break;
+      }
+      const list = seen.sort((a, b) => a.at - b.at);
+      const matched = match(list, value, h.helpers, true);
+      if (!matched.option) return { reason: matched.reason };
+      const wanted = matched.option;
+      const locate = list => placed(list).find(({ option, at }) => keyOf(option) === wanted.key && Math.abs(at - wanted.at) < row / 2)?.option || null;
+      // 等列表停住再认这一项；等满了还在变，就按当时画出来的认。
+      const settledHit = async () => {
+        const settled = await settle(SCAN_SETTLE_MS);
+        if (settled.reason && settled.reason !== 'verification_timeout') return { reason: settled.reason };
+        const hit = locate(settled.value || read());
+        return hit ? { option: hit } : { reason: 'options_not_rendered' };
+      };
+      // 滚回这一项所在的一屏（放在中间），按文字和位置认出它。
+      scroller.scrollTop = Math.max(0, wanted.at - (scroller.clientHeight - row) / 2);
+      const shown = await settledHit();
+      if (!shown.option) return shown;
+      found = { option: shown.option, again: async () => {
+        const now = locate(read());
+        const checked = now ? { option: now } : await settledHit();
+        if (!checked.option) scroller.scrollTop = home;
+        return checked;
+      } };
+      return found;
+    } finally {
+      if (!found) scroller.scrollTop = home;
+    }
+  }
+  // partial：列表不全（见 partialList），或滚着看过、说不准看全了没有（见 scanList）。只认完全相同、归一化相同或同一个意思的
+  // 另一种写法（#429，ai-helpers.js 的 OPTION_SYNONYMS）的一项，不靠「包含」去猜，几项都沾边也按没有匹配，好去搜索或滚着往下找。
+  // 联想框的建议不走这里，见 sameOption。
   function match(list, value, helpers, partial = false) {
     const same = option => [option.value, option.text].some(text => trim(text) === trim(value)
       || (helpers.isSameOptionText ? helpers.isSameOptionText(text, value) : helpers.normalizeText(text) === helpers.normalizeText(value)));
@@ -624,6 +754,11 @@
     const value = trim(text), number = /^(\d{1,2})\s*月$/.exec(value), chinese = /^(十一|十二|[一二三四五六七八九十])月$/.exec(value);
     return number ? Number(number[1]) : chinese ? CN_MONTHS.indexOf(chinese[1]) + 1 : 0;
   }
+  // 年月写在一起的标题（#429 Element 区间日历的「2026 年 11 月」）。
+  function yearMonthOf(text) {
+    const hit = /^(\d{4})\s*年\s*(\d{1,2})\s*月$/.exec(trim(text));
+    return hit && Number(hit[2]) >= 1 && Number(hit[2]) <= 12 ? { y: Number(hit[1]), m: Number(hit[2]) } : null;
+  }
   // 显示文字里第一段日期（组件可能把同一个值显示两遍），按日历精度比。
   function shownDate(text, mode) {
     const hit = /(\d{4})\s*(?:[-/.年]\s*(\d{1,2})\s*(?:[-/.月]\s*(\d{1,2}))?)?/.exec(String(text || ''));
@@ -659,6 +794,7 @@
     const cells = (read, keep = () => true) => leaves.filter(el => inCell(el) && read(el.textContent) && keep(el)).map(el => ({ value: read(el.textContent), node: el }));
     const headYear = leaves.find(el => !inCell(el) && yearOf(el.textContent));
     const headMonth = leaves.find(el => !inCell(el) && monthOf(el.textContent));
+    const headBoth = headYear || headMonth ? null : yearMonthOf(leaves.find(el => !inCell(el) && yearMonthOf(el.textContent))?.textContent);
     const disabledCell = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
         if (node.getAttribute?.('aria-disabled') === 'true' || node.hasAttribute?.('disabled')) return true;
@@ -690,8 +826,8 @@
       days: cells(dayOf, el => !otherMonth(el) && !disabledCell(el)),
       // 本月标成选中的日子。
       picked: cells(dayOf, el => !otherMonth(el) && pickedCell(el)).map(cell => cell.value),
-      headYear: headYear ? yearOf(headYear.textContent) : 0, headYearNode: headYear || null,
-      headMonth: headMonth ? monthOf(headMonth.textContent) : 0, headMonthNode: headMonth || null,
+      headYear: headYear ? yearOf(headYear.textContent) : headBoth?.y || 0, headYearNode: headYear || null,
+      headMonth: headMonth ? monthOf(headMonth.textContent) : headBoth?.m || 0, headMonthNode: headMonth || null,
       // 格子以外的字（标题、按钮）：年月认不出时，拿它看日历有没有动。
       head: leaves.filter(el => !inCell(el)).map(el => trim(el.textContent)).join('|'),
       button: (level, dir) => buttons.find(button => button.level === level && button.dir === dir)?.el || null,
@@ -854,6 +990,103 @@
     if (done.reason) return done.reason === 'verification_timeout' ? missed() : { reason: done.reason };
     return { accepted, dayDefaulted };
   }
+  // #429 区间日期的日历（antd 3、ant-design-vue 1.x 的 RangePicker，editable=false 的 Element daterange、monthrange，
+  // 以及打字没收下的 Element 区间）：并排两个面板。点开始框打开日历，用翻年、翻月按钮把左边面板翻到开始那个月（选月的翻到那一年），
+  // 点那一天，再翻到结束那个月点结束那天；组件拿到两头才提交、收起。只点了一头就收起，点的那头不算（真组件上看过）。
+  // 不在日历的框里打字：antd 3.26 的区间日历在结束框打字会把开始清掉。带时间的（要点「确定」）不处理。
+  // want：开始、结束的 { y, m, d }，d 为 0 时选 1 号（宿主在结果里写明）。由 control-adapters.js 的 operateRange 调用并核对两个框。
+  function rangePanels(layer, h) {
+    const tables = Array.from(layer.querySelectorAll('table')).filter(table => h.visible(table));
+    if (tables.length !== 2) return null;
+    // 每个面板取装着自己的表格、不装着另一个表格的最外层。
+    const panelOf = (table, other) => {
+      let node = table;
+      while (node.parentElement && node.parentElement !== layer && !node.parentElement.contains(other)) node = node.parentElement;
+      return node;
+    };
+    return [panelOf(tables[0], tables[1]), panelOf(tables[1], tables[0])];
+  }
+  async function pickRange(ctx, want, boxes, h) {
+    const doc = ctx.el.ownerDocument;
+    const info = { el: boxes[0], root: ctx.entry.root, before: ctx.popupsBeforeFocus || shownLayers(doc, h.visible) };
+    const reason = h.click(boxes[0], ctx); if (reason) return { reason };
+    const opened = await h.waitUntil(ctx, doc.documentElement, () => calendarNear(info, h), Boolean, 1500);
+    if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
+    const layer = opened.value;
+    ctx.observed = { ...ctx.observed, library: 'generic', popupRole: 'calendar' };
+    let outcome;
+    try { outcome = await clickRange(ctx, want, h, layer); } catch { outcome = { reason: 'operation_failed' }; }
+    // 选不成时收起点开的日历：点了的那一头不算，组件里的值不变。
+    if (outcome.reason && !h.stop(ctx)) await leaveCalendar(ctx, boxes[0], ctx.entry.root, layer, h);
+    return outcome;
+  }
+  async function clickRange(ctx, want, h, layer) {
+    const doc = ctx.el.ownerDocument;
+    const panels = () => (layer.isConnected && h.visible(layer) ? rangePanels(layer, h) : null);
+    const views = () => panels()?.map(panel => ({ panel, view: calendarView(panel, h) })) || null;
+    if (Array.from(layer.querySelectorAll('[class*="time-picker" i], [class*="time-header" i]')).some(h.visible)) return { reason: 'unsupported_control' };
+    // 日历打开有动画：格子显示出来才看得出是选日还是选月。
+    const shown = await h.waitUntil(ctx, doc.documentElement, views, seen => Boolean(seen && (seen[0].view.dayCells >= 28 || seen[0].view.months.length >= 12)), 1500);
+    if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'unsupported_control' : shown.reason };
+    const mode = shown.value[0].view.dayCells >= 28 ? 'date' : 'month';
+    // 面板显示的月份（选月的是年份），按月数比先后。
+    const at = view => (view?.headYear && (mode === 'month' || view.headMonth) ? view.headYear * 12 + (mode === 'month' ? 0 : view.headMonth) : 0);
+    const signature = () => (views() || []).map(({ view }) => at(view)).join('|');
+    for (const date of want) {
+      const goal = date.y * 12 + (mode === 'month' ? 0 : date.m);
+      let target = null;
+      for (let step = 0; !target; step += 1) {
+        const seen = views();
+        if (!seen || seen.some(({ view }) => !at(view))) return { reason: 'unsupported_control' };
+        target = seen.find(({ view }) => at(view) === goal) || null;
+        if (target) break;
+        if (step >= 60) return { reason: 'no_option_match' };
+        // 往前翻用左边面板的按钮，往后翻用右边面板的；两个面板各翻各的（antd 3 已有值时左边停在开始月、右边停在结束月），
+        // 要的月份夹在中间的翻左边。差一年以上翻年，不到一年翻月；先用这个面板自己的按钮（有翻月没翻年的就一直翻月），
+        // 面板上一个都没有才用日历里别处的，免得各翻各的时翻了另一个面板。
+        const [left, right] = seen;
+        const dir = goal < at(left.view) ? -1 : 1;
+        const moving = dir < 0 || goal < at(right.view) ? left : right;
+        const diff = Math.abs(goal - at(moving.view));
+        const levels = mode === 'month' ? ['year'] : diff >= 12 ? ['year', 'month'] : ['month'];
+        const pick = view => levels.map(level => view.button(level, dir)).find(Boolean);
+        const button = pick(moving.view) || pick(calendarView(layer, h));
+        if (!button) return { reason: 'no_option_match' };
+        const before = signature();
+        const reason = h.click(button, ctx); if (reason) return { reason };
+        const moved = await h.waitUntil(ctx, doc.documentElement, signature, now => Boolean(now) && now !== before, 1000);
+        if (moved.reason) return { reason: moved.reason === 'verification_timeout' ? 'selection_not_committed' : moved.reason };
+      }
+      const hits = mode === 'date' ? target.view.days.filter(cell => cell.value === (date.d || 1)) : target.view.months.filter(cell => cell.value === date.m);
+      if (hits.length !== 1) return { reason: 'no_option_match' };
+      const reason = h.click(hits[0].node, ctx, true); if (reason) return { reason };
+    }
+    const closed = await h.waitUntil(ctx, doc.documentElement, () => !layer.isConnected || !h.visible(layer), Boolean);
+    return closed.reason ? { reason: closed.reason === 'verification_timeout' ? 'selection_not_committed' : closed.reason } : {};
+  }
+  // 打字没收下时收起这个区间的日历（见 control-adapters.js 的 typedRange），收法同 leaveCalendar。交回日历还开着没有。
+  // before：打字之前就开着的弹层（上一个日期框的日历可能还在退场），不当成这次打开的。
+  async function leaveRange(ctx, boxes, h, before = new Set()) {
+    const layer = calendarNear({ el: boxes[0], root: ctx.entry.root, before }, h);
+    if (layer && !h.stop(ctx)) await leaveCalendar(ctx, boxes[1], ctx.entry.root, layer, h);
+    return Boolean(layer?.isConnected && h.visible(layer));
+  }
+  // 收起日历：在框上按 Esc（Element 收到后不往外传），没收再在页面空白处按下、松开（不派发 click）。
+  // 框在对话框、抽屉里：不按 Esc，只在对话框里、框旁边按下、松开，和 run 失败时收起弹层一样。
+  async function leaveCalendar(ctx, el, root, layer, h) {
+    const doc = el.ownerDocument, gone = () => !layer.isConnected || !h.visible(layer);
+    if (gone()) return;
+    const dialog = dialogOf(root);
+    if (dialog) {
+      const spot = pressSpot(root, dialog);
+      if (spot) press(spot);
+    } else {
+      el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+      const left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
+      if (left.reason === 'verification_timeout' && !gone() && !h.stop(ctx)) press(doc.body);
+    }
+    if (!h.stop(ctx)) await h.waitUntil(ctx, doc.documentElement, gone, Boolean, POPUP_LEAVE_MS);
+  }
   async function perform(ctx, raw, h, state) {
     const info = describe(ctx.entry);
     state.info = info;
@@ -880,6 +1113,10 @@
     // 选项文字和要填的值算不算同一项：归一化后相同，或是同一个意思的另一种写法（#429）。
     const sameText = (text, value) => h.helpers.isSameOptionText ? h.helpers.isSameOptionText(text, value)
       : h.helpers.normalizeText(text) === h.helpers.normalizeText(value);
+    // #429 问性别的题，英文表单的选项只写 M、F，要点开才看得到：worker 拿不到选项，给的是「男」「女」。按点开的列表再换一次
+    // （ai-helpers.js 的 controlChoiceValue：题目上下文取扫描时的对应关系 binding，只在问性别的字段上换）。级联不换。
+    const wantedIn = (list, level) => info.cascade || !h.helpers.controlChoiceValue ? desired[level]
+      : h.helpers.controlChoiceValue(ctx.entry?.binding, list, desired[level]);
     if (!desired.length || desired.length > 8 || desired.some(value => !value)) return { reason: 'no_option_match' };
     const safeSearch = input => input?.tagName === 'INPUT' && !input.readOnly && !input.disabled
       && ['text', 'search', 'email', 'tel', 'url'].includes(input.type);
@@ -941,7 +1178,7 @@
     };
     const initiallyOwned = ownedPopup(info, h.visible);
     const alreadyOpen = (info.combo.getAttribute('aria-expanded') === 'true' && initiallyOwned.popup) || layuiList();
-    const trigger = info.cascade ? info.el : info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector')) || info.root
+    const trigger = info.cascade ? info.el : info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector, .ant-select-content')) || info.root
       : info.library === 'element' ? info.root.querySelector('.el-select__wrapper, .el-input') || info.root
       : info.library === 'arco' ? info.root.querySelector('.arco-select-view') || info.root : info.combo;
     if (!alreadyOpen) { const reason = h.click(info.library === 'generic' ? coverOf(trigger, info) || trigger : trigger, ctx); if (reason) return { reason }; }
@@ -1299,13 +1536,13 @@
       // AntD 先输入了要找的值：先到的列表可能是输入前的请求晚到的结果。列表里有同名的一项才马上选，否则等满再用最后的列表。
       const typedAntd = typedFirst && !generic;
       const sameName = list => list.some(option => !option.disabled && [option.text, option.value]
-        .some(text => sameText(text, desired[level])));
+        .some(text => sameText(text, wantedIn(list, level))));
       // 联想框打字后的建议里没有同名的一项：停住一阵再算没有（见 FREE_TEXT_STEADY_MS），不用等满。
       const typedSettled = since => info.freeText && Date.now() - since >= FREE_TEXT_STEADY_MS && Date.now() - typedAt >= FREE_TEXT_SETTLE_MS;
       // 列表不全时只认同名的一项（见 partialList），没有就先搜索，搜完照样看列表全不全。
       const partial = current => partialList(current, popup, ctx.popup);
       // 联想框只选同名的一项（见 sameOption）：网页先给出的建议里没有，就打字再找；打字后还没有，交宿主按文本框写。
-      const pick = items => info.freeText ? sameOption(items, desired[level], h.helpers) : match(items, desired[level], h.helpers, partial(items));
+      const pick = items => info.freeText ? sameOption(items, desired[level], h.helpers) : match(items, wantedIn(items, level), h.helpers, partial(items));
       const listReady = list => (!loading() && list.length > 0 && (!generic || Date.now() - steadySince >= 300) && (!typedAntd || sameName(list) || typedSettled(steadySince)))
         || (eagerSearch && list.length === 0) || (typedAntd && noSuggestions(list));
       const waitedFrom = Date.now();
@@ -1357,9 +1594,18 @@
         if (updated.reason) return { reason: updated.reason === 'verification_timeout' ? 'options_timeout' : updated.reason };
         list = updated.value; found = pick(list);
       }
+      // #429 不能搜索的虚拟列表：第一屏里没有同名的一项时滚着看完整张列表（见 scanList）。
+      let scanned = false;
+      if (!searchable && !region && !info.cascade && !info.freeText && ['antd', 'element'].includes(info.library)
+        && found.reason === 'no_option_match' && partial(list)) {
+        found = await scanList(ctx, h, () => readOptions(level), popup, ctx.popup, desired[level]);
+        scanned = Boolean(found.option);
+      }
       if (found.reason) return found;
       // Re-read immediately before activation: async renders can replace an option.
-      const latest = region ? regionPick(readOptions(level)) : pick(readOptions(level));
+      // 滚着找到的一项按文字和位置再认一次（scanList 的 again，认不出时它滚回原处）：它可能是按「包含」对上的，当前这一屏又不全，按 pick 比只认同名。
+      const latest = scanned ? await found.again()
+        : region ? regionPick(readOptions(level)) : pick(readOptions(level));
       if (multiplePopup()) return { reason: 'unsupported_control' };
       if (latest.reason) return latest;
       if (!info.pathNodes) info.pathNodes = [];
@@ -1406,7 +1652,7 @@
     // 联想框里插件打过字：之后才到的建议会再弹出来，由宿主发 Tab 收起（closeSuggestions）。
     return { accepted: () => accepted(false), closeSuggestions: Boolean(info.freeText && searchDone) };
   }
-  // #429 antd（4/5、3 和 ant-design-vue 1.x）、Element（UI 2、Plus）的多选下拉。要选的几项按 splitMultipleValues 拆开
+  // #429 antd（4/5/6、3 和 ant-design-vue 1.x）、Element（UI 2、Plus）的多选下拉。要选的几项按 splitMultipleValues 拆开
   // （整段正好是一个标签或选项时不拆），标签和要选的项对不对得上和选项一样按 findSelectOptionIndex 认。
   // 点开下拉一项一项找：列表不全或没有时在组件自己的搜索框里搜，没选上的点一下，等它成了标签再找下一项。
   // 有一项找不到就停下报那一项的原因，已经点了的不撤回（和单选一样），原来的标签不动。都选上了再点删除去掉这次不要的标签
@@ -1476,7 +1722,7 @@
       return added.length > 1 ? { reason: 'ambiguous_popup' } : added.length === 1 ? { popup: added[0] } : null;
     };
     if (pending.length && !popup) {
-      const trigger = info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector')) || info.root
+      const trigger = info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector, .ant-select-content')) || info.root
         : info.root.querySelector('.el-select__wrapper, .el-input') || info.root;
       const reason = h.click(trigger, ctx); if (reason) return { reason };
       const opened = await h.waitUntil(ctx, doc.documentElement, findPopup, Boolean);
@@ -1543,6 +1789,11 @@
           list = searched.list;
           if (!list.length) return fail({ reason: 'no_option_match' });
           found = match(list, value, helpers, partialList(list, popup, ctx.popup));
+        } else if (['antd', 'element'].includes(info.library) && found.reason === 'no_option_match' && partialList(list, popup, ctx.popup)) {
+          // 没有能打字的搜索框：滚着看完整张列表（见 scanList），点之前按文字和位置再认一次。
+          // pickMultiple 只从 antd、Element 进来（两个调用处都先判断了库），这里照单选的门槛再写一遍。
+          found = await scanList(ctx, h, listOf, popup, ctx.popup, value);
+          if (found.option) found = await found.again();
         }
       }
       if (found.reason) return fail(found);
@@ -1814,5 +2065,5 @@
       || String(el.getAttribute('class') || '').split(/\s+/).some(token => CHECKED_TOKEN.test(token)));
   }
   scope.ResumeProCustomControls = { describe, acceptsFreeText, snapshot, hasExistingValue, readSelection, visiblePopups, optionTarget, isChecked, run, suggest,
-    openLayers, dismissOpened };
+    openLayers, dismissOpened, pickRange, leaveRange };
 })(typeof self !== 'undefined' ? self : globalThis);

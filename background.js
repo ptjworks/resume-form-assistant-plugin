@@ -81,6 +81,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+// 「AI 填写时发送资料原文」（#429，插件状态页的开关，默认关）只在这里读写，存在本机的 chrome.storage.local。
+// 读：ai-client.js 每次一键填写前问一次，插件状态页显示开关时问一次。改：只认插件自己的页面（插件状态页），网页里发来的不认。
+// 没存过、读不到都按关着：AI 只收到编号、分组和字段名。
+const SEND_VALUES_KEY = "aiSendResumeValues";
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AI_SEND_VALUES_STATUS") {
+    chrome.storage.local.get(SEND_VALUES_KEY)
+      .then(stored => sendResponse({ ok: true, enabled: stored?.[SEND_VALUES_KEY] === true }))
+      .catch(() => sendResponse({ ok: false, enabled: false }));
+    return true;
+  }
+  if (message?.type === "AI_SEND_VALUES_SET") {
+    if (sender?.id !== chrome.runtime.id || !sender?.url?.startsWith(chrome.runtime.getURL(""))) {
+      sendResponse({ ok: false, error: "forbidden" });
+      return false;
+    }
+    const enabled = message.enabled === true;
+    chrome.storage.local.set({ [SEND_VALUES_KEY]: enabled })
+      .then(() => sendResponse({ ok: true, enabled }))
+      .catch(() => sendResponse({ ok: false, error: "storage_failed" }));
+    return true;
+  }
+  return false;
+});
+
 // #226 站点配方只在这里写入：所有保存、删除、更新最近使用排成一队，两个网页同时保存也不会互相覆盖。
 // 只接受本扩展内容脚本（网页顶层）发来的请求，并且只能写它自己所在网页的那一条（按发送方网址重新归类核对）。
 // 配方是本机缓存：这里不转发、不上传，也不交给桌面。

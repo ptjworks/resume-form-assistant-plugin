@@ -27,6 +27,10 @@ pub fn payload_schema(message_type: &str) -> Option<Value> {
         "usage.touch" => include_str!("../schemas/payloads/usage-touch.json"),
         "usage.settings" => include_str!("../schemas/payloads/usage-settings.json"),
         "mail.import" => include_str!("../schemas/payloads/mail-import.json"),
+        "siteAnswers.read" => include_str!("../schemas/payloads/site-answers-read.json"),
+        "siteAnswers.save" => include_str!("../schemas/payloads/site-answers-save.json"),
+        "resumeFiles.list" => include_str!("../schemas/payloads/resume-files-list.json"),
+        "resumeFiles.read" => include_str!("../schemas/payloads/resume-files-read.json"),
         "legacy.import" => include_str!("../schemas/payloads/legacy-import.json"),
         _ => return None,
     };
@@ -48,6 +52,10 @@ pub fn response_payload_schema(message_type: &str) -> Option<Value> {
         "usage.touch" => include_str!("../schemas/responses/usage-touch.json"),
         "usage.settings" => include_str!("../schemas/responses/usage-settings.json"),
         "mail.import" => include_str!("../schemas/responses/mail-import.json"),
+        "siteAnswers.read" => include_str!("../schemas/responses/site-answers-read.json"),
+        "siteAnswers.save" => include_str!("../schemas/responses/site-answers-save.json"),
+        "resumeFiles.list" => include_str!("../schemas/responses/resume-files-list.json"),
+        "resumeFiles.read" => include_str!("../schemas/responses/resume-files-read.json"),
         "legacy.import" => include_str!("../schemas/responses/legacy-import.json"),
         _ => return None,
     };

@@ -1,0 +1,16 @@
+{
+  "$id": "https://resumepro.local/protocol/payloads/site-answers-read.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "site"
+  ],
+  "properties": {
+    "site": {
+      "description": "站点：小写 host（去掉 www.，带非默认端口），几家公司共用一个 host 的招聘平台再加一段公司路径（host[:port][/段]）。格式由校验器检查",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  }
+}

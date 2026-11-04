@@ -10,7 +10,7 @@
 //! - message_receipts 持久化提交回执(含 sourceRestoreEpoch 与 payloadSha256)与永久删除墓碑。
 //! - schema_migrations 记录迁移历史;PRAGMA user_version 为权威版本。
 
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 9;
 
 #[derive(Clone, Copy)]
 pub struct Migration {
@@ -322,6 +322,42 @@ CREATE TABLE evidence_recycle (
 );
 "#;
 
+/// #429：题目问到对方公司的回答按网站存，只在同一个网站复用（见 `site_answers.rs`）。
+/// 同一网站里题目归一后只存一条；`question` 留着用户看到的原文。
+pub const V8_SITE_ANSWERS: &str = r#"
+CREATE TABLE site_answers (
+  site TEXT NOT NULL,
+  question_key TEXT NOT NULL,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (site, question_key)
+);
+"#;
+
+/// #429：网申时上传的简历附件、证件照、成绩单（见 `resume_files.rs`）。字节放在
+/// `attachments/resume-files/<sha256>`，跟着备份走；不进 `attachment_blobs`：那张表的引用计数
+/// 只数邮件证据，清理证据时会删掉没人引用的文件。同样的字节只存一份，所以 `sha256` 唯一。
+pub const V9_RESUME_FILES: &str = r#"
+CREATE TABLE resume_files (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('resume','photo','transcript','other')),
+  name TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  mime TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+  sha256 TEXT NOT NULL UNIQUE,
+  stored_rel_path TEXT NOT NULL UNIQUE,
+  is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+  template_ids_json TEXT NOT NULL DEFAULT '[]',
+  position INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_resume_files_default ON resume_files(kind) WHERE is_default = 1;
+"#;
+
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         to_version: 1,
@@ -357,5 +393,15 @@ pub const MIGRATIONS: &[Migration] = &[
         to_version: 7,
         description: "recoverable notification recycle bin",
         sql: V7_EVIDENCE_RECYCLE,
+    },
+    Migration {
+        to_version: 8,
+        description: "answers remembered per site for questions about the company (#429)",
+        sql: V8_SITE_ANSWERS,
+    },
+    Migration {
+        to_version: 9,
+        description: "resume files uploaded to job sites: resume, photo, transcript and other material",
+        sql: V9_RESUME_FILES,
     },
 ];

@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
 const { openFramedPage, installLayout } = require("./helpers/frame-page.js");
+const antd6 = require("./helpers/antd6-select.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = ["antd-prefix.js", "ai-helpers.js", "custom-controls.js", "control-adapters.js", "field-scan.js", "fill-probe.js", "page-outline.js"];
@@ -158,6 +159,17 @@ test("the prefix is read from antd's own structure: a select's selector, or a fo
   assert.deepEqual(plain(other.w.ResumeProAntdPrefix.prefixes(other.doc)), ["ant"]);
 });
 
+// #429 antd 6（@rc-component/select 1.x）的下拉没有 X-select-selector：X-select 下面直接是装着 X-select-input 的 X-select-content。
+// 只有 X-select-content、里面没有 X-select-input 的不算。
+test("antd 6's select is read as a prefix too: a select content holding the select input", () => {
+  for (const options of [{}, { multiple: true }, { cascader: true }]) {
+    const page = load(`<div>${antd6.selectHtml("atsx", options)}</div>`);
+    assert.deepEqual(plain(page.w.ResumeProAntdPrefix.prefixes(page.doc)), ["ant", "atsx"], JSON.stringify(options));
+  }
+  const lookalike = load('<div class="yy-select"><div class="yy-select-content"><input class="yy-input" readonly placeholder="请选择"></div></div>');
+  assert.deepEqual(plain(lookalike.w.ResumeProAntdPrefix.prefixes(lookalike.doc)), ["ant"]);
+});
+
 test("selectors keep the default prefix and add the page's own; a page with only ant- gets the same selector back", () => {
   const { w, doc } = load(form("atsx"));
   const antd = w.ResumeProAntdPrefix;
@@ -295,6 +307,28 @@ test("the choice shown in an atsx- select is read back", () => {
   const found = control(scan(), "最高学历");
   assert.deepEqual(plain(w.ResumeProCustomControls.readSelection(targetOf(found))), { texts: ["硕士"], cascade: false });
   assert.equal(w.ResumeProCustomControls.hasExistingValue(targetOf(found)), true);
+});
+
+// #429 飞书这类 atsx- 页面换成 antd 6、下拉外面又没有 Form.Item 时，只能靠下拉自己的结构认前缀。
+test("atsx- antd 6 selects without form items are scanned, picked and read back as antd", async () => {
+  const field = (id, label, options) => `<div class="field"><label for="${id}">${label}</label>${antd6.selectHtml("atsx", { id, ...options })}</div>`;
+  const { w, doc, scan } = load(`<form>${field("edu", "最高学历", {})}${field("home", "现居住地", { cascader: true })}</form>`);
+  const [select, cascader] = doc.querySelectorAll(".atsx-select");
+  const picked = antd6.wire(doc, select, EDUCATION, { p: "atsx" });
+  const path = antd6.wire(doc, cascader, { 广东省: { 深圳市: ["南山区"] } }, { p: "atsx", cascader: true });
+  const controls = scan();
+  assert.equal(control(controls, "最高学历").controlKind, "custom-select");
+  assert.equal(control(controls, "现居住地").controlKind, "cascader");
+  const api = w.ResumeProControls.create({ timeoutMs: 300, settleMs: 35, isVisible });
+  for (const [label, value] of [["最高学历", "本科"], ["现居住地", "广东省/深圳市/南山区"]]) {
+    const target = targetOf(control(controls, label));
+    assert.equal(w.ResumeProCustomControls.describe(target).library, "antd", label);
+    const result = await api.operate(target, value);
+    assert.equal(result.ok, true, `${label}: ${JSON.stringify(result)}`);
+  }
+  assert.deepEqual(picked.picked, ["本科"]);
+  assert.deepEqual(path.picked, ["广东省/深圳市/南山区"]);
+  assert.deepEqual(plain(w.ResumeProCustomControls.readSelection(targetOf(control(controls, "最高学历")))), { texts: ["本科"], cascade: false });
 });
 
 test("an atsx- month picker (antd 4 and 5) is filled through its calendar", async () => {

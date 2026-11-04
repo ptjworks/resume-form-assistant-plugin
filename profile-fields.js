@@ -101,6 +101,10 @@
   ];
 
   const CUSTOM_GROUP = "补充字段";
+  // #429 第五项第 2 点：这个网站记住的回答。填写时并进资料，只在同一个网站读出来。
+  const SITE_GROUP = "本网站回答";
+  // 一个网站最多记住的题数，和桌面 archive-store 的 MAX_SITE_ANSWERS_PER_SITE 一致。
+  const MAX_SITE_ANSWERS_PER_SITE = 30;
   const MAX_CUSTOM_FIELDS = 200;
   const MAX_OFFERED_LABELS = 20;
   // #189：已填项也进候选，一张表上可复用的内容比空字段多，上限放宽；超出的只报个数。
@@ -150,6 +154,37 @@
   // 离开所在区块就看不懂的笼统题目。
   const GENERIC_TITLE = /^(?:其[他它](?:信息|说明|情况)?|补充(?:说明|信息|内容)?|附加(?:说明|信息)?|附言|留言)$/;
   const CONTACT_SECTION = /紧急联系|联系人|监护人/;
+  // 按网站存回答时的网站（#429）：几家公司共用一个域名的招聘平台，公司在路径或查询参数里。
+  // 这些平台的整个域名（含子域名）都只按下面认得出的公司算，认不出就不按网站存，宁可交给 AI 也不串到别家：
+  // Moka 的 {app.}mokahr.com/{campus-recruitment|campus_apply|apply|…}/{公司}/…（手机版前面多一段 m）；
+  // hotjob 的 wecruit.hotjob.cn/SU{24 位十六进制}/…；
+  // Greenhouse 的 {job-}boards{.eu}.greenhouse.io/{公司}/…，嵌入页 /embed/job_app?for={公司}；
+  // Lever 的 jobs{.eu}.lever.co/{公司}/…。
+  const MOKA_ROUTES = new Set(["campus-recruitment", "social-recruitment", "intern-recruitment", "campus_apply", "social_apply", "apply", "recommendation-apply"]);
+  const TENANT_SEGMENT = /^[A-Za-z0-9_-]{1,64}$/;
+  // 平台自己的路径，不是公司。
+  const RESERVED_SEGMENTS = new Set(["embed", "api", "v0", "v1", "jobs", "job", "apply", "search", "s", "index", "static", "assets"]);
+  const companySegment = (segment) => (segment && !RESERVED_SEGMENTS.has(segment.toLowerCase()) ? segment : "");
+  const PATH_TENANT_HOSTS = [
+    { host: /(?:^|\.)mokahr\.com$/, tenant: (segments) => {
+      const rest = segments[0] === "m" ? segments.slice(1) : segments;
+      return MOKA_ROUTES.has(rest[0]) ? companySegment(rest[1]) : "";
+    } },
+    { host: /(?:^|\.)hotjob\.cn$/, tenant: (segments) => /^SU[0-9a-f]{24}$/i.test(segments[0] || "") ? segments[0] : "" },
+    { host: /(?:^|\.)greenhouse\.io$/, tenant: (segments, url) => {
+      if (!/^(?:job-)?boards(?:\.eu)?\.greenhouse\.io$/.test(url.hostname.toLowerCase())) return "";
+      return segments[0] === "embed" ? url.searchParams.get("for") || "" : companySegment(segments[0]);
+    } },
+    { host: /(?:^|\.)lever\.co$/, tenant: (segments, url) => /^jobs(?:\.eu)?\.lever\.co$/.test(url.hostname.toLowerCase()) ? companySegment(segments[0]) : "" }
+  ];
+  // 公司在查询参数里、在不认得的路径里，或者认不出来的共享站点（含子域名）：不按网站存，免得把一家公司的回答填到另一家。
+  const SHARED_HOSTS = /(?:^|\.)(?:51job\.com|zhaopin\.com|nowcoder\.com|zhipin\.com|liepin\.com|lagou\.com|shixiseng\.com|yingjiesheng\.com|iguopin\.com|ncss\.cn|gaoxiaojob\.com|chinahr\.com|kanzhun\.com|wintalent\.cn|linkedin\.com|indeed\.com|ashbyhq\.com|workable\.com|smartrecruiters\.com)$/;
+  // 平台本身的域名：公司在它们的子域名上（acme.zhiye.com、acme.jobs.feishu.cn），这几个域名本身不算哪一家。
+  const SHARED_EXACT = /^(?:zhiye\.com|italent\.cn|jobs\.feishu\.cn)$/;
+  // 和协议 isSiteKey 一样的形状：host[:port][/一段]。
+  const SITE_KEY = /^[a-z0-9][a-z0-9.-]*(?::[0-9]{1,5})?(?:\/[A-Za-z0-9_-]{1,64})?$/;
+  // 只在同一个网站复用的题：题目问到对方公司。去掉「本公司」这几个字再看是不是只适用于当前岗位（「为什么选择本公司」还是）。
+  const COMPANY_IN_JOB_LABEL = /[本该贵](?:公司|单位)/g;
 
   function text(value) {
     return String(value ?? "").trim();
@@ -369,17 +404,21 @@
   // 再加题目里说「本行」「我司」的）和整段作答；
   // 笼统的短题目；同一张表上同名的题不止一个；题在可以加多条的区块里（group 末尾带序号）、家庭成员和紧急联系人区块里，
   // 以及经历区块里除排名、外语这类概括信息以外的题（和存的时候 entryFieldLabel 的口径一样）。
+  // #429 第五项第 2 点：这个网站记住的回答（SITE_GROUP，网页端只读出当前网站的）也在这里比，只用于题目问到对方公司的那类题
+  // （siteScopedTitle），和补充字段的题目正好不重叠；家庭区块里问「是否有亲属在本公司工作」的也算。
   function savedAnswerMatches(formFields, resumeFields, taken = new Set(), pageFields = formFields) {
     // 资料来自 profileToResumeFields：只给有值的补充字段，归一后同名的只给一次（没填回答的只是待补的名字，不算第二个答案）。
     // 这里再数一次同名，是给不经过它的调用兜底。
     const saved = new Map();
+    const site = new Map();
     (Array.isArray(resumeFields) ? resumeFields : []).forEach((field) => {
-      if (field?.group !== CUSTOM_GROUP) return;
+      const target = field?.group === CUSTOM_GROUP ? saved : field?.group === SITE_GROUP ? site : null;
+      if (!target) return;
       const id = normalizeKey(field.key);
       const value = text(field.value);
-      if (id && value) saved.set(id, saved.has(id) ? null : value);
+      if (id && value) target.set(id, target.has(id) ? null : value);
     });
-    if (!saved.size) return [];
+    if (!saved.size && !site.size) return [];
 
     const forms = Array.isArray(formFields) ? formFields : [];
     const sameLabel = new Map();
@@ -392,14 +431,16 @@
       if (!field?.fieldId || taken.has(field.fieldId)) return;
       const label = text(field.label);
       const id = normalizeKey(label);
-      const value = saved.get(id);
-      if (!value || id.length < 2 || sameLabel.get(id) > 1 || !reusableTitle(id)) return;
+      const scoped = siteScopedTitle(id);
+      const value = scoped ? site.get(id) : reusableTitle(id) ? saved.get(id) : null;
+      if (!value || id.length < 2 || sameLabel.get(id) > 1) return;
       if (value.length > JOB_SPECIFIC_VALUE_CHARS || looksLikeIdentifier(value)) return;
       // 「区块 2」是 field-scan 给同一区块里同名的题排的序号（`${section} ${repeatIndex}`，一定带空格）。
       // 网页自己的区块名带数字（「教育经历2」「志愿一」）不靠这一条：经历类区块由 entryFieldLabel 拦下，
       // 别的区块里同一道题出现不止一次时由上面的同名计数拦下。
       const group = text(field.group);
-      if (/\s\d+$/.test(group) || CONTACT_SECTION.test(group) || entryFieldLabel({ section: group, title: label }) === null) return;
+      if (/\s\d+$/.test(group) || CONTACT_SECTION.test(group)) return;
+      if (entryFieldLabel({ section: group, title: label }) === null && !(scoped && FAMILY_SECTION.test(group))) return;
       matches.push({ fieldId: field.fieldId, value });
     });
     return matches;
@@ -413,6 +454,60 @@
   function reusableTitle(id) {
     return HAS_HAN.test(id) && !(SAVED_ANSWER_EXCLUDED.test(id) || JOB_SPECIFIC_LABEL.test(id) || COMPANY_REFERENCE.test(id) || SECRET_LABEL.test(id)
       || CONTEXTLESS_TITLE.test(id) || GENERIC_TITLE.test(id) || NOT_A_LABEL.test(id));
+  }
+
+  // 只在同一个网站复用的题（#429）：题目问到对方公司（「本公司」「本行」「亲属在……工作」），
+  // 别的地方和补充字段一样：证件、联系方式、政治面貌、薪资，只适用于当前岗位的，像密码的，都不算。id 是归一后的题目。
+  function siteScopedTitle(id) {
+    return HAS_HAN.test(id) && COMPANY_REFERENCE.test(id) && !(SAVED_ANSWER_EXCLUDED.test(id) || SECRET_LABEL.test(id)
+      || JOB_SPECIFIC_LABEL.test(id.replace(COMPANY_IN_JOB_LABEL, "")));
+  }
+
+  // 网址对应的网站（#429）：小写 host，去掉 www.，带非默认端口；几家公司共用一个 host 的招聘平台再加路径里的公司那一段。
+  // 认不出公司的共享站点、IP v6、不是 http(s) 的返回空串：这时不按网站存，也不按网站填。
+  function siteKeyOf(href) {
+    let url;
+    try {
+      url = new URL(String(href || ""));
+    } catch {
+      return "";
+    }
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (!host || SHARED_HOSTS.test(host) || SHARED_EXACT.test(host)) return "";
+    // 端口 0 能写进网址，协议不收（只收 1～65535）。
+    if (url.port && !(Number(url.port) >= 1 && Number(url.port) <= 65535)) return "";
+    let key = url.port ? `${host}:${url.port}` : host;
+    const rule = PATH_TENANT_HOSTS.find((item) => item.host.test(host));
+    if (rule) {
+      const tenant = rule.tenant(url.pathname.split("/").filter(Boolean), url);
+      if (!TENANT_SEGMENT.test(tenant || "")) return "";
+      // 公司段统一小写：同一家公司在网址里大小写不同（Acme、acme）也算一个网站。
+      key = `${key}/${tenant.toLowerCase()}`;
+    }
+    return SITE_KEY.test(key) && key.length <= 200 ? key : "";
+  }
+
+  // 桌面读回来的网站回答（{ key, value }）并进资料用的形状。
+  function siteAnswerFields(answers) {
+    return (Array.isArray(answers) ? answers : [])
+      .filter((item) => text(item?.key) && text(item?.value))
+      .map((item) => ({ group: SITE_GROUP, key: text(item.key), value: text(item.value) }));
+  }
+
+  // 家庭区块里问对方公司的题（「是否有亲属在本公司工作」）：别的家庭字段照旧不收，这一类按网站存。
+  function siteFamilyLabel(candidate) {
+    const section = text(candidate?.section);
+    if (!FAMILY_SECTION.test(section) || candidate?.sectionRepeatable || CONTACT_SECTION.test(section)) return "";
+    if (!siteScopedTitle(normalizeKey(candidate?.title ?? candidate?.label))) return "";
+    return candidateLabel({ ...candidate, section: "" });
+  }
+
+  // 没匹配上的候选里是不是有按网站存的题（#429）：和 planProfileOffer 按网站分时取同一个名字。网页端据此决定要不要先读网站回答。
+  function siteScopedCandidate(candidate) {
+    if (candidate?.matched) return false;
+    const label = siteFamilyLabel(candidate) || candidateLabel(candidate);
+    return Boolean(label) && siteScopedTitle(normalizeKey(label));
   }
 
   // 一次填写之后，网页上既没匹配上、也还空着的字段。密码验证码、文件、勾选框、经历类区块里的字段不算。
@@ -453,7 +548,9 @@
     "existing-changed": (key) => `「${key}」在桌面里刚有了不同的内容，没有覆盖；请重新核对后再保存。`,
     "conflict-unconfirmed": (key) => `「${key}」与桌面已有内容不同，需要勾选「替换」才会覆盖，没有保存。`,
     gone: (key) => `「${key}」在网页上找不到了，没有保存。`,
-    full: (key) => `「${key}」放不下：「我的信息」已满，先在桌面删掉用不上的补充字段。`
+    full: (key) => `「${key}」放不下：「我的信息」已满，先在桌面删掉用不上的补充字段。`,
+    "site-unfit": (key) => `「${key}」的回答太长，或像号码、联系方式，不会按网站记住。`,
+    "site-full": (key) => `「${key}」放不下：这个网站已经记住了 ${MAX_SITE_ANSWERS_PER_SITE} 道题，先在桌面「网站回答」里删掉用不上的。`
   };
 
   function skipNote(id, key, reason) {
@@ -467,7 +564,12 @@
   //   pending  只有字段名（网页上空着，或有内容但读不出来），保存后在桌面标「待补充」
   //   conflicts 桌面同名补充字段已有不同的内容，由用户决定是否替换
   //   notes    不能保存的项和原因；same 桌面已有相同内容的项数（sameIds 是它们的 id）
-  function planProfileOffer({ candidates, profile: rawProfile, templateFields = [], limit = MAX_OFFERED_CANDIDATES, stats = null } = {}) {
+  //   site     #429：只在这个网站复用的题（siteScopedTitle）和网页上的回答，存到桌面的网站回答；id 带 site: 前缀，
+  //            existing 是这个网站已经记住的不同回答（要用户勾选才替换）。只有传了 site（{ answers: 桌面里这个网站的回答 }，
+  //            即桌面支持而且认得出网站）才分出来；传 { pending: true }（还在读这个网站的回答）时这类题先不列，
+  //            读完由调用方按结果重算；不传时这类题照旧按补充字段处理。
+  //   siteWaiting  这类题先不列的个数：网页上还空着（只记回答），或者还在读网站回答；调用方据此留着候选，之后再列出来。
+  function planProfileOffer({ candidates, profile: rawProfile, templateFields = [], limit = MAX_OFFERED_CANDIDATES, stats = null, site = null } = {}) {
     const profile = normalizeProfile(rawProfile);
     // 模板和预置字段（含家庭成员）：同名的没法再存成补充字段，存了也会被它们盖住。
     const fixedProfile = { ...profile, custom: [] };
@@ -478,12 +580,16 @@
     });
     const fixedKeys = knownFieldKeys(fixedProfile, templateFields);
     const customByKey = new Map(profile.custom.map((item) => [normalizeKey(item.key), item]));
+    const sitePending = Boolean(site?.pending);
+    const siteAnswers = site && !sitePending ? new Map((Array.isArray(site.answers) ? site.answers : [])
+      .filter((item) => text(item?.key) && text(item?.value)).map((item) => [normalizeKey(item.key), { key: text(item.key), value: text(item.value) }])) : null;
+    let siteRoom = siteAnswers ? MAX_SITE_ANSWERS_PER_SITE - siteAnswers.size : 0;
 
     const rank = (entry) => entry.state === "ready" ? (entry.value ? 3 : 2) : entry.state === "unreadable" ? 1 : 0;
     const merged = new Map();
     for (const candidate of Array.isArray(candidates) ? candidates : []) {
       if (candidate?.matched) continue;
-      const label = candidateLabel(candidate, stats);
+      const label = ((siteAnswers || sitePending) && siteFamilyLabel(candidate)) || candidateLabel(candidate, stats);
       if (!label) continue;
       const state = candidate.state === "stale" ? "stale" : candidate.state === "unreadable" ? "unreadable" : "ready";
       const entry = { id: normalizeKey(label), key: label, state, value: state === "ready" ? text(candidate.value) : "", ambiguous: false };
@@ -497,7 +603,7 @@
       }
     }
 
-    const plan = { filled: [], pending: [], conflicts: [], notes: [], same: 0, sameIds: [], hidden: 0 };
+    const plan = { filled: [], pending: [], conflicts: [], site: [], siteWaiting: 0, notes: [], same: 0, sameIds: [], hidden: 0 };
     for (const entry of merged.values()) {
       const { id, key, value } = entry;
       if (entry.ambiguous) { plan.notes.push(skipNote(id, key, "ambiguous")); continue; }
@@ -507,6 +613,22 @@
       const hasValue = Boolean(value);
       const unreadable = entry.state === "unreadable";
 
+      if ((siteAnswers || sitePending) && siteScopedTitle(id)) {
+        // 只记题目、不记回答没有用：网页上空着或读不准的不列，只数一下。
+        // 还没读到网站回答时不知道该存哪边，也先不列：不能先按补充字段存进「我的信息」。
+        if (!hasValue || sitePending) { plan.siteWaiting += 1; continue; }
+        if (value.length > JOB_SPECIFIC_VALUE_CHARS || looksLikeIdentifier(value)) { plan.notes.push(skipNote(id, key, "site-unfit")); continue; }
+        // 模板或预置字段里已有同名的题、回答也一样：不用再按网站记一遍。回答不同的照样列，这个网站的答法就是要跟着网站走。
+        if (fixedKeys.has(id) && sameValue(fixedValues.get(id) || "", value)) { plan.same += 1; plan.sameIds.push(`site:${id}`); continue; }
+        const existing = siteAnswers.get(id);
+        if (existing && sameValue(existing.value, value)) { plan.same += 1; plan.sameIds.push(`site:${id}`); continue; }
+        if (plan.filled.length + plan.pending.length + plan.conflicts.length + plan.site.length >= limit) { plan.hidden += 1; continue; }
+        if (!existing && siteRoom <= 0) { plan.notes.push(skipNote(id, key, "site-full")); continue; }
+        if (!existing) siteRoom -= 1;
+        plan.site.push({ id: `site:${id}`, key: existing?.key || key, value, existing: existing?.value || "", defaultSelected: !existing });
+        continue;
+      }
+
       if (fixedKeys.has(id)) {
         if (!hasValue) continue;
         const existing = fixedValues.get(id) || "";
@@ -515,7 +637,7 @@
         continue;
       }
 
-      const listed = plan.filled.length + plan.pending.length + plan.conflicts.length;
+      const listed = plan.filled.length + plan.pending.length + plan.conflicts.length + plan.site.length;
       const custom = customByKey.get(id);
       if (custom) {
         const existing = text(custom.value);
@@ -544,19 +666,21 @@
 
   function profileOfferSummary(plan) {
     const conflicts = plan?.conflicts?.length || 0;
+    const site = plan?.site?.length || 0;
     return `可保存到我的信息：已填 ${plan?.filled?.length || 0} 项，待补 ${plan?.pending?.length || 0} 项`
-      + (conflicts ? `；另有 ${conflicts} 项与桌面已有内容不同` : "");
+      + (conflicts ? `；另有 ${conflicts} 项与桌面已有内容不同` : "")
+      + (site ? `；${site} 项只在这个网站使用` : "");
   }
 
   function planHasOffer(plan) {
-    return Boolean(plan && (plan.filled.length || plan.pending.length || plan.conflicts.length));
+    return Boolean(plan && (plan.filled.length || plan.pending.length || plan.conflicts.length || plan.site?.length));
   }
 
   // 没有用户勾选信息时（页面上保留的旧按钮）：按默认勾选的项保存，冲突项从不默认替换。
   function defaultProfileSelection(plan) {
     const pick = (items, kind) => (items || []).filter((item) => item.defaultSelected)
       .map((item) => ({ id: item.id, key: item.key, kind, reviewedValue: item.value ?? "" }));
-    return [...pick(plan?.filled, "filled"), ...pick(plan?.pending, "pending")];
+    return [...pick(plan?.filled, "filled"), ...pick(plan?.pending, "pending"), ...pick(plan?.site, "site")];
   }
 
   function utf8Length(value) {
@@ -589,7 +713,8 @@
 
     for (const choice of Array.isArray(selection) ? selection : []) {
       const id = text(choice?.id);
-      if (!id || seenIds.has(id)) continue;
+      // 网站回答（#429，id 带 site:）走 applySiteSelection，这里不碰，也不报成「找不到了」。
+      if (!id || id.startsWith("site:") || seenIds.has(id)) continue;
       seenIds.add(id);
       const item = items.get(id);
       const key = item?.key || notes.get(id)?.key || text(choice?.key) || id;
@@ -635,6 +760,41 @@
     }
 
     return { profile, saved, skipped, full };
+  }
+
+  // 用户勾选的网站回答（#429），和 applyProfileSelection 同一套核对：plan 是点击那一刻按网页当前值和桌面里这个网站的回答重算的，
+  // selection 里只看 id 带 site: 的项。看到的和现在的对不上就不存，照实报在 skipped 里。
+  // 返回 answers（发给桌面的 { key, value, previous }，previous 是用户看到的桌面旧回答）和 saved、skipped。
+  function applySiteSelection(plan, selection = []) {
+    const items = new Map((plan?.site || []).map((item) => [item.id, item]));
+    const sameIds = new Set(plan?.sameIds || []);
+    const answers = [];
+    const saved = [];
+    const skipped = [];
+    const seen = new Set();
+    const skip = (id, key, reason) => skipped.push(skipNote(id, key, reason));
+    for (const choice of Array.isArray(selection) ? selection : []) {
+      const id = text(choice?.id);
+      if (!id.startsWith("site:") || seen.has(id)) continue;
+      seen.add(id);
+      const item = items.get(id);
+      const key = item?.key || text(choice?.key) || id.slice(5);
+      if (!item) { skip(id, key, sameIds.has(id) ? "same" : "gone"); continue; }
+      if (choice?.kind !== "site" || typeof choice?.reviewedValue !== "string" || choice.reviewedValue !== item.value) {
+        skip(id, key, "value-changed");
+        continue;
+      }
+      if (item.existing) {
+        if (choice.replaceOf === undefined) { skip(id, key, "conflict-unconfirmed"); continue; }
+        if (!sameValue(choice.replaceOf, item.existing)) { skip(id, key, "existing-changed"); continue; }
+      } else if (choice.replaceOf !== undefined) {
+        skip(id, key, "existing-changed");
+        continue;
+      }
+      answers.push({ key: item.key, value: item.value, ...(item.existing ? { previous: item.existing } : {}) });
+      saved.push({ id, key: item.key, value: item.value, kind: "site" });
+    }
+    return { answers, saved, skipped };
   }
 
   // 保存结果给用户看的话。saved 非空只表示桌面确认写入了这些项；skipped 里的照实列出，不混进「已保存」。
@@ -743,6 +903,8 @@
 
   const api = {
     CUSTOM_GROUP,
+    MAX_SITE_ANSWERS_PER_SITE,
+    SITE_GROUP,
     SECRET_LABEL,
     SECRET_VALUE,
     FAMILY_FIELDS,
@@ -752,6 +914,7 @@
     MAX_OFFERED_CANDIDATES,
     addPendingFields,
     applyProfileSelection,
+    applySiteSelection,
     countPendingFields,
     countProfileValues,
     defaultProfileSelection,
@@ -759,6 +922,7 @@
     emptyProfile,
     hasProfileContent,
     knownFieldKeys,
+    looksLikeIdentifier,
     mergeProfiles,
     mergeResumeFields,
     normalizeKey,
@@ -770,6 +934,10 @@
     profileOfferSummary,
     profileToResumeFields,
     savedAnswerMatches,
+    siteAnswerFields,
+    siteKeyOf,
+    siteScopedCandidate,
+    siteScopedTitle,
     stripProfileSecrets
   };
 

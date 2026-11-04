@@ -111,9 +111,9 @@ test("the analysis can be cancelled through the same channel as a fill", async (
 });
 
 function bigFill(count) {
-  // 每个字段带一大段候选资料，迫使 worker 分成多批，每批一次模型调用。
-  const formFields = Array.from({ length: count }, (_, i) => ({ fieldId: `f${i}`, label: `问题${i}说明` }));
-  const resumeFields = Array.from({ length: count }, (_, i) => ({ group: "补充", key: `问题${i}说明`, value: `${"很长的回答".repeat(2600)}${i}` }));
+  // 每个字段带一大段说明文字，迫使 worker 分成多批，每批一次模型调用。资料的值不发（#429 第 11 项），撑大请求的只能是题目。
+  const formFields = Array.from({ length: count }, (_, i) => ({ fieldId: `f${i}`, label: `问题${i}说明`, placeholder: "很长的说明".repeat(2600) }));
+  const resumeFields = Array.from({ length: count }, (_, i) => ({ group: "补充", key: `问题${i}说明`, value: `回答${i}` }));
   return { formFields, resumeFields };
 }
 

@@ -6,14 +6,17 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'ai-worker.js'), 'utf8');
 const helpers = require('../ai-helpers.js');
+const { refsFor, catalogOf } = require('./helpers/ai-refs.js');
 const BASE = {
   formFields: [{ fieldId: 'name', label: '姓名' }, { fieldId: 'school', label: '学校' }],
   resumeFields: [{ group: '基本信息', key: '姓名', value: '测试用户' }, { group: '教育背景', key: '学校', value: '大学乙' }]
 };
 
+// 替身按值写回答，发给 worker 前按这次的资料目录换成编号（tests/helpers/ai-refs.js）。
 function worker(respond = () => ({ ok: true, text: '[{"fieldId":"school","value":"大学乙"}]' }), { now = () => 0 } = {}) {
   const sent = [];
   let sequence = 0;
+  let resume = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: helpers,
     ResumeProProfile: require('../profile-fields.js'),
@@ -26,13 +29,17 @@ function worker(respond = () => ({ ok: true, text: '[{"fieldId":"school","value"
       sent.push(message);
       if (message.kind === 'desktop-complete') {
         Promise.resolve(respond(message)).then(reply => {
-          context.self.onmessage({ data: { kind: 'desktop-result', callId: message.callId, reply } });
+          const answer = reply?.ok && typeof reply.text === 'string' ? { ...reply, text: refsFor(message.user, resume, reply.text) } : reply;
+          context.self.onmessage({ data: { kind: 'desktop-result', callId: message.callId, reply: answer } });
         });
       }
     }
   };
   vm.runInContext(source, context);
-  return { context, sent, run: (input = BASE, controller) => context.handleAiFill(input, controller) };
+  return { context, sent, run: (input = BASE, controller) => {
+    resume = input.resumeFields || [];
+    return context.handleAiFill(input, controller);
+  } };
 }
 
 test('AI fill keeps local rules and parses only desktop response text', async () => {
@@ -137,11 +144,12 @@ test('password and verification fields never enter any AI prompt', async () => {
   assert.ok(result.diagnostics.skippedSecret >= 3);
 });
 
-test('an oversized lone candidate is skipped instead of prompting AI without resume context', async () => {
+test('a field too large to send with any resume item is skipped instead of prompting AI without resume context', async () => {
   const env = worker(() => { throw new Error('AI must not receive an empty candidate batch'); });
+  // 资料的值不发、字段名截到 200 字（#429 第 11 项）：撑爆预算的只能是网页字段本身。
   const result = await env.run({
-    formFields: [{ fieldId: 'school', label: '学校', inputType: 'select', options: ['大学甲', '大学乙'] }],
-    resumeFields: [{ group: '教育背景', key: '学校', value: '合成资料'.repeat(20_000) }]
+    formFields: [{ fieldId: 'school', label: '学校', placeholder: '甲'.repeat(17_000) }],
+    resumeFields: [{ group: '教育背景', key: '学校', value: '大学乙' }]
   });
   assert.equal(env.sent.filter(item => item.kind === 'desktop-complete').length, 0);
   assert.ok(result.diagnostics.skippedOversized > 0);
@@ -150,8 +158,8 @@ test('an oversized lone candidate is skipped instead of prompting AI without res
 
 test('a failed request replaces an earlier skip code, so the diagnostics name the failure', async () => {
   const input = {
-    formFields: [{ fieldId: 'school', label: '学校', inputType: 'select', options: ['大学甲', '大学乙'] }, { fieldId: 'intro', label: '个人简介' }],
-    resumeFields: [{ group: '教育背景', key: '学校', value: '合成资料'.repeat(20_000) }, { group: '其他', key: '自我评价', value: '合成评价' }]
+    formFields: [{ fieldId: 'school', label: '学校', placeholder: '甲'.repeat(17_000) }, { fieldId: 'intro', label: '个人简介' }],
+    resumeFields: [{ group: '教育背景', key: '学校', value: '大学乙' }, { group: '其他', key: '自我评价', value: '合成评价' }]
   };
   const timeout = worker(() => ({ ok: false, reason: 'timeout' }));
   const failed = await timeout.run(input);
@@ -381,17 +389,132 @@ test('a later batch failure keeps matches already returned by the desktop', asyn
   assert.match(result.warning, /连不上/);
 });
 
-test('candidate subsets for one page field produce at most one fill match', async () => {
+// 资料项多到整份目录超出预算（字段名截到 60 字，300 项约 70 KB）。
+const BIG_CATALOG = Array.from({ length: 300 }, (_, i) => ({ group: '自定义', key: `资料${i}` + '甲'.repeat(55), value: `结果${i + 1}` }));
+
+test('a catalog over the budget is cut once per batch of questions, with the items about them first', async () => {
   let calls = 0;
-  const env = worker(() => ({ ok: true, text: JSON.stringify([{ fieldId: 'single', value: `结果${++calls}` }]) }));
-  const result = await env.run({
-    formFields: [{ fieldId: 'single', label: '自我评价', inputType: 'text' }],
-    resumeFields: Array.from({ length: 30 }, (_, i) => ({ group: '自定义', key: `资料${i}`, value: '甲'.repeat(1800) }))
+  const env = worker((message) => {
+    calls += 1;
+    const entry = catalogOf(message.user).find((item) => item.key === '期望薪资');
+    return { ok: true, text: JSON.stringify(entry ? [{ fieldId: 'salary', ref: entry.ref }] : []) };
   });
-  assert.ok(calls > 1);
-  assert.equal(result.matches.length, 1);
-  assert.equal(result.matches[0].value, '结果1');
-  assert.equal(result.diagnostics.aiMatches, 1);
+  const formFields = Array.from({ length: 30 }, (_, i) => ({ fieldId: `q${i}`, label: `问题${i}` }));
+  const result = await env.run({
+    formFields: [...formFields, { fieldId: 'salary', label: '期望薪资' }],
+    // 和题目有关的一项排在目录最后，也要放进这一批。
+    resumeFields: [...BIG_CATALOG, { group: '补充字段', key: '期望薪资', value: '面议' }]
+  });
+  // 请求数只随题目的批数增长：31 道短题是一批，一次请求，不按目录切块再乘上去。
+  assert.equal(calls, 1);
+  assert.equal(result.diagnostics.requests, 1);
+  assert.equal(result.diagnostics.skippedOversized, 0);
+  assert.equal(result.matches.find((match) => match.fieldId === 'salary').value, '面议');
+  const budget = vm.runInContext('AI_USER_BUDGET', env.context);
+  assert.ok(Buffer.byteLength(JSON.stringify(env.sent.find((item) => item.kind === 'desktop-complete').user)) <= budget);
+
+  // 题目多到超过半份预算时分几批，每批一次请求。
+  let more = 0;
+  const many = worker(() => { more += 1; return { ok: true, text: '[]' }; });
+  const long = await many.run({
+    formFields: Array.from({ length: 6 }, (_, i) => ({ fieldId: `l${i}`, label: `长题${i}`, placeholder: '乙'.repeat(3000) })),
+    resumeFields: BIG_CATALOG
+  });
+  assert.equal(more, long.diagnostics.requests);
+  assert.ok(more >= 2 && more <= 6, `one request per batch of questions, got ${more}`);
+  assert.ok(long.diagnostics.catalogTrimmed < BIG_CATALOG.length, "counted once, not once per batch");
+});
+
+test('a trimmed catalog takes only its own refs, keeps the fits of each select in it and says it is a part', async () => {
+  let sent = null;
+  const env = worker((message) => {
+    sent = message;
+    // 一项被裁掉的编号（目录里最后一项和题目无关），一项本批有的。
+    const refs = new Set(catalogOf(message.user).map((entry) => entry.ref));
+    const missing = Array.from({ length: 302 }, (_, i) => `r${i + 1}`).find((ref) => !refs.has(ref));
+    return { ok: true, text: JSON.stringify([{ fieldId: 'q0', ref: missing }, { fieldId: 'politics', ref: catalogOf(message.user).find((entry) => entry.key === '身份').ref }]) };
+  });
+  const result = await env.run({
+    formFields: [{ fieldId: 'q0', label: '问题0' }, { fieldId: 'politics', label: '政治面貌', inputType: 'select', options: ['共青团员', '群众'] }],
+    // 「身份」和题目说的不是一件事，排在最后；它是这道下拉唯一填得进的一项。
+    resumeFields: [...BIG_CATALOG, { group: '基本信息', key: '身份', value: '共青团员' }]
+  });
+  const catalog = catalogOf(sent.user);
+  const refs = new Set(catalog.map((entry) => entry.ref));
+  const fields = JSON.parse(sent.user.split('\n')[1]);
+  const politics = fields.find((field) => field.fieldId === 'politics');
+  assert.ok(politics.fits.length > 0 && politics.fits.every((token) => refs.has(token.split('.')[0])), JSON.stringify(politics.fits));
+  assert.match(sent.user, /只列了和这批题目有关的一部分/);
+  // 哪一批都没发出去的项数（去重），不是各批相加；这一批里没答上的题记在 trimmedUnanswered。
+  assert.equal(result.diagnostics.catalogTrimmed, BIG_CATALOG.length + 1 - catalog.length);
+  assert.equal(result.diagnostics.trimmedUnanswered, 1);
+  // 不在本批目录里的编号不用，哪怕整份目录里有。
+  assert.equal(result.matches.some((match) => match.fieldId === 'q0'), false);
+  assert.equal(result.matches.find((match) => match.fieldId === 'politics').value, '共青团员');
+});
+
+test('a select whose fitting items were all trimmed away is counted as trimmed, not as too much content', async () => {
+  let sent = null;
+  const env = worker((message) => {
+    sent = message;
+    const politics = JSON.parse(message.user.split('\n')[1]).find((field) => field.fieldId === 'politics');
+    return { ok: true, text: JSON.stringify([{ fieldId: 'politics', ref: politics.fits[0] }]) };
+  });
+  // 300 项都填得进「政治面貌」，排在前面占满了预算；「方案」唯一填得进的一项排在最后，被裁掉了。
+  const result = await env.run({
+    formFields: [{ fieldId: 'politics', label: '政治面貌', inputType: 'select', options: ['共青团员', '群众'] },
+      { fieldId: 'plan', label: '方案', inputType: 'select', options: ['乙方案', '丙方案'] }],
+    resumeFields: [...BIG_CATALOG.map((entry) => ({ ...entry, value: '共青团员' })), { group: '自定义', key: '方案' + '甲'.repeat(55), value: '乙方案' }]
+  });
+  assert.deepEqual(JSON.parse(sent.user.split('\n')[1]).map((field) => field.fieldId), ['politics']);
+  assert.equal(result.matches.find((match) => match.fieldId === 'politics').value, '共青团员');
+  assert.equal(result.diagnostics.skippedOversized, 0);
+  assert.equal(result.diagnostics.errorCode, 'none');
+  assert.doesNotMatch(result.warning, /内容太多/);
+  assert.equal(result.diagnostics.trimmedUnanswered, 1);
+  assert.ok(result.diagnostics.catalogTrimmed >= 1);
+});
+
+test('a select with a fits list too long for the budget still gets items picked, its fits cut to them', () => {
+  const env = worker();
+  const relevantEntries = vm.runInContext('relevantEntries', env.context);
+  const promptBytes = vm.runInContext('promptBytes', env.context);
+  const budget = vm.runInContext('AI_USER_BUDGET', env.context);
+  const entries = Array.from({ length: 7000 }, (_, i) => ({ ref: `r${i + 1}`, group: '自定义', key: `资料${i}` }));
+  const field = { fieldId: 'politics', label: '政治面貌', inputType: 'select', options: ['群众'], fits: entries.map((entry) => entry.ref) };
+  assert.ok(promptBytes([field], [], true) > budget, 'the whole fits list alone is over the budget');
+  const chosen = relevantEntries([field], entries);
+  assert.ok(chosen.length > 100, `${chosen.length} items picked`);
+  const refs = new Set(chosen.map((entry) => entry.ref));
+  assert.ok(promptBytes([{ ...field, fits: field.fits.filter((ref) => refs.has(ref)) }], chosen, true) <= budget);
+});
+
+test('the bytes counted for each catalog item add up to what the prompt really takes', () => {
+  const env = worker();
+  const fields = [{ fieldId: 'a', label: '题目"引号"\\反斜杠' }];
+  const entries = [{ ref: 'r1', group: '基本信息', key: '姓名' }, { ref: 'r2', group: '补充字段', key: '带"引号"和\\反斜杠的题目', shape: '长文本' },
+    { ref: 'r3', group: 'Other', key: 'English key', aka: ['别名一', '别名二'] }];
+  const promptBytes = vm.runInContext('promptBytes', env.context);
+  const entryBytes = vm.runInContext('entryBytes', env.context);
+  for (const partial of [false, true]) {
+    const sum = entries.reduce((total, entry) => total + entryBytes(entry), 0);
+    assert.equal(promptBytes(fields, entries, partial) - promptBytes(fields, [], partial) + 1, sum);
+  }
+});
+
+test('two different answers to one field in one reply leave it out and say why; the same answer twice does not', async () => {
+  const school = (message) => ({ fieldId: 'school', ref: catalogOf(message.user)[0].ref });
+  const twice = worker((message) => ({ ok: true, text: JSON.stringify([school(message), school(message)]) }));
+  const same = await twice.run({ formFields: [{ fieldId: 'school', label: '学校' }], resumeFields: [{ group: '教育', key: '学校', value: '大学乙' }] });
+  assert.equal(same.matches.find((match) => match.fieldId === 'school').value, '大学乙');
+  const two = worker((message) => ({ ok: true, text: JSON.stringify(catalogOf(message.user).map((entry) => ({ fieldId: 'school', ref: entry.ref }))) }));
+  const torn = await two.run({ formFields: [{ fieldId: 'school', label: '学校' }],
+    resumeFields: [{ group: '教育', key: '本科学校', value: '大学甲' }, { group: '教育', key: '硕士学校', value: '大学乙' }] });
+  assert.deepEqual(JSON.parse(JSON.stringify(torn.matches.find((match) => match.fieldId === 'school'))), { fieldId: 'school', value: '', blocked: 'ai_conflict' });
+  // 一题只进一批，ai_conflict 只会是同一个回复里给了不同的值：网页上的原因照这个说。
+  const content = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
+  assert.match(content, /ai_conflict: "AI 对同一题给了不同的值"/);
+  assert.doesNotMatch(content + fs.readFileSync(path.join(__dirname, '..', 'ai-worker.js'), 'utf8'), /几批 ?(?:AI )?回答对不上|几批对不上/);
 });
 
 test('rate limiting stops later prompt batches', async () => {

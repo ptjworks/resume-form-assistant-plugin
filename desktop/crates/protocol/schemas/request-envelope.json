@@ -43,7 +43,11 @@
         "legacy.import",
         "usage.touch",
         "usage.settings",
-        "mail.import"
+        "mail.import",
+        "siteAnswers.read",
+        "siteAnswers.save",
+        "resumeFiles.list",
+        "resumeFiles.read"
       ]
     },
     "occurredAt": {

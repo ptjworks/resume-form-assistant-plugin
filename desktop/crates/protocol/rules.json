@@ -1,13 +1,17 @@
 {
   "protocolVersion": 2,
   "minProtocolVersion": 1,
-  "maxProtocolVersion": 4,
+  "maxProtocolVersion": 6,
   "maxEnvelopeBytes": 65536,
   "suggestedRawChunkBytes": 32768,
   "maxSnapshotBytes": 2097152,
   "maxReconcileItems": 32,
   "maxChunkCount": 128,
   "maxAssemblerSessions": 16,
+  "resumeFileChunkBytes": 45054,
+  "maxResumeFileBytes": 10485760,
+  "maxResumeFileChunkCount": 233,
+  "maxResumeFiles": 30,
   "occurredAtSubset": "UTC RFC3339: YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS.fractionZ with a real calendar date and clock; Z only, no numeric offsets.",
   "identityForbidden": [
     "health",
@@ -27,7 +31,11 @@
     "resume.read",
     "resume.update",
     "legacy.import",
-    "mail.import"
+    "mail.import",
+    "siteAnswers.read",
+    "siteAnswers.save",
+    "resumeFiles.list",
+    "resumeFiles.read"
   ],
   "writeTypes": [
     "job.save",
@@ -51,7 +59,11 @@
     "legacy.import",
     "usage.touch",
     "usage.settings",
-    "mail.import"
+    "mail.import",
+    "siteAnswers.read",
+    "siteAnswers.save",
+    "resumeFiles.list",
+    "resumeFiles.read"
   ],
   "v2MessageTypes": [
     "resume.read",
@@ -117,5 +129,13 @@
   ],
   "v4MessageTypes": [
     "mail.import"
+  ],
+  "v5MessageTypes": [
+    "siteAnswers.read",
+    "siteAnswers.save"
+  ],
+  "v6MessageTypes": [
+    "resumeFiles.list",
+    "resumeFiles.read"
   ]
 }

@@ -12,7 +12,7 @@ use crate::urls::{allowlist_from_rules, reject_sensitive_urls, reject_sensitive_
 use crate::time::is_utc_timestamp;
 use crate::types::{
     MessageType, Request, MAX_ENVELOPE_BYTES, MAX_PROTOCOL_VERSION, MAX_RECONCILE_ITEMS,
-    MAX_SNAPSHOT_BYTES, MIN_PROTOCOL_VERSION,
+    MAX_SNAPSHOT_BYTES, MIN_PROTOCOL_VERSION, RESUME_FILE_CHUNK_BYTES,
 };
 
 pub fn utf8_json_len(value: &Value) -> usize {
@@ -294,9 +294,36 @@ fn validate_payload_extras(ty: MessageType, payload: &Map<String, Value>) -> Res
             }
         }
         MessageType::LegacyImport => validate_legacy_import(payload)?,
+        MessageType::SiteAnswersRead | MessageType::SiteAnswersSave => {
+            if !is_site_key(payload["site"].as_str().unwrap()) {
+                return Err(invalid_payload("site must be host[:port][/segment]"));
+            }
+        }
         _ => {}
     }
     Ok(())
+}
+
+/// #429: the site a set of answers belongs to — a lowercase host, an optional port, and for
+/// a recruiting platform shared by many companies one more path segment naming the company.
+/// Nothing else: no scheme, query or longer path, so a whole page address never lands here.
+pub fn is_site_key(site: &str) -> bool {
+    let (host_port, tenant) = match site.split_once('/') {
+        Some((head, tail)) => (head, Some(tail)),
+        None => (site, None),
+    };
+    let (host, port) = match host_port.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (host_port, None),
+    };
+    let host_ok = host.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && host.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-');
+    let port_ok = port.is_none_or(|p| {
+        (1..=5).contains(&p.len()) && p.chars().all(|c| c.is_ascii_digit()) && p.parse::<u32>().is_ok_and(|n| (1..=65535).contains(&n))
+    });
+    let tenant_ok = tenant.is_none_or(|t| (1..=64).contains(&t.len())
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+    host_ok && port_ok && tenant_ok
 }
 
 fn invalid_payload(message: &str) -> ProtocolError {
@@ -465,6 +492,30 @@ pub fn validate_response_for_request(value: &Value, req: &Request) -> Result<(),
     {
         return Err(invalid("ai.complete tier is only returned to a request that asked for one"));
     }
+    // #429: answers for one site go back only to a request about that site.
+    if matches!(req.message_type, MessageType::SiteAnswersRead | MessageType::SiteAnswersSave)
+        && value["ok"] == true
+        && value["payload"]["site"] != req.payload["site"]
+    {
+        return Err(invalid("site answers response names a different site"));
+    }
+    // #429: one chunk of the file version that was asked for, and exactly as long as that
+    // chunk must be. The chunk digest is checked by whoever assembles the file.
+    if req.message_type == MessageType::ResumeFilesRead && value["ok"] == true {
+        let p = &value["payload"];
+        if p["fileId"] != req.payload["fileId"] || p["sha256"] != req.payload["sha256"] || p["chunkIndex"] != req.payload["chunkIndex"] {
+            return Err(invalid("resume file chunk is not the one that was requested"));
+        }
+        let size = p["byteSize"].as_u64().unwrap();
+        let count = p["chunkCount"].as_u64().unwrap();
+        let index = p["chunkIndex"].as_u64().unwrap();
+        let chunk = RESUME_FILE_CHUNK_BYTES as u64;
+        let expected_len = if index + 1 == count { size.saturating_sub(index * chunk) } else { chunk };
+        let decoded = decode_standard_base64(p["bytesBase64"].as_str().unwrap())?;
+        if count != size.div_ceil(chunk) || index >= count || decoded.len() as u64 != expected_len {
+            return Err(invalid("resume file chunk length or count mismatch"));
+        }
+    }
     if req.message_type == MessageType::MailImport && value["ok"] == true {
         let p = &value["payload"];
         let final_chunk = req.payload["chunkIndex"].as_u64().unwrap() + 1 == req.payload["chunkCount"].as_u64().unwrap();
@@ -602,7 +653,15 @@ pub fn validate_response_value(value: &Value, request_type: MessageType) -> Resu
     // Whole response, before the ok/error split. Scanning only the success branch let a
     // schema-valid failure carry a credential in `error.message`. Archive data can hold
     // credentials and the host must not hand them back to the extension, on any branch.
-    reject_secrets(value)?;
+    // #429: the one exception is the bytes of a resume file. Scanning Base64 cannot find a
+    // readable credential; it could only misfire, and a misfire would refuse the same file on
+    // every read. Today's rules cannot misfire on canonical Base64 (`=` is only end padding),
+    // but a later rule could. Every other field, error branch included, is still scanned.
+    if request_type == MessageType::ResumeFilesRead {
+        reject_secrets_except(value, &[&["payload", "bytesBase64"]])?;
+    } else {
+        reject_secrets(value)?;
+    }
     if value.as_array().is_some() || !value.is_object() {
         return Err(ProtocolError::new(
             ErrorCode::InvalidPayload,
@@ -685,6 +744,9 @@ pub fn validate_response_value(value: &Value, request_type: MessageType) -> Resu
         if request_type == MessageType::QueryCandidates {
             candidate_timestamps_are_real(obj.get("payload").unwrap())?;
         }
+        if request_type == MessageType::ResumeFilesList {
+            resume_file_list_extras(obj.get("payload").unwrap())?;
+        }
     } else {
         if obj.contains_key("resultId") {
             return Err(ProtocolError::new(
@@ -708,6 +770,47 @@ pub fn validate_response_value(value: &Value, request_type: MessageType) -> Resu
         }
     }
     Ok(())
+}
+
+/// #429: one row per file, at most one default per kind, a type that kind may hold, and
+/// real timestamps.
+fn resume_file_list_extras(payload: &Value) -> Result<(), ProtocolError> {
+    let mut ids = std::collections::HashSet::new();
+    let mut defaults = std::collections::HashSet::new();
+    for file in payload["files"].as_array().unwrap() {
+        let kind = file["kind"].as_str().unwrap();
+        if !ids.insert(file["fileId"].as_str().unwrap().to_ascii_lowercase()) {
+            return Err(invalid_payload("resume file listed twice"));
+        }
+        if file["isDefault"] == true && !defaults.insert(kind) {
+            return Err(invalid_payload("more than one default resume file of one kind"));
+        }
+        if !resume_file_mime_allowed(kind, file["mime"].as_str().unwrap()) {
+            return Err(invalid_payload("resume file type does not fit its kind"));
+        }
+        if !is_utc_timestamp(file["updatedAt"].as_str().unwrap()) {
+            return Err(invalid_payload("resume file updatedAt must be a real UTC timestamp"));
+        }
+    }
+    Ok(())
+}
+
+/// #429: which file types each kind holds. Resumes are documents, photos are images,
+/// transcripts either; other material may be any of the five types.
+pub fn resume_file_mime_allowed(kind: &str, mime: &str) -> bool {
+    const PDF: &str = "application/pdf";
+    const DOC: &str = "application/msword";
+    const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const JPEG: &str = "image/jpeg";
+    const PNG: &str = "image/png";
+    let allowed: &[&str] = match kind {
+        "resume" => &[PDF, DOC, DOCX],
+        "photo" => &[JPEG, PNG],
+        "transcript" => &[PDF, JPEG, PNG],
+        "other" => &[PDF, DOC, DOCX, JPEG, PNG],
+        _ => &[],
+    };
+    allowed.contains(&mime)
 }
 
 fn handshake_response_extras(payload: &Value) -> Result<(), ProtocolError> {

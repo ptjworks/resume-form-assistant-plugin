@@ -504,6 +504,8 @@ test("a span of two dates gives the start or the end only when the question says
   assert.equal(pick("2019-2023", "离职年份"), "2023");
   assert.equal(pick("2019.09-2023.06", "在校时间（开始）"), "2019.09");
   assert.equal(pick("2019.09-2023.06", "Start date"), "2019.09");
+  assert.equal(pick("2019.09-2023.06", "Enrollment Date"), "2019.09");
+  assert.equal(pick("2019.09-2023.06", "Graduation Date (Master)"), "2023.06");
   // 没写、两样都写了：原样交回，由日期控件报日期不对。
   assert.equal(pick("2019.09-2023.06", "在校时间"), "2019.09-2023.06");
   assert.equal(pick("2019.09-2023.06", "起止时间"), "2019.09-2023.06");
@@ -516,9 +518,16 @@ test("a span of two dates gives the start or the end only when the question says
   assert.equal(pick("2019.09-2023.06", "发起时间"), "2019.09-2023.06");
   assert.equal(pick("2019.09-2023.06", "起薪日期"), "2019.09-2023.06");
   assert.equal(pick("2019.09-2023.06", "出生日期 请选择日期，禁止填写未来日期"), "2019.09-2023.06");
-  // 不是正好两个日期的不动。
+  // #429 一个日期后面跟着至今：开始取日期，结束取「至今」（原来整段交回，结束题被当成 2019-09）。
+  assert.equal(pick("2019.09-至今", "开始时间"), "2019.09");
+  assert.equal(pick("2019.09-至今", "结束时间"), "至今");
+  assert.equal(pick("2019.09至今", "在校时间（结束）"), "至今");
+  assert.equal(pick("2019年9月 ~ 现在", "离职时间"), "现在");
+  assert.equal(pick("2019.09-至今", "在校时间"), "2019.09-至今");
+  // 别的不是一段起止的不动。
   assert.equal(pick("2019.09", "开始时间"), "2019.09");
-  assert.equal(pick("2019.09-至今", "开始时间"), "2019.09-至今");
+  assert.equal(pick("北京 2019.09-至今", "开始时间"), "北京 2019.09-至今");
+  assert.equal(pick("2019.09-现在在职", "结束时间"), "2019.09-现在在职");
   assert.equal(pick("2019.09-2023.06（全日制）", "开始时间"), "2019.09-2023.06（全日制）");
   assert.equal(pick("2019.09-2021.06-2023.06", "开始时间"), "2019.09-2021.06-2023.06");
   assert.equal(pick("", "开始时间"), "");

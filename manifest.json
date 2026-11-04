@@ -87,6 +87,8 @@
         "deep-analysis.js",
         "page-actions.js",
         "page-recipe.js",
+        "site-knowledge.js",
+        "upload-slots.js",
         "sidebar-state.js",
         "content.js",
         "webmail.js"

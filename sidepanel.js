@@ -41,6 +41,16 @@
     recipeReanalyze: document.getElementById("recipe-reanalyze"),
     recipeDelete: document.getElementById("recipe-delete"),
     fillResult: document.getElementById("fill-result"),
+    uploadSite: document.getElementById("upload-site"),
+    uploadRows: document.getElementById("upload-rows"),
+    uploadNotes: document.getElementById("upload-notes"),
+    uploadConfirm: document.getElementById("upload-confirm"),
+    uploadFill: document.getElementById("upload-fill"),
+    uploadCancel: document.getElementById("upload-cancel"),
+    uploadResult: document.getElementById("upload-result"),
+    uploadResultList: document.getElementById("upload-result-list"),
+    uploadResultOpen: document.getElementById("upload-result-open"),
+    uploadResultDismiss: document.getElementById("upload-result-dismiss"),
     profileOffer: document.getElementById("profile-offer"),
     profileOfferText: document.getElementById("profile-offer-text"),
     profileOfferCount: document.getElementById("profile-offer-count"),
@@ -142,6 +152,7 @@
     desktopPill: document.getElementById("desktop-pill"),
     pageDomain: document.getElementById("page-domain"),
     pageReady: document.getElementById("page-ready"),
+    siteHint: document.getElementById("site-hint"),
     templateMeta: document.getElementById("template-meta"),
     pluginVersion: document.getElementById("plugin-version"),
     fieldsTemplate: document.getElementById("fields-template"),
@@ -162,6 +173,7 @@
     taskFlows: {
       repeat: document.getElementById("task-flow-repeat"),
       deep: document.getElementById("task-flow-deep"),
+      upload: document.getElementById("task-flow-upload"),
       job: document.getElementById("task-flow-job"),
       submit: document.getElementById("task-flow-submit"),
       archive: document.getElementById("task-flow-archive")
@@ -228,6 +240,21 @@
   // #226 本站配方：页面只报「有没有、上次是否过期」，侧栏看不到网址和配方内容。
   let recipeView = null;
   let recipePending = false;
+  // #429 第 4 项：上传前的确认卡片和上传结果。页面报上传框（题目、认成什么、收什么、建议的文件），文件名、大小侧栏自己向后台读，
+  // 确认时侧栏先告诉后台「这个标签页、这个网站、这几个文件」，页面才拿得到文件。卡片按页面给的版本认，换一份就重选。
+  let uploadView = null;
+  let uploadFiles = null;
+  let uploadFilesKey = "";
+  // 桌面里的文件列表最多等这么久：桌面卡住时卡片不能一直停在「正在读取」。
+  // 没读到时 uploadFilesDown 是原因：desktop_old（桌面太旧）或 desktop_unavailable（连不上、超时）。
+  const UPLOAD_LIST_MS = 5000;
+  let uploadFilesDown = "";
+  // 框自己带着不能传的原因（已经有文件、桌面旧、连不上、插件没能处理）：不给它选文件。
+  const UPLOAD_BLOCKED = ["has_file", "file_unsure", "desktop_old", "desktop_unavailable", "plan_invalid", "plan_forbidden", "plan_stopped"];
+  let uploadChoices = new Map();
+  let uploadPending = false;
+  let pageHostWithPort = "";
+  const UPLOAD_KINDS = ["resume", "photo", "transcript", "other", "unknown"];
   // Archiving the fill that just ended (#178). The page owns the question and its answer;
   // the panel draws the page's snapshot, bound to the tab it came from. `archiveSeen` is the
   // newest snapshot of this tab and page load, so an older poll that left before a click can
@@ -567,6 +594,8 @@
     elements.fillButton.disabled = desktopMode !== "ready" || !hasData || currentTabId === null || Boolean(status?.busy) || repeating || deepRunning;
     elements.fillButton.textContent = filling ? (status.phase || "正在填写…") : "一键 AI 填写";
     elements.cancelButton.hidden = !status?.canCancel || repeating || deepRunning;
+    // #429 上传、等网站解析时停的是上传。
+    elements.cancelButton.textContent = typeof status?.cancelLabel === "string" && status.cancelLabel ? status.cancelLabel : "取消 AI 等待（保留本地匹配）";
     elements.repeatButton.disabled = desktopMode !== "ready" || !selectedTemplate() || currentTabId === null
       || Boolean(status?.busy) || repeating || repeatPending || deepRunning;
     elements.deepButton.disabled = desktopMode !== "ready" || !hasData || currentTabId === null
@@ -586,6 +615,10 @@
     // While the page fills, the card says so with the page's own phase text; no made-up percentage.
     elements.fillProgress.hidden = !filling;
     elements.fillProgressPhase.textContent = filling ? (status.phase || "正在填写…") : "";
+    // #429 上传简历后会覆盖已填内容的平台：网页给的一句提示，放在「当前网页」下面。
+    const siteHint = typeof status?.siteHint === "string" ? status.siteHint : "";
+    elements.siteHint.hidden = !siteHint;
+    elements.siteHint.textContent = siteHint;
     // 等 AI 久了，网页给的提示（#402）：已经先填了几项、可以取消。
     const waitHint = filling && typeof status.waitHint === "string" ? status.waitHint : "";
     if (elements.fillProgressHint) {
@@ -849,6 +882,297 @@
     } finally {
       deepPending = false;
       renderDeep();
+    }
+    await pollStatus();
+  }
+
+  // --- #429 第 4 项：上传前的确认卡片、上传结果 ------------------------------------------------
+
+  // 页面给的上传状态，只留卡片要用的；上传框的题目是网站自己的字，只当文字显示。
+  function normalizeUpload(raw) {
+    if (!raw || typeof raw !== "object" || !["offer", "running", "done"].includes(raw.phase)) return null;
+    const version = Number.isInteger(raw.version) && raw.version >= 0 ? raw.version : 0;
+    const epoch = typeof raw.epoch === "string" && /^[\w-]{1,64}$/.test(raw.epoch) ? raw.epoch : "";
+    if (raw.phase === "running") return { phase: "running", version, epoch };
+    if (raw.phase === "done") {
+      const lines = (Array.isArray(raw.lines) ? raw.lines : []).filter((line) => typeof line === "string" && line).slice(0, 20).map((line) => line.slice(0, 300));
+      return lines.length ? { phase: "done", version, epoch, host: typeof raw.host === "string" ? raw.host.slice(0, 255) : "", lines,
+        tone: ["ok", "warn"].includes(raw.tone) ? raw.tone : "info", addFiles: raw.addFiles === true } : null;
+    }
+    const number = (value) => Number.isInteger(value) && value > 0 ? value : null;
+    const slots = (Array.isArray(raw.slots) ? raw.slots : []).slice(0, 20)
+      .filter((slot) => typeof slot?.id === "string" && /^upload-\d{1,3}$/.test(slot.id))
+      .map((slot) => ({
+        id: slot.id,
+        title: typeof slot.title === "string" ? slot.title.slice(0, 80) : "",
+        kind: UPLOAD_KINDS.includes(slot.kind) ? slot.kind : "unknown",
+        reason: typeof slot.reason === "string" && /^[a-z_]{0,32}$/.test(slot.reason) ? slot.reason : "",
+        fileId: typeof slot.fileId === "string" ? slot.fileId.slice(0, 64) : "",
+        accept: typeof slot.accept === "string" ? slot.accept.slice(0, 200) : "",
+        limit: number(slot.limit) || 0,
+        siteLimit: number(slot.siteLimit)
+      }));
+    const restore = raw.restore && typeof raw.restore === "object" && Number.isInteger(raw.restore.count) && raw.restore.count > 0
+      ? { count: raw.restore.count, pending: raw.restore.pending === true,
+        labels: (Array.isArray(raw.restore.labels) ? raw.restore.labels : []).filter((label) => typeof label === "string").slice(0, 5).map((label) => label.slice(0, 40)),
+        laterCount: Number.isInteger(raw.restore.laterCount) && raw.restore.laterCount > 0 ? raw.restore.laterCount : 0,
+        later: (Array.isArray(raw.restore.later) ? raw.restore.later : []).filter((label) => typeof label === "string").slice(0, 5).map((label) => label.slice(0, 40)) }
+      : null;
+    if (!epoch || (!slots.length && !restore)) return null;
+    return { phase: "offer", version, epoch, host: typeof raw.host === "string" ? raw.host.slice(0, 255) : "",
+      platform: typeof raw.platform === "string" ? raw.platform.slice(0, 20) : "", slots, restore };
+  }
+
+  function hostWithPort(url) {
+    try {
+      const parsed = new URL(String(url || ""));
+      return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.host : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function setUploadView(view, tabId) {
+    // 卡片上的网站要和侧栏看到的标签页一样；不一样（页面跳走了）就不显示。
+    const shown = ["offer", "done"].includes(view?.phase) && view.host !== pageHostWithPort ? null : view;
+    const key = shown?.phase === "offer" ? `${tabId}:${shown.epoch}:${shown.version}` : "";
+    if (key && key !== uploadFilesKey) {
+      uploadFilesKey = key;
+      uploadChoices = new Map(shown.slots.filter((slot) => slot.fileId).map((slot) => [slot.id, slot.fileId]));
+      // 卡片上没有能放文件的框（只改回，或者框都有原因不能传）：不用读桌面里的文件，也不用等。
+      if (shown.slots.some((slot) => !UPLOAD_BLOCKED.includes(slot.reason))) {
+        uploadFiles = null;
+        loadUploadFiles(key).catch(() => {});
+      } else {
+        uploadFiles = [];
+        uploadFilesDown = "";
+      }
+    } else if (!key) {
+      uploadFilesKey = "";
+      uploadFiles = null;
+    }
+    uploadView = shown;
+    renderUpload();
+  }
+
+  function clearUpload() {
+    uploadView = null;
+    uploadFiles = null;
+    uploadFilesKey = "";
+    uploadChoices = new Map();
+    renderUpload();
+  }
+
+  async function loadUploadFiles(key) {
+    let timer = null;
+    let reply = null;
+    try {
+      reply = await Promise.race([
+        Promise.resolve().then(() => chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_LIST" })),
+        new Promise((resolve) => { timer = setTimeout(() => resolve({ status: "unavailable" }), UPLOAD_LIST_MS); })
+      ]);
+    } catch {
+      reply = null;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (uploadFilesKey !== key) return;
+    const ok = reply?.status === "ok" && Array.isArray(reply.files);
+    uploadFiles = ok ? reply.files : [];
+    // 没读到列表：桌面太旧（unsupported）和连不上、超时分开说。
+    uploadFilesDown = ok ? "" : reply?.status === "unsupported" ? "desktop_old" : "desktop_unavailable";
+    renderUpload();
+  }
+
+  const UPLOAD_KIND_NAMES = { resume: "简历附件", photo: "证件照", transcript: "成绩单", other: "其他材料" };
+  function uploadSize(bytes) {
+    return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  // 绑了模板的附件只给那几个模板用：没绑模板的，和绑了当前模板的，才能选（后台交文件前按同样的规则再核对一次）。
+  function usableForTemplate(file) {
+    const ids = Array.isArray(file?.templateIds) ? file.templateIds : [];
+    const current = selectedTemplate()?.id || "";
+    return !ids.length || (Boolean(current) && ids.includes(current));
+  }
+
+  // 一个框能选的文件：当前模板能用、框收得下、不超过上限。认得出要什么的框只列这一类，认不出的和别的材料列全部。
+  function uploadCandidates(slot) {
+    const api = self.ResumeProUploadSlots;
+    const files = Array.isArray(uploadFiles) ? uploadFiles : [];
+    if (!api || UPLOAD_BLOCKED.includes(slot.reason)) return [];
+    const known = ["resume", "photo", "transcript"].includes(slot.kind);
+    return files.filter((file) => usableForTemplate(file) && (!known || file.kind === slot.kind)
+      && api.fits({ accept: slot.accept, limit: slot.limit }, file));
+  }
+
+  function uploadNote(slot) {
+    const kind = UPLOAD_KIND_NAMES[slot.kind] || "文件";
+    switch (slot.reason) {
+      case "has_file": return "已经有文件了，不替换。";
+      case "file_unsure": return "框里像是已经有文件了，不替换。";
+      case "desktop_old": return "桌面程序版本较旧，不能上传。";
+      case "desktop_unavailable": return "桌面暂时连不上，不能上传。";
+      case "plan_invalid": case "plan_forbidden": case "plan_stopped": return "插件没能处理这个上传框，不能上传。";
+      case "no_file": return `桌面里还没有${kind}。`;
+      case "too_large": return slot.siteLimit ? `网站要求不超过 ${uploadSize(slot.limit)}，桌面里的文件更大。` : "桌面里的文件太大。";
+      case "not_accepted": return "网站不收桌面里这类文件的格式。";
+      case "one_resume": return "这个网站每传一次简历都会重新解析，默认不传。";
+      case "other_kind": return "不是简历附件、证件照或成绩单，默认不传。";
+      case "choose": return `桌面里有几份${kind}，请选一份。`;
+      case "unknown_kind": case "ambiguous_kind": case "accept_mismatch": case "style_mismatch": return "认不出要什么文件，默认不传。";
+      default: return slot.siteLimit ? `网站要求不超过 ${uploadSize(slot.limit)}。` : "";
+    }
+  }
+
+  function uploadChoice(slot) {
+    const chosen = uploadChoices.get(slot.id) || "";
+    return uploadCandidates(slot).some((file) => file.fileId === chosen) ? chosen : "";
+  }
+
+  let uploadRowsShown = "";
+  function renderUpload() {
+    const view = uploadView;
+    const offer = view?.phase === "offer" ? view : null;
+    if (offer) {
+      elements.uploadSite.textContent = `上传到 ${offer.host}`;
+      const signature = JSON.stringify([offer.epoch, offer.version, offer.slots, uploadFiles, [...uploadChoices]]);
+      if (signature !== uploadRowsShown) {
+        uploadRowsShown = signature;
+        const focused = document.activeElement?.dataset?.uploadSlot || "";
+        elements.uploadRows.replaceChildren(...offer.slots.map((slot, index) => {
+          const row = document.createElement("li");
+          row.className = "upload-row";
+          const title = document.createElement("span");
+          title.className = "upload-row__title";
+          title.textContent = slot.title || UPLOAD_KIND_NAMES[slot.kind] || `上传框 ${index + 1}`;
+          row.append(title);
+          const candidates = uploadCandidates(slot);
+          if (candidates.length) {
+            const select = document.createElement("select");
+            select.className = "dock-select";
+            select.dataset.uploadSlot = slot.id;
+            select.setAttribute("aria-label", `${title.textContent}：选择要上传的文件`);
+            select.append(new Option("不传", ""), ...candidates.map((file) =>
+              new Option(`${file.name}（${uploadSize(file.byteSize)}）${file.label ? ` · ${file.label}` : ""}`, file.fileId)));
+            select.value = uploadChoice(slot);
+            row.append(select);
+          }
+          // 列表没读到：框自己有原因（已经有文件、桌面旧、连不上）就说它的，别的框按列表没读到的原因说。
+          const listNote = uploadFilesDown && !UPLOAD_BLOCKED.includes(slot.reason)
+            ? uploadNote({ ...slot, reason: uploadFilesDown }) : "";
+          const text = uploadFiles === null ? "正在读取桌面里的文件…"
+            : listNote || (candidates.length ? (uploadChoice(slot) ? "" : uploadNote(slot)) : uploadNote(slot) || "桌面里没有能放进这个框的文件。");
+          if (text) {
+            const note = document.createElement("p");
+            note.className = "upload-row__note";
+            note.textContent = text;
+            if (slot.reason === "no_file") {
+              const open = document.createElement("button");
+              open.type = "button";
+              open.dataset.uploadOpen = "resume";
+              open.textContent = "打开桌面简历资料";
+              note.append(open);
+            }
+            row.append(note);
+          }
+          return row;
+        }));
+        if (focused) elements.uploadRows.querySelector?.(`[data-upload-slot="${focused}"]`)?.focus?.();
+      }
+      const notes = [];
+      if (offer.platform) notes.push(`${offer.platform}上传简历后会重新解析：先传简历，等解析完再填写，最后传其他文件。`);
+      if (offer.restore) {
+        const list = (labels, count) => `${labels.join("、")}${count > labels.length ? " 等" : ""}`;
+        const labels = list(offer.restore.labels, offer.restore.count);
+        // 只有被解析改掉的才改回：没改的不动。
+        notes.push(offer.restore.pending
+          ? `上次上传后网站改了你填过的 ${offer.restore.count} 项，会先改回：${labels}。`
+          : `上传后网站会重新解析。已填的 ${offer.restore.count} 项要是被改掉，会改回：${labels}；表单被网站重排时可能改不回，改不回的会列出来。`);
+        if (offer.restore.pending && offer.restore.laterCount) {
+          // 停下以后又变过的、等解析时你自己改过的：都不改回。
+          notes.push(`后来又改过的 ${offer.restore.laterCount} 项不改回，请核对：${list(offer.restore.later, offer.restore.laterCount)}。`);
+        }
+      }
+      elements.uploadNotes.hidden = !notes.length;
+      elements.uploadNotes.replaceChildren(...notes.map((text) => { const item = document.createElement("li"); item.textContent = text; return item; }));
+      const chosen = offer.slots.some((slot) => uploadChoice(slot));
+      // 上次被打断、记着要改回的：主按钮先改回；另一个按钮写明不改回。
+      const restoring = Boolean(offer.restore?.pending);
+      elements.uploadConfirm.textContent = restoring ? (chosen ? "改回、上传并填写" : "改回并填写") : "上传并填写";
+      elements.uploadFill.textContent = restoring ? "只填写，不改回" : "只填写";
+      // 只改回的卡片不等文件列表：列表还在读（这时还选不了文件）也能点「改回并填写」。
+      elements.uploadConfirm.disabled = uploadPending || (!chosen && !offer.restore?.pending);
+      elements.uploadFill.disabled = uploadPending;
+      elements.uploadCancel.disabled = uploadPending;
+    } else {
+      uploadRowsShown = "";
+    }
+    const done = view?.phase === "done" ? view : null;
+    elements.uploadResult.hidden = !done;
+    if (done) {
+      elements.uploadResult.className = `upload-result${done.tone === "ok" ? " is-ok" : done.tone === "warn" ? " is-warn" : ""}`;
+      elements.uploadResultList.replaceChildren(...done.lines.map((line) => { const item = document.createElement("li"); item.textContent = line; return item; }));
+      elements.uploadResultOpen.hidden = !done.addFiles;
+      elements.uploadResultDismiss.disabled = uploadPending;
+    }
+    updateFillAvailability(lastPageStatus);
+    renderTaskPanel();
+  }
+
+  // 卡片上的按钮。确认时先把这个标签页、这个网站、这张卡片、选的文件告诉后台（后台只把这几个文件、各一次交给这一页的这张卡片，
+  // 标签页跳到别的网址就作废），再让页面开始。
+  async function uploadAction(action) {
+    const view = uploadView;
+    if (uploadPending || !view) return;
+    const message = { type: "RESUME_PANEL_UPLOAD", action, version: view.version, epoch: view.epoch };
+    uploadPending = true;
+    renderUpload();
+    // 告诉过后台的那次确认给了哪个标签页；页面没有开始（回绝了，或者这一步出了错），就作废它。
+    let grantedTab = null;
+    let started = false;
+    try {
+      if (action === "confirm") {
+        if (view.phase !== "offer") return;
+        const choices = view.slots.map((slot) => ({ slot: slot.id, fileId: uploadChoice(slot) })).filter((choice) => choice.fileId);
+        const files = [...new Set(choices.map((choice) => choice.fileId))]
+          .map((fileId) => uploadFiles?.find((file) => file.fileId === fileId)).filter(Boolean);
+        if (files.length) {
+          const tab = await activeTab();
+          let origin = "";
+          try { origin = new URL(tab?.url || "").origin; } catch { origin = ""; }
+          if (!tab?.id || tab.id !== currentTabId || hostWithPort(tab.url) !== view.host || !/^https?:/.test(origin)) {
+            toast("网页已切换，请重新点一键填写。");
+            return;
+          }
+          let granted = null;
+          try {
+            granted = await chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_GRANT", tabId: tab.id, origin,
+              card: `${view.epoch}:${view.version}`, templateId: selectedTemplate()?.id || "",
+              files: files.map((file) => ({ fileId: file.fileId, sha256: file.sha256 })) });
+          } catch {
+            granted = null;
+          }
+          if (granted?.status !== "ok") {
+            toast(granted?.status === "stale" ? "网页已切换，请重新点一键填写。" : "没能开始上传，请重试。");
+            return;
+          }
+          grantedTab = tab.id;
+        }
+        message.choices = choices;
+      }
+      const result = await sendToPage(message);
+      started = Boolean(result?.ok);
+      if (!started) toast(result?.error || "操作未完成，请重试。");
+    } catch {
+      toast("操作未完成，请重试。");
+    } finally {
+      // 页面没有开始：刚才告诉后台的那次确认也作废（发给页面时出了错也一样）。
+      if (grantedTab !== null && !started) {
+        Promise.resolve().then(() => chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_FILES_REVOKE", tabId: grantedTab })).catch(() => {});
+      }
+      uploadPending = false;
+      renderUpload();
     }
     await pollStatus();
   }
@@ -1405,7 +1729,8 @@
     submit: '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.3 2.4 2.4 4.8-5"/></svg>',
     repeat: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6"/></svg>',
     deep: '<svg class="icon" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M8 10.5h5M10.5 8v5"/></svg>',
-    archive: '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg>'
+    archive: '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></svg>',
+    upload: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>'
   };
   const TASK_STEPS = {
     job: ["读取岗位", "核对信息", "保存结果"],
@@ -1413,7 +1738,8 @@
     repeat: ["扫描网页", "制定计划", "预览计划", "执行中", "结束"],
     deep: ["确认说明", "分析页面", "确认操作", "填写网页", "结束"],
     recipe: ["核对网页", "确认操作", "填写网页", "结束"],
-    archive: ["是否留档", "选择申请", "留档结果"]
+    archive: ["是否留档", "选择申请", "留档结果"],
+    upload: ["确认文件", "上传", "填写"]
   };
   let taskShown = "";
   let taskPhase = "";
@@ -1426,6 +1752,7 @@
     if (SUBMIT_ACTIVE.has(submitConfirm?.phase || "idle")) return "submit";
     if (repeatView && repeatView.phase !== "idle") return "repeat";
     if (deepConsentOpen || (deepView && deepView.phase !== "idle")) return "deep";
+    if (uploadView?.phase === "offer") return "upload";
     if (fillArchive) return "archive";
     return "";
   }
@@ -1527,6 +1854,10 @@
       return { key: view.phase, title: "深度分析本页", step: steps[view.phase] ?? 4, error: view.phase === "failed", exit, desc,
         unsure: ["failed", "stopped", "needs_action"].includes(view.phase) };
     }
+    if (task === "upload") {
+      return { key: "offer", title: "上传文件到网页", step: 0, exit: { button: elements.uploadCancel, label: "取消" },
+        desc: "确认后才会把文件交给网页" };
+    }
     const phase = archiveShownPhase || fillArchive.phase;
     const cancel = elements.fillOfferActions.querySelector?.('[data-archive="cancel"]');
     const dismiss = elements.fillOfferActions.querySelector?.('[data-archive="dismiss"]');
@@ -1597,7 +1928,8 @@
     taskPhase = key;
     if (!task && previous && (focusInPanel || !active || active === document.body)) {
       // Back where the flow was started, or its entry button when that control is gone.
-      const entry = { job: elements.jobSaveButton, submit: elements.submitButton, repeat: elements.repeatButton, deep: elements.deepButton, archive: elements.fillButton }[previous];
+      const entry = { job: elements.jobSaveButton, submit: elements.submitButton, repeat: elements.repeatButton, deep: elements.deepButton,
+        upload: elements.fillButton, archive: elements.fillButton }[previous];
       const target = [taskReturnFocus, entry, elements.fillButton, elements.templateSelect].find(usableFocus);
       target?.focus?.();
       taskReturnFocus = null;
@@ -1824,7 +2156,9 @@
   const profileItems = () => !profileOffer ? [] : [
     ...profileOffer.filled.map((item) => ({ ...item, kind: "filled" })),
     ...profileOffer.pending.map((item) => ({ ...item, kind: "pending" })),
-    ...profileOffer.conflicts.map((item) => ({ ...item, kind: "conflict" }))
+    ...profileOffer.conflicts.map((item) => ({ ...item, kind: "conflict" })),
+    // #429：只在这个网站用的回答，存到桌面的网站回答。
+    ...(profileOffer.site || []).map((item) => ({ ...item, kind: "site" }))
   ];
   const profileChecked = (item) => profileChoices.has(item.id) ? profileChoices.get(item.id) : Boolean(item.defaultSelected);
 
@@ -1838,15 +2172,16 @@
   function profileRow(item) {
     const preview = (value) => value.length > PROFILE_PREVIEW_CHARS ? `${value.slice(0, PROFILE_PREVIEW_CHARS)}…` : value;
     const lines = [];
-    if (item.kind === "conflict") {
+    if (item.kind === "conflict" || (item.kind === "site" && item.existing)) {
       lines.push(`<span class="profile-item__value" title="${escapeHtml(item.existing)}">桌面：${escapeHtml(preview(item.existing))}</span>`);
       lines.push(`<span class="profile-item__value" title="${escapeHtml(item.value)}">网页：${escapeHtml(preview(item.value))}</span>`);
-    } else if (item.kind === "filled") {
+    } else if (item.kind === "filled" || item.kind === "site") {
       lines.push(`<span class="profile-item__value" title="${escapeHtml(item.value)}">${escapeHtml(preview(item.value))}</span>`);
     }
     if (item.completes) lines.push('<em class="profile-item__tag">桌面里已有这个待补充项，会补上内容</em>');
     if (item.jobSpecific) lines.push('<em class="profile-item__tag">可能只适用于当前岗位，默认不勾选</em>');
     if (item.unreadable) lines.push('<em class="profile-item__tag">网页上已有内容但读不准，只保存字段名</em>');
+    if (item.kind === "site" && item.existing) lines.push('<em class="profile-item__tag">这个网站记住的回答不同，勾选后才替换</em>');
     return `<label class="profile-item"><input type="checkbox" data-profile-id="${escapeHtml(item.id)}"${profileChecked(item) ? " checked" : ""}${profileSavePending || profileOffer?.saving ? " disabled" : ""}>`
       + `<span class="profile-item__body"><span class="profile-item__key">${escapeHtml(item.key)}</span>${lines.join("")}</span></label>`;
   }
@@ -1867,6 +2202,7 @@
     const filled = items.filter((item) => item.kind === "filled");
     const pending = items.filter((item) => item.kind === "pending");
     const conflicts = items.filter((item) => item.kind === "conflict");
+    const site = items.filter((item) => item.kind === "site");
     const savedItems = Array.isArray(result?.savedItems) ? result.savedItems : [];
     const savedContent = savedItems.filter((item) => item.kind !== "pending");
     const savedQuestions = savedItems.length - savedContent.length;
@@ -1880,26 +2216,36 @@
           : `已记下 ${savedQuestions || result.saved} 个问题`;
     } else {
       // 重点是「补充字段」：简历和「我的信息」里还没有的网页问题，可以存成桌面「我的信息」的补充字段。
-      elements.profileOfferText.textContent = !items.length && result?.text ? result.text : filled.length
+      elements.profileOfferText.textContent = !items.length && result?.text ? result.text : filled.length && site.length
+        ? `可以把 ${filled.length} 个答案加入补充字段，${site.length} 个记在这个网站`
+        : filled.length
         ? `可以把 ${filled.length} 个答案加入补充字段`
+        : site.length
+        ? `可以把 ${site.length} 个答案记在这个网站`
         : conflicts.length
           ? "网页内容与补充字段里已有的内容不同"
           : `有 ${pending.length} 个问题可以加入补充字段`;
     }
-    const offerCount = filled.length + pending.length + conflicts.length;
+    const offerCount = filled.length + pending.length + conflicts.length + site.length;
     elements.profileOfferCount.hidden = completed || !offerCount;
     elements.profileOfferCount.textContent = offerCount ? `${offerCount} 个问题` : "";
     elements.profileOfferIntro.hidden = completed || !items.length;
     elements.profileOfferIntro.textContent = filled.length
       ? "这些问题你的简历里还没有。保存到桌面「我的信息 · 补充字段」后，下次遇到相同问题会自动填写。"
+      : site.length
+        ? "这些题目问到这家公司。保存到桌面「网站回答」后，下次在这个网站遇到相同的题会自动填写。"
       : conflicts.length
         ? "桌面原内容会保留；只有你选中时才会替换。"
         : "这些问题你的简历里还没有。在网页填好答案后，这里会列出可以保存的内容；保存到桌面「我的信息 · 补充字段」后，下次遇到相同问题会自动填写。";
     elements.profileOfferResult.hidden = !result;
     if (result) {
       elements.profileOfferResult.className = `profile-result is-${result.kind}`;
+      const savedSite = savedItems.filter((item) => item.kind === "site").length;
+      const savedWhere = savedSite && savedSite === savedItems.length ? "已保存到桌面「网站回答」，下次在这个网站填写可以使用。"
+        : savedSite ? "已保存到桌面「我的信息」和「网站回答」，下次填写可以使用。"
+          : savedContent.length ? "已保存到桌面「我的信息」，下次填写可以使用。" : "已保存到桌面「我的信息」；补上答案后，下次填写可以使用。";
       elements.profileOfferResult.innerHTML = completed
-        ? `<span>${escapeHtml(savedContent.length ? "已保存到桌面「我的信息」，下次填写可以使用。" : "已保存到桌面「我的信息」；补上答案后，下次填写可以使用。")}</span>`
+        ? `<span>${escapeHtml(savedWhere)}</span>`
           + (result.kind === "partial" ? `<span>${escapeHtml(result.text)}</span>` : "")
           + (result.hint && (result.kind === "partial" || result.hint.includes("暂时没能重新读取")) ? `<span>${escapeHtml(result.hint)}</span>` : "")
           + (result.details?.length ? `<ul>${result.details.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "")
@@ -1919,6 +2265,9 @@
         + `<div class="profile-items">${list.map(profileRow).join("")}</div></details>`;
     elements.profileOfferGroups.innerHTML = completed ? "" : [
       filled.length ? `<div class="profile-items profile-items--filled">${filled.map(profileRow).join("")}</div>` : "",
+      site.length ? `<div class="profile-site"><p class="profile-site__title">${escapeHtml(offer.siteName ? `只在 ${offer.siteName} 使用` : "只在这个网站使用")}</p>`
+        + `<p class="profile-group__hint">题目问到这家公司，换个网站不会用。</p>`
+        + `<div class="profile-items">${site.map(profileRow).join("")}</div></div>` : "",
       more("pending", pending, filled.length
         ? `还有 ${pending.length} 个问题没填 · 稍后处理`
         : `查看这 ${pending.length} 个问题`, "只记下问题名称；在网页填好后，这里会自动出现可保存的答案。"),
@@ -1935,7 +2284,7 @@
     elements.profileOfferNotes.hidden = completed || !notes.length;
     elements.profileOfferNotes.innerHTML = notes.map(escapeHtml).join("<br>");
 
-    elements.profileOfferSave.hidden = completed || !items.length || (!selected.length && !filled.length && !conflicts.length);
+    elements.profileOfferSave.hidden = completed || !items.length || (!selected.length && !filled.length && !conflicts.length && !site.length);
     elements.profileOfferSkip.hidden = completed || !items.length;
     elements.profileOfferSave.textContent = busy ? "正在保存…" : !selected.length
       ? "选择要保存的内容"
@@ -1956,7 +2305,7 @@
     if (!profileOffer || profileSavePending) return;
     const selected = profileItems().filter(profileChecked).map((item) => ({
       id: item.id, key: item.key, kind: item.kind, reviewedValue: item.value ?? "",
-      ...(item.kind === "conflict" ? { replaceOf: item.existing } : {})
+      ...(item.kind === "conflict" || (item.kind === "site" && item.existing) ? { replaceOf: item.existing } : {})
     }));
     if (!selected.length) return;
     profileSavePending = true;
@@ -1987,6 +2336,7 @@
       const nextTabId = tab?.id || null;
       const nextHost = hostOf(tab?.url);
       const nextAddress = addressOf(tab?.url);
+      pageHostWithPort = hostWithPort(tab?.url);
       // Another tab, or another page in this tab (even on the same site): the job read before
       // is not this page's.
       if (jobSeen && (jobSeen.tabId !== nextTabId || jobSeen.address !== nextAddress)) jobSeen = null;
@@ -2007,6 +2357,7 @@
         clearTargetState();
         clearRepeat();
         clearDeep();
+        clearUpload();
         resetFillArchive();
         profileOfferKey = "";
         setProfileOffer(null);
@@ -2044,6 +2395,7 @@
       deepView = connected ? normalizeDeep(response.deep) : null;
       deepOffer = connected && ["prominent", "secondary", "none"].includes(response.deepOffer) ? response.deepOffer : "none";
       recipeView = connected ? normalizeRecipe(response.recipe) : null;
+      setUploadView(connected ? normalizeUpload(response.upload) : null, polledTabId);
       if (!connected) deepConsentOpen = false;
       if (connected && response.status) {
         elements.fillResult.hidden = false;
@@ -2249,6 +2601,22 @@
     deepAction("dismiss").then(() => startDeep()).catch(() => toast("无法开始深度分析。"));
   });
   elements.deepDismiss.addEventListener("click", () => { deepAction("dismiss").catch(() => {}); });
+  elements.uploadConfirm.addEventListener("click", () => { uploadAction("confirm").catch(() => toast("没能开始上传，请重试。")); });
+  elements.uploadFill.addEventListener("click", () => { uploadAction("fill").catch(() => toast("无法开始填写。")); });
+  elements.uploadCancel.addEventListener("click", () => { uploadAction("cancel").catch(() => {}); });
+  elements.uploadResultDismiss.addEventListener("click", () => { uploadAction("dismiss").catch(() => {}); });
+  elements.uploadRows.addEventListener("change", (event) => {
+    const select = event.target?.closest?.("select[data-upload-slot]");
+    if (!select) return;
+    uploadChoices.set(select.dataset.uploadSlot, select.value);
+    renderUpload();
+  });
+  for (const node of [elements.uploadRows, elements.uploadResult]) {
+    node.addEventListener("click", (event) => {
+      if (!event.target?.closest?.("[data-upload-open], #upload-result-open")) return;
+      desktopAction("resume").catch(() => toast("桌面程序暂时无法打开，请检查连接。"));
+    });
+  }
   elements.cancelButton.addEventListener("click", async () => {
     const result = await sendToPage({ type: "RESUME_PANEL_CANCEL" });
     if (!result?.ok) toast(result?.error || "当前无法取消。");

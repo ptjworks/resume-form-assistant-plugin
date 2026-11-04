@@ -14,7 +14,7 @@ use crate::snapshot::{
     plugin_chunk_ack_payload, plugin_snapshot_ack_payload, ChunkAssembler, DurableChunk, Integrity,
 };
 use crate::types::{
-    CurrentArchive, MessageKey, MessageType, ReceiptStore, ReconcileStatusKind, StoredOutcome,
+    CurrentArchive, MessageKey, MessageType, ReceiptStore, ReconcileStatusKind, Request, StoredOutcome,
     WriteDecision, MAX_ENVELOPE_BYTES,
 };
 use crate::validate::{
@@ -152,7 +152,18 @@ fn identity_rules_for_v2_types() {
 fn handshake_announces_supported_maximum() {
     let payload = crate::identity::handshake_response_payload(&current(), "0.4.0");
     assert_eq!(payload["minProtocolVersion"], 1);
-    assert_eq!(payload["maxProtocolVersion"], 4);
+    assert_eq!(payload["maxProtocolVersion"], 6);
+}
+
+#[test]
+fn site_keys_are_a_host_with_at_most_one_company_segment() {
+    for ok in ["campus.example.com", "127.0.0.1:8080", "app.mokahr.com/example-co", "wecruit.hotjob.cn/SU0123456789abcdef01234567"] {
+        assert!(crate::is_site_key(ok), "{ok}");
+    }
+    assert!(crate::is_site_key("a.com:65535/acme"));
+    for bad in ["", "https://campus.example.com", "Campus.example.com", "-x.com", "a.com/b/c", "a.com/", "a.com:", "a.com:123456", "a.com:0", "a.com:65536", "a.com:99999", "a.com?x=1", "a.com/中文", "[::1]"] {
+        assert!(!crate::is_site_key(bad), "{bad}");
+    }
 }
 
 #[test]
@@ -1018,4 +1029,74 @@ fn usage_settings_is_v3_identity_free_and_has_a_closed_action_and_response() {
     let mut extra = response.clone();
     extra["payload"]["identifier"] = json!("must-not-leak");
     assert!(validate_response_value(&extra, MessageType::UsageSettings).is_err());
+}
+
+// #429: resume files, read in chunks.
+fn resume_file_request() -> Request {
+    let mut v = envelope("resumeFiles.read", json!({"fileId": "66666666-6666-4666-8666-666666666601", "sha256": HASH2, "chunkIndex": 0}));
+    v["protocolVersion"] = json!(6);
+    validate_request_value(&v).unwrap()
+}
+
+fn resume_file_chunk(patch: Value) -> Value {
+    let mut payload = json!({
+        "fileId": "66666666-6666-4666-8666-666666666601", "sha256": HASH2, "byteSize": 3, "chunkIndex": 0,
+        "chunkCount": 1, "chunkSha256": HASH, "bytesBase64": "AAAA"
+    });
+    for (key, value) in patch.as_object().unwrap() {
+        payload[key] = value.clone();
+    }
+    json!({"protocolVersion": 6, "correlationId": MSG, "ok": true, "payload": payload})
+}
+
+#[test]
+fn only_a_resume_files_bytes_skip_the_secret_scan() {
+    let req = resume_file_request();
+    // Text refused everywhere else gets past the scan in bytesBase64, then fails as Base64.
+    validate_response_value(&resume_file_chunk(json!({"bytesBase64": "token: abc"})), MessageType::ResumeFilesRead).unwrap();
+    let err = validate_response_for_request(&resume_file_chunk(json!({"bytesBase64": "token: abc"})), &req).unwrap_err();
+    assert_eq!(err.code.as_str(), "invalid_payload");
+    // The same text in any other field of that response is still a secret.
+    for field in ["fileId", "sha256", "chunkSha256"] {
+        let err = validate_response_value(&resume_file_chunk(json!({field: "token: abc"})), MessageType::ResumeFilesRead).unwrap_err();
+        assert_eq!(err.code.as_str(), "secret_forbidden", "{field}");
+    }
+    let mut extra = resume_file_chunk(json!({}));
+    extra["extra"] = json!("password=hunter2");
+    assert_eq!(validate_response_value(&extra, MessageType::ResumeFilesRead).unwrap_err().code.as_str(), "secret_forbidden");
+    let failed = json!({"protocolVersion": 6, "correlationId": MSG, "ok": false, "payload": {},
+        "error": {"code": "conflict", "retryable": false, "message": "token: abc"}});
+    assert_eq!(validate_response_value(&failed, MessageType::ResumeFilesRead).unwrap_err().code.as_str(), "secret_forbidden");
+    // Only resumeFiles.read: the same path in another response is scanned.
+    let list = json!({"protocolVersion": 6, "correlationId": MSG, "ok": true, "payload": {"files": [], "bytesBase64": "token: abc"}});
+    assert_eq!(validate_response_value(&list, MessageType::ResumeFilesList).unwrap_err().code.as_str(), "secret_forbidden");
+}
+
+#[test]
+fn a_resume_file_chunk_is_the_one_asked_for_and_as_long_as_that_chunk() {
+    let req = resume_file_request();
+    validate_response_for_request(&resume_file_chunk(json!({})), &req).unwrap();
+    for wrong in [
+        json!({"fileId": "66666666-6666-4666-8666-666666666602"}),
+        json!({"sha256": "c".repeat(64)}),
+        json!({"chunkIndex": 1, "chunkCount": 2, "byteSize": 45057}),
+        json!({"byteSize": 4}),
+        json!({"chunkCount": 2}),
+        json!({"bytesBase64": "AAAAAA=="}),
+    ] {
+        assert_eq!(validate_response_for_request(&resume_file_chunk(wrong.clone()), &req).unwrap_err().code.as_str(), "invalid_payload", "{wrong}");
+    }
+    // A v5 request cannot ask for a resume file at all.
+    let mut v5 = envelope("resumeFiles.read", json!({"fileId": "66666666-6666-4666-8666-666666666601", "sha256": HASH2, "chunkIndex": 0}));
+    v5["protocolVersion"] = json!(5);
+    assert_eq!(validate_request_value(&v5).unwrap_err().code.as_str(), "protocol_incompatible");
+}
+
+#[test]
+fn resume_file_kinds_hold_only_their_types() {
+    use crate::resume_file_mime_allowed as allowed;
+    assert!(allowed("resume", "application/pdf") && allowed("resume", "application/msword"));
+    assert!(!allowed("resume", "image/jpeg") && !allowed("photo", "application/pdf"));
+    assert!(allowed("photo", "image/png") && allowed("transcript", "image/jpeg") && allowed("other", "application/msword"));
+    assert!(!allowed("other", "application/zip") && !allowed("cover", "application/pdf"));
 }

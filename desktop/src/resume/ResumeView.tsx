@@ -5,12 +5,14 @@ import type { Listen } from "./LegacyImport.tsx";
 import { ProfileForm } from "./ProfileForm.tsx";
 import type { ProfileProbe } from "./ProfileForm.tsx";
 import { DialogQueueProvider, ResumeDialog } from "./ResumeDialog.tsx";
+import { ResumeFiles } from "./ResumeFiles.tsx";
 import { useResumeParse } from "./ResumeParse.tsx";
+import { SiteAnswers } from "./SiteAnswers.tsx";
 import { TemplateList } from "./TemplateList.tsx";
 import type { TemplateEditorProbe } from "./TemplateFieldEditor.tsx";
 import type { FilePickers, ReloadSignal } from "./TemplateList.tsx";
 
-export type ResumeSubview = "templates" | "profile";
+export type ResumeSubview = "templates" | "profile" | "sites" | "files";
 
 /** 页面外（顶栏、插件要求打开别的页）问简历页能不能离开。由 mount.tsx 持有。 */
 export interface ResumeLeaveGate {
@@ -20,6 +22,8 @@ export interface ResumeLeaveGate {
 const TABS: Array<{ id: ResumeSubview; label: string }> = [
   { id: "templates", label: "简历模板" },
   { id: "profile", label: "我的信息" },
+  { id: "sites", label: "网站回答" },
+  { id: "files", label: "附件" },
 ];
 
 /**
@@ -65,7 +69,7 @@ function ResumeWorkspace({
   const templateProbe = useRef<TemplateEditorProbe | null>(null);
   // 哪一处有未保存的修改，离开前的确认据此说清楚会丢什么。
   const [leavingWhat, setLeavingWhat] = useState<{ profile: boolean; template: boolean }>({ profile: false, template: false });
-  const tabRefs = useRef<Record<ResumeSubview, HTMLButtonElement | null>>({ templates: null, profile: null });
+  const tabRefs = useRef<Record<ResumeSubview, HTMLButtonElement | null>>({ templates: null, profile: null, sites: null, files: null });
 
   const parse = useResumeParse({
     onCreated: (templateId) => setListSignal((signal) => ({ token: signal.token + 1, select: templateId })),
@@ -182,6 +186,24 @@ function ResumeWorkspace({
         hidden={view !== "profile"}
       >
         <ProfileForm key={generation} listen={listen} probe={profileProbe} />
+      </div>
+      <div
+        role="tabpanel"
+        id="resume-panel-sites"
+        aria-labelledby="resume-tab-sites"
+        className="resume-panel"
+        hidden={view !== "sites"}
+      >
+        <SiteAnswers key={generation} listen={listen} active={view === "sites"} />
+      </div>
+      <div
+        role="tabpanel"
+        id="resume-panel-files"
+        aria-labelledby="resume-tab-files"
+        className="resume-panel"
+        hidden={view !== "files"}
+      >
+        <ResumeFiles key={generation} pickers={pickers} active={view === "files"} />
       </div>
       <ResumeDialog
         open={leaving}

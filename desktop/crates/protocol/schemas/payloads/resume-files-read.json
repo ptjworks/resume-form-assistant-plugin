@@ -1,0 +1,27 @@
+{
+  "$id": "https://resumepro.local/protocol/payloads/resume-files-read.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fileId",
+    "sha256",
+    "chunkIndex"
+  ],
+  "properties": {
+    "fileId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "sha256": {
+      "description": "要读的那一版文件的 SHA-256：桌面里这个文件换过、删过就回 conflict",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "chunkIndex": {
+      "description": "第几块，每块 resumeFileChunkBytes 字节",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 232
+    }
+  }
+}

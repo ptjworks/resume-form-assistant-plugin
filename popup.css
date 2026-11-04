@@ -60,6 +60,8 @@ button { font: inherit; }
 .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .card-head--split { align-items: flex-start; }
 .card-heading { flex: 1; min-width: 0; }
+/* 卡片标题右边的开关（「AI 填写时发送资料原文」）：和标题同一行，不另起一行。 */
+.card-head > .feedback-switch { flex: none; margin-top: 0 !important; }
 .card-heading h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .card-sub { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
 .card-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 11px; background: var(--soft); color: #3f4a58; }

@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
+const { refsFor, catalogOf } = require("./helpers/ai-refs.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
@@ -40,6 +41,7 @@ function layout(w) {
 function aiWorker(clock, resume = RESUME) {
   const calls = [];
   const cancels = [];
+  let lastResume = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
     ResumeProFormAgent: require("../form-agent.js"), AbortController, TextEncoder, performance: { now: () => clock.now },
@@ -50,12 +52,13 @@ function aiWorker(clock, resume = RESUME) {
       if (message.kind === "desktop-cancel") { cancels.push(message.callId); return; }
       if (message.kind !== "desktop-complete") return;
       const fields = JSON.parse(message.user.split("\n")[1]);
-      const call = { fields, labels: fields.map((field) => field.label) };
+      const call = { fields, labels: fields.map((field) => field.label), prompt: message.user };
       const answer = (reply) => context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId, reply } });
       // 按题目名回答；不传就只回这几项里资料有的。
-      call.reply = (values = null) => answer({ ok: true, text: JSON.stringify(fields
+      // AI 只回资料编号（#429 第 11 项）：按值写的回答照这次发出去的目录换成编号。
+      call.reply = (values = null) => answer({ ok: true, text: refsFor(message.user, lastResume, JSON.stringify(fields
         .map((field) => ({ fieldId: field.fieldId, value: (values || Object.fromEntries(resume.map(([, key, value]) => [key, value])))[field.label] }))
-        .filter((item) => item.value)) });
+        .filter((item) => item.value))) });
       call.fail = (reply) => answer({ ok: false, ...reply });
       calls.push(call);
     }
@@ -66,6 +69,7 @@ function aiWorker(clock, resume = RESUME) {
     calls, cancels,
     dispatch: (message) => new Promise((resolve) => {
       const copy = JSON.parse(JSON.stringify(message));
+      if (Array.isArray(copy.resumeFields)) lastResume = copy.resumeFields;
       const keepOpen = context.dispatchAiMessage(copy, sender, (reply) => resolve(JSON.parse(JSON.stringify(reply ?? null))));
       if (!keepOpen && copy.type !== "CANCEL_AI_FILL") resolve(undefined);
     })
@@ -76,8 +80,9 @@ const item = (id, label, control) => `<div class="form-item" id="${id}-item"><la
 const input = (id, label, { type = "text", value = "" } = {}) => item(id, label, `<input id="${id}" name="${id}" type="${type}" value="${value}">`);
 
 // body 是表单内容；confirm 返回 true/false；onGender：选了性别后页面要做的事（新出现字段之类）；resume 是简历资料；
-// custom 是「我的信息」里的补充字段。
-function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [] } = {}) {
+// custom 是「我的信息」里的补充字段；site 是桌面里这个网站记住的回答（#429），null 表示桌面不支持；
+// 也可以是函数：拿第几次读取，回答案数组，回 null 表示这次桌面没连上；字符串是后台回的状态（forbidden 之类）。
+function page(t, body, { confirm = () => true, onGender = null, resume = RESUME, custom = [], site = null, siteKey = "jobs.example.test" } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://jobs.example.test/apply/form" });
   const w = dom.window;
@@ -103,6 +108,12 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME,
       sendMessage: async (message) => {
         sent.push(message.type);
         if (message.type === "DESKTOP_RESUME_READ") return { status: "ok", data };
+        if (message.type === "DESKTOP_SITE_ANSWERS_READ") {
+          if (typeof site === "string") return { status: site };
+          const answers = typeof site === "function" ? site(sent.filter((type) => type === message.type).length) : site;
+          if (answers) return { status: "ok", site: siteKey, answers };
+          return { status: typeof site === "function" ? "unavailable" : "unsupported" };
+        }
         if (["ENSURE_AI_HOST", "AI_HOST_READY"].includes(message.type)) return { ready: true };
         if (message.type === "AI_FILL" || message.type === "CANCEL_AI_FILL") return worker.dispatch(message);
         return {};
@@ -233,11 +244,12 @@ test("cancelling while the early fill is still writing only cancels the AI wait;
 
 // AI 回来、填完它自己的字段以后：先填的字段被上面 AI 选的题目清空了，按原值再填一次，和原来从上往下填的结果一样。
 test("a local field the page clears when the AI's choice above it changes is filled again after that choice", async (t) => {
-  const resume = [["基本信息", "证件类型", "身份证"], ["基本信息", "身份证号", "110101199001011234"], ...RESUME];
-  const TYPE = item("idType", "证件类型", `<select id="idType" name="idType"><option value="">请选择</option><option value="1">身份证</option><option value="2">护照</option></select>`);
+  // 证件类型现在本地就填（#429），这里用交给 AI 的国籍。
+  const resume = [["基本信息", "国籍", "中国"], ["基本信息", "身份证号", "110101199001011234"], ...RESUME];
+  const TYPE = item("nation", "国籍", `<select id="nation" name="nation"><option value="">请选择</option><option value="1">中国</option><option value="2">其他</option></select>`);
   const p = page(t, input("name", "姓名") + TYPE + input("idNo", "证件号码"), { resume });
-  // 常见的 Vue watch：证件类型一变，证件号码清空。
-  p.w.document.getElementById("idType").addEventListener("change", () => {
+  // 常见的 Vue watch：国籍一变，证件号码清空。
+  p.w.document.getElementById("nation").addEventListener("change", () => {
     const number = p.w.document.getElementById("idNo");
     number.value = "";
     number.dispatchEvent(new p.w.Event("input", { bubbles: true }));
@@ -245,10 +257,10 @@ test("a local field the page clears when the AI's choice above it changes is fil
   const running = p.run();
   assert.ok(await p.until(() => p.value("idNo") && p.worker.calls.length === 1 && /AI 匹配中/.test(p.ui.fill.textContent)),
     "the number is filled before the AI answers");
-  assert.deepEqual(p.worker.calls[0].labels, ["证件类型"]);
+  assert.deepEqual(p.worker.calls[0].labels, ["国籍"]);
   p.worker.calls[0].reply();
   const result = await running;
-  assert.deepEqual(["name", "idType", "idNo"].map(p.value), ["测试用户", "1", "110101199001011234"]);
+  assert.deepEqual(["name", "nation", "idNo"].map(p.value), ["测试用户", "1", "110101199001011234"]);
   assert.equal(result.outcome, "success", p.ui.diag.value);
   assert.equal(result.filledCount, 3);
   assert.equal(p.ui.status.textContent, "已填写 3 个字段。");
@@ -690,9 +702,10 @@ test("a field revealed later with the same question as one already on the page g
   p.worker.calls[0].reply();
   assert.ok(await p.until(() => p.worker.calls.length === 2), "the second one goes to the AI");
   assert.deepEqual(p.worker.calls[1].labels, ["每周可实习天数"]);
-  p.worker.calls[1].reply({ 每周可实习天数: "3天" });
+  // AI 只能挑资料里的一项（#429 第 11 项），这里挑的正是存过的回答。
+  p.worker.calls[1].reply({ 每周可实习天数: "5天" });
   const result = await running;
-  assert.deepEqual([p.value("days"), p.value("days2")], ["5天", "3天"]);
+  assert.deepEqual([p.value("days"), p.value("days2")], ["5天", "5天"]);
   assert.equal(result.outcome, "success", p.ui.diag.value);
 });
 
@@ -704,7 +717,210 @@ test("an assisted fill counts same questions across the whole page, not just the
     { scopes: [p.w.document.getElementById("second")] }), 15000);
   assert.ok(await p.until(() => p.worker.calls.length === 1));
   assert.deepEqual(p.worker.calls[0].labels, ["每周可实习天数", "毕业院校"]);
-  p.worker.calls[0].reply({ 每周可实习天数: "3天", 毕业院校: "示例大学" });
+  p.worker.calls[0].reply({ 每周可实习天数: "5天", 毕业院校: "示例大学" });
   await running;
-  assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "3天", "示例大学"]);
+  assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "5天", "示例大学"]);
+});
+
+// #429 第五项第 2 点：问到对方公司的题，用这个网站记住的回答在 AI 回来之前填；补充字段里同名的不用。
+const SITE = [{ key: "是否有亲属在本公司工作", value: "否" }];
+const COMPANY = radios("relative", "是否有亲属在本公司工作", ["是", "否"]);
+// AI 只能挑资料里填得进选项的一项（#429 第 11 项）：换了说法的补充字段，本地不认作同一题，留给 AI。
+const RELATIVE_ELSEWHERE = [{ key: "是否有亲属在本行工作", value: "否" }];
+
+test("a company question takes this site's remembered answer with the local matches, not the custom field's", async (t) => {
+  const p = page(t, input("name", "姓名") + COMPANY + input("salary", "期望薪资"),
+    { custom: [{ key: "是否有亲属在本公司工作", value: "是" }], site: SITE });
+  const checked = () => p.w.document.querySelector("input[name=relative]:checked")?.value || "";
+  const running = p.run();
+  assert.ok(await p.until(() => checked() && p.worker.calls.length === 1), `the site answer waits for the AI: ${checked()}`);
+  assert.equal(checked(), "否");
+  assert.deepEqual(p.worker.calls[0].labels, ["期望薪资"]);
+  assert.equal(p.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1);
+  p.worker.calls[0].reply({ 期望薪资: "面议" });
+  const result = await running;
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+  assert.equal(lineOf((await p.report()).diagnosticsReport, "local_matches"), "2");
+});
+
+test("without a remembered answer, or with a desktop that has none, the company question goes to the AI", async (t) => {
+  for (const site of [null, []]) {
+    const p = page(t, input("name", "姓名") + COMPANY, { site, custom: RELATIVE_ELSEWHERE });
+    const running = p.run();
+    assert.ok(await p.until(() => p.worker.calls.length === 1));
+    assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作"]);
+    p.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+    assert.equal((await running).outcome, "success");
+  }
+});
+
+test("a page with no question about the company never asks the desktop for site answers", async (t) => {
+  const p = page(t, BASIC, { site: SITE });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  p.worker.calls[0].reply();
+  await running;
+  assert.equal(p.sent.includes("DESKTOP_SITE_ANSWERS_READ"), false);
+});
+
+test("a company question revealed later reads the site answers then, and is filled without the AI", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const p = page(t, input("name", "姓名") + GENDER + input("school", "毕业院校"), {
+    site: SITE,
+    onGender: (doc) => {
+      if (doc.getElementById("relative-item")) return;
+      const holder = doc.createElement("div");
+      holder.innerHTML = COMPANY;
+      doc.getElementById("apply").append(holder.firstChild);
+    }
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
+  assert.equal(p.sent.includes("DESKTOP_SITE_ANSWERS_READ"), false, "nothing about the company on the page yet");
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.equal(p.w.document.querySelector("input[name=relative]:checked")?.value, "否");
+  assert.equal(p.worker.calls.length, 1, "the revealed company question did not go to the AI");
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+});
+
+// 第一次读网站回答时桌面没连上：后来冒出的公司题再读一次；桌面明确不支持就不再读。
+test("a company question revealed later reads the site answers again after a failed read, but not from a desktop that lacks them", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const reveal = (doc) => {
+    if (doc.getElementById("intern")) return;
+    const holder = doc.createElement("div");
+    holder.innerHTML = input("intern", "是否曾在本行实习");
+    doc.getElementById("apply").append(holder.firstChild);
+  };
+  const retried = page(t, input("name", "姓名") + GENDER + COMPANY, {
+    site: (read) => (read === 1 ? null : [{ key: "是否曾在本行实习", value: "否" }]), onGender: reveal, custom: RELATIVE_ELSEWHERE
+  });
+  let running = retried.run();
+  assert.ok(await retried.until(() => retried.value("gender") === "m" && retried.worker.calls.length === 1));
+  retried.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+  await running;
+  assert.equal(retried.value("intern"), "否", "filled from the second read");
+  assert.equal(retried.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 2);
+  assert.equal(retried.worker.calls.length, 1, "the revealed question did not go to the AI");
+
+  // 桌面不支持，或者后台不认这个发送方：再读结果也一样，只读一次。
+  for (const site of [null, "forbidden"]) {
+    const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site, onGender: reveal, custom: RELATIVE_ELSEWHERE });
+    running = old.run();
+    assert.ok(await old.until(() => old.value("gender") === "m" && old.worker.calls.length === 1));
+    old.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
+    assert.ok(await old.until(() => old.worker.calls.length === 2), "the revealed question goes to the AI");
+    old.worker.calls[1].reply({ 是否曾在本行实习: "否" });
+    await running;
+    assert.equal(old.sent.filter((type) => type === "DESKTOP_SITE_ANSWERS_READ").length, 1, `asked once (${site})`);
+  }
+});
+
+// 公司题本地填不了（页面上同名的有两道）时交给 AI：资料里可以有这个网站自己记住的回答，别的网站的不会有。
+test("a company question left to the AI may see this site's remembered answer, never another site's", async (t) => {
+  const twice = input("r1", "是否有亲属在本公司工作") + input("r2", "是否有亲属在本公司工作");
+  const answer = [{ key: "是否有亲属在本公司工作", value: "父亲在本公司财务部任职" }];
+  for (const [siteKey, expected] of [["jobs.example.test", true], ["other.example.test", false]]) {
+    const p = page(t, input("name", "姓名") + twice, { site: answer, siteKey });
+    const running = p.run();
+    assert.ok(await p.until(() => p.worker.calls.length === 1));
+    assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作", "是否有亲属在本公司工作"]);
+    // 发给 AI 的资料目录只有字段名（#429 第 11 项）：看有没有这个网站那一组。
+    assert.equal(catalogOf(p.worker.calls[0].prompt).some((entry) => entry.group === "本网站回答"), expected, siteKey);
+    assert.equal(p.worker.calls[0].prompt.includes("财务部"), false, "the remembered answer itself is never sent");
+    p.worker.calls[0].reply({});
+    await running;
+  }
+});
+
+// 后来冒出公司题时才读到的网站回答，和一开始就有的资料一样：诊断里带着它的字段名要藏起来。
+test("a remembered answer read for a question revealed later is hidden in field names of the diagnostics too", async (t) => {
+  const GENDER = item("gender", "性别", `<select id="gender" name="gender"><option value="">请选择</option><option value="m">男</option><option value="f">女</option></select>`);
+  const p = page(t, input("name", "姓名") + GENDER + input("school", "毕业院校"), {
+    site: [{ key: "是否有亲属在本公司工作", value: "父亲在本公司财务部任职" }],
+    onGender: (doc) => {
+      if (doc.getElementById("relative")) return;
+      const holder = doc.createElement("div");
+      holder.innerHTML = input("relative", "是否有亲属在本公司工作") + input("echo", "父亲在本公司财务部任职情况说明");
+      doc.getElementById("apply").append(...holder.children);
+      const echo = doc.getElementById("echo");
+      for (const type of ["input", "change", "blur"]) echo.addEventListener(type, () => { echo.value = ""; });
+    }
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
+  p.worker.calls[0].reply();
+  assert.ok(await p.until(() => p.worker.calls.length === 2), "the echoing field goes to the AI");
+  // AI 只能挑资料里的一项（#429 第 11 项）；挑哪一项都一样，页面会把它清掉。
+  p.worker.calls[1].reply({ 父亲在本公司财务部任职情况说明: "测试用户" });
+  const result = await running;
+  assert.equal(p.value("relative"), "父亲在本公司财务部任职");
+  assert.equal(result.unfilledCount, 1, "the echoing field is reported as not filled");
+  assert.match(p.ui.diag.value, /- （字段名已隐藏）：input\[text\]/);
+  assert.equal(p.ui.diag.value.includes("财务部"), false);
+});
+
+// #429 第 11 项：日期框只收写得成日期的资料。AI 给它挑了一项不是日期的，worker 拦下（blocked）、不带原文，
+// 网页不往框里写，记作没填上、报日期不对。
+test("a date box the AI gives a non-date item to stays empty and is reported as a bad date", async (t) => {
+  const p = page(t, input("name", "姓名") + input("start", "入职时间", { type: "date" }) + input("school", "毕业院校"));
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  assert.deepEqual(p.worker.calls[0].labels, ["入职时间", "毕业院校"]);
+  p.worker.calls[0].reply({ 入职时间: "示例大学", 毕业院校: "示例大学" });
+  const result = await running;
+  assert.deepEqual(["name", "start", "school"].map(p.value), ["测试用户", "", "示例大学"]);
+  assert.equal(result.filledCount, 2);
+  assert.match(p.ui.status.textContent, /入职时间（日期格式或范围不符）/);
+  const report = (await p.report()).diagnosticsReport;
+  assert.match(report, /^- .*: input\[date\].* reason=invalid_date$/m);
+  assert.equal(lineOf(report, "ai_matches"), "1");
+  assert.doesNotMatch(lineOf(report, "drop_reasons"), /ai_unmatched/, report);
+});
+
+// #429 证件类型按资料和号码本地填；资料写的和号码对不上的不填，报「和证件号码对不上」，也不交给 AI。
+const ID_PAGE = (selected = "") => input("name", "姓名") + item("idType", "证件类型", `<select id="idType" name="idType"><option value="">请选择</option>`
+  + [["1", "居民身份证"], ["2", "港澳台居民居住证"], ["3", "护照"]].map(([value, text]) => `<option value="${value}"${value === selected ? " selected" : ""}>${text}</option>`).join("")
+  + `</select>`) + input("idNo", "证件号码") + input("school", "毕业院校");
+
+test("the ID number picks the ID type before the AI answers when the profile states none", async (t) => {
+  const p = page(t, ID_PAGE(), { resume: [["基本信息", "证件号码", "810000199408230021"], ...RESUME] });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("idNo") && p.worker.calls.length === 1), "filled before the AI answers");
+  assert.deepEqual(["idType", "idNo"].map(p.value), ["2", "810000199408230021"]);
+  assert.deepEqual(p.worker.calls[0].labels, ["毕业院校"]);
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.equal(result.outcome, "success", p.ui.diag.value);
+  assert.equal(result.filledCount, 4);
+});
+
+test("an ID type the number contradicts is left empty and reported, not sent to the AI", async (t) => {
+  const resume = [["基本信息", "证件类型", "居民身份证"], ["基本信息", "证件号码", "810000199408230021"], ...RESUME];
+  const p = page(t, ID_PAGE(), { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("idNo") && p.worker.calls.length === 1), "the number is filled before the AI answers");
+  assert.deepEqual(p.worker.calls[0].labels, ["毕业院校"]);
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.deepEqual(["name", "idType", "idNo", "school"].map(p.value), ["测试用户", "", "810000199408230021", "示例大学"]);
+  assert.equal(result.filledCount, 3);
+  assert.equal(result.unfilledCount, 1);
+  assert.equal(p.ui.status.textContent, "已填写 3 个字段。1 项没填上：证件类型（和证件号码对不上），请手动补上。");
+  const report = (await p.report()).diagnosticsReport;
+  assert.match(report, /^- .*: select reason=id_type_mismatch$/m);
+});
+
+test("a contradicted ID type that already has a value asks no overwrite question and stays as it is", async (t) => {
+  const resume = [["基本信息", "证件类型", "护照"], ["基本信息", "证件号码", "11010519491231002X"], ...RESUME];
+  const p = page(t, ID_PAGE("1"), { resume, confirm: () => false });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1), "the AI is asked");
+  assert.deepEqual(p.worker.calls[0].labels, ["毕业院校"]);
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.equal(p.confirms.length, 0);
+  assert.deepEqual(["idType", "idNo", "school"].map(p.value), ["1", "11010519491231002X", "示例大学"]);
+  assert.equal(result.unfilledCount, 1);
 });

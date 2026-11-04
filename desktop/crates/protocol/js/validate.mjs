@@ -12,6 +12,8 @@ export const MAX_ENVELOPE_BYTES = RULES.maxEnvelopeBytes;
 export const MAX_RECONCILE_ITEMS = RULES.maxReconcileItems;
 export const MAX_CHUNK_COUNT = RULES.maxChunkCount;
 export const MAX_SNAPSHOT_BYTES = RULES.maxSnapshotBytes;
+export const RESUME_FILE_CHUNK_BYTES = RULES.resumeFileChunkBytes;
+export const MAX_RESUME_FILE_BYTES = RULES.maxResumeFileBytes;
 
 const FORBIDDEN_KEYS = ["apikey", "api_key", "api-key", "authorization", "cookie", "set-cookie", "password", "otp", "token", "secret"];
 // The desktop store's own label rule (archive-store::resume_secrets::is_secret_label,
@@ -361,6 +363,8 @@ export async function validateRequest(value) {
     if (e.code) throw e;
     throw fail("invalid_payload", e.message);
   }
+  if (RULES.v6MessageTypes.includes(type) && value.protocolVersion < 6) throw fail("protocol_incompatible", `${type} requires protocolVersion 6`);
+  if (RULES.v5MessageTypes.includes(type) && value.protocolVersion < 5) throw fail("protocol_incompatible", `${type} requires protocolVersion 5`);
   if (RULES.v4MessageTypes.includes(type) && value.protocolVersion < 4) throw fail("protocol_incompatible", "mail.import requires protocolVersion 4");
   if (RULES.v3MessageTypes.includes(type) && value.protocolVersion < 3) throw fail("protocol_incompatible", `${type} requires protocolVersion 3`);
   if (RULES.v2MessageTypes.includes(type) && value.protocolVersion < 2) {
@@ -422,6 +426,9 @@ export async function validateRequest(value) {
         }
       }
     }
+  }
+  if (RULES.v5MessageTypes.includes(type) && !isSiteKey(value.payload.site)) {
+    throw fail("invalid_payload", "site must be host[:port][/segment]");
   }
   if (type === "mail.import") {
     const p = value.payload;
@@ -543,6 +550,25 @@ export function validateResponseForRequest(value, request) {
       !Object.hasOwn(request.payload ?? {}, "tier") && request.payload?.purpose !== "analyze") {
     throw fail("invalid_payload", "ai.complete tier is only returned to a request that asked for one");
   }
+  // #429: answers for one site go back only to a request about that site.
+  if (RULES.v5MessageTypes.includes(request.messageType) && value.ok && value.payload?.site !== request.payload?.site) {
+    throw fail("invalid_payload", "site answers response names a different site");
+  }
+  // #429: one chunk of the file version that was asked for, and exactly as long as that
+  // chunk must be. The chunk digest is checked by whoever assembles the file.
+  if (request.messageType === "resumeFiles.read" && value.ok) {
+    const p = value.payload;
+    const asked = request.payload ?? {};
+    if (p.fileId !== asked.fileId || p.sha256 !== asked.sha256 || p.chunkIndex !== asked.chunkIndex) {
+      throw fail("invalid_payload", "resume file chunk is not the one that was requested");
+    }
+    const chunk = RESUME_FILE_CHUNK_BYTES;
+    const expected = p.chunkIndex + 1 === p.chunkCount ? p.byteSize - p.chunkIndex * chunk : chunk;
+    if (p.chunkCount !== Math.ceil(p.byteSize / chunk) || p.chunkIndex >= p.chunkCount
+        || decodeStandardBase64(p.bytesBase64).length !== expected) {
+      throw fail("invalid_payload", "resume file chunk length or count mismatch");
+    }
+  }
   if (request.messageType === "mail.import" && value.ok) {
     const p = value.payload;
     const final = request.payload.chunkIndex + 1 === request.payload.chunkCount;
@@ -645,7 +671,11 @@ export function validateResponse(value, requestType) {
   // Whole response, before the ok/error split. Scanning only the success branch let a
   // schema-valid failure carry a credential in `error.message`. Archive data can hold
   // credentials and the host must not hand them back to the extension, on any branch.
-  walkSecrets(value);
+  // #429: the one exception is the bytes of a resume file. Scanning Base64 cannot find a
+  // readable credential; it could only misfire, and a misfire would refuse the same file on
+  // every read. Today's rules cannot misfire on canonical Base64 (`=` is only end padding),
+  // but a later rule could. Every other field, error branch included, is still scanned.
+  walkSecrets(value, requestType === "resumeFiles.read" ? [["payload", "bytesBase64"]] : []);
   const responseBytes = utf8JsonLen(value);
   if (responseBytes > MAX_ENVELOPE_BYTES) {
     throw fail("payload_too_large", `response is ${responseBytes} UTF-8 bytes; max is ${MAX_ENVELOPE_BYTES}`);
@@ -659,6 +689,8 @@ export function validateResponse(value, requestType) {
     }
   }
   validateSchema(value, responseSchema());
+  if (RULES.v6MessageTypes.includes(requestType) && value.protocolVersion < 6) throw fail("protocol_incompatible", `${requestType} response requires protocolVersion 6`);
+  if (RULES.v5MessageTypes.includes(requestType) && value.protocolVersion < 5) throw fail("protocol_incompatible", `${requestType} response requires protocolVersion 5`);
   if (RULES.v4MessageTypes.includes(requestType) && value.protocolVersion < 4) throw fail("protocol_incompatible", "mail.import response requires protocolVersion 4");
   if (RULES.v3MessageTypes.includes(requestType) && value.protocolVersion < 3) throw fail("protocol_incompatible", `${requestType} response requires protocolVersion 3`);
   if (RULES.v2MessageTypes.includes(requestType) && value.protocolVersion < 2) {
@@ -727,6 +759,7 @@ export function validateResponse(value, requestType) {
     if (requestType === "application.queryCandidates") {
       candidateTimestampsAreReal(value.payload);
     }
+    if (requestType === "resumeFiles.list") resumeFileListExtras(value.payload);
   } else if (value.resultId) {
     throw fail("invalid_payload", "ok:false response must not include resultId");
   } else {
@@ -783,4 +816,46 @@ function candidateTimestampsAreReal(payload) {
       }
     }
   }
+}
+
+// #429: one row per file, at most one default per kind, a type that kind may hold, and
+// real timestamps. Same rule as the Rust validator's resume_file_list_extras.
+function resumeFileListExtras(payload) {
+  const ids = new Set();
+  const defaults = new Set();
+  for (const file of payload.files) {
+    const id = file.fileId.toLowerCase();
+    if (ids.has(id)) throw fail("invalid_payload", "resume file listed twice");
+    ids.add(id);
+    if (file.isDefault) {
+      if (defaults.has(file.kind)) throw fail("invalid_payload", "more than one default resume file of one kind");
+      defaults.add(file.kind);
+    }
+    if (!resumeFileMimeAllowed(file.kind, file.mime)) throw fail("invalid_payload", "resume file type does not fit its kind");
+    if (!isUtcTimestamp(file.updatedAt)) throw fail("invalid_payload", "resume file updatedAt must be a real UTC timestamp");
+  }
+}
+
+const PDF = "application/pdf";
+const DOC = "application/msword";
+const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const RESUME_FILE_TYPES = {
+  resume: [PDF, DOC, DOCX],
+  photo: ["image/jpeg", "image/png"],
+  transcript: [PDF, "image/jpeg", "image/png"],
+  other: [PDF, DOC, DOCX, "image/jpeg", "image/png"],
+};
+
+// #429: which file types each kind holds. Resumes are documents, photos are images,
+// transcripts either; other material may be any of the five types.
+export function resumeFileMimeAllowed(kind, mime) {
+  return Object.hasOwn(RESUME_FILE_TYPES, kind) && RESUME_FILE_TYPES[kind].includes(mime);
+}
+
+// #429: the site a set of answers belongs to — a lowercase host, an optional port, and for
+// a recruiting platform shared by many companies one more path segment naming the company.
+// Same rule as the Rust validator's is_site_key.
+export function isSiteKey(site) {
+  const match = typeof site === "string" && /^[a-z0-9][a-z0-9.-]*(?::([0-9]{1,5}))?(?:\/[A-Za-z0-9_-]{1,64})?$/.exec(site);
+  return Boolean(match) && (match[1] === undefined || (Number(match[1]) >= 1 && Number(match[1]) <= 65535));
 }

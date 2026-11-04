@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
 const scanner = require('../field-scan.js');
+const antd6 = require('./helpers/antd6-select.js');
 
 const visible = el => !el.closest('[hidden]');
 function load(label, control) {
@@ -18,7 +19,7 @@ function load(label, control) {
   const found = scanner.scanPage(w.document, { isVisible: visible }).controls.find(item => item.label === label);
   assert.ok(found, `scanned ${label}`);
   const target = { kind: 'element', element: found.element, elements: found.elements, root: found.root, controlKind: found.controlKind, hints: {} };
-  return { w, doc: w.document, api, target };
+  return { w, doc: w.document, api, target, found };
 }
 
 // AntD 3（rc-select 9）/ ant-design-vue 1.x：点组件根展开，弹层挂在 body 下；选中后占位隐藏，出现 selection-selected-value。
@@ -176,6 +177,35 @@ test('an ID type from the profile selects the site option that is another name f
   }
 });
 
+// #429 英文表单的性别下拉只写 M、F，点开过一会儿才有选项：worker 拿不到选项，给的是「男」，按点开的列表换成 M。
+// 只在问性别的字段上换：尺码下拉里的 M 不算。
+test('a gender select whose M and F options appear only when opened takes 男 as M', async () => {
+  const h = antd3(['M', 'F'], { label: 'Gender', loadAfter: 20 });
+  h.target.binding = h.found;
+  const result = await h.api.operate(h.target, '男');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.picked, ['M']);
+  const size = antd3(['S', 'M', 'L'], { label: '尺码', loadAfter: 20 });
+  size.target.binding = size.found;
+  assert.equal((await size.api.operate(size.target, '男')).reason, 'no_option_match');
+  assert.deepEqual(size.picked, []);
+});
+
+// 英文性别题的题目只写在控件的 aria-label 上（字段名看不出是性别）：按扫描时的完整上下文认出是性别题，「男」选上 M。
+// 选项写成 Male、Female 的，「男」选上 Male。
+test('a gender select named only by its aria-label takes 男 as M, and Male, Female options take 男 as Male', async () => {
+  const h = antd3(['M', 'F'], { label: 'Choose one', loadAfter: 20 });
+  h.found.element.setAttribute('aria-label', 'Sex');
+  h.target.binding = h.found;
+  const result = await h.api.operate(h.target, '男');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.picked, ['M']);
+  const words = antd3(['Male', 'Female'], { label: 'Gender', loadAfter: 20 });
+  words.target.binding = words.found;
+  assert.equal((await words.api.operate(words.target, '男')).ok, true);
+  assert.deepEqual(words.picked, ['Male']);
+});
+
 test('AntD 3 existing selection is read as the displayed choice', () => {
   const h = antd3(['CET4', 'CET6'], { label: '外语等级', selected: 'CET4' });
   assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ['CET4']);
@@ -294,4 +324,58 @@ test('AntD AutoComplete without suggestions on opening is typed into like other 
   assert.deepEqual(h.searches, ['北京大学']);
   assert.equal(h.input.value, '北京大学');
   assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ['北京大学']);
+});
+
+// #429 antd 6（@rc-component/select 1.x）：没有 .ant-select-selector，单选的已选文字直接写在 .ant-select-content 里。
+// 替身见 helpers/antd6-select.js（按真 antd 6.6.8 的结构写）。
+function antd6Select(choices, { label = '学历', ...options } = {}) {
+  const h = load(label, antd6.selectHtml('ant', options));
+  const root = h.doc.querySelector('.ant-select');
+  return { ...h, root, input: root.querySelector('input'), state: antd6.wire(h.doc, root, choices, options) };
+}
+
+test('AntD 6 single selection is verified from the text in its content', async () => {
+  const h = antd6Select(['大专', '本科', '硕士', '博士']);
+  const result = await h.api.operate(h.target, '硕士');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.state.picked, ['硕士']);
+  assert.equal(h.state.open, false);
+  assert.equal(h.api.check(h.target).ok, true);
+  const content = h.root.querySelector('.ant-select-content');
+  Array.from(content.childNodes).filter(node => node.nodeType === 3).forEach(node => node.remove());
+  assert.equal(h.api.check(h.target).reason, 'value_reverted');
+});
+
+test('AntD 6 shows the choice as plain text: read back, while the placeholder and a typed query are not the choice', () => {
+  const shown = antd6Select(['本科', '硕士'], { selected: '本科', search: true });
+  assert.deepEqual(Array.from(shown.w.ResumeProCustomControls.readSelection(shown.target).texts), ['本科']);
+  assert.equal(shown.w.ResumeProCustomControls.hasExistingValue(shown.target), true);
+  // 搜索时打的字只在输入框里，已选的还是本科。
+  shown.input.value = '硕';
+  assert.deepEqual(Array.from(shown.w.ResumeProCustomControls.readSelection(shown.target).texts), ['本科']);
+  // 选项带 className 时套一层 .ant-select-content-value。
+  const styled = antd6Select(['学士', '硕士'], { label: '学位', selected: '学士', styled: true });
+  assert.deepEqual(Array.from(styled.w.ResumeProCustomControls.readSelection(styled.target).texts), ['学士']);
+  const empty = antd6Select(['本科', '硕士']);
+  assert.deepEqual(Array.from(empty.w.ResumeProCustomControls.readSelection(empty.target).texts), []);
+  assert.equal(empty.w.ResumeProCustomControls.hasExistingValue(empty.target), false);
+});
+
+test('AntD 6 search select without a popup before typing is searched in its own input', async () => {
+  const h = antd6Select(['北京大学', '北京师范大学', '清华大学'], { label: '毕业院校', search: true, remote: true });
+  const result = await h.api.operate(h.target, '北京大学');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.state.picked, ['北京大学']);
+  assert.deepEqual(h.state.searches, ['北京大学']);
+  assert.equal(h.input.value, '');
+});
+
+test('AntD 6 Cascader is picked column by column and its path is read back', async () => {
+  const region = { 广东省: { 深圳市: ['南山区', '福田区'], 广州市: ['天河区'] }, 江苏省: { 苏州市: ['昆山市'] } };
+  const h = antd6Select(region, { label: '现居住地', cascader: true });
+  assert.equal(h.target.controlKind, 'cascader');
+  const result = await h.api.operate(h.target, '广东省/深圳市/南山区');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.state.picked, ['广东省/深圳市/南山区']);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.w.ResumeProCustomControls.readSelection(h.target))), { texts: ['广东省', '深圳市', '南山区'], cascade: true });
 });
