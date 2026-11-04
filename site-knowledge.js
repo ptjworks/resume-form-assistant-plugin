@@ -32,16 +32,18 @@
   // Moka 把页面配置放在内联脚本的 window._MOKA_ENV_ 里；内容脚本读不到页面的全局变量，只看脚本文字。
   const mentions = (doc, word) => Array.from(doc?.scripts || []).some(script => !script.src && String(script.textContent || "").includes(word));
   const PLATFORMS = [
-    { id: "moka", name: "Moka", overwrites: true, hosts: [/(^|\.)mokahr\.com$/],
+    // parseMs：传完简历后至少等多久再填（第 4 项）。Form2Offer 记的解析时长往上取：Moka 8～10 秒、北森 10～20 秒；
+    // 飞书、大易、携程没有记时长，按 15 秒。网站解析时不一定显示忙碌，等得太短，解析结果会在填完之后才到。
+    { id: "moka", name: "Moka", overwrites: true, parseMs: 12000, hosts: [/(^|\.)mokahr\.com$/],
       looks: doc => (has(doc, "[class*='apply-field-']") && has(doc, "[class*='sd-Select']")) || mentions(doc, "_MOKA_ENV_") },
-    { id: "feishu", name: "飞书招聘", overwrites: true, hosts: [/(^|\.)jobs\.feishu\.cn$/, /(^|\.)jobs\.larksuite\.com$/],
+    { id: "feishu", name: "飞书招聘", overwrites: true, parseMs: 15000, hosts: [/(^|\.)jobs\.feishu\.cn$/, /(^|\.)jobs\.larksuite\.com$/],
       looks: doc => has(doc, ".ud-formily-item") && has(doc, "[data-form-field-id]") },
     // 北森旧版门户（zhiye.com 下 Portal/、campusxq 这类路径）的解析只截短专业名，不算。旧版是 IIS 站点，路径不分大小写。
-    { id: "beisen", name: "北森", overwrites: true, hosts: [/(^|\.)zhiye\.com$/, /(^|\.)italentx?\.(?:cn|com)$/, /(^|\.)beisen\.com$/],
+    { id: "beisen", name: "北森", overwrites: true, parseMs: 25000, hosts: [/(^|\.)zhiye\.com$/, /(^|\.)italentx?\.(?:cn|com)$/, /(^|\.)beisen\.com$/],
       skip: { host: /(^|\.)zhiye\.com$/, path: /^\/(?:portal(?:\/|$)|campusxq|internxq|socialxq)/i },
       looks: doc => has(doc, ".form-item--phoenix") && has(doc, "[class*='phoenix-']") },
-    { id: "dayee", name: "大易", overwrites: true, hosts: [/(^|\.)dayee\.com$/] },
-    { id: "ctrip", name: "携程招聘", overwrites: true, hosts: [/^(?:careers|job)\.ctrip\.com$/] },
+    { id: "dayee", name: "大易", overwrites: true, parseMs: 15000, hosts: [/(^|\.)dayee\.com$/] },
+    { id: "ctrip", name: "携程招聘", overwrites: true, parseMs: 15000, hosts: [/^(?:careers|job)\.ctrip\.com$/] },
     { id: "51job-classic", name: "前程无忧（旧版）", bytes: true, hosts: [/(^|\.)51job\.com$/], path: /\.aspx/i },
     { id: "yingjiesheng", name: "应届生求职", bytes: true, hosts: [/^q\.yingjiesheng\.com$/, /^young\.yingjiesheng\.com$/] }
   ];
@@ -89,10 +91,23 @@
     }
     return String(fallback || "");
   }
-  // 侧栏里的一句提示：只给上传后会覆盖已填内容的平台。
-  function uploadHint(platform) {
+  // 侧栏里的一句提示：只给上传后会覆盖已填内容的平台。一键填写能替用户传简历时（桌面里有简历附件、页面上有空着的简历框）
+  // 说一键填写会怎么做，不能传时（桌面旧、没有文件）请用户先自己传。
+  function uploadHint(platform, { canUpload = false } = {}) {
     if (!platform?.overwrites) return "";
-    return `${platform.name}${/[A-Za-z0-9]$/.test(platform.name) ? " " : ""}上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。`;
+    const name = `${platform.name}${/[A-Za-z0-9]$/.test(platform.name) ? " " : ""}`;
+    return canUpload
+      ? `${name}上传简历后会重新解析并覆盖已填内容。一键填写会先上传简历，等解析完再填写。`
+      : `${name}上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。`;
+  }
+  // 传完简历后怎么等网站解析（见 upload-slots.js 的 waitForParse）。不忙、表单安静、等够最短时间三个条件都满足才算完，不提前结束。
+  // 会覆盖的平台至少等 parseMs，表单安静 2 秒，最多 60 秒。别的网站至少 1 秒，表单安静 1.5 秒，最多 10 秒；
+  // 这段时间里表单的值变了，当它也会解析覆盖，上限放宽到 15 秒。
+  function parseTiming(platform) {
+    if (platform?.overwrites && Number.isInteger(platform.parseMs)) {
+      return { known: true, minMs: platform.parseMs, quietMs: 2000, maxMs: 60000, extendMs: 60000 };
+    }
+    return { known: false, minMs: 1000, quietMs: 1500, maxMs: 10000, extendMs: 15000 };
   }
 
   // 字数：按字符（UTF-16 码元，和浏览器的 maxlength 一样）；按字节的站点一个字一个字量，0～255 以外的字算 2（emoji 也算 2）。
@@ -134,7 +149,7 @@
     return null;
   }
 
-  const api = { detect, countsBytes, addressOf, uploadHint, measure, limitOf, platforms: PLATFORMS.map(({ id, name, overwrites = false, bytes = false }) => ({ id, name, overwrites, bytes })) };
+  const api = { detect, countsBytes, addressOf, uploadHint, parseTiming, measure, limitOf, platforms: PLATFORMS.map(({ id, name, overwrites = false, bytes = false }) => ({ id, name, overwrites, bytes })) };
   scope.ResumeProSiteKnowledge = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);

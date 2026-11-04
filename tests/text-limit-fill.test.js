@@ -157,6 +157,7 @@ test("a box with maxlength 0 is filled as before: 0 is not taken as a limit", as
 
 test("the side panel status carries an upload hint on platforms whose resume upload overwrites the form", async (t) => {
   const form = row("name", "姓名", `<input id="name">`);
+  // 页面上没有空着的简历框：一键填写不会先传简历，不用问桌面，直接是这句（有简历框时见 upload-flow.test.js）。
   assert.equal((await page(t, form, { url: "https://app.mokahr.com/campus_apply/example/1" }).status()).siteHint,
     "Moka 上传简历后会重新解析并覆盖已填内容，请先上传简历再填写。");
   // 跑在公司自己域名上的飞书：按页面特征认。
