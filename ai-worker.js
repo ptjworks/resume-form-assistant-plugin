@@ -726,7 +726,7 @@ function refMatches(payload, fields, catalog, allowed) {
       return [unknownLevel ? { fieldId: field.fieldId, value, note: "region_level_unknown" } : { fieldId: field.fieldId, value }];
     }
     if (field.cascade === true) {
-      const { value, coarse } = regionPrefix(joined);
+      const { value, coarse } = regionPrefix(joined, field);
       return [coarse ? { fieldId: field.fieldId, value: "", blocked: "region_too_coarse" } : { fieldId: field.fieldId, value }];
     }
     const value = ResumeProAIHelpers.choiceValue(field, joined);
@@ -852,30 +852,41 @@ function pickerDate(field, value) {
 // 整段都认得出（resolve 要整段都是地名，后面带着街道、门牌、邮编、括号的认不出）时原样给，不会带着街道。
 // 认出来只到省一级的（「广东省」「广东省/科苑路8号」）标 coarse：级联要选到市以下，只交省等于没填对。
 // 直辖市、特别行政区本身就是市（「北京市」「香港」），不算。
-function regionPrefix(value) {
+// 截前缀只用在地区级联上：题目问的是地区（isRegionQuestion），或者截出来的前缀至少认出省、市两级（本身就是地址）。
+// 别的级联（专业类别、行业）认不出是地区，值原样给：「上海交通大学闵行校区」不会被截成「上海」。
+function regionPrefix(value, field) {
   const regions = globalThis.ResumeProRegions;
   const text = String(value).trim();
   if (!regions?.resolve) return { value: text, coarse: false };
   const whole = regions.resolve(text);
   if (whole) return { value: text, coarse: tooCoarse(whole.path) };
+  const asked = isRegionQuestion(field);
+  const named = path => path.filter(part => !part.placeholder).length;
   if (text.includes("/")) {
     const segments = text.split(/\s*\/\s*/);
     for (let count = segments.length - 1; count >= 1; count -= 1) {
       const head = segments.slice(0, count).join("/");
       const found = regions.resolve(head);
-      if (found) return { value: head, coarse: tooCoarse(found.path) };
+      if (!found) continue;
+      return asked || named(found.path) >= 2 ? { value: head, coarse: tooCoarse(found.path) } : { value: text, coarse: false };
     }
     return { value: text, coarse: false };
   }
   // 不按「/」分开的：从长到短找认得出、至少到市（直辖市、特别行政区本身就算，见 tooCoarse）的前缀。四个字以上、有两级地名的照旧直接截；
-  // 更短的（「深圳市」「北京市」）只在后面像街道门牌时截（「深圳市科苑路8号」），「北京大学」「深圳大学」这类不截。
+  // 更短的（「深圳市」「北京市」）只在题目问地区、后面又像街道门牌时截（「深圳市科苑路8号」），「北京大学」「深圳大学」这类不截。
   for (let end = Math.min(text.length - 1, 40); end >= 2; end -= 1) {
     const head = text.slice(0, end);
     const path = regions.resolve(head)?.path;
     if (!path || tooCoarse(path)) continue;
-    if ((head.length >= 4 && path.filter(part => !part.placeholder).length >= 2) || ADDRESS_REST.test(text.slice(end))) return { value: head.trim(), coarse: false };
+    if ((head.length >= 4 && named(path) >= 2) || (asked && ADDRESS_REST.test(text.slice(end)))) return { value: head.trim(), coarse: false };
   }
   return { value: text, coarse: false };
+}
+
+// 题目问的是地区：题目、占位文字、aria-label、name、id 里有城市、省份、地址、所在地、籍贯这类词，或者联动下拉某一级只写着「省」「市」「区县」。
+const REGION_QUESTION = /地区|区域|省份|省市|城市|区县|市县|地址|住址|所在地|居住地|现居|籍贯|户籍|户口|生源地|地点|\b(?:location|city|province|region|address|hometown|residence)\b/i;
+function isRegionQuestion(field) {
+  return REGION_QUESTION.test(ResumeProAIHelpers.questionHint(field || {})) || /^\s*(?:省|市|区|县|省份|城市|区县)\s*$/.test(String(field?.label ?? ""));
 }
 const ADDRESS_REST = /[路街道巷弄号村镇乡栋楼室区县]|\d/;
 
@@ -890,7 +901,7 @@ function tooCoarse(path) {
 // 给整段由页面按「包含」选，标 unknownLevel（诊断里记 regionLevelUnknown）。
 const LEVEL_WORDS = [[0, /省|自治区|province/i], [1, /市|city/i], [2, /县|区|county|district/i]];
 function levelRegion(field, value) {
-  const head = regionPrefix(value).value;
+  const head = regionPrefix(value, field).value;
   const path = globalThis.ResumeProRegions?.resolve?.(head)?.path;
   if (!path) return { value: head };
   const own = [field.label, field.placeholder, field.name, field.idAttr, field.ariaLabel].filter(Boolean).join(" ")
