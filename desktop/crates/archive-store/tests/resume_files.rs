@@ -356,10 +356,11 @@ fn a_record_whose_home_is_not_a_file_is_deleted_and_the_home_is_left_for_the_use
 }
 
 #[test]
-fn bytes_of_the_wrong_content_at_home_never_overwrite_the_right_copy_in_tmp() {
+fn a_home_with_the_wrong_content_is_left_alone_and_the_record_still_goes() {
     let dir = tempfile::tempdir().unwrap();
     let db = open(dir.path());
     let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    let kept = db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
     let archive = dir.path().join("archive");
     let home = archive.join(RESUME_FILES_DIR).join(&file.sha256);
     let staged = archive.join("tmp").join(format!("resume-file-{}.deleting", file.sha256));
@@ -367,12 +368,46 @@ fn bytes_of_the_wrong_content_at_home_never_overwrite_the_right_copy_in_tmp() {
     std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
     std::fs::rename(&home, &staged).unwrap();
     std::fs::write(&home, b"other bytes").unwrap();
-    // 删除不挪原位置的东西，不盖掉 tmp/ 里那份，按查不清报错，记录不动。
-    let error = db.delete_resume_file(&file.id).unwrap_err();
-    assert_eq!(code(error), "validation_failed");
-    assert_eq!(std::fs::read(&staged).unwrap(), pdf(1));
+    // 删除不挪原位置的东西（不会盖掉 tmp/ 里那份），只删记录；那个文件留着，列进残留，让用户自己处理。
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted && result.stuck_in_tmp.is_none(), "{result:?}");
+    assert_eq!(result.folder.leftovers, vec![format!("{RESUME_FILES_DIR}/{}", file.sha256)]);
     assert_eq!(std::fs::read(&home).unwrap(), b"other bytes");
-    assert!(db.resume_file(&file.id).unwrap().is_some());
+    assert!(db.resume_file(&file.id).unwrap().is_none());
+    // 以后的清理也不删这个名字是哈希、内容却对不上的文件。别的附件都在。
+    db.add_resume_file(ResumeFileKind::Other, "材料.pdf", &pdf(2)).unwrap();
+    assert_eq!(std::fs::read(&home).unwrap(), b"other bytes");
+    assert_eq!(db.read_resume_file(&kept.id).unwrap().1, png());
+}
+
+#[test]
+fn a_tmp_folder_that_became_a_link_is_never_moved_into_or_cleaned_through() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    // 档案的 tmp/ 被换成指向档案外面一个目录的链接，那边有几个名字像暂存文件的文件。
+    let outside = dir.path().join("outside-tmp");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("resume-file-x.partial"), b"someone else's").unwrap();
+    std::fs::write(outside.join(format!("resume-file-{}.deleting", "1".repeat(64))), b"someone else's").unwrap();
+    let tmp = dir.path().join("archive").join("tmp");
+    let _ = std::fs::remove_dir_all(&tmp);
+    link_dir(&outside, &tmp);
+    // 删除只删记录：不往链接里挪，也不顺着它清理，按没能核对报。外面的文件、原位置的字节都还在。
+    let home = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted && result.folder.unchecked.is_some(), "{result:?}");
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 2);
+    assert_eq!(std::fs::read(&home).unwrap(), pdf(1));
+    // 添加也不往链接里写暂存文件。
+    assert_eq!(code(db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap_err()), "validation_failed");
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 2);
+    db.close().unwrap();
+    // 收拾测试：先拆掉链接，免得删临时目录时顺着链接删外面。
+    #[cfg(windows)]
+    std::fs::remove_dir(&tmp).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&tmp).unwrap();
 }
 
 /// 把 `link` 做成指向 `target` 目录的链接：Unix 上是符号链接，Windows 上是目录连接（不用管理员权限）。

@@ -804,16 +804,16 @@ fn move_no_clobber(from: &Path, to: &Path) -> std::io::Result<bool> {
     }
 }
 
-/// 附件目录和它上面的 `attachments/` 都不是链接（符号链接、Windows 的目录连接）。是链接的话，里面的「文件」可能在
-/// 档案外面：不在里面写、删、列任何东西。还不存在不算错（没有东西可动）。
+/// 附件目录、它上面的 `attachments/`、放暂存字节的 `tmp/` 都不是链接（符号链接、Windows 的目录连接）。是链接的话，
+/// 里面的「文件」可能在档案外面：不在里面写、删、列任何东西。还不存在的不算错（没有东西可动）。
 fn resume_folder_boundary(archive_dir: &Path) -> std::io::Result<()> {
-    for rel in ["attachments", RESUME_FILES_DIR] {
+    for rel in ["attachments", RESUME_FILES_DIR, "tmp"] {
         match std::fs::symlink_metadata(archive_dir.join(rel)) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(std::io::Error::other(format!("{rel} 是一个链接，可能指向档案外面")));
             }
             Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
     }
@@ -968,11 +968,12 @@ impl ArchiveStore {
 
     /// 删一个附件。能用的记录和读不出来的记录走同一条路，要删的字节只认附件目录里按哈希放的那份
     /// （读不出来的记录记的路径不可信，不拿来动文件；别的记录还用着这个哈希就不动）：
+    /// - 附件目录、`attachments/`、`tmp/` 有一个是链接：一个文件都不动，只删记录，按没能核对报。
     /// - 在事务外先把字节挪进 `tmp/`（不进备份）。挪不动（被别的程序占着、没有权限）、查不清它在不在，
-    ///   就什么都不删、照实报错；查过以后它已经没了，当作已经不在，接着删记录。挪完再看一眼挪走的确实是
-    ///   一个文件，不是（期间被换掉了）就原样挪回去，按查不清报错。
-    /// - 原位置上不是普通文件（目录、链接之类）：那不是这条记录的字节，不挪也不删，只删记录，位置列在结果里
-    ///   让用户自己处理。
+    ///   就什么都不删、照实报错；查过以后它已经没了，当作已经不在，接着删记录。挪完再核对一次挪走的是一个文件、
+    ///   内容就是这份，不是（期间被换掉了）就原样挪回去，按查不清报错。
+    /// - 原位置上不是普通文件（目录、链接之类），或者内容不是这份字节：那不是这条记录的字节，不挪也不删，
+    ///   只删记录，位置列在结果里让用户自己处理。
     /// - 再用一个短事务删记录，同一个事务里看删完以后还有没有记录用着这个哈希。
     /// - 记录没删掉、没删到、还有记录用着，或者提交以后再看一次又有了引用（查不清也算有），就把字节挪回去
     ///   （原位置上已经有东西就不覆盖，留在 `tmp/` 里照实报），不清；否则删掉挪走的字节。最后再清一次残留。
@@ -984,7 +985,8 @@ impl ArchiveStore {
         let Some((sha256, rel)) = self.transaction(|tx| tx.resume_file_bytes_to_delete(id))? else {
             return Ok(ResumeFileDeletion { deleted: false, stuck_in_tmp: None, folder: self.check_resume_file_folder() });
         };
-        // 附件目录或 `attachments/` 是链接：里面的东西可能在档案外面，一个文件都不动，只删记录，核对按没能核对报。
+        // 附件目录、`attachments/`、`tmp/` 有一个是链接：里面的东西可能在档案外面，一个文件都不动，只删记录，
+        // 核对按没能核对报。
         let boundary = resume_folder_boundary(self.archive_dir());
         let rel = if boundary.is_ok() { rel } else { None };
         let mut moved = None;
@@ -994,48 +996,46 @@ impl ArchiveStore {
             match spot(&target)? {
                 Spot::Empty => {}
                 Spot::Other => left_in_place = Some(rel),
-                Spot::File => {
-                    // 原位置的内容得就是这份字节才挪：内容不对的挪过去，会盖掉 tmp/ 里可能是唯一对的那一份。
-                    match hash_matches(&target, &sha256) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            return Err(invalid(format!(
-                                "附件目录里 {rel} 的内容和这条记录对不上，查不清，没有删除。可以先把这个文件挪走再删。"
-                            )));
-                        }
-                        Err(error) => {
-                            eprintln!("resume-files: hash-check-failed · {error}");
-                            return Err(invalid("文件正被别的程序占用，或者读不了，查不清它的内容，没有删除。关掉占用它的程序后再删一次。"));
-                        }
+                // 原位置的内容得就是这份字节才挪：内容不对的挪过去，会盖掉 tmp/ 里可能是唯一对的那一份。不对就和
+                // 「原位置不是普通文件」一样，只删记录，不动它，列出来让用户自己处理（清理也不删这种文件）。
+                Spot::File => match hash_matches(&target, &sha256) {
+                    Ok(false) => left_in_place = Some(rel),
+                    Err(error) => {
+                        eprintln!("resume-files: hash-check-failed · {error}");
+                        return Err(invalid("文件正被别的程序占用，或者读不了，查不清它的内容，没有删除。关掉占用它的程序后再删一次。"));
                     }
-                    #[cfg(test)]
-                    self.between_steps("checked");
-                    let trash = trash_for(self.archive_dir(), &rel);
-                    std::fs::create_dir_all(self.archive_dir().join("tmp"))?;
-                    match std::fs::rename(&target, &trash) {
-                        Ok(()) => {
-                            if !matches!(spot(&trash), Ok(Spot::File)) {
-                                let moved_in = self.relative(&trash);
-                                return Err(match move_no_clobber(&trash, &target) {
-                                    Ok(_) => invalid("这个附件的文件刚被别的程序换掉了，查不清，没有删除。稍后再删一次。"),
-                                    Err(error) => {
-                                        eprintln!("resume-files: put-back-failed · {error}");
-                                        invalid(format!(
-                                            "这个附件的文件刚被别的程序换掉了，查不清，没有删除。挪进来的东西没能放回原处，还在档案的 {moved_in}，需要的话请手动处理。"
-                                        ))
-                                    }
-                                });
+                    Ok(true) => {
+                        #[cfg(test)]
+                        self.between_steps("checked");
+                        let trash = trash_for(self.archive_dir(), &rel);
+                        std::fs::create_dir_all(self.archive_dir().join("tmp"))?;
+                        match std::fs::rename(&target, &trash) {
+                            Ok(()) => {
+                                // 挪走以后再核对一次：是一个文件，内容也还是这份。期间被换掉了就原样挪回去，按查不清报错。
+                                let unchanged = matches!(spot(&trash), Ok(Spot::File)) && matches!(hash_matches(&trash, &sha256), Ok(true));
+                                if !unchanged {
+                                    let moved_in = self.relative(&trash);
+                                    return Err(match move_no_clobber(&trash, &target) {
+                                        Ok(_) => invalid("这个附件的文件刚被别的程序换掉了，查不清，没有删除。稍后再删一次。"),
+                                        Err(error) => {
+                                            eprintln!("resume-files: put-back-failed · {error}");
+                                            invalid(format!(
+                                                "这个附件的文件刚被别的程序换掉了，查不清，没有删除。挪进来的东西没能放回原处，还在档案的 {moved_in}，需要的话请手动处理。"
+                                            ))
+                                        }
+                                    });
+                                }
+                                moved = Some((target, trash));
                             }
-                            moved = Some((target, trash));
-                        }
-                        // 查过以后又没了（别的清理、杀毒软件）：没有要挪的，接着删记录。
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => {
-                            eprintln!("resume-files: move-refused · {error}");
-                            return Err(invalid("文件正被别的程序占用，或者没有权限挪动它，没有删除。关掉占用它的程序后再删一次。"));
+                            // 查过以后又没了（别的清理、杀毒软件）：没有要挪的，接着删记录。
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(error) => {
+                                eprintln!("resume-files: move-refused · {error}");
+                                return Err(invalid("文件正被别的程序占用，或者没有权限挪动它，没有删除。关掉占用它的程序后再删一次。"));
+                            }
                         }
                     }
-                }
+                },
             }
         }
         #[cfg(test)]
@@ -1050,9 +1050,16 @@ impl ArchiveStore {
             }),
             _ => true,
         };
+        let keep_bytes = moved.is_some() && keep(&forgotten);
+        // 挪回去、删掉之前再看一次边界：这期间附件目录、`tmp/` 被换成了链接，就一个都不动，照实报。
+        let still_inside = resume_folder_boundary(self.archive_dir()).is_ok();
         // 挪走的字节接下来怎么样了：挪回去了就不用再管；挪不回去、删不掉的继续跟着（第二项是本该挪回去）。
         let staged = match moved {
-            Some((target, trash)) if keep(&forgotten) => match move_no_clobber(&trash, &target) {
+            Some((_, trash)) if !still_inside => {
+                eprintln!("resume-files: boundary-changed · staged bytes left where they are");
+                Some((trash, keep_bytes))
+            }
+            Some((target, trash)) if keep_bytes => match move_no_clobber(&trash, &target) {
                 Ok(true) => None,
                 // 原位置复原了，暂存名却还在：多出来的一份，按没删掉的残留跟着。
                 Ok(false) => Some((trash, false)),
@@ -1072,7 +1079,7 @@ impl ArchiveStore {
             None => None,
         };
         // 删记录失败也清一次：上面没挪回去的字节，清理会再试着挪回去。附件目录是链接时不清（清理也会自己拒绝）。
-        if boundary.is_ok() {
+        if boundary.is_ok() && still_inside {
             self.sweep_resume_files_noting_errors();
         }
         // 清理之后还在（或者查不清）的，就是卡在 tmp/ 里了。
@@ -1093,7 +1100,7 @@ impl ArchiveStore {
         };
         let mut folder = self.check_resume_file_folder();
         // 没动的那个位置一定列出来（核对出错时可能没扫到它）。
-        if let Some(rel) = left_in_place.filter(|rel| !folder.manual.contains(rel)) {
+        if let Some(rel) = left_in_place.filter(|rel| !folder.manual.contains(rel) && !folder.leftovers.contains(rel)) {
             folder.manual.push(rel);
             folder.manual.sort();
         }
@@ -1169,6 +1176,10 @@ impl ArchiveStore {
         for entry in entries_of(&folder, &mut failure) {
             let name = entry.file_name().to_string_lossy().to_string();
             match entry.file_type() {
+                // 名字是哈希、内容却不是这份字节的：不知道是谁的，不删，留给用户（核对时列在残留里）。
+                Ok(kind) if kind.is_file() && !referenced.contains(&name) && is_sha256(&name) && !matches!(hash_matches(&entry.path(), &name), Ok(true)) => {
+                    eprintln!("resume-files: leftover-kept · its content does not match its name");
+                }
                 Ok(kind) if kind.is_file() && !referenced.contains(&name) => match remove_verified(&entry.path()) {
                     Ok(()) => removed += 1,
                     Err(error) => eprintln!("resume-files: leftover-kept · {error}"),
@@ -1541,6 +1552,25 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("查不清") && message.contains(&format!("tmp/resume-file-{}.deleting", file.sha256)), "{message}");
         assert!(trash.is_dir() && !home.exists());
+        assert!(store.resume_file(&file.id).unwrap().is_some());
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn content_swapped_between_the_check_and_the_move_is_put_back_and_not_deleted() {
+        let (dir, store) = test_store();
+        let file = store.add_resume_file(ResumeFileKind::Resume, "简历.pdf", BYTES).unwrap();
+        let archive = dir.path().join("archive");
+        let home = archive.join(rel_path(&file.sha256));
+        // 核对过内容以后、挪之前，文件被换成了另一份内容（还是普通文件）：挪走以后再核对一次，对不上就挪回去，
+        // 按查不清报错，记录不动。
+        let swapped = home.clone();
+        between_steps("checked", move |_| std::fs::write(&swapped, b"swapped in").unwrap());
+        let error = store.delete_resume_file(&file.id).unwrap_err();
+        assert_eq!(error.code(), "validation_failed");
+        assert!(error.to_string().contains("查不清"), "{error}");
+        assert_eq!(std::fs::read(&home).unwrap(), b"swapped in");
+        assert!(!trash_for(&archive, &rel_path(&file.sha256)).exists());
         assert!(store.resume_file(&file.id).unwrap().is_some());
         store.close().unwrap();
     }
