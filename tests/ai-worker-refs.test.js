@@ -609,6 +609,23 @@ test("every script the worker imports is packed, the region data included", asyn
   for (const file of imported) assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes(file), `${file} is packed`);
 });
 
+test("with resume values sent, password and code fields and resume items still never go out", async () => {
+  const resume = [{ group: "教育经历", key: "学校", value: "虚构理工学院" }, { group: "补充字段", key: "邮箱密码", value: "fictional-pass-123" },
+    { group: "补充字段", key: "短信验证码", value: "839201" }];
+  const env = worker(() => [{ fieldId: "school", value: "虚构理工学院" }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }, { fieldId: "password", label: "登录密码", inputType: "password" },
+      { fieldId: "captcha", label: "图形验证码", inputType: "text" }],
+    resumeFields: resume, sendValues: true
+  });
+  // 和只发字段名时一样，开头就用 isSecretField、safeResumeField 去掉像密码、验证码的网页字段和资料。
+  const sent = env.calls.map((call) => `${call.system}\n${call.user}`).join("\n");
+  assert.match(sent, /虚构理工学院/, "values do go out with the switch on");
+  assert.ok(!["fictional-pass-123", "839201", "邮箱密码", "短信验证码", "登录密码", "图形验证码"].some((text) => sent.includes(text)), sent);
+  assert.equal(valueOf(result, "school"), "虚构理工学院");
+  assert.equal(result.diagnostics.secretFormFields, 2);
+});
+
 test("with resume values sent, an open question still takes only a resume answer on the same topic, copied as it is", async () => {
   const resume = [{ group: "自我评价", key: "自我评价", value: "踏实认真，  做事有条理" }, { group: "求职意向", key: "期望工作地点", value: "虚构城" }];
   const env = worker(() => [
