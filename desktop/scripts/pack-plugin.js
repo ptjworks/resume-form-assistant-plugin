@@ -43,7 +43,6 @@ export const PLUGIN_ARCHIVE_OPERANDS = [
   "feedback-ui.js",
   "feedback.css",
   "ai-worker.js",
-  "ai-worker-values.js",
   "ai-host.js",
   "ai-host.html",
   "ai-client.js",
