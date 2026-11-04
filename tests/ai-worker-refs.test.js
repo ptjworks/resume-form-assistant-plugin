@@ -681,6 +681,41 @@ test("with resume values sent, a select takes the option the AI copies for a res
   assert.equal(valueOf(off, "text"), "学校就业网");
 });
 
+test("with resume values sent, a select some resume item fits still takes only a ref in its fits; the AI's option is not used", async () => {
+  const resume = [{ group: "教育经历", key: "学历", value: "硕士" }, { group: "补充字段", key: "了解渠道", value: "学校就业网" }];
+  const degrees = ["本科", "硕士", "博士"];
+  const form = [
+    { fieldId: "outside", label: "最高学历", inputType: "select", options: degrees },
+    { fieldId: "inside", label: "第一学历", inputType: "radio", options: degrees },
+    { fieldId: "heard", label: "How did you hear about us?", inputType: "select", options: ["Please select", "School Career Website", "Friend"] }
+  ];
+  const answer = (message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key)?.ref;
+    return [
+      // fits 以外的编号配一个选项：不填。
+      { fieldId: "outside", ref: ref("了解渠道"), option: "博士" },
+      // fits 里的编号配一个和这项资料对不上的选项：按编号填资料对应的那个选项。
+      { fieldId: "inside", ref: ref("学历"), option: "博士" },
+      // 没有 fits 的照旧认「编号 + 选项」。
+      { fieldId: "heard", ref: ref("了解渠道"), option: "School Career Website" }
+    ];
+  };
+  const onEnv = worker(answer);
+  const on = await onEnv.run({ formFields: form, resumeFields: resume, sendValues: true });
+  const sent = fieldsOf(onEnv.calls[0]);
+  const degreeRef = catalogOf(onEnv.calls[0].user).find((entry) => entry.key === "学历").ref;
+  assert.deepEqual(sent.find((field) => field.fieldId === "outside").fits, [degreeRef]);
+  assert.equal(sent.find((field) => field.fieldId === "heard").fits, undefined);
+  assert.equal(valueOf(on, "outside"), undefined);
+  assert.equal(valueOf(on, "inside"), "硕士");
+  assert.equal(valueOf(on, "heard"), "School Career Website");
+  // 开关关着：带 fits 的两题和打开时一样，没有 fits 的不发、不填。
+  const off = await worker(answer).run({ formFields: form, resumeFields: resume });
+  assert.equal(valueOf(off, "outside"), undefined);
+  assert.equal(valueOf(off, "inside"), "硕士");
+  assert.equal(valueOf(off, "heard"), undefined);
+});
+
 test("the switch only adds values to the catalog and an option for choice fields; no separate value-mode code is left", async () => {
   assert.equal(fs.existsSync(path.join(__dirname, "..", "ai-worker-values.js")), false);
   assert.equal(fs.existsSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js")), false);
