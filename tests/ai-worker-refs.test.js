@@ -16,8 +16,8 @@ const regions = (() => {
   return scope.ResumeProRegions;
 })();
 
-// respond(message, catalog) 返回 AI 的回答（数组或文字）；legacy 接着跑评测用的旧发值方式（scripts/eval-fill-legacy.js）。
-function worker(respond = () => [], { legacy = false, withRegions = true } = {}) {
+// respond(message, catalog) 返回 AI 的回答（数组或文字）。
+function worker(respond = () => [], { withRegions = true } = {}) {
   const calls = [];
   let sequence = 0;
   const context = vm.createContext({
@@ -36,7 +36,6 @@ function worker(respond = () => [], { legacy = false, withRegions = true } = {})
   };
   if (!withRegions) delete context.ResumeProRegions;
   vm.runInContext(source, context);
-  if (legacy) vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js"), "utf8"), context);
   return { calls, context, run: async (input) => JSON.parse(JSON.stringify(await context.handleAiFill(input))) };
 }
 
@@ -579,14 +578,26 @@ test("an open question the resume has no answer to is counted on its own", async
   assert.equal(result.diagnostics.aiMatches, 1);
 });
 
-test("the old value prompt lives only in the eval script, which replaces handleAiFill after the worker", async () => {
-  const resume = [{ group: "教育经历", key: "学校", value: "虚构理工学院" }];
-  const env = worker(() => [{ fieldId: "school", value: "虚构理工学院" }], { legacy: true });
-  const result = await env.run({ formFields: [{ fieldId: "school", label: "毕业院校" }], resumeFields: resume });
-  assert.match(env.calls[0].user, /虚构理工学院/);
-  assert.match(env.calls[0].system, /应该填写什么值/);
+test("resume values go out only when sendValues is exactly true; anything else sends keys alone", async () => {
+  const resume = [{ group: "教育经历", key: "学校", value: "虚构理工学院" }, { group: "基本信息", key: "手机号码", value: "13912345678" }];
+  const form = [{ fieldId: "school", label: "毕业院校" }, { fieldId: "contact", label: "备用联系电话" }];
+  // 开关关着：没带、false、字符串 "true"、1、对象都按关着，发出的文字里查不到资料值，目录里没有 value。
+  for (const sendValues of [undefined, false, "true", 1, {}]) {
+    const off = worker((message, catalog) => [{ fieldId: "school", ref: catalog[0].ref }]);
+    const result = await off.run({ formFields: form, resumeFields: resume, ...(sendValues === undefined ? {} : { sendValues }) });
+    const sent = off.calls.map((call) => `${call.system}\n${call.user}`).join("\n");
+    for (const field of resume) assert.ok(!sent.includes(field.value), `${JSON.stringify(sendValues)}: ${field.key}`);
+    assert.ok(catalogOf(off.calls[0].user).every((entry) => !("value" in entry)));
+    assert.doesNotMatch(off.calls[0].system, /和值（value）/);
+    assert.equal(valueOf(result, "school"), "虚构理工学院");
+  }
+  // 开关打开：目录里每项带上值，AI 照旧回编号，值由插件按编号填。
+  const on = worker((message, catalog) => [{ fieldId: "school", ref: catalog.find((entry) => entry.key === "学校").ref }]);
+  const result = await on.run({ formFields: form, resumeFields: resume, sendValues: true });
+  assert.deepEqual(catalogOf(on.calls[0].user).map((entry) => entry.value), ["虚构理工学院", "13912345678"]);
+  assert.match(on.calls[0].user, /简历资料目录（编号、分组、字段名和值）/);
+  assert.match(on.calls[0].system, /和值（value）/);
   assert.equal(valueOf(result, "school"), "虚构理工学院");
-  assert.equal(refOf(env.calls[0].user, "学校"), undefined, "no catalog in the old prompt");
 });
 
 test("every script the worker imports is packed, the region data included", async () => {
@@ -596,16 +607,137 @@ test("every script the worker imports is packed, the region data included", asyn
   for (const file of imported) assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes(file), `${file} is packed`);
 });
 
-test("the shipped worker has no old value prompt and no switch, and the eval script is not packed", async () => {
-  assert.doesNotMatch(source, /ResumeProEvalValuePrompt|LEGACY_SYSTEM_PROMPT|buildLegacyUserPrompt|应该填写什么值/);
+test("with resume values sent, password and code fields and resume items still never go out", async () => {
+  const resume = [{ group: "教育经历", key: "学校", value: "虚构理工学院" }, { group: "补充字段", key: "邮箱密码", value: "fictional-pass-123" },
+    { group: "补充字段", key: "短信验证码", value: "839201" }];
+  const env = worker((message, catalog) => [{ fieldId: "school", ref: catalog.find((entry) => entry.key === "学校").ref }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "school", label: "毕业院校" }, { fieldId: "password", label: "登录密码", inputType: "password" },
+      { fieldId: "captcha", label: "图形验证码", inputType: "text" }],
+    resumeFields: resume, sendValues: true
+  });
+  // 和只发字段名时一样，开头就用 isSecretField、safeResumeField 去掉像密码、验证码的网页字段和资料：目录里没有它们。
+  const sent = env.calls.map((call) => `${call.system}\n${call.user}`).join("\n");
+  assert.match(sent, /虚构理工学院/, "values do go out with the switch on");
+  assert.ok(!["fictional-pass-123", "839201", "邮箱密码", "短信验证码", "登录密码", "图形验证码"].some((text) => sent.includes(text)), sent);
+  assert.equal(valueOf(result, "school"), "虚构理工学院");
+  assert.equal(result.diagnostics.secretFormFields, 2);
+});
+
+test("with resume values sent, an open question still takes only a resume item on the same topic, never a written answer", async () => {
+  const resume = [{ group: "自我评价", key: "自我评价", value: "踏实认真" }, { group: "求职意向", key: "期望工作地点", value: "虚构城" }];
+  const env = worker((message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key).ref;
+    return [{ fieldId: "why", value: "I love your products and want to grow with your team." }, { fieldId: "self", ref: ref("自我评价") },
+      { fieldId: "whyUs", ref: ref("期望工作地点") }, { fieldId: "city", ref: ref("期望工作地点") }];
+  });
+  const box = (fieldId, label) => ({ fieldId, label, tagName: "textarea", inputType: "textarea" });
+  const result = await env.run({
+    formFields: [box("why", "Why do you want to join us?"), box("self", "自我评价"), box("whyUs", "为什么选择我们公司"), { fieldId: "city", label: "意向城市" }],
+    resumeFields: resume, sendValues: true
+  });
+  // AI 写的一段（带 value 的条目）整条不要；和题目说的不是一件事的资料不填；同一件事的照填资料原文；不是开放题的照旧。
+  assert.equal(valueOf(result, "why"), undefined);
+  assert.equal(valueOf(result, "whyUs"), undefined);
+  assert.equal(valueOf(result, "self"), "踏实认真");
+  assert.equal(valueOf(result, "city"), "虚构城");
+  assert.equal(result.diagnostics.openUnanswered, 2);
+});
+
+test("with resume values sent, a select takes the option the AI copies for a resume item; with the switch off it does not", async () => {
+  const resume = [{ group: "补充字段", key: "了解渠道", value: "学校就业网" }, { group: "技能", key: "专业技能", value: "SQL、Python" }];
+  const form = [
+    { fieldId: "heard", label: "How did you hear about us?", inputType: "select", options: ["Please select", "School Career Website", "Friend"] },
+    { fieldId: "skills", label: "擅长的工具", inputType: "select", multiple: true, options: ["SQL", "Python", "Excel"] },
+    { fieldId: "loose", label: "Source", inputType: "select", options: ["Website", "Other"] },
+    { fieldId: "far", label: "Referral", inputType: "radio", options: ["Yes", "No"] },
+    { fieldId: "text", label: "了解渠道说明" }
+  ];
+  const answer = (message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key)?.ref;
+    return [
+      { fieldId: "heard", ref: ref("了解渠道"), option: "School Career Website" },
+      { fieldId: "skills", refs: [ref("专业技能")], options: ["SQL", "Python"] },
+      // 不是一字不差的选项：照只有编号处理，「学校就业网」落不到选项上，不填。
+      { fieldId: "loose", ref: ref("了解渠道"), option: "website" },
+      // 编号不在这一批目录里：不填。
+      { fieldId: "far", ref: "r99", option: "Yes" },
+      // 文本框不认选项，值按编号取资料原文。
+      { fieldId: "text", ref: ref("了解渠道"), option: "School Career Website" }
+    ];
+  };
+  const on = await worker(answer).run({ formFields: form, resumeFields: resume, sendValues: true });
+  assert.equal(valueOf(on, "heard"), "School Career Website");
+  assert.equal(valueOf(on, "skills"), "SQL、Python");
+  assert.equal(valueOf(on, "loose"), undefined);
+  assert.equal(valueOf(on, "far"), undefined);
+  assert.equal(valueOf(on, "text"), "学校就业网");
+  // 开关关着：不认「编号 + 选项」，本地对不上的下拉照旧不发、不填。
+  const offEnv = worker(answer);
+  const off = await offEnv.run({ formFields: form, resumeFields: resume });
+  assert.equal(valueOf(off, "heard"), undefined);
+  assert.equal(valueOf(off, "loose"), undefined);
+  assert.equal(fieldsOf(offEnv.calls[0]).some((field) => field.fieldId === "heard"), false, "no item fits it, so it is not sent");
+  assert.equal(valueOf(off, "text"), "学校就业网");
+});
+
+test("with resume values sent, a select some resume item fits still takes only a ref in its fits; the AI's option is not used", async () => {
+  const resume = [{ group: "教育经历", key: "学历", value: "硕士" }, { group: "补充字段", key: "了解渠道", value: "学校就业网" }];
+  const degrees = ["本科", "硕士", "博士"];
+  const form = [
+    { fieldId: "outside", label: "最高学历", inputType: "select", options: degrees },
+    { fieldId: "inside", label: "第一学历", inputType: "radio", options: degrees },
+    { fieldId: "heard", label: "How did you hear about us?", inputType: "select", options: ["Please select", "School Career Website", "Friend"] }
+  ];
+  const answer = (message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key)?.ref;
+    return [
+      // fits 以外的编号配一个选项：不填。
+      { fieldId: "outside", ref: ref("了解渠道"), option: "博士" },
+      // fits 里的编号配一个和这项资料对不上的选项：按编号填资料对应的那个选项。
+      { fieldId: "inside", ref: ref("学历"), option: "博士" },
+      // 没有 fits 的照旧认「编号 + 选项」。
+      { fieldId: "heard", ref: ref("了解渠道"), option: "School Career Website" }
+    ];
+  };
+  const onEnv = worker(answer);
+  const on = await onEnv.run({ formFields: form, resumeFields: resume, sendValues: true });
+  const sent = fieldsOf(onEnv.calls[0]);
+  const degreeRef = catalogOf(onEnv.calls[0].user).find((entry) => entry.key === "学历").ref;
+  assert.deepEqual(sent.find((field) => field.fieldId === "outside").fits, [degreeRef]);
+  assert.equal(sent.find((field) => field.fieldId === "heard").fits, undefined);
+  assert.equal(valueOf(on, "outside"), undefined);
+  assert.equal(valueOf(on, "inside"), "硕士");
+  assert.equal(valueOf(on, "heard"), "School Career Website");
+  // 开关关着：带 fits 的两题和打开时一样，没有 fits 的不发、不填。
+  const off = await worker(answer).run({ formFields: form, resumeFields: resume });
+  assert.equal(valueOf(off, "outside"), undefined);
+  assert.equal(valueOf(off, "inside"), "硕士");
+  assert.equal(valueOf(off, "heard"), undefined);
+});
+
+test("the switch only adds values to the catalog and an option for choice fields; no separate value-mode code is left", async () => {
+  assert.equal(fs.existsSync(path.join(__dirname, "..", "ai-worker-values.js")), false);
+  assert.equal(fs.existsSync(path.join(__dirname, "..", "scripts", "eval-fill-legacy.js")), false);
+  assert.doesNotMatch(source, /handleValuesFill|应该填写什么值|ai-worker-values/);
+  assert.match(source, /const withValues = message\?\.sendValues === true;/);
   assert.equal("selectResumeCandidates" in helpers, false);
+  // 发资料原文的提示词由只发字段名的那份改两句、加一条得来：两处改动都要真的改上了。
+  const env = worker();
+  const plain = vm.runInContext("AI_SYSTEM_PROMPT", env.context);
+  const values = vm.runInContext("VALUES_SYSTEM_PROMPT", env.context);
+  for (const [from, to] of vm.runInContext("VALUES_PROMPT_EDITS", env.context)) {
+    assert.ok(plain.includes(from) && values.includes(to) && !plain.includes(to), from);
+  }
+  assert.notEqual(values, plain);
   const { PLUGIN_ARCHIVE_OPERANDS } = await import(pathToFileURL(path.join(__dirname, "..", "desktop", "scripts", "pack-plugin.js")).href);
   assert.ok(PLUGIN_ARCHIVE_OPERANDS.includes("ai-worker.js"));
+  assert.equal(PLUGIN_ARCHIVE_OPERANDS.includes("ai-worker-values.js"), false);
   assert.equal(PLUGIN_ARCHIVE_OPERANDS.some((entry) => entry === "scripts" || entry.startsWith("scripts/")), false);
   const { assertPluginOnlyArchive } = await import(pathToFileURL(path.join(__dirname, "..", "desktop", "scripts", "check-plugin-release-allowlist.js")).href);
   const packed = ["manifest.json", "background.js", "content.js", "content.css", "LICENSE", "ai-worker.js"];
   assert.doesNotThrow(() => assertPluginOnlyArchive(packed));
-  assert.throws(() => assertPluginOnlyArchive([...packed, "scripts/eval-fill-legacy.js"]), /scripts\/eval-fill-legacy\.js/);
+  assert.throws(() => assertPluginOnlyArchive([...packed, "scripts/eval-fill.mjs"]), /scripts\/eval-fill\.mjs/);
 });
 
 test("a parsed key whose school name was edited afterwards still leaves the old name out", async () => {

@@ -30,6 +30,22 @@ const AI_SYSTEM_PROMPT = [
   "17. 带 maxLength 的字段照常对应：资料太长时插件不填，会告诉用户字数上限，不要因为它跳过，也不要换一项不相干的资料"
 ].join("\n");
 
+// 插件状态页打开「AI 填写时发送资料原文」时（请求里 sendValues === true）：目录里每项带上值（value），AI 照旧回编号，值仍由插件按编号填，
+// 本地的核对和只发字段名时一样。只多一样：没有 fits 的下拉、单选（本地没有一项资料落得到选项上）可以另给一个选项原文（option、options），
+// 本地核对它一字不差是这个字段的选项、编号都在本批目录里，就填这个选项（optionMatch）；「学校就业网」对「School Career Website」这类
+// 本地对不上的，靠它填上。带 fits 的照只发字段名时那样只认 fits 里的编号。
+const VALUES_PROMPT_EDITS = [
+  ["简历资料只给编号（ref）、分组（group）和字段名（key），不给值；值由插件按编号填。",
+    "简历资料给编号（ref）、分组（group）、字段名（key）和值（value）；值由插件按编号填，你只回编号。"],
+  ["5. 带 fits 的字段（下拉框、单选框）只能从 fits 里挑一项，没有合适的就跳过",
+    '5. 带 fits 的字段（下拉框、单选框）只能从 fits 里挑一项，没有合适的就跳过；带 options、没有 fits 的下拉框、单选框：照样给所用资料的 ref（不能省，只有 option 的不填），再加 "option"，从这个字段的 options 里一字不差地抄一项，如资料 r3 是「学校就业网」、选项有「School Career Website」时回 {"fieldId":"f1","ref":"r3","option":"School Career Website"}；多选写成 "refs":[…] 和 "options":[…]；没有合适的选项就跳过'],
+  // 看得到起止时间、学历时，模型会把最近、最高的一段挪到网页第一段；网页上几段的先后照资料目录的先后对。
+  ["网页上第一段对资料里第一段，第二段对第二段",
+    "网页上第一段对资料里第一段，第二段对第二段：照字段名里的编号对，网页第一段用「教育经历1」这一段的几项，第二段用「教育经历2」；看到值以后也不要按时间先后或学历高低调换，第二段学历更高、时间更近也照样放第二段"]
+];
+const VALUES_SYSTEM_PROMPT = VALUES_PROMPT_EDITS.reduce((prompt, [from, to]) => prompt.replace(from, to), AI_SYSTEM_PROMPT)
+  + "\n18. 文本框、日期框只给 ref，不要给 option，也不要写值；资料里没有对应的一项就跳过";
+
 const activeFillRequests = new Map();
 const desktopCalls = new Map();
 
@@ -220,35 +236,36 @@ function safeResumeField(field) {
   return ResumeProAIHelpers.isSafeResumeField(field, ResumeProProfile);
 }
 
-function promptBytes(fields, candidates, partial = false) {
+function promptBytes(fields, candidates, partial = false, withValues = false) {
   // The user text is JSON-escaped again inside the Native Messaging envelope.
-  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates, partial))).length;
+  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates, partial, withValues))).length;
 }
 
 // 整份资料目录装得下时，按题目分批，每批带整份目录。装不下时（资料项太多），每批题目最多占一半预算，
 // 目录先放这批题目 fits 里的项、再放和题目相关的项，放到装不下为止（relevantEntries）：一批只问一次，请求数只随题目的批数增长。
 // 编号仍是整份目录里的；fits 只留这一批目录里有的，留不下一项的题不发：是资料被裁掉了，不是题目太大，
 // 记进 trimmedOut（诊断算作 trimmedUnanswered），不算 skippedOversized。trimmed 是哪一批都没发出去的资料项数。
-function makePromptBatches(formFields, entries) {
+function makePromptBatches(formFields, entries, withValues = false) {
   const batches = [];
   let skippedOversized = 0;
   let partial = false;
   const trimmedOut = [];
   const shown = new Set();
   if (!entries.length) return { batches, skippedOversized, skippedNoContext: formFields.length, trimmed: 0, trimmedOut };
-  const whole = promptBytes([], entries) <= AI_USER_BUDGET;
-  const roomy = fields => (whole ? promptBytes(fields, entries) <= AI_USER_BUDGET : promptBytes(fields, [], true) <= AI_USER_BUDGET / 2);
+  const whole = promptBytes([], entries, false, withValues) <= AI_USER_BUDGET;
+  const roomy = fields => (whole ? promptBytes(fields, entries, false, withValues) <= AI_USER_BUDGET
+    : promptBytes(fields, [], true, withValues) <= AI_USER_BUDGET / 2);
   let current = [];
   const flush = () => {
     if (!current.length) return;
-    if (promptBytes(current, entries) <= AI_USER_BUDGET) {
+    if (promptBytes(current, entries, false, withValues) <= AI_USER_BUDGET) {
       batches.push({ fields: current, candidates: entries, partial: false });
       entries.forEach(entry => shown.add(entry.ref));
       current = [];
       return;
     }
     partial = true;
-    const candidates = relevantEntries(current, entries);
+    const candidates = relevantEntries(current, entries, withValues);
     const sent = new Set(candidates.map(entry => entry.ref));
     const fields = current.flatMap(field => {
       if (!field.fits) return [field];
@@ -280,7 +297,7 @@ function entryBytes(entry) {
 
 // 目录装不下时给一批题目挑资料：先放这批题目 fits 里的项，再放字段名、分组、别的叫法和题目说的是同一件事的项，其余照原来的顺序，
 // 放到装不下为止；估算差一点要再删时，从最不相关的那头删。发出去的仍按目录原来的顺序。
-function relevantEntries(fields, entries) {
+function relevantEntries(fields, entries, withValues = false) {
   const asked = new Set(topic(fields.map(field => [field.label, field.placeholder, field.group].filter(Boolean).join(" ")).join(" ")));
   const fitted = new Set(fields.flatMap(field => (field.fits || []).map(token => REF_TOKEN.exec(token)?.[1])));
   const rank = entry => fitted.has(entry.ref) ? 0 : topic([entry.key, entry.group, ...(entry.aka || [])].join(" ")).some(word => asked.has(word)) ? 1 : 2;
@@ -296,7 +313,7 @@ function relevantEntries(fields, entries) {
       fitBytes.set(ref, (fitBytes.get(ref) || 0) + token.length + 5);
     }
   }
-  let bytes = promptBytes(trimmedTo(new Set()), [], true);
+  let bytes = promptBytes(trimmedTo(new Set()), [], true, withValues);
   for (const { entry } of ordered) {
     const cost = entryBytes(entry) + (fitBytes.get(entry.ref) || 0);
     if (bytes + cost > AI_USER_BUDGET) continue;
@@ -308,7 +325,7 @@ function relevantEntries(fields, entries) {
     return entries.filter(entry => keep.has(entry));
   };
   let chosen = inOrder();
-  while (picked.length && promptBytes(trimmedTo(new Set(chosen.map(entry => entry.ref))), chosen, true) > AI_USER_BUDGET) {
+  while (picked.length && promptBytes(trimmedTo(new Set(chosen.map(entry => entry.ref))), chosen, true, withValues) > AI_USER_BUDGET) {
     picked.pop();
     chosen = inOrder();
   }
@@ -357,6 +374,9 @@ async function handleAnalyzePage(message, controller) {
 }
 
 async function handleAiFill(message, controller = new AbortController()) {
+  // 插件状态页打开了「AI 填写时发送资料原文」：目录里每项带上值，没有 fits 的下拉、单选可以回「编号 + 选项」（见 VALUES_SYSTEM_PROMPT）。
+  // 只认 true 本身，别的（没带、false、"true"）都按默认的只发编号、分组和字段名。
+  const withValues = message?.sendValues === true;
   // #223: a caller may ask for a tier (the strong model for a re-match). Without one the
   // request stays exactly what every desktop understands.
   const tier = message.tier === "strong" || message.tier === "default" ? message.tier : undefined;
@@ -402,8 +422,9 @@ async function handleAiFill(message, controller = new AbortController()) {
   if (remainingFormFields.length) {
     const apiStart = performance.now();
     // 选项读得到、却没有一项资料填得进去的下拉不发，记作没有对应的资料，不算 AI 没匹配上。
-    const prompt = promptFields(remainingFormFields, catalog);
-    const { batches, skippedOversized, skippedNoContext, trimmed, trimmedOut } = makePromptBatches(prompt.fields, catalog.entries);
+    const prompt = promptFields(remainingFormFields, catalog, withValues);
+    const entries = withValues ? catalog.entries.map(entry => ({ ...entry, value: catalog.values.get(entry.ref) })) : catalog.entries;
+    const { batches, skippedOversized, skippedNoContext, trimmed, trimmedOut } = makePromptBatches(prompt.fields, entries, withValues);
     trimmedOut.forEach(fieldId => trimmedFields.add(fieldId));
     diagnostics.catalogTrimmed = trimmed;
     diagnostics.skippedOversized = skippedOversized;
@@ -425,9 +446,9 @@ async function handleAiFill(message, controller = new AbortController()) {
       }
       if (maxCalls !== undefined) diagnostics.calls += 1;
       diagnostics.requests += 1;
-      const user = buildUserPrompt(batch.fields, batch.candidates, batch.partial);
+      const user = buildUserPrompt(batch.fields, batch.candidates, batch.partial, withValues);
       diagnostics.promptBytes += new TextEncoder().encode(user).length;
-      const result = await sendToDesktop({ purpose: "fill", tier, system: AI_SYSTEM_PROMPT, user, signal: controller.signal });
+      const result = await sendToDesktop({ purpose: "fill", tier, system: withValues ? VALUES_SYSTEM_PROMPT : AI_SYSTEM_PROMPT, user, signal: controller.signal });
       if (tier && (result?.tier === "strong" || result?.tier === "default")) diagnostics.tierUsed = result.tier;
       // #299：服务商多久回了响应头（几批取最慢的），超时停在哪一步。旧桌面不给就不记。
       if (Number.isInteger(result?.firstByteMs) && result.firstByteMs >= 0) {
@@ -449,7 +470,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       if (controller.signal.aborted) break;
       if (batch.partial) batch.fields.forEach(field => trimmedFields.add(field.fieldId));
       try {
-        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)));
+        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)), withValues);
         aiMatches.push(...ResumeProAIHelpers.filterValidMatches(batch.fields, found));
         answeredFields.push(...batch.fields);
       } catch {
@@ -491,13 +512,15 @@ async function handleAiFill(message, controller = new AbortController()) {
 }
 
 // 第一行之后是字段列表（测试按行取），之后是资料目录。目录装不下、只发了和这批题目有关的一部分时（partial）说明一句。
-function buildUserPrompt(formFields, entries, partial = false) {
+// withValues：插件状态页打开了「AI 填写时发送资料原文」，目录里每项带着值。
+function buildUserPrompt(formFields, entries, partial = false, withValues = false) {
+  const what = withValues ? "编号、分组、字段名和值" : "只有编号、分组和字段名，不含值";
   return [
     "表单字段列表：",
     JSON.stringify(formFields),
     "",
-    partial ? "简历资料目录（只有编号、分组和字段名，不含值；资料项太多，这里只列了和这批题目有关的一部分，没列出的不等于没有，只能用列出的编号）："
-      : "简历资料目录（只有编号、分组和字段名，不含值）：",
+    partial ? `简历资料目录（${what}；资料项太多，这里只列了和这批题目有关的一部分，没列出的不等于没有，只能用列出的编号）：`
+      : `简历资料目录（${what}）：`,
     JSON.stringify(entries),
     "",
     "填写原则：基本信息优先对应基本信息分组；教育背景不要给邮箱、电话、出生日期、籍贯等基础字段；低置信度时跳过。"
@@ -630,7 +653,8 @@ const SPAN_SIDES = ["start", "end"];
 
 // 选项读得到的下拉、单选，带上 fits：哪几项资料（或资料里日期的年、月、日）填得进某个选项，只给编号，不说落到哪一项。
 // 一项都填不进去的不发（noFit）。联动下拉的下一级和级联的选项要等页面加载，不算。
-function promptFields(fields, catalog) {
+// withValues（发资料原文）时一项都填不进去的照发，不带 fits：AI 看得到值，可以回「编号 + 选项」。填得进去的照样带 fits，只认 fits 里的编号。
+function promptFields(fields, catalog, withValues = false) {
   const helpers = ResumeProAIHelpers;
   const sent = [];
   let noFit = 0;
@@ -662,6 +686,7 @@ function promptFields(fields, catalog) {
       return list;
     });
     if (fits.length) sent.push({ ...field, fits });
+    else if (withValues) sent.push(field);
     else noFit += 1;
   }
   return { fields: sent, noFit };
@@ -669,7 +694,9 @@ function promptFields(fields, catalog) {
 
 // AI 回的「字段 → 资料编号」换成资料原文。编号不在这一批发出去的目录里（allowed）、字段不在这一批、带 fits 却挑了 fits 以外的、
 // 条目里自己写了值的，整条不要；多选只去掉这样的几项，剩下的照拼。
-function refMatches(payload, fields, catalog, allowed) {
+// withValues（发资料原文）时，没有 fits 的下拉、单选的「编号 + 选项」先按 optionMatch 核对，对得上就填那个选项；对不上的照只有编号处理。
+// 带 fits 的不看 AI 给的选项：fits 被裁空的题整题不发（trimmedOut），本批里带 fits 的 fits 都不空，编号要在 fits 里，值按编号映射到选项。
+function refMatches(payload, fields, catalog, allowed, withValues = false) {
   const source = Array.isArray(payload) ? payload : payload?.matches;
   if (!Array.isArray(source)) throw new Error("结果不是 JSON 数组。");
   const byId = new Map(fields.map(field => [field.fieldId, field]));
@@ -680,6 +707,8 @@ function refMatches(payload, fields, catalog, allowed) {
     if (!field || !list.length) return [];
     // 多选最多 20 项，别的题最多 8 项：再多的不填，报原因。
     if (list.length > (field.multiple === true ? 20 : 8)) return [{ fieldId: field.fieldId, value: "", blocked: "too_many_items" }];
+    const option = withValues && !field.fits ? optionMatch(item, field, list, allowed) : null;
+    if (option) return [option];
     // 日期控件要整个日期：AI 多给了年、月、日也按整项填，一段起止由页面按题目取开始或结束。
     const whole = isDateControl(field);
     const part = (DATE_PARTS.includes(item.part) && !whole) || SPAN_SIDES.includes(item.part) ? (list.length === 1 ? item.part : "") : "";
@@ -728,6 +757,24 @@ function refMatches(payload, fields, catalog, allowed) {
     const value = ResumeProAIHelpers.choiceValue(field, joined);
     return value ? [{ fieldId: field.fieldId, value }] : [];
   });
+}
+
+// 发资料原文时没有 fits 的下拉、单选的「编号 + 选项」：字段有读得到的选项，AI 给的选项一字不差是其中一项（选项文字或 value），
+// 编号都是本批目录里的（目录本来就没有像密码、验证码的资料）。对得上就填这个选项；多选的几项用「、」拼。
+// 带 fits 的字段不走这条（refMatches 里分开）：本地有资料填得进选项时，只认 fits 里的编号。
+// 级联、联动下拉的选项要等页面加载，读不到，不走这条；对不上给 null，照只回编号处理。
+function optionMatch(item, field, refs, allowed) {
+  const helpers = ResumeProAIHelpers;
+  const choice = (field.inputType === "select" || field.inputType === "radio") && field.cascadeGroup === undefined && field.cascade !== true;
+  if (!choice || !helpers.hasRealOptions(field)) return null;
+  const picked = field.multiple === true && Array.isArray(item.options) ? item.options : item.option === undefined ? [] : [item.option];
+  if (!picked.length || (field.multiple !== true && picked.length !== 1)) return null;
+  const offered = new Set(field.options.filter(option => !helpers.isPlaceholderOption(option))
+    .flatMap(option => (typeof option === "object" && option !== null ? [option.text, option.value] : [option]))
+    .filter(text => typeof text === "string" && text));
+  if (picked.some(text => typeof text !== "string" || !offered.has(text))) return null;
+  if (refs.some(ref => !REF_TOKEN.test(String(ref ?? "").trim()) || (allowed && !allowed.has(REF_TOKEN.exec(String(ref).trim())?.[1])))) return null;
+  return { fieldId: field.fieldId, value: field.multiple === true ? picked.join("、") : picked[0] };
 }
 
 // 同一个回复里对同一题给了几个不一样的回答（一题只进一批，不会跨批）：这一题不填，报原因。

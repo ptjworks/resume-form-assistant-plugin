@@ -106,3 +106,57 @@ test('a migration action is reported from the status it returns, never from the 
   assert.match(view('resend', { phase: 'rejected' }).text, /^没有重新发送/);
   assert.match(view('resend', null).text, /^没有重新发送/);
 });
+
+// #429「AI 填写时发送资料原文」：开关默认关；读不到时不能点，也不说按关闭处理，给一个重新读取；改动交给后台存，这一页不写存储。
+test('the send-values switch starts off, follows the stored setting and saves through the service worker', async () => {
+  const { JSDOM } = require('jsdom');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'popup.html'), 'utf8');
+  const markup = html.slice(html.indexOf('<section class="card" id="send-values"'), html.indexOf('<section class="card" id="migration"'));
+  assert.match(markup, /<input type="checkbox" id="send-values-toggle" disabled>/, 'off and locked until the setting is read');
+  const open = async (status, saved = { ok: true, enabled: true }) => {
+    const dom = new JSDOM(html.replace(/<script src="[^"]+"><\/script>/g, ''), { runScripts: 'outside-only' });
+    const sent = [];
+    dom.window.chrome = {
+      runtime: {
+        getURL: (name) => `chrome-extension://test/${name}`, getManifest: () => ({ version: '0.0.0' }),
+        sendMessage: async (message) => {
+          sent.push(message);
+          if (message.type === 'AI_SEND_VALUES_STATUS') return typeof status === 'function' ? status() : status;
+          if (message.type === 'AI_SEND_VALUES_SET') { status = { ok: true, enabled: message.enabled === true }; return saved; }
+          return null;
+        }
+      },
+      storage: { local: { get: async () => ({}) }, onChanged: { addListener() {} } }
+    };
+    dom.window.eval(fs.readFileSync(path.join(__dirname, '..', 'resume-data.js'), 'utf8'));
+    dom.window.eval(source);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const doc = dom.window.document;
+    return { dom, sent, toggle: doc.getElementById('send-values-toggle'), result: doc.getElementById('send-values-result'),
+      retry: doc.getElementById('send-values-retry'), actions: doc.getElementById('send-values-actions') };
+  };
+  const off = await open({ ok: true, enabled: false });
+  assert.equal(off.toggle.checked, false);
+  assert.equal(off.toggle.disabled, false);
+  off.toggle.checked = true;
+  off.toggle.dispatchEvent(new off.dom.window.Event('change'));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(off.sent.filter((message) => message.type === 'AI_SEND_VALUES_SET').map((message) => message.enabled), [true]);
+  assert.equal(off.toggle.checked, true);
+  assert.match(off.result.textContent, /已打开/);
+  assert.equal(off.actions.hidden, true);
+  // 读不到：开关锁住，不说按关闭处理（一键填写会自己再读），给重新读取；读到了就照实显示，提示收起来。
+  let reads = 0;
+  const unknown = await open(() => (++reads === 1 ? { ok: false, enabled: false } : { ok: true, enabled: true }));
+  assert.equal(unknown.toggle.checked, false);
+  assert.equal(unknown.toggle.disabled, true);
+  assert.equal(unknown.actions.hidden, false);
+  assert.match(unknown.result.textContent, /无法确认/);
+  assert.doesNotMatch(unknown.result.textContent, /按关闭/);
+  unknown.retry.dispatchEvent(new unknown.dom.window.Event('click'));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(unknown.toggle.checked, true, 'the stored setting shows once it can be read');
+  assert.equal(unknown.toggle.disabled, false);
+  assert.equal(unknown.actions.hidden, true);
+  assert.equal(unknown.result.hidden, true);
+});

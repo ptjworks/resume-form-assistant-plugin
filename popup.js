@@ -266,12 +266,39 @@
     try { await renderDesktop(); } finally { $("desktop-recheck").disabled = false; }
   });
 
+  // 「AI 填写时发送资料原文」（#429）：设置由后台存，这一页不自己写存储。
+  // 读不到时不知道实际是开是关（一键填写会自己再读一次）：不说按关闭处理，开关不能点，给一个重新读取。
+  const UNKNOWN_SEND_VALUES = "没读到这项设置，现在无法确认是开是关。请点「重新读取」。";
+  async function renderSendValues() {
+    const status = await send({ type: "AI_SEND_VALUES_STATUS" });
+    const known = status?.ok === true;
+    $("send-values-toggle").checked = known && status.enabled === true;
+    $("send-values-toggle").disabled = !known;
+    $("send-values-actions").hidden = known;
+    if (!known) report("send-values-result", UNKNOWN_SEND_VALUES, "warn");
+    else if ($("send-values-result").textContent === UNKNOWN_SEND_VALUES) report("send-values-result", "");
+  }
+  $("send-values-retry").addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try { await renderSendValues(); } finally { $("send-values-retry").disabled = false; }
+  });
+  $("send-values-toggle").addEventListener("change", async (event) => {
+    const enabled = event.currentTarget.checked;
+    event.currentTarget.disabled = true;
+    const result = await send({ type: "AI_SEND_VALUES_SET", enabled });
+    report("send-values-result", result?.ok !== true ? "没保存上，请再试一次。"
+      : enabled ? "已打开：之后的一键填写会把资料原文发给模型服务商。" : "已关闭：之后的一键填写只发题目和字段名。", result?.ok === true ? "ok" : "warn");
+    await renderSendValues();
+  });
+
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.legacyImport) renderMigration().catch(() => {});
+    if (area === "local" && changes.aiSendResumeValues) renderSendValues().catch(() => {});
   });
 
   $("plugin-version").textContent = chrome.runtime.getManifest().version;
   $("plugin-version-top").textContent = chrome.runtime.getManifest().version;
   renderDesktop().catch(() => {});
   renderMigration().catch(() => {});
+  renderSendValues().catch(() => {});
 })();
