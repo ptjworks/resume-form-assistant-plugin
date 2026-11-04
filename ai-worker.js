@@ -633,19 +633,23 @@ function latestSpans(fields) {
 }
 
 const DATE_PARTS = ["year", "month", "day"];
+// 题目、占位提示连同 name、id：name、id 里的驼峰、数字、下划线和连字符先拆开（graduationMonth、birth_year、year1），
+// 下面按 \b 认的 year、month、day、date 才认得出。
+function questionWords(field) {
+  const split = value => String(value ?? "").replace(/([a-z\d])([A-Z])/g, "$1 $2").replace(/([a-z])(\d)/gi, "$1 $2").replace(/[_-]+/g, " ");
+  return [field?.label, field?.placeholder, split(field?.name), split(field?.idAttr)].filter(Boolean).join(" ");
+}
 // 问年月日某一部分的题：年份、月份、日期、年月、几月几号、出生年、毕业月……，英文的 year、month、day；题目只写一个「年」「月」「日」的也算。
 // 「年薪」「月薪」「年龄」「年级」「工作年限」和单说「时间」都不算。
 const DATE_PART_WORDS = /年份|月份|日期|年月|[年月]日|几月|几号|几日|(?:出生|毕业|入学|入职|离职)[年月日]|\b(?:year|month|day)\b/i;
 function asksDatePart(field) {
-  return /^\s*[年月日]\s*$/.test(String(field?.label ?? ""))
-    || DATE_PART_WORDS.test([field?.label, field?.placeholder, field?.name, field?.idAttr].filter(Boolean).join(" "));
+  return /^\s*[年月日]\s*$/.test(String(field?.label ?? "")) || DATE_PART_WORDS.test(questionWords(field));
 }
 // 文本框（没有 fits）只在题目明说要年、月或日的一部分时收 AI 回的年、月、日：「出生年份」「毕业月份」「几月」「出生年」。
 // 「到岗日期」「出生年月」要的是整个日期，AI 回了年、月、日也整条不要（下拉照旧按 asksDatePart 带 fits）。
 const PART_ONLY_WORDS = /年份|月份|几月|几号|几日|(?:出生|毕业|入学|入职|离职)[年月](?![月日])|\b(?:year|month|day)\b/i;
 function asksPartOnly(field) {
-  return /^\s*[年月日]\s*$/.test(String(field?.label ?? ""))
-    || PART_ONLY_WORDS.test([field?.label, field?.placeholder, field?.name, field?.idAttr].filter(Boolean).join(" "));
+  return /^\s*[年月日]\s*$/.test(String(field?.label ?? "")) || PART_ONLY_WORDS.test(questionWords(field));
 }
 // 编号后面可以跟年、月、日，或一段起止的开始、结束（start、end：AI 常这样写，提示词没要求，本地也认）。
 const REF_TOKEN = /^(r\d+)(?:\.(year|month|day|start|end))?$/;
@@ -672,7 +676,7 @@ function promptFields(fields, catalog, withValues = false) {
     // 多选照比：几项拼成的一长串也可能每一项都落得到选项上（isValueValidForField 先拆开再核对）。
     const shortOptions = texts.every(text => text.length <= 30);
     // 年、月、日只给问它们的题，和题目说的是时间、选项全是数字的下拉（「毕业时间」下面列的是年份）；「每周实习天数」这类不算。
-    const timeish = /时间|年度|\b(?:date|time)\b/i.test([field.label, field.placeholder, field.name, field.idAttr].filter(Boolean).join(" "));
+    const timeish = /时间|年度|\b(?:date|time)\b/i.test(questionWords(field));
     const parts = asksDatePart(field) || (numbers && timeish) ? DATE_PARTS : [];
     const fits = catalog.entries.flatMap(({ ref }) => {
       const value = catalog.values.get(ref);

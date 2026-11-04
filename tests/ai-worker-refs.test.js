@@ -553,6 +553,28 @@ test("a select with readable options lists the refs that fit an option, and only
   assert.equal(valueOf(result, "month"), "5月");
 });
 
+test("a year or month select known only by a camelCase or snake_case name still lists the date parts that fit", async () => {
+  const resume = [{ group: "教育经历", key: "毕业时间", value: "2023-06" }, { group: "基本信息", key: "出生日期", value: "2001-05-09" }];
+  const env = worker((message, catalog) => [{ fieldId: "gradMonth", ref: `${catalog.find((entry) => entry.key === "毕业时间").ref}.month` }]);
+  const months = Array.from({ length: 12 }, (_, i) => String(i + 1));
+  const result = await env.run({
+    formFields: [
+      { fieldId: "gradMonth", label: "毕业", name: "graduationMonth", inputType: "select", options: months },
+      { fieldId: "joinMonth", label: "参加工作", idAttr: "work_start_month", inputType: "select", options: months },
+      // 「monthly」不是 month：月薪的下拉不当成问月份。
+      { fieldId: "salary", label: "期望", name: "monthlySalary", inputType: "select", options: ["5000", "8000", "10000"] }
+    ],
+    resumeFields: resume
+  });
+  const fields = fieldsOf(env.calls[0]);
+  const refs = catalogOf(env.calls[0].user);
+  const ref = (key) => refs.find((entry) => entry.key === key).ref;
+  assert.ok(fields.find((field) => field.fieldId === "gradMonth")?.fits.includes(`${ref("毕业时间")}.month`));
+  assert.ok(fields.find((field) => field.fieldId === "joinMonth")?.fits.includes(`${ref("出生日期")}.month`));
+  assert.equal(fields.some((field) => field.fieldId === "salary"), false);
+  assert.equal(valueOf(result, "gradMonth"), "6");
+});
+
 test("date parts follow the question for a span and the option spelling", () => {
   const months = { label: "毕业月份", options: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"] };
   assert.equal(helpers.datePart("2019.09-2023.06", "month", months), "06");
