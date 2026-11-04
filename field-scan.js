@@ -1227,6 +1227,23 @@
     return resolved.text;
   }
 
+  // #429 上传框所在的表单项和题目。file 框常常藏着（组件画自己的按钮），按上传组件的根（root）找表单项，题目的找法和别的控件一样。
+  // 页面上别的 file 框（uploads）也算边界：两个上传框挨在一起时不会读到另一个的题目。上传组件里的按钮、提示不算题目
+  // （包着 file 框的 label 自己就是「选择文件」按钮时也不算）。
+  function uploadItem(input, root, options = {}) {
+    const doc = input?.ownerDocument;
+    if (!doc || !root) return { title: "", item: root || null };
+    const ctx = makeContext(doc, { ...options, isVisible: options.isVisible || (() => true) });
+    const uploads = Array.isArray(options.uploads) ? options.uploads : Array.from(doc.querySelectorAll("input[type='file' i]"));
+    ctx.boundaries = new Set([...boundaryControls(ctx), ...uploads.filter((other) => other !== input && !root.contains(other))]);
+    const control = { kind: "element", controlKind: "file", element: input, elements: [input], root };
+    const item = findItem(root, ctx);
+    const explicit = explicitLabel(control, ctx);
+    const resolved = (explicit && !(explicit.labelEl && root.contains(explicit.labelEl)) ? explicit : null)
+      || itemLabel(control, item, ctx) || tableLabel(control, item, ctx) || gridLabel(control, item, ctx) || siblingLabel(control, item, ctx);
+    return { title: resolved?.text || "", item };
+  }
+
   // #224 页面大纲：同一套逻辑控件归并和题目判断，但不按「能不能一键填写」筛掉控件——
   // 对不上题目、在页头或像站内搜索的也列出来，由大纲自己决定写不写。只读结构，不读值。
   // root 是 Document 或开放的 ShadowRoot。
@@ -1337,7 +1354,8 @@
     isNoiseText,
     labelForElement,
     outlineControls,
-    scanPage
+    scanPage,
+    uploadItem
   };
 
   globalScope.ResumeProFieldScan = api;

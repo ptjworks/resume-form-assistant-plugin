@@ -85,6 +85,13 @@
               <p id="recipe-line" class="source-line recipe-line" hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V20l-6-3.5L6 20V4.5a1 1 0 0 1 1-1z"/></svg><span class="recipe-line__label">本站配方：</span><span id="recipe-state" class="chip chip--ok">已保存</span><button id="recipe-reanalyze" type="button" title="重新让 AI 分析这个页面；效果更好时会更新本站配方">重新分析</button><button id="recipe-delete" type="button" title="删除这个页面的配方，只影响本站这一条">删除</button></p>
               <p id="fill-reason" class="card-hint fill-reason" hidden></p>
               <div id="fill-result" class="fill-result" role="status" hidden></div>
+              <div id="upload-result" class="upload-result" role="status" hidden>
+                <ul id="upload-result-list" class="upload-result__list"></ul>
+                <div class="upload-result__actions">
+                  <button id="upload-result-open" type="button" hidden>打开桌面简历资料</button>
+                  <button id="upload-result-dismiss" type="button">知道了</button>
+                </div>
+              </div>
               <div id="deep-offer" class="deep-offer" role="region" aria-label="深度分析本页" hidden>
                 <p class="deep-offer__text">常规填写效果不理想？可以让 AI 先看懂这个页面的结构，再重新匹配和填写。</p>
                 <button id="deep-offer-start" type="button">深度分析本页</button>
@@ -182,6 +189,19 @@
                     <button type="button" id="repeat-cancel" hidden>取消</button>
                     <button type="button" id="repeat-stop" hidden>停止</button>
                     <button type="button" id="repeat-dismiss" hidden>知道了</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="task-flow" id="task-flow-upload" data-task="upload">
+                <div id="upload-card" class="repeat-card upload-card">
+                  <p id="upload-site" class="repeat-card__message"></p>
+                  <ul id="upload-rows" class="upload-rows" aria-label="要上传的文件"></ul>
+                  <ul id="upload-notes" class="deep-card__list" hidden></ul>
+                  <div class="repeat-card__actions task-foot">
+                    <button type="button" id="upload-confirm" class="repeat-card__primary">上传并填写</button>
+                    <button type="button" id="upload-fill">只填写</button>
+                    <button type="button" id="upload-cancel">取消</button>
                   </div>
                 </div>
               </div>
@@ -497,6 +517,7 @@
     <script src="webmail.js"></script>
     <script src="gmail-download.js"></script>
     <script src="sidepanel-mail.js"></script>
+    <script src="upload-slots.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

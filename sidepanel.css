@@ -167,6 +167,17 @@ button:disabled { cursor: not-allowed; }
 @keyframes indeterminate { from { transform: translateX(-100%); } to { transform: translateX(270%); } }
 .fill-result { margin-top: 12px; padding: 9px 11px; border: 1px solid var(--ok-line); border-radius: 10px; background: var(--ok-bg); color: var(--ok-ink); font-size: 12px; white-space: pre-wrap; }
 .fill-result.is-error { border-color: var(--danger-line); background: var(--danger-bg); color: var(--danger); }
+.upload-result { margin-top: 8px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font-size: 12px; line-height: 1.55; }
+.upload-result.is-ok { border-color: var(--ok-line); background: var(--ok-bg); color: var(--ok-ink); }
+.upload-result.is-warn { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); }
+.upload-result__list { display: grid; gap: 4px; margin: 0; padding: 0 0 0 16px; }
+.upload-result__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.upload-result__actions button { min-height: 30px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; font-weight: 600; }
+.upload-rows { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+.upload-row { display: grid; gap: 6px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.upload-row__title { font-weight: 600; overflow-wrap: anywhere; }
+.upload-row__note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.upload-row__note button { margin-left: 4px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; text-decoration: underline; }
 
 /* 投递流转 */
 .job-summary { margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); }
