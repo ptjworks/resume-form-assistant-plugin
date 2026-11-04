@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::exclude::{classify, in_resume_files, Disposition};
+use crate::exclude::{classify, in_resume_files, is_resume_files_dir, Disposition};
 use crate::manifest::{
     ArchiveCounts, Manifest, ManifestEntry, DATABASE_PATH, FORMAT, FORMAT_VERSION, MANIFEST_PATH,
     SETTINGS_PATH,
@@ -135,9 +135,15 @@ fn build(
                 }
                 Disposition::Include => {}
             }
+            // 目录项自己的类型，不跟着链接走（Windows 的目录连接也算链接）。
             let kind = child.file_type()?;
-            // 附件目录里不是普通文件的东西（子目录、链接）不归任何附件：入队之前就跳过，不去读里面。
-            if in_resume_files(&rel) && !kind.is_file() {
+            if kind.is_symlink() {
+                // 链接不进包：打包会顺着它去读档案外面的东西。
+                skipped.push((rel, "链接，不跟着去读".to_string()));
+            } else if is_resume_files_dir(&rel) && !kind.is_dir() {
+                skipped.push((rel, "附件目录不是普通目录".to_string()));
+            } else if in_resume_files(&rel) && !kind.is_file() {
+                // 附件目录里不是普通文件的东西（子目录）不归任何附件：入队之前就跳过，不去读里面。
                 skipped.push((rel, "附件目录里不是普通文件".to_string()));
             } else if kind.is_dir() {
                 walk.push(path);

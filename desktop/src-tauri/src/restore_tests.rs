@@ -237,6 +237,52 @@ fn subfolders_of_the_attachment_folder_are_skipped_without_being_read() {
     store.close().unwrap();
 }
 
+/// 把 `link` 做成指向 `target` 目录的链接：Unix 上是符号链接，Windows 上是目录连接（不用管理员权限）。
+fn link_dir(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        // cmd 把路径里的正斜杠当成开关，先换成反斜杠。
+        let native = |path: &std::path::Path| path.to_string_lossy().replace('/', "\\");
+        let made = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(native(link))
+            .arg(native(target))
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&made.stderr));
+    }
+}
+
+#[test]
+fn an_attachment_folder_that_is_a_link_is_skipped_by_the_backup_and_never_read() {
+    // #429: attachments/resume-files itself was replaced by a link to a folder outside the archive.
+    // The backup walks it only when it is a real directory, so nothing out there is read or packed.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let outside = source.paths.data_root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.pdf"), b"%PDF-1.7\nnot part of the archive").unwrap();
+    std::fs::write(outside.join("0".repeat(64)), b"looks like an attachment").unwrap();
+    let folder = source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR);
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.parent().unwrap()).unwrap();
+    link_dir(&outside, &folder);
+    let package = export_to(&store, &source.paths, "backup.zip");
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains("resume-files") && !entry.path.contains("secret")));
+    store.close().unwrap();
+    // 收拾测试：先拆掉链接，免得删临时目录时顺着链接删外面。
+    #[cfg(windows)]
+    std::fs::remove_dir(&folder).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&folder).unwrap();
+    assert!(outside.join("secret.pdf").is_file());
+}
+
 #[test]
 fn restoring_the_same_backup_twice_mints_two_different_epochs() {
     let source = layout();

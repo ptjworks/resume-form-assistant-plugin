@@ -28,6 +28,11 @@ pub fn in_resume_files(rel: &str) -> bool {
     rel.starts_with(RESUME_FILES_DIR)
 }
 
+/// 这一项就是网申附件目录本身。它得是一个普通目录才往里走。
+pub fn is_resume_files_dir(rel: &str) -> bool {
+    RESUME_FILES_DIR.strip_suffix('/') == Some(rel)
+}
+
 /// `settings.json` 里唯一会被带走的那些键（拆分计划 Q2）。
 ///
 /// 整份带走会把将来加进去的任何机器专属设置一起带走；一个不带则换机后配对要
