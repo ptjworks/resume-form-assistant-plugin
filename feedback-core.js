@@ -67,7 +67,7 @@
   // `scan_error` (#408): controls whose title or section could not be read, skipped one by one.
   const DROPS = ["type_hidden", "non_fillable", "disabled", "invisible", "popup_internal", "grouped", "page_chrome",
     "site_search", "outside_form", "no_label", "scan_error", "out_of_scope", "secret",
-    "no_resume_mapping", "ai_unmatched", "no_result", "not_sent", "changed_while_waiting", "not_written", "unconfirmed", "unsynced"];
+    "no_resume_mapping", "ai_unmatched", "open_question", "no_result", "not_sent", "changed_while_waiting", "not_written", "unconfirmed", "unsynced"];
   // Where each scanned field's title came from, and why a field was not offered for 我的信息 (#228).
   const LABEL_SOURCES = ["explicit", "item", "table", "sibling", "placeholder"];
   const OFFER_SKIPS = ["ambiguous", "entry"];
@@ -97,7 +97,7 @@
     "in_flight", "internal", "other"];
   // Where the desktop's AI request timed out (#299): connecting, waiting for the headers, or reading the body.
   const TIMEOUT_STAGES = ["connect", "first_byte", "body"];
-  const FILL_REASONS = ["value_not_committed", "value_reverted", "element_disconnected", "validation_not_cleared", "framework_state_unsynced", "value_changed", "verification_timeout", "unsupported_control", "no_option_match", "options_not_rendered", "options_timeout", "ambiguous_option", "ambiguous_popup", "cascade_timeout", "cascade_parent_failed", "cascade_unsupported", "selection_not_committed", "control_disabled", "invalid_date", "range_incomplete", "too_long", "format_mismatch", "readonly_picker", "operation_failed", "cancelled", "id_type_mismatch"];
+  const FILL_REASONS = ["value_not_committed", "value_reverted", "element_disconnected", "validation_not_cleared", "framework_state_unsynced", "value_changed", "verification_timeout", "unsupported_control", "no_option_match", "options_not_rendered", "options_timeout", "ambiguous_option", "ambiguous_popup", "cascade_timeout", "cascade_parent_failed", "cascade_unsupported", "selection_not_committed", "control_disabled", "invalid_date", "range_incomplete", "too_long", "format_mismatch", "readonly_picker", "operation_failed", "cancelled", "id_type_mismatch", "ai_conflict", "too_many_items", "region_unavailable", "region_too_coarse", "region_level_missing"];
   // A text the page did not keep (#399 #405): what the box held after it lost focus (empty, what it held before
   // the fill, or something else; never the text itself), and whether a suggestion list or another popup came
   // up within a second of writing. The box's inputmode is part of its structure.
@@ -230,15 +230,20 @@
     // otherwise they were never sent (e.g. too large). A request with no answer at all leaves
     // every field without a result.
     const failed = Boolean(d) && requestFailed(d.errorCode);
-    const rest = d ? Math.max(0, firstRound - secret - n(d.ruleMatches) - noMapping - n(d.aiMatches))
+    // AI answers held back with a reason (aiBlocked, #429: a bad date, batches that disagree) are matches the page
+    // reports as not written, like the local ones; they are not AI misses.
+    const answered = n(d?.aiMatches) + n(d?.aiBlocked);
+    const rest = d ? Math.max(0, firstRound - secret - n(d.ruleMatches) - noMapping - answered)
       : input.requested ? firstRound : 0;
-    const sent = d && aiCalled(input) ? Math.min(rest, Math.max(0, n(d.aiFields) - noMapping - n(d.aiMatches))) : 0;
+    const sent = d && aiCalled(input) ? Math.min(rest, Math.max(0, n(d.aiFields) - noMapping - answered)) : 0;
+    // Of those, open questions with no ready answer in the resume (#429): the AI no longer writes one, so they get their own reason.
+    const open = Math.min(sent, n(d?.openUnanswered));
     const counts = {
       type_hidden: n(s?.typeHidden), non_fillable: n(s?.nonFillable), disabled: n(s?.disabled), invisible: n(s?.invisible),
       popup_internal: n(s?.popup), grouped: n(s?.grouped), page_chrome: n(s?.pageChrome), site_search: n(s?.siteSearch),
       outside_form: n(s?.outsideForm), no_label: n(s?.noLabel), scan_error: n(s?.scanError), out_of_scope: n(s?.outOfScope),
       secret, no_resume_mapping: noMapping,
-      ai_unmatched: failed ? 0 : sent, no_result: d ? (failed ? sent : 0) : rest, not_sent: 0,
+      ai_unmatched: failed ? 0 : sent - open, open_question: failed ? 0 : open, no_result: d ? (failed ? sent : 0) : rest, not_sent: 0,
       // Matches left alone because the user or the page changed the field while the AI worked (#402).
       changed_while_waiting: n(input.keptCount),
       not_written: n(input.unfilledCount), unconfirmed: n(input.unconfirmedCount), unsynced: n(input.unsyncedCount)
@@ -389,7 +394,7 @@
         continue;
       }
       // Every value has its own closed pattern; the length cap only bounds the regex work.
-      // The longest reachable value is drop_reasons with every reason at six digits (377 chars).
+      // The longest reachable value is drop_reasons with every reason at six digits (398 chars).
       const entry = /^([a-z_]{1,32}): (.{1,400})$/.exec(line);
       if (entry) {
         const known = Object.prototype.hasOwnProperty.call(VALUES, entry[1]) && VALUES[entry[1]].test(entry[2])

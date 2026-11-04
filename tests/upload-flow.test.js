@@ -9,6 +9,7 @@ const vm = require("node:vm");
 const crypto = require("node:crypto");
 const { JSDOM } = require("jsdom");
 const SLOTS = require("../upload-slots.js");
+const { refsFor } = require("./helpers/ai-refs.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
@@ -55,7 +56,9 @@ function fileInputs(w) {
     get() { return this.type === "file" ? picked.get(this) || [] : null; }, set(value) { picked.set(this, value); } });
 }
 
+// AI 只回资料编号（#429 第 11 项）：按值写的回答照这次发出去的目录换成编号（tests/helpers/ai-refs.js）。
 function aiWorker(answers, sent) {
+  let lastResume = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
     ResumeProFormAgent: require("../form-agent.js"), AbortController, TextEncoder, performance: { now: () => 0 },
@@ -67,13 +70,15 @@ function aiWorker(answers, sent) {
       sent.push(JSON.stringify(message));
       const fields = JSON.parse(message.user.split("\n")[1]);
       context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId,
-        reply: { ok: true, text: JSON.stringify(fields.map((field) => ({ fieldId: field.fieldId, value: answers[field.label] })).filter((item) => item.value)) } } });
+        reply: { ok: true, text: refsFor(message.user, lastResume,
+          JSON.stringify(fields.map((field) => ({ fieldId: field.fieldId, value: answers[field.label] })).filter((item) => item.value))) } } });
     }
   };
   vm.runInContext(fs.readFileSync(path.join(ROOT, "ai-worker.js"), "utf8"), context);
   const sender = { tab: { id: 1 }, frameId: 0, documentId: "doc" };
   return (message) => new Promise((resolve) => {
     const copy = JSON.parse(JSON.stringify(message));
+    if (Array.isArray(copy.resumeFields)) lastResume = copy.resumeFields;
     const keepOpen = context.dispatchAiMessage(copy, sender, (reply) => resolve(JSON.parse(JSON.stringify(reply ?? null))));
     if (!keepOpen && copy.type !== "CANCEL_AI_FILL") resolve(undefined);
   });
@@ -132,7 +137,9 @@ async function page(t, body, { url = "https://app.mokahr.com/campus_apply/exampl
   for (const level of ["log", "info", "warn", "error", "debug"]) w.console[level] = (...args) => seen.logs.push(args.map(String).join(" "));
   const ai = aiWorker(answers, seen.ai);
   const data = { templates: [{ id: "t", name: "虚构模板", fieldCount: 1 }],
-    activeTemplate: { id: "t", name: "虚构模板", groups: [{ name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }] }] },
+    // AI 只回资料编号（#429 第 11 项）：替身回的「示例大学」「共青团员」要是资料里有的项。
+    activeTemplate: { id: "t", name: "虚构模板", groups: [{ name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }, { key: "政治面貌", value: "共青团员" }] },
+      { name: "教育经历", fields: [{ key: "教育经历1-学校", value: "示例大学" }] }] },
     profile: { values: {}, family: [], custom: [] }, profileRevision: 0 };
   // 后台：侧栏的确认（grant）和取文件都走真实的 upload-grants.mjs；文件按块读的部分由 #457 的测试管，这里直接给整份。
   const grants = createUploadGrants();

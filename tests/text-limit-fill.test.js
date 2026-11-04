@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
+const { refsFor } = require("./helpers/ai-refs.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
@@ -32,7 +33,8 @@ function layout(w) {
   }
 }
 
-function aiWorker(answers) {
+// AI 只回资料编号（#429 第 11 项）：answers 也放进资料（page），回答时按发出去的目录换成编号。
+function aiWorker(answers, resume) {
   const calls = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
@@ -45,7 +47,8 @@ function aiWorker(answers) {
       const fields = JSON.parse(message.user.split("\n")[1]);
       calls.push({ fields, system: message.system });
       context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId,
-        reply: { ok: true, text: JSON.stringify(fields.map((field) => ({ fieldId: field.fieldId, value: answers[field.label] })).filter((item) => item.value)) } } });
+        reply: { ok: true, text: refsFor(message.user, resume,
+          JSON.stringify(fields.map((field) => ({ fieldId: field.fieldId, value: answers[field.label] })).filter((item) => item.value))) } } });
     }
   };
   vm.runInContext(fs.readFileSync(path.join(ROOT, "ai-worker.js"), "utf8"), context);
@@ -74,9 +77,10 @@ function page(t, body, { url = "https://jobs.example.test/apply/form", answers =
   w.document.addEventListener = (type, ...rest) => (type === "DOMContentLoaded" ? undefined : listen(type, ...rest));
   w.__RESUME_PRO_TEST__ = true;
   w.confirm = () => true;
-  const worker = aiWorker(answers);
-  const data = { templates: [{ id: "t", name: "虚构模板", fieldCount: 1 }],
-    activeTemplate: { id: "t", name: "虚构模板", groups: [{ name: "基本信息", fields: RESUME.map(([, key, value]) => ({ key, value })) }] },
+  const fields = [...RESUME.map(([, key, value]) => ({ key, value })), ...Object.entries(answers).map(([key, value]) => ({ key, value }))];
+  const worker = aiWorker(answers, fields.map((field) => ({ group: "基本信息", ...field })));
+  const data = { templates: [{ id: "t", name: "虚构模板", fieldCount: fields.length }],
+    activeTemplate: { id: "t", name: "虚构模板", groups: [{ name: "基本信息", fields }] },
     profile: { values: {}, family: [], custom: [] }, profileRevision: 0 };
   w.chrome = {
     runtime: { id: "test-extension", getURL: (file) => `chrome-extension://test-extension/${file}`, getManifest: () => ({ version: "0.4.4" }),
@@ -128,7 +132,7 @@ test("a value over a box's limit is left out and reported with the limit; values
   // AI 拿到了上限。
   const sent = Object.fromEntries(p.worker.calls[0].fields.map((field) => [field.label, field.maxLength]));
   assert.deepEqual(sent, { "毕业院校": 6, "专业": 10, "自我评价": 20, "获奖情况": undefined });
-  assert.match(p.worker.calls[0].system, /13\. 带 maxLength 的字段/);
+  assert.match(p.worker.calls[0].system, /17\. 带 maxLength 的字段照常对应/);
 });
 
 test("on a site that counts bytes a Chinese character counts 2; the same value fits elsewhere", async (t) => {

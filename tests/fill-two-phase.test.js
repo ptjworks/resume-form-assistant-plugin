@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
+const { refsFor, catalogOf } = require("./helpers/ai-refs.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
@@ -40,6 +41,7 @@ function layout(w) {
 function aiWorker(clock, resume = RESUME) {
   const calls = [];
   const cancels = [];
+  let lastResume = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
     ResumeProFormAgent: require("../form-agent.js"), AbortController, TextEncoder, performance: { now: () => clock.now },
@@ -53,9 +55,10 @@ function aiWorker(clock, resume = RESUME) {
       const call = { fields, labels: fields.map((field) => field.label), prompt: message.user };
       const answer = (reply) => context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId, reply } });
       // 按题目名回答；不传就只回这几项里资料有的。
-      call.reply = (values = null) => answer({ ok: true, text: JSON.stringify(fields
+      // AI 只回资料编号（#429 第 11 项）：按值写的回答照这次发出去的目录换成编号。
+      call.reply = (values = null) => answer({ ok: true, text: refsFor(message.user, lastResume, JSON.stringify(fields
         .map((field) => ({ fieldId: field.fieldId, value: (values || Object.fromEntries(resume.map(([, key, value]) => [key, value])))[field.label] }))
-        .filter((item) => item.value)) });
+        .filter((item) => item.value))) });
       call.fail = (reply) => answer({ ok: false, ...reply });
       calls.push(call);
     }
@@ -66,6 +69,7 @@ function aiWorker(clock, resume = RESUME) {
     calls, cancels,
     dispatch: (message) => new Promise((resolve) => {
       const copy = JSON.parse(JSON.stringify(message));
+      if (Array.isArray(copy.resumeFields)) lastResume = copy.resumeFields;
       const keepOpen = context.dispatchAiMessage(copy, sender, (reply) => resolve(JSON.parse(JSON.stringify(reply ?? null))));
       if (!keepOpen && copy.type !== "CANCEL_AI_FILL") resolve(undefined);
     })
@@ -698,9 +702,10 @@ test("a field revealed later with the same question as one already on the page g
   p.worker.calls[0].reply();
   assert.ok(await p.until(() => p.worker.calls.length === 2), "the second one goes to the AI");
   assert.deepEqual(p.worker.calls[1].labels, ["每周可实习天数"]);
-  p.worker.calls[1].reply({ 每周可实习天数: "3天" });
+  // AI 只能挑资料里的一项（#429 第 11 项），这里挑的正是存过的回答。
+  p.worker.calls[1].reply({ 每周可实习天数: "5天" });
   const result = await running;
-  assert.deepEqual([p.value("days"), p.value("days2")], ["5天", "3天"]);
+  assert.deepEqual([p.value("days"), p.value("days2")], ["5天", "5天"]);
   assert.equal(result.outcome, "success", p.ui.diag.value);
 });
 
@@ -712,14 +717,16 @@ test("an assisted fill counts same questions across the whole page, not just the
     { scopes: [p.w.document.getElementById("second")] }), 15000);
   assert.ok(await p.until(() => p.worker.calls.length === 1));
   assert.deepEqual(p.worker.calls[0].labels, ["每周可实习天数", "毕业院校"]);
-  p.worker.calls[0].reply({ 每周可实习天数: "3天", 毕业院校: "示例大学" });
+  p.worker.calls[0].reply({ 每周可实习天数: "5天", 毕业院校: "示例大学" });
   await running;
-  assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "3天", "示例大学"]);
+  assert.deepEqual([p.value("days1"), p.value("days2"), p.value("school")], ["", "5天", "示例大学"]);
 });
 
 // #429 第五项第 2 点：问到对方公司的题，用这个网站记住的回答在 AI 回来之前填；补充字段里同名的不用。
 const SITE = [{ key: "是否有亲属在本公司工作", value: "否" }];
 const COMPANY = radios("relative", "是否有亲属在本公司工作", ["是", "否"]);
+// AI 只能挑资料里填得进选项的一项（#429 第 11 项）：换了说法的补充字段，本地不认作同一题，留给 AI。
+const RELATIVE_ELSEWHERE = [{ key: "是否有亲属在本行工作", value: "否" }];
 
 test("a company question takes this site's remembered answer with the local matches, not the custom field's", async (t) => {
   const p = page(t, input("name", "姓名") + COMPANY + input("salary", "期望薪资"),
@@ -738,7 +745,7 @@ test("a company question takes this site's remembered answer with the local matc
 
 test("without a remembered answer, or with a desktop that has none, the company question goes to the AI", async (t) => {
   for (const site of [null, []]) {
-    const p = page(t, input("name", "姓名") + COMPANY, { site });
+    const p = page(t, input("name", "姓名") + COMPANY, { site, custom: RELATIVE_ELSEWHERE });
     const running = p.run();
     assert.ok(await p.until(() => p.worker.calls.length === 1));
     assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作"]);
@@ -787,7 +794,7 @@ test("a company question revealed later reads the site answers again after a fai
     doc.getElementById("apply").append(holder.firstChild);
   };
   const retried = page(t, input("name", "姓名") + GENDER + COMPANY, {
-    site: (read) => (read === 1 ? null : [{ key: "是否曾在本行实习", value: "否" }]), onGender: reveal
+    site: (read) => (read === 1 ? null : [{ key: "是否曾在本行实习", value: "否" }]), onGender: reveal, custom: RELATIVE_ELSEWHERE
   });
   let running = retried.run();
   assert.ok(await retried.until(() => retried.value("gender") === "m" && retried.worker.calls.length === 1));
@@ -799,7 +806,7 @@ test("a company question revealed later reads the site answers again after a fai
 
   // 桌面不支持，或者后台不认这个发送方：再读结果也一样，只读一次。
   for (const site of [null, "forbidden"]) {
-    const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site, onGender: reveal });
+    const old = page(t, input("name", "姓名") + GENDER + COMPANY, { site, onGender: reveal, custom: RELATIVE_ELSEWHERE });
     running = old.run();
     assert.ok(await old.until(() => old.value("gender") === "m" && old.worker.calls.length === 1));
     old.worker.calls[0].reply({ 是否有亲属在本公司工作: "否" });
@@ -819,7 +826,9 @@ test("a company question left to the AI may see this site's remembered answer, n
     const running = p.run();
     assert.ok(await p.until(() => p.worker.calls.length === 1));
     assert.deepEqual(p.worker.calls[0].labels, ["是否有亲属在本公司工作", "是否有亲属在本公司工作"]);
-    assert.equal(p.worker.calls[0].prompt.includes("财务部"), expected, siteKey);
+    // 发给 AI 的资料目录只有字段名（#429 第 11 项）：看有没有这个网站那一组。
+    assert.equal(catalogOf(p.worker.calls[0].prompt).some((entry) => entry.group === "本网站回答"), expected, siteKey);
+    assert.equal(p.worker.calls[0].prompt.includes("财务部"), false, "the remembered answer itself is never sent");
     p.worker.calls[0].reply({});
     await running;
   }
@@ -843,12 +852,31 @@ test("a remembered answer read for a question revealed later is hidden in field 
   assert.ok(await p.until(() => p.value("gender") === "m" && p.worker.calls.length === 1));
   p.worker.calls[0].reply();
   assert.ok(await p.until(() => p.worker.calls.length === 2), "the echoing field goes to the AI");
-  p.worker.calls[1].reply({ 父亲在本公司财务部任职情况说明: "无" });
+  // AI 只能挑资料里的一项（#429 第 11 项）；挑哪一项都一样，页面会把它清掉。
+  p.worker.calls[1].reply({ 父亲在本公司财务部任职情况说明: "测试用户" });
   const result = await running;
   assert.equal(p.value("relative"), "父亲在本公司财务部任职");
   assert.equal(result.unfilledCount, 1, "the echoing field is reported as not filled");
   assert.match(p.ui.diag.value, /- （字段名已隐藏）：input\[text\]/);
   assert.equal(p.ui.diag.value.includes("财务部"), false);
+});
+
+// #429 第 11 项：日期框只收写得成日期的资料。AI 给它挑了一项不是日期的，worker 拦下（blocked）、不带原文，
+// 网页不往框里写，记作没填上、报日期不对。
+test("a date box the AI gives a non-date item to stays empty and is reported as a bad date", async (t) => {
+  const p = page(t, input("name", "姓名") + input("start", "入职时间", { type: "date" }) + input("school", "毕业院校"));
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  assert.deepEqual(p.worker.calls[0].labels, ["入职时间", "毕业院校"]);
+  p.worker.calls[0].reply({ 入职时间: "示例大学", 毕业院校: "示例大学" });
+  const result = await running;
+  assert.deepEqual(["name", "start", "school"].map(p.value), ["测试用户", "", "示例大学"]);
+  assert.equal(result.filledCount, 2);
+  assert.match(p.ui.status.textContent, /入职时间（日期格式或范围不符）/);
+  const report = (await p.report()).diagnosticsReport;
+  assert.match(report, /^- .*: input\[date\].* reason=invalid_date$/m);
+  assert.equal(lineOf(report, "ai_matches"), "1");
+  assert.doesNotMatch(lineOf(report, "drop_reasons"), /ai_unmatched/, report);
 });
 
 // #429 证件类型按资料和号码本地填；资料写的和号码对不上的不填，报「和证件号码对不上」，也不交给 AI。

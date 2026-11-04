@@ -835,13 +835,39 @@ test("worker: a rule value the field cannot accept does not count as matched", a
   const worker = loadWorker((request) => { body = request; });
 
   const result = await worker.handleAiFill({
-    formFields: [{ fieldId: "g", label: "Gender", inputType: "select", tagName: "select", options: ["M", "F"] }],
-    resumeFields: [{ group: "基本信息", key: "性别", value: "男" }]
+    formFields: [{ fieldId: "g", label: "Gender", inputType: "select", tagName: "select", options: ["Herr", "Frau"] }],
+    resumeFields: [{ group: "基本信息", key: "性别", value: "男" }, { group: "基本信息", key: "姓名", value: "测试用户" }]
   });
 
   assert.equal(result.diagnostics.ruleMatches, 0);
   assert.equal(result.diagnostics.aiFields, 1);
-  assert.ok(body.user.includes("Gender"));
+  // #429 第 11 项：没有一项资料填得进选项的下拉不发给 AI，记作没有对应的资料。
+  assert.equal(body, null);
+  assert.equal(result.diagnostics.skippedNoContext, 1);
+});
+
+test("worker: an English gender select takes M or F for 男 or 女", async () => {
+  const result = await loadWorker(() => {}).handleAiFill({
+    formFields: [{ fieldId: "g", label: "Gender", inputType: "select", tagName: "select", options: ["M", "F"] }],
+    resumeFields: [{ group: "基本信息", key: "性别", value: "女" }]
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "g", value: "F" }]);
+  // M、F 不是全局的同义写法：只在问性别的字段上换（choiceValue）。
+  assert.equal(helpers.findSelectOptionIndex(["M", "F"], "女"), -1);
+  assert.equal(helpers.choiceValue({ label: "Sex", inputType: "radio", options: ["M", "F"] }, "男"), "M");
+  assert.equal(helpers.choiceValue({ label: "T恤尺码", inputType: "select", options: ["S", "M", "L"] }, "男"), "男");
+});
+
+test("sex counts as a gender question only as a whole word, not inside Middlesex or Essex", async () => {
+  assert.equal(helpers.inferFieldSemantic({ label: "Sex", inputType: "radio", options: ["M", "F"] }), "gender");
+  assert.notEqual(helpers.inferFieldSemantic({ label: "Middlesex", inputType: "text" }), "gender");
+  assert.notEqual(helpers.inferFieldSemantic({ label: "Essex campus address", inputType: "text" }), "gender");
+  const result = await loadWorker(() => {}).handleAiFill({
+    formFields: [{ fieldId: "school", label: "Middlesex", inputType: "text" }, { fieldId: "address", label: "Essex campus address", inputType: "text" }],
+    resumeFields: [{ group: "基本信息", key: "性别", value: "男" }]
+  });
+  assert.equal(result.diagnostics.ruleMatches, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), []);
 });
 
 // #429 身份证号自检：校验码、出生日期和开头。号码都是按规则算出来的虚构号码。
@@ -970,4 +996,12 @@ test("id type: a blocked match survives the validity filter and keeps the field 
     resumeFields: [...resume, { group: "教育背景", key: "专业", value: "示例专业" }] });
   assert.deepEqual(JSON.parse(body.user.split("\n")[1]).map((item) => item.label), ["专业"], "the type field is not sent to the AI");
   assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "type", value: "护照", blocked: "id_type_mismatch" }]);
+});
+
+// #429 C20：日期的哪一头、哪一部分，题目写在 name、id、aria-label 上的也认。
+test("a date part reads which end of a span to take from the name or id when the label does not say it", () => {
+  assert.equal(helpers.datePart("2019.09-2023.06", "month", { label: "月", name: "graduationMonth", options: [] }), "06");
+  assert.equal(helpers.datePart("2019.09-2023.06", "year", { label: "年", idAttr: "start-year", options: [] }), "2019");
+  assert.equal(helpers.datePart("2019.09-2023.06", "year", { label: "年", ariaLabel: "End year", options: [] }), "2023");
+  assert.equal(helpers.questionHint({ label: "a", placeholder: "b", ariaLabel: "c", name: "d", idAttr: "e" }), "a b c d e");
 });

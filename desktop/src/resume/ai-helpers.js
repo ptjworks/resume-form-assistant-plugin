@@ -97,7 +97,12 @@
     ["大学本科", "本科"],
     ["大学专科", "专科", "大专"],
     ...LEVEL_SYNONYMS,
-    // 性别：英文表单。
+    // 计算机等级（NCRE）：带不带「考试」「全国」。
+    ...["一", "二", "三", "四"].map((level) => [`全国计算机等级考试${level}级`, `全国计算机等级${level}级`, `计算机等级${level}级`, `计算机${level}级`]),
+    // 是否题：英文表单。
+    ["是", "Yes"],
+    ["否", "No"],
+    // 性别：英文表单。只写首字母（M、F）的不放这里，见 choiceValue。
     ["男", "男性", "Male"],
     ["女", "女性", "Female"]
     // 「中国」不当成「中国大陆」：港澳台居民的国籍也是中国，选项把港澳台分开列时照旧不选。
@@ -189,7 +194,6 @@
     isSecretFormField,
     isSafeResumeField,
     localRuleMatches,
-    selectResumeCandidates,
     findSelectOptionIndex,
     isSameOptionText,
     optionSearchText,
@@ -202,7 +206,18 @@
     rangeDateValue,
     rangeDateParts,
     isPresentDate,
-    detectCascadeGroups
+    detectCascadeGroups,
+    isValueValidForField,
+    hasRealOptions,
+    choiceValue,
+    controlChoiceValue,
+    spanSide,
+    questionHint,
+    valueShape,
+    datePart,
+    catalogKeys,
+    maskResumeValues,
+    looseText
   };
 
   globalScope.ResumeProAIHelpers = helpers;
@@ -231,10 +246,13 @@
   function inferFieldSemantic(field) {
     const choice = field?.inputType === "select" || field?.inputType === "radio";
     let contact = false;
-    for (const part of [field?.label, field?.ariaLabel, field?.placeholder, field?.name, field?.idAttr]) {
+    const parts = [field?.label, field?.ariaLabel, field?.placeholder, field?.name, field?.idAttr];
+    for (const [at, part] of parts.entries()) {
       const haystack = normalizeText(part);
-      const type = haystack && SEMANTIC_KEYWORDS.find((item) => (item.type !== "id_type" || choice)
-        && item.keywords.some((keyword) => haystack.includes(keyword)))?.type;
+      // 英文的「sex」按整词认，只看题目、aria-label、占位文字：Middlesex、Essex 这类校名、地名里也有这几个字母。
+      const type = (haystack && SEMANTIC_KEYWORDS.find((item) => (item.type !== "id_type" || choice)
+        && item.keywords.some((keyword) => haystack.includes(keyword)))?.type)
+        || (at < 3 && /\bsex\b/i.test(String(part ?? "")) ? "gender" : "");
       if (!type || (contact && type !== "phone" && type !== "email")) continue;
       if (type === "phone" && !PHONE_WORDS.some((word) => haystack.includes(word))) {
         contact = true;
@@ -277,40 +295,6 @@
     return OTHER_NUMBER_KEY.test(text) ? "other" : "";
   }
 
-  // Keep complete groups (including every repeated experience). Unknown or
-  // cross-domain labels deliberately fall back to the full resume.
-  function selectResumeCandidates(formFields, resumeFields) {
-    const domains = [
-      /教育|学校|院校|研究生|硕士|博士|专业|学历|学位|入学|毕业|education|school|university|major|degree|postgraduate/i,
-      /工作经历|实习|任职经历|工作内容|工作单位|公司|雇主|\bwork\s+(?:history|experience)\b|\bemployment\b|\binternship\b|\bcompany\b/i,
-      /项目|科研|研究经历|\bproject\b|\bresearch\b/i,
-      /论文|专利|发表|publication|patent/i,
-      /证书|奖励|奖项|荣誉|certificate|award/i,
-      /技能|语言能力|skill|language/i,
-      /基本信息|个人信息|姓名|电话|邮箱|籍贯|personal|contact/i
-    ];
-    const classify = (text) => domains.flatMap((pattern, i) => pattern.test(text) ? [i] : []);
-    const selected = new Set();
-    for (const field of formFields) {
-      const context = [field.group, field.label, field.placeholder, field.name, field.ariaLabel].filter(Boolean).join(" ");
-      // Eligibility/location questions are not employment-history questions.
-      if (/authoriz|eligib|sponsor|visa|work\s*(?:permit|location)|career\s*plan|工作许可|工作授权|工作地点|工作计划|职业规划|求职意向|就业资格|签证/i.test(context)) return resumeFields;
-      const categories = classify(context);
-      if (categories.length !== 1) return resumeFields;
-      const category = categories[0];
-      if (!resumeFields.some(item => classify(String(item.group || "")).includes(category))) return resumeFields;
-      const relevant = resumeFields.filter((item) => {
-        const groups = classify(String(item.group || ""));
-        // Custom groups cannot safely be ruled out.
-        // Current employer/role and similar facts may live in basic info.
-        return !groups.length || groups.includes(6) || groups.includes(category);
-      });
-      if (!relevant.length) return resumeFields;
-      relevant.forEach((item) => selected.add(item));
-    }
-    return resumeFields.filter((item) => selected.has(item));
-  }
-
   function buildRuleBasedMatches(formFields, resumeFields) {
     const strongTypes = new Set(["name", "email", "phone", "gender", "birth_date", "id_type", "id_number", "hometown", "region"]);
     const matches = [];
@@ -350,7 +334,7 @@
       if (matchIndex >= 0) {
         matches.push({
           fieldId: field.fieldId,
-          value: resumeFields[matchIndex].value
+          value: choiceValue(field, resumeFields[matchIndex].value)
         });
         usedResumeIndexes.add(matchIndex);
       }
@@ -789,8 +773,27 @@
       && field.options.some((option) => !isPlaceholderOption(option) && String(typeof option === "object" && option !== null ? option.text ?? "" : option ?? "").trim());
   }
 
+  // #429 英文表单的性别下拉只写首字母（M、F）：只在问性别的字段上，把「男」「女」换成选项里的 M、F。
+  // 不放进 OPTION_SYNONYMS：「T 恤尺码」这类下拉也有 M，全局认了会把性别算成能填进去。
+  const GENDER_LETTERS = [["M", ["男", "男性", "male"]], ["F", ["女", "女性", "female"]]];
+  function choiceValue(field, value) {
+    if (inferFieldSemantic(field) !== "gender" || !hasRealOptions(field) || findSelectOptionIndex(field.options, value) >= 0) return value;
+    const text = normalizeText(value);
+    const letter = GENDER_LETTERS.find(([, words]) => words.includes(text))?.[0];
+    return letter && findSelectOptionIndex(field.options, letter) >= 0 ? letter : value;
+  }
+
+  // 填写层（custom-controls.js、control-adapters.js）：选项这时才读到的下拉、单选，按扫描时的题目上下文再走一次 choiceValue。
+  // 上下文和 content.js 发给 worker 的字段一样：字段名、占位文字，加上控件自己的 name、id、aria-label（英文表的题目可能只写在这些上）。
+  function controlChoiceValue(binding, options, value) {
+    if (!binding) return value;
+    const attr = (name) => binding.element?.getAttribute?.(name) || "";
+    return choiceValue({ label: binding.label, placeholder: binding.placeholder, name: attr("name"), idAttr: binding.element?.id || "",
+      ariaLabel: attr("aria-label"), inputType: "select", options }, value);
+  }
+
   function isValueValidForField(field, value) {
-    const text = String(value ?? "").trim();
+    const text = String(choiceValue(field, value) ?? "").trim();
     const semantic = inferFieldSemantic(field);
 
     if (!text) {
@@ -823,7 +826,9 @@
       case "birth_date":
         return /(\d{4}[-/.年]\d{1,2}([-/.\月]\d{1,2}日?)?)/.test(text);
       case "gender":
-        return /(男|女|male|female)/i.test(text);
+        // 只写首字母的 M、F 只在选项里真有这一项时算（choiceValue 按选项换出来的）；选项要点开才看得到的，交给填写层。
+        return /(男|女|male|female)/i.test(text)
+          || (/^[mf]$/i.test(text) && hasRealOptions(field) && findSelectOptionIndex(field.options, text) >= 0);
       case "id_number":
         return /^[0-9xX]{8,18}$/.test(unspaced) && !MOBILE_VALUE.test(unspaced);
       case "name":
@@ -950,15 +955,26 @@
   // 「2023.09-至今」的结束取「至今」（#429）。两样都写了（起止时间）、都没写，或不是一段起止的，原样交回，由日期控件报日期不对。
   const SPAN_DATE = /(?:19|20)\d{2}(?:\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?|\s*[\/\-.]\s*\d{1,2}(?!\d)(?:\s*[\/\-.]\s*\d{1,2}(?!\d))?|\s*年)?/g;
   // 「起」「止」单独成词才算（「在校时间（起）」「在校时间：止」）：「发起」「起薪」「禁止」里的不算。
-  const SPAN_START = /开始|起始|入学|入职|(?:^|[\s(（【\[:：])起(?=$|[\s)）】\]:：])|\b(?:start|from|begin)/i;
-  const SPAN_END = /结束|截止|终止|毕业|离职|(?:^|[\s(（【\[:：])止(?=$|[\s)）】\]:：])|\b(?:end|until)\b/i;
+  const SPAN_START = /开始|起始|入学|入职|(?:^|[\s(（【\[:：])起(?=$|[\s)）】\]:：])|\b(?:start|from|begin|enrol|admission)/i;
+  const SPAN_END = /结束|截止|终止|毕业|离职|(?:^|[\s(（【\[:：])止(?=$|[\s)）】\]:：])|\b(?:end|until)\b|\bgraduat/i;
   function rangeDateValue(rawValue, hint) {
     const raw = String(rawValue ?? "").trim();
     const parts = rangeDateParts(raw);
     if (!parts) return raw;
+    const side = spanSide(hint);
+    return side ? parts[side === "start" ? 0 : 1] : raw;
+  }
+
+  // 判断题目要日期的哪一头、哪一部分时看的文字：题目、占位文字、aria-label、name、id（英文表常只写在 name、id 上，如 graduationMonth）。
+  function questionHint(field) {
+    return [field?.label, field?.placeholder, field?.ariaLabel, field?.name, field?.idAttr].filter(Boolean).join(" ");
+  }
+
+  // 题目要一段起止的哪一头：写明开始、入学这类的给 start，写明结束、毕业、离职这类的给 end；两样都写了、都没写给空串。
+  function spanSide(hint) {
     const text = String(hint ?? "");
     const start = SPAN_START.test(text), end = SPAN_END.test(text);
-    return start === end ? raw : parts[start ? 0 : 1];
+    return start === end ? "" : start ? "start" : "end";
   }
 
   // #429 「至今」「现在」这类写法（和 custom-controls.js 日历认的一样）。
@@ -1019,5 +1035,209 @@
 
   function pad2(value) {
     return String(Number(value)).padStart(2, "0");
+  }
+
+  // #429 第 11 项：发给 AI 的资料目录不带值，只带按值算出的形态，字段名看不出意思（「号码1」）时 AI 靠它判断。
+  // 只说形态：几位数字、邮箱、日期这类，认不出的给空串。
+  function valueShape(value) {
+    const text = String(value ?? "").trim();
+    const compact = text.replace(/[\s-]/g, "");
+    if (!text) return "";
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) return "邮箱";
+    if (MOBILE_VALUE.test(compact)) return "11 位数字";
+    if (CN_ID_VALUE.test(compact)) return "18 位证件号";
+    if (/^https?:\/\//i.test(text)) return "网址";
+    if (rangeDateParts(text)) return "起止日期";
+    if (/^[\d\s年月日\/\-.:T]+$/.test(text) && parseDateParts(text)?.year) return "日期";
+    if (/^\d+$/.test(compact)) return `${compact.length} 位数字`;
+    return text.length > 60 ? "长文本" : "";
+  }
+
+  // 日期里的年、月或日（出生年份、毕业月份分开的下拉）。一段起止先按题目取开始或结束（rangeDateValue）。
+  // 下拉读得到选项时按选项的写法给（「5」「05」「5月」），要和一个选项归一后完全相同：「9」不能靠「包含」落到「1999年」上。
+  // 对不上给空串；没有选项给补零的数字。
+  function datePart(value, part, field) {
+    const hint = questionHint(field);
+    const text = String(rangeDateValue(value, hint)).trim();
+    const yearOnly = /^((?:19|20)\d{2})\s*年?$/.exec(text);
+    const parsed = yearOnly ? { year: yearOnly[1] } : parseDateParts(text);
+    const number = Number(parsed?.[part]);
+    if (!["year", "month", "day"].includes(part) || !number) return "";
+    const unit = { year: "年", month: "月", day: "日" }[part];
+    const forms = part === "year" ? [String(number), `${number}${unit}`]
+      : [pad2(number), String(number), `${number}${unit}`, `${pad2(number)}${unit}`];
+    if (!hasRealOptions(field)) return forms[0];
+    const written = field.options.filter((option) => !isPlaceholderOption(option))
+      .flatMap((option) => (typeof option === "object" && option !== null ? [option.text, option.value] : [option]))
+      .map(normalizeText).filter(Boolean);
+    return forms.find((form) => written.includes(normalizeText(form))) || "";
+  }
+
+  // 比较字段名前缀和值时用：全角转半角（NFKC），去掉标点、符号和空格，英文不分大小写。
+  function looseText(text) {
+    return String(text ?? "").normalize("NFKC").replace(/[\s\p{P}\p{S}]/gu, "").toLowerCase();
+  }
+
+  // 逐字归一时的一个字：字母连同后面跟着的组合附加符（NFD 写法的「é」是「e」加一个附加符）算一个，
+  // 这样逐字归一（NFKC）拼起来和整串归一的结果一样，资料值和字段名用的是同一种归一。
+  const LOOSE_UNIT = /\P{M}\p{M}*|\p{M}+/gu;
+
+  // 字段名逐字归一一次（looseText）：loose 是归一后的整串，ends[i] 是归一后第 i 个字在原字段名里结束的位置，
+  // 紧跟着的标点、空格（归一后没有字）算进它。前缀比较只对 loose 做 startsWith，不再逐个前缀重新归一。
+  function looseIndex(key) {
+    let loose = "";
+    const ends = [];
+    let at = 0;
+    for (const char of String(key ?? "").match(LOOSE_UNIT) || []) {
+      at += char.length;
+      const part = looseText(char);
+      for (let i = 0; i < part.length; i += 1) ends.push(at);
+      loose += part;
+      if (!part && ends.length) ends[ends.length - 1] = at;
+    }
+    return { loose, ends };
+  }
+
+  // 桌面解析简历时，同一段经历的字段名起成「学校名或公司名 + 教育经历 - 专业」（semanticizeParsedFields），字段名里带着值。
+  // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。
+  // 经历类分组里，字段名以这一组的某个值开头的，后面不管是什么，前缀都换成编号（「某校社团经历-职位」→「校园经历1-社团经历-职位」）；
+  // 前缀对不上现在的值（解析以后改过学校名）时，「某某 + 教育经历」这样的也换掉，前面多长都算（英文全称常超过 18 个字）。别的字段名原样。
+  // withPrefixes：同时给出每个字段名开头这次起的编号有几个字（prefixes，原样的字段名是 0），遮值时只有这一段不找。
+  function catalogKeys(resumeFields, { withPrefixes = false } = {}) {
+    const labels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
+    const numbers = new Map();
+    const made = (label, number, rest) => ({ key: `${label}${number}${rest}`, prefix: `${label}${number}`.length });
+    const numberOf = (group, label, anchor) => {
+      const slot = `${group}\u0000${label}`;
+      if (!numbers.has(slot)) numbers.set(slot, new Map());
+      const seen = numbers.get(slot);
+      if (!seen.has(anchor)) seen.set(anchor, seen.size + 1);
+      return seen.get(anchor);
+    };
+    // 每项资料的值只归一一次：完整的值（最多 80 个字）和截到 18 个字的值。
+    const forms = resumeFields.map((field) => ({
+      id: looseText(String(field?.value ?? "")),
+      texts: [...new Set([looseText(sanitizeAnchor(field?.value)), looseText(String(field?.value ?? "").replace(/\s+/g, " ").trim().slice(0, 80))])]
+    }));
+    const renamed = resumeFields.map((field) => {
+      const key = String(field?.key ?? "");
+      const group = String(field?.group ?? "");
+      const groupLabel = ENTITY_LABEL_BY_GROUP.find((item) => item.pattern.test(group))?.label;
+      // 前缀和值按 looseText 比：全角半角、标点、空格不同（「（南校区）」对「(南校区)」）也算同一个值。
+      // 解析时字段名只带值的前 18 个字（sanitizeAnchor），改过的可能带着全名：两种都比，取对得上的最长一段。
+      // 编号按这一项的完整值分：前 18 个字一样的两所学校不合成一段。字段名里看不出是哪一项时（只带前 18 个字），
+      // 按桌面给重名字段名加的「 (2)」认：第 n 段就是这个前缀下的第 n 个值；同一所学校的两段经历也靠它分开。
+      const suffix = Number(/\s\((\d+)\)$/.exec(key)?.[1] || 1);
+      const index = looseIndex(key);
+      const anchors = resumeFields.flatMap((other, at) => (other?.group !== field?.group ? [] : forms[at].texts.map((text) => ({
+        id: forms[at].id, owner: String(other?.key ?? ""),
+        length: text.length >= 2 && index.loose.startsWith(text) ? index.ends[text.length - 1] : 0
+      }))))
+        .filter((item) => item.length > 0)
+        .sort((a, b) => b.length - a.length);
+      const entryOf = (length) => {
+        const ids = [...new Set(anchors.filter((item) => item.length === length).map((item) => item.id))];
+        return `${ids[Math.min(ids.length, suffix) - 1]}#${suffix}`;
+      };
+      const tail = (text) => text.replace(/\s\(\d+\)$/, "");
+      for (const { length, owner } of anchors) {
+        const rest = key.slice(length);
+        const label = labels.find((item) => rest.startsWith(item)) || /^[\u4e00-\u9fa5A-Za-z]+?信息(?=-|$|\s\()/.exec(rest)?.[0];
+        if (!label) continue;
+        // 经历类以外的分组只换同一段自己的前缀：给出这个值的那项，字段名也是这个前缀加同一个标签（解析出来的「某奖项名奖项信息」）；
+        // 以别的字段的值开头的字段名原样留着。
+        if (!groupLabel && !owner.startsWith(key.slice(0, length) + label)) continue;
+        return made(label, numberOf(group, label, entryOf(length)), tail(rest.slice(label.length)));
+      }
+      if (!groupLabel) return { key, prefix: 0 };
+      if (anchors.length) {
+        const rest = tail(key.slice(anchors[0].length)).replace(/^[\s\-_:：]+/, "");
+        return made(groupLabel, numberOf(group, groupLabel, entryOf(anchors[0].length)), rest ? `-${rest}` : "");
+      }
+      for (const label of labels) {
+        const at = key.indexOf(label);
+        if (at >= 1 && /^(?:-|$|\s\()/.test(key.slice(at + label.length))) {
+          return made(label, numberOf(group, label, `${looseText(key.slice(0, at))}#${suffix}`), tail(key.slice(at + label.length)));
+        }
+      }
+      return { key, prefix: 0 };
+    });
+    const prefixes = renamed.map((item) => item.prefix);
+    const keys = maskResumeValues(renamed.map((item) => item.key), resumeFields,
+      { labels: renamed.map((item) => item.key), groups: resumeFields.map((field) => field?.group), prefixes });
+    return withPrefixes ? { keys, prefixes } : keys;
+  }
+
+  // 人名类字段（本人、家庭成员、配偶、紧急联系人、推荐人的姓名，曾用名）：值 2 个字起就遮，出现在哪段文字里都换。
+  const NAME_KEY = /姓名|名字|曾用名|(?:联系|推荐|介绍|证明)人(?!.*(?:关系|电话|手机|邮箱|单位|职务))|\b(?:(?:first|last|given|family|full|middle|maiden)\s*name|surname|name)\b/i;
+  // 学校、公司、城市、地址、证件、联系方式这类字段（按字段名认），和人名类一样：值再短也能认出人。
+  const IDENTIFYING_KEY = /学校|院校|大学|学院|公司|单位|企业|雇主|城市|省份|地区|所在地|居住|籍贯|户籍|户口所在|生源地|地址|住址|证件|身份证|护照|手机|电话|邮箱|微信|qq|联系方式|\b(?:school|university|college|company|employer|city|address|phone|mobile|email|wechat)\b/i;
+  const PLACEHOLDER_LIMIT = 20;
+  // #429 第 11 项：发给 AI 的目录文字（字段名、分组名）里能认出人的资料值，一律换成占位「〔那项资料的字段名〕」；
+  // 那项资料的字段名自己带着资料值或超过 20 个字时用「〔资料值〕」。不按字段豁免，同样的字在哪段文字里都换。
+  // 能认出人的值：带数字的、归一后 4 个字及以上的，或人名、学校、公司、城市、地址、证件、联系方式这类字段的值（NAME_KEY、IDENTIFYING_KEY）。
+  // 别的是短常用词（是、否、男、本科、汉族、父亲、服从），留在题目里，「是否服从调剂」「父亲姓名」不会被弄坏。
+  // 值按 looseText 比，至少 2 个字；只有数字、不到 5 位的（年龄、名次、年份）不算更长一串数字里的一段（「22」不算「2022届」里的）。
+  // 几项资料的值都对得上时先换最长的；同样长的先认同一分组的那项（groups[i] 是第 i 段文字所在的分组）。
+  // prefixes[i]：第 i 段开头这么多字是 catalogKeys 这次起的编号（「实习经历1」），不在里面找；
+  // 原样的字段名、分组名没有这一段，从头找（以「实习经历」开头、后面跟着手机号的原样文字也遮）。
+  // 资料值和要找的文字按同一种方式归一（looseText，逐字时字母连同组合附加符算一个字），记着归一后每个字在原文里的位置。
+  // labels[i] 是第 i 项资料在目录里的字段名，做占位用。
+  function maskResumeValues(texts, resumeFields, { labels = [], groups = [], prefixes = [] } = {}) {
+    const values = resumeFields.flatMap((field, owner) => {
+      const value = String(field?.value ?? "");
+      const key = String(field?.key ?? "");
+      const named = NAME_KEY.test(key) || IDENTIFYING_KEY.test(key);
+      return [...new Set([looseText(value), looseText(sanitizeAnchor(value)), looseText(value.replace(/\s+/g, " ").trim().slice(0, 80))])]
+        .filter((text) => text.length >= 2 && (named || /\d/.test(text) || text.length >= 4))
+        .map((text) => ({ text, owner, group: field?.group, number: /^\d{2,4}$/.test(text) }));
+    });
+    const byGroup = new Map();
+    const rankedFor = (group) => {
+      if (!byGroup.has(group)) {
+        byGroup.set(group, [...values].sort((a, b) => b.text.length - a.text.length || Number(b.group === group) - Number(a.group === group)));
+      }
+      return byGroup.get(group);
+    };
+    const hitsIn = (text, group, from = 0) => {
+      const chars = [];
+      let loose = "";
+      let offset = 0;
+      for (const char of text.match(LOOSE_UNIT) || []) {
+        const part = looseText(char);
+        for (let i = 0; i < part.length; i += 1) chars.push([offset, offset + char.length]);
+        loose += part;
+        offset += char.length;
+      }
+      const taken = [];
+      for (const { text: value, owner, number } of rankedFor(group)) {
+        for (let hit = loose.indexOf(value); hit >= 0; hit = loose.indexOf(value, hit + 1)) {
+          const start = chars[hit][0];
+          const end = chars[hit + value.length - 1][1];
+          if (start < from || taken.some((span) => start < span.end && span.start < end)) continue;
+          if (number && /\d/.test((loose[hit - 1] ?? "") + (loose[hit + value.length] ?? ""))) continue;
+          taken.push({ start, end, owner });
+        }
+      }
+      return taken.sort((a, b) => b.start - a.start);
+    };
+    const names = new Map();
+    const nameOf = (owner) => {
+      if (!names.has(owner)) {
+        const label = String(labels[owner] ?? "");
+        const clean = label && label.length <= PLACEHOLDER_LIMIT && !label.includes("〔") && !hitsIn(label, resumeFields[owner]?.group).length;
+        names.set(owner, clean ? label : "资料值");
+      }
+      return names.get(owner);
+    };
+    const done = new Map();
+    return texts.map((text, at) => {
+      const slot = JSON.stringify([String(text ?? ""), groups[at] ?? null, prefixes[at] || 0]);
+      if (!done.has(slot)) {
+        done.set(slot, hitsIn(String(text ?? ""), groups[at], prefixes[at] || 0)
+          .reduce((out, { start, end, owner }) => `${out.slice(0, start)}〔${nameOf(owner)}〕${out.slice(end)}`, String(text ?? "")));
+      }
+      return done.get(slot);
+    });
   }
 })(typeof self !== "undefined" ? self : globalThis);

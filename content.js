@@ -87,6 +87,11 @@
     cascade_unsupported: "两级选择暂不支持",
     control_disabled: "字段不可操作",
     invalid_date: "日期格式或范围不符",
+    ai_conflict: "AI 对同一题给了不同的值",
+    too_many_items: "AI 给的资料项太多",
+    region_unavailable: "地区数据没加载",
+    region_too_coarse: "地址只认出了省",
+    region_level_missing: "资料里没有这一级地区",
     too_long: "超出字数上限",
     range_incomplete: "起止日期缺一头",
     format_mismatch: "只能填数字",
@@ -4732,7 +4737,7 @@
     const dropLabels = { type_hidden: "隐藏输入框", non_fillable: "按钮或文件框", disabled: "禁用", invisible: "不可见",
       popup_internal: "下拉内部输入", grouped: "并入同一控件", page_chrome: "页头导航", site_search: "站内搜索",
       outside_form: "表单外", no_label: "对不上题目", scan_error: "读取出错", out_of_scope: "不在新增范围", secret: "疑似密码", no_resume_mapping: "无对应资料",
-      ai_unmatched: "AI 未匹配", no_result: "没拿到 AI 结果", not_sent: "没送 AI", changed_while_waiting: "等 AI 时有改动",
+      ai_unmatched: "AI 未匹配", open_question: "开放题没有现成回答", no_result: "没拿到 AI 结果", not_sent: "没送 AI", changed_while_waiting: "等 AI 时有改动",
       not_written: "没写上", unconfirmed: "未确认", unsynced: "未同步" };
     const pageType = result.pageType
       ? `${result.pageType.type === "application_form" ? "网申填写页" : "不像网申填写页"}（依据：${({

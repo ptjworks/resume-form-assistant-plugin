@@ -9,6 +9,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
+const { refsFor } = require("./helpers/ai-refs.js");
 
 const ROOT = path.join(__dirname, "..");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
@@ -36,6 +37,7 @@ function layout(w) {
 
 function aiWorker(resume) {
   const calls = [];
+  let lastResume = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
     ResumeProFormAgent: require("../form-agent.js"), AbortController, TextEncoder, performance: { now: () => 0 },
@@ -46,8 +48,10 @@ function aiWorker(resume) {
       if (message.kind !== "desktop-complete") return;
       const fields = JSON.parse(message.user.split("\n")[1]);
       const call = { labels: fields.map((field) => field.label) };
+      // AI 只回资料编号（#429 第 11 项）：按值写的回答照这次发出去的目录换成编号。
       call.reply = (values) => context.self.onmessage({ data: { kind: "desktop-result", callId: message.callId,
-        reply: { ok: true, text: JSON.stringify(fields.map((field) => ({ fieldId: field.fieldId, value: values[field.label] })).filter((item) => item.value)) } } });
+        reply: { ok: true, text: refsFor(message.user, lastResume,
+          JSON.stringify(fields.map((field) => ({ fieldId: field.fieldId, value: values[field.label] })).filter((item) => item.value))) } } });
       calls.push(call);
     }
   };
@@ -57,13 +61,16 @@ function aiWorker(resume) {
     calls,
     dispatch: (message) => new Promise((resolve) => {
       const copy = JSON.parse(JSON.stringify(message));
+      if (Array.isArray(copy.resumeFields)) lastResume = copy.resumeFields;
       const keepOpen = context.dispatchAiMessage(copy, sender, (reply) => resolve(JSON.parse(JSON.stringify(reply ?? null))));
       if (!keepOpen && copy.type !== "CANCEL_AI_FILL") resolve(undefined);
     })
   };
 }
 
-const RESUME = [["基本信息", "姓名", "测试用户"], ["教育经历", "在校时间", "2019.09-2023.06"]];
+// AI 只能挑资料里的一项：开始、结束分开存的两项，供替身按一头回答。
+const RESUME = [["基本信息", "姓名", "测试用户"], ["教育经历", "在校时间", "2019.09-2023.06"], ["教育经历", "入学时间", "2019.09"],
+  ["教育经历", "毕业时间", "2023.06"], ["教育经历", "专业", "示例专业"]];
 const RANGE = `<div class="form-item"><label class="form-label">在校时间</label>
   <div class="el-date-editor el-range-editor el-date-editor--daterange">
     <input class="el-range-input" placeholder="开始日期"><span>至</span><input class="el-range-input" placeholder="结束日期"></div></div>`;
@@ -200,12 +207,12 @@ test("a range end the local rules know waits for the AI's other end, then both a
   assert.deepEqual(p.worker.calls[0].labels, ["在校时间（结束）"]);
   assert.equal(p.w.document.getElementById("name").value, "测试用户", "the name is filled early");
   assert.equal(p.log.opened, 0, "the start does not go alone before the AI answers");
-  p.worker.calls[0].reply({ "在校时间（结束）": "2023-06-30" });
+  p.worker.calls[0].reply({ "在校时间（结束）": "2023.06" });
   const result = await running;
   assert.equal(result.outcome, "success", p.ui.diag.value);
   assert.equal(result.filledCount, 3);
   assert.equal(result.unfilledCount, 0);
-  assert.deepEqual(p.model(), ["2019-09-01", "2023-06-30"]);
+  assert.deepEqual(p.model(), ["2019-09-01", "2023-06-01"]);
   assert.equal(p.log.opened, 1);
 });
 
