@@ -89,6 +89,15 @@ fn code(error: StoreError) -> &'static str {
     error.code()
 }
 
+/// 删掉了，也清干净了：没有卡在 tmp/ 里的，没有会挡住备份的残留，核对也没出错。
+fn clean(result: &ResumeFileDeletion) -> bool {
+    result.deleted
+        && result.stuck_in_tmp.is_none()
+        && result.folder.leftovers.is_empty()
+        && result.folder.manual.is_empty()
+        && result.folder.unchecked.is_none()
+}
+
 #[test]
 fn files_are_taken_by_their_content_and_kind_not_by_their_name() {
     let dir = tempfile::tempdir().unwrap();
@@ -181,20 +190,281 @@ fn a_damaged_record_is_listed_apart_never_guessed_and_the_rest_still_work() {
         ))
         .unwrap();
     }
-    // 读不出来的记录可以删：只删这一行，删的时候不碰文件；它的字节下一次清理时才清掉。
+    // 读不出来的记录可以删，和能用的记录走同一条路：按哈希放的字节一起删掉，别的文件不动。
     let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
     raw.execute_batch(&format!("UPDATE resume_files SET template_ids_json = 'not json' WHERE id = '{}'", file.id)).unwrap();
     drop(raw);
     let db = open(dir.path());
-    let bytes = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
-    assert!(db.delete_resume_file(&file.id).unwrap());
-    assert!(bytes.is_file(), "deleting a damaged record touches no file");
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    let bytes = folder.join(&file.sha256);
+    assert!(bytes.is_file());
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(clean(&result), "{result:?}");
+    assert!(!bytes.exists());
     let listing = db.resume_file_listing().unwrap();
     assert!(listing.damaged.is_empty());
     assert_eq!(listing.files.len(), 5);
-    assert!(listing.files.iter().all(|f| f.kind == ResumeFileKind::Photo));
-    db.add_resume_file(ResumeFileKind::Resume, "新简历.pdf", &pdf(9)).unwrap();
-    assert!(!bytes.exists(), "swept once nothing refers to it");
+    assert!(listing.files.iter().all(|f| f.kind == ResumeFileKind::Photo && folder.join(&f.sha256).is_file()));
+    // 没删到的（不存在的 id）不清理，也不报错。
+    std::fs::write(folder.join("leftover"), b"x").unwrap();
+    assert!(!db.delete_resume_file(&file.id).unwrap().deleted);
+    assert!(folder.join("leftover").is_file());
+}
+
+#[test]
+fn a_damaged_record_with_a_bad_hash_is_deleted_and_the_folder_is_checked_by_scanning() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let broken = db.add_resume_file(ResumeFileKind::Resume, "旧简历.pdf", &pdf(1)).unwrap();
+    let kept = db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
+    db.close().unwrap();
+    // 哈希写法不对（大写）：没法按哈希找到它的字节，只能扫附件目录看还有什么是备份清单不收的。
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute("UPDATE resume_files SET sha256 = upper(sha256) WHERE id = ?1", rusqlite::params![broken.id]).unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    // 一份无关的残留在子目录里：清理只清这个目录下的文件，它会留着，备份会因为它停下。
+    std::fs::create_dir_all(folder.join("sub")).unwrap();
+    std::fs::write(folder.join("sub").join("stray"), b"x").unwrap();
+    let result = db.delete_resume_file(&broken.id).unwrap();
+    assert!(result.deleted);
+    // 子目录不是附件文件：不挡备份，单独列出来让用户自己处理。
+    assert!(result.folder.leftovers.is_empty(), "{result:?}");
+    assert_eq!(result.folder.manual, vec![format!("{RESUME_FILES_DIR}/sub")]);
+    assert!(result.folder.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
+    assert_eq!(db.check_resume_file_folder().manual, result.folder.manual);
+    // 没有记录用着的那份字节清掉了，别的附件都在。
+    assert!(!folder.join(&broken.sha256).exists());
+    assert_eq!(db.read_resume_file(&kept.id).unwrap().1, png());
+    // 残留拿掉以后，附件目录里没有备份清单不收的文件。
+    std::fs::remove_dir_all(folder.join("sub")).unwrap();
+    let check = db.check_resume_file_folder();
+    assert!(check.leftovers.is_empty() && check.manual.is_empty() && check.unchecked.is_none());
+}
+
+#[test]
+fn a_folder_that_cannot_be_checked_is_never_reported_clean() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let broken = db.add_resume_file(ResumeFileKind::Resume, "旧简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute("UPDATE resume_files SET sha256 = 'not-a-hash' WHERE id = ?1", rusqlite::params![broken.id]).unwrap();
+    drop(raw);
+    // 附件目录变成了一个文件：读不了目录，核对不了还有没有残留。
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    std::fs::remove_dir_all(&folder).unwrap();
+    std::fs::write(&folder, b"not a folder").unwrap();
+    let db = open(dir.path());
+    let result = db.delete_resume_file(&broken.id).unwrap();
+    assert!(result.deleted, "the record is gone");
+    assert!(result.folder.leftovers.is_empty());
+    assert!(result.folder.unchecked.is_some(), "a failed check is not a clean result");
+    assert!(db.check_resume_file_folder().unchecked.is_some());
+}
+
+#[test]
+fn deleting_a_damaged_record_keeps_bytes_another_record_still_uses() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let healthy = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    // 表里 sha256 唯一，两条记录共用一份字节只会出现在改过的库里：重建一张没有这条约束的表来模拟，
+    // 再加一条存储位置不对、哈希相同的坏记录。
+    let damaged = "11111111-1111-4111-8111-111111111199";
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute_batch(&format!(
+        "CREATE TABLE resume_files_copy AS SELECT * FROM resume_files;
+         DROP TABLE resume_files;
+         ALTER TABLE resume_files_copy RENAME TO resume_files;
+         INSERT INTO resume_files SELECT '{damaged}', kind, '旧简历.pdf', label, mime, byte_size, sha256, 'elsewhere/old.pdf', 0,
+           template_ids_json, position + 1, created_at, updated_at FROM resume_files WHERE id = '{}';",
+        healthy.id
+    ))
+    .unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    let listing = db.resume_file_listing().unwrap();
+    assert_eq!(listing.damaged.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), vec![damaged]);
+    // 删掉坏记录：另一条记录还用着这份字节，留着就对，算成功，也没有残留。
+    let result = db.delete_resume_file(damaged).unwrap();
+    assert!(clean(&result), "{result:?}");
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    assert!(folder.join(&healthy.sha256).is_file());
+    assert_eq!(db.read_resume_file(&healthy.id).unwrap().1, pdf(1));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_damaged_record_whose_bytes_are_held_is_not_deleted_and_a_held_stray_is_reported() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute_batch(&format!("UPDATE resume_files SET template_ids_json = 'not json' WHERE id = '{}'", file.id)).unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    // 别的程序独占着这条记录的字节：和删能用的附件一样，挪不进 tmp/ 就什么都不删、照实报错。
+    let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(folder.join(&file.sha256)).unwrap();
+    assert_eq!(code(db.delete_resume_file(&file.id).unwrap_err()), "validation_failed");
+    assert_eq!(db.resume_file_listing().unwrap().damaged.len(), 1);
+    assert!(folder.join(&file.sha256).is_file());
+    drop(held);
+    // 被占着删不掉的是一份无关的残留：记录和它的字节照常删掉，算成功，另外带上会挡住备份的那份残留。
+    std::fs::write(folder.join("stray"), b"x").unwrap();
+    let stray = std::fs::OpenOptions::new().read(true).share_mode(0).open(folder.join("stray")).unwrap();
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted);
+    assert_eq!(result.folder.leftovers, vec![format!("{RESUME_FILES_DIR}/stray")]);
+    assert!(result.folder.unchecked.is_none() && result.stuck_in_tmp.is_none(), "{result:?}");
+    assert!(!folder.join(&file.sha256).exists());
+    drop(stray);
+    // 放开以后，下一次增删附件时清掉。
+    db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
+    assert!(db.check_resume_file_folder().leftovers.is_empty());
+}
+
+#[test]
+fn a_record_whose_home_is_not_a_file_is_deleted_and_the_home_is_left_for_the_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    let home = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
+    // 原位置上不是文件，是一个目录：那不是这条记录的字节。只删记录，不挪不删那个目录，把它列出来让用户处理。
+    std::fs::remove_file(&home).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(home.join("inside"), b"x").unwrap();
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted && result.stuck_in_tmp.is_none(), "{result:?}");
+    assert_eq!(result.folder.manual, vec![format!("{RESUME_FILES_DIR}/{}", file.sha256)]);
+    assert!(result.folder.leftovers.is_empty() && result.folder.unchecked.is_none(), "{result:?}");
+    assert!(db.resume_file(&file.id).unwrap().is_none());
+    assert!(home.join("inside").is_file());
+    assert!(!dir.path().join("archive").join("tmp").join(format!("resume-file-{}.deleting", file.sha256)).exists());
+    // 删不存在的记录也照样核对附件目录。
+    let again = db.delete_resume_file(&file.id).unwrap();
+    assert!(!again.deleted);
+    assert_eq!(again.folder.manual, result.folder.manual);
+}
+
+#[test]
+fn a_home_with_the_wrong_content_is_left_alone_and_the_record_still_goes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    let kept = db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
+    let archive = dir.path().join("archive");
+    let home = archive.join(RESUME_FILES_DIR).join(&file.sha256);
+    let staged = archive.join("tmp").join(format!("resume-file-{}.deleting", file.sha256));
+    // 对的那份在 tmp/ 里（上一次没能挪回去），原位置上是一个内容不对的文件。
+    std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+    std::fs::rename(&home, &staged).unwrap();
+    std::fs::write(&home, b"other bytes").unwrap();
+    // 删除不挪原位置的东西（不会盖掉 tmp/ 里那份），只删记录；那个文件留着，列进残留，让用户自己处理。
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted && result.stuck_in_tmp.is_none(), "{result:?}");
+    assert_eq!(result.folder.leftovers, vec![format!("{RESUME_FILES_DIR}/{}", file.sha256)]);
+    assert_eq!(std::fs::read(&home).unwrap(), b"other bytes");
+    assert!(db.resume_file(&file.id).unwrap().is_none());
+    // 以后的清理也不删这个名字是哈希、内容却对不上的文件。别的附件都在。
+    db.add_resume_file(ResumeFileKind::Other, "材料.pdf", &pdf(2)).unwrap();
+    assert_eq!(std::fs::read(&home).unwrap(), b"other bytes");
+    assert_eq!(db.read_resume_file(&kept.id).unwrap().1, png());
+}
+
+#[test]
+fn a_tmp_folder_that_became_a_link_is_never_moved_into_or_cleaned_through() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    // 档案的 tmp/ 被换成指向档案外面一个目录的链接，那边有几个名字像暂存文件的文件。
+    let outside = dir.path().join("outside-tmp");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("resume-file-x.partial"), b"someone else's").unwrap();
+    std::fs::write(outside.join(format!("resume-file-{}.deleting", "1".repeat(64))), b"someone else's").unwrap();
+    let tmp = dir.path().join("archive").join("tmp");
+    let _ = std::fs::remove_dir_all(&tmp);
+    link_dir(&outside, &tmp);
+    // 删除只删记录：不往链接里挪，也不顺着它清理，按没能核对报。外面的文件、原位置的字节都还在。
+    let home = dir.path().join("archive").join(RESUME_FILES_DIR).join(&file.sha256);
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted && result.folder.unchecked.is_some(), "{result:?}");
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 2);
+    assert_eq!(std::fs::read(&home).unwrap(), pdf(1));
+    // 添加也不往链接里写暂存文件。
+    assert_eq!(code(db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap_err()), "validation_failed");
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 2);
+    db.close().unwrap();
+    // 收拾测试：先拆掉链接，免得删临时目录时顺着链接删外面。
+    #[cfg(windows)]
+    std::fs::remove_dir(&tmp).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&tmp).unwrap();
+}
+
+/// 把 `link` 做成指向 `target` 目录的链接：Unix 上是符号链接，Windows 上是目录连接（不用管理员权限）。
+fn link_dir(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        // cmd 把路径里的正斜杠当成开关，先换成反斜杠。
+        let native = |path: &std::path::Path| path.to_string_lossy().replace('/', "\\");
+        let made = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(native(link))
+            .arg(native(target))
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&made.stderr));
+    }
+}
+
+#[test]
+fn an_attachment_folder_that_became_a_link_is_never_cleaned_through() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    // 让这条记录读不出来（删的时候走坏记录那条路），哈希也写坏，最容易只删一行就走到清理。
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute("UPDATE resume_files SET sha256 = 'not-a-hash' WHERE id = ?1", rusqlite::params![file.id]).unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    // 打开档案以后，附件目录被换成指向档案外面一个目录的链接，那边有几个没人引用的文件。
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("victim.pdf"), b"not part of the archive").unwrap();
+    std::fs::write(outside.join("0".repeat(64)), b"looks like an attachment").unwrap();
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    std::fs::remove_dir_all(&folder).unwrap();
+    link_dir(&outside, &folder);
+    // 删除只删记录，一个文件都不动，按没能核对报；外面的文件都还在。
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted, "{result:?}");
+    assert!(result.folder.unchecked.is_some() && result.folder.leftovers.is_empty(), "{result:?}");
+    assert_eq!(std::fs::read(outside.join("victim.pdf")).unwrap(), b"not part of the archive");
+    assert!(outside.join("0".repeat(64)).is_file());
+    // 添加也不往链接里写。
+    assert_eq!(code(db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap_err()), "validation_failed");
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 2);
+    db.close().unwrap();
+    // 收拾测试：先拆掉链接，免得删临时目录时顺着链接删外面。
+    #[cfg(windows)]
+    std::fs::remove_dir(&folder).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&folder).unwrap();
 }
 
 #[test]
@@ -227,11 +497,11 @@ fn leftovers_in_tmp_are_swept_and_a_locked_file_is_not_reported_deleted() {
         assert_eq!(db.resume_file(&file.id).unwrap().unwrap().name, "新简历.pdf");
         drop(held);
         let now = db.resume_file(&file.id).unwrap().unwrap();
-        assert!(db.delete_resume_file(&now.id).unwrap());
+        assert!(db.delete_resume_file(&now.id).unwrap().deleted);
         assert!(!stored.exists(), "the old bytes are swept once nothing holds them");
     }
     #[cfg(not(windows))]
-    assert!(db.delete_resume_file(&file.id).unwrap());
+    assert!(db.delete_resume_file(&file.id).unwrap().deleted);
 
     let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("archive").join(RESUME_FILES_DIR)).unwrap().collect();
     assert!(leftovers.is_empty());
@@ -345,9 +615,9 @@ fn deleting_and_replacing_remove_the_old_bytes_and_leftovers_are_swept() {
     std::fs::write(folder.join("leftover"), b"x").unwrap();
     let photo = db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap();
     assert!(!folder.join("leftover").exists());
-    assert!(db.delete_resume_file(&photo.id).unwrap());
+    assert!(db.delete_resume_file(&photo.id).unwrap().deleted);
     assert!(!folder.join(&photo.sha256).exists());
-    assert!(!db.delete_resume_file(&photo.id).unwrap());
+    assert!(!db.delete_resume_file(&photo.id).unwrap().deleted);
     let names: Vec<_> = std::fs::read_dir(&folder).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(names, vec![std::ffi::OsString::from(&replaced.sha256)]);
 }
@@ -432,11 +702,13 @@ fn a_stored_path_anywhere_else_is_damage_and_no_file_is_touched() {
         assert!(db.check_attachment_refs().unwrap().invalid_files.contains(&bad), "{bad}");
         db.close().unwrap();
     }
-    // 删掉这条记录只删这一行：档案外的文件原样在。
+    // 删掉这条记录：它记的路径不碰，档案外的文件原样在；它按哈希留在附件目录里的字节一起清掉。
     let db = open(dir.path());
-    assert!(db.delete_resume_file(&file.id).unwrap());
+    assert!(db.delete_resume_file(&file.id).unwrap().deleted);
     assert!(db.resume_file_listing().unwrap().damaged.is_empty());
     assert_eq!(std::fs::read(&outside).unwrap(), pdf(2));
+    assert!(!folder.join(&file.sha256).exists());
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 5, "the other files stay");
 }
 
 #[test]

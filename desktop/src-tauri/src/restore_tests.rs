@@ -124,7 +124,7 @@ fn resume_files_travel_in_a_backup_and_come_back_whole() {
 }
 
 #[test]
-fn a_resume_file_record_pointing_outside_the_archive_never_brings_that_file_into_a_backup() {
+fn a_resume_file_record_pointing_outside_the_archive_stays_out_of_backups_and_deleting_it_unblocks_them() {
     // #429: a record whose stored path was changed to a file outside the archive. The backup
     // list leaves the record out, so that path is never compared, read or packed.
     let source = layout();
@@ -147,14 +147,140 @@ fn a_resume_file_record_pointing_outside_the_archive_never_brings_that_file_into
     let error = export_archive(&store, &source.paths, &blocked, NOW).unwrap_err();
     assert!(format!("{error:?}").contains("孤立"), "{error:?}");
     assert!(!blocked.exists());
-    // Without those bytes the backup goes through, and the outside file is not in it.
-    std::fs::remove_file(source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256)).unwrap();
+    assert!(store.check_attachment_refs().unwrap().invalid_files.contains(&outside.to_string_lossy().to_string()));
+    // The user deletes the broken record on the attachments page: the bytes nobody refers to any
+    // more are cleared with it, so the next backup goes through, without the outside file.
+    let deletion = store.delete_resume_file(&file.id).unwrap();
+    assert!(
+        deletion.deleted && deletion.stuck_in_tmp.is_none() && deletion.folder.leftovers.is_empty() && deletion.folder.unchecked.is_none(),
+        "{deletion:?}"
+    );
+    assert!(!source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256).exists());
     let package = export_to(&store, &source.paths, "backup.zip");
     let manifest = backup::read_manifest(&package).unwrap();
     assert!(manifest.entries.iter().all(|entry| !entry.path.contains("outside") && !entry.path.contains(&file.sha256)));
-    assert!(store.check_attachment_refs().unwrap().invalid_files.contains(&outside.to_string_lossy().to_string()));
+    assert!(store.check_attachment_refs().unwrap().invalid_files.is_empty());
     assert_eq!(std::fs::read(&outside).unwrap(), b"%PDF-1.7\nnot part of the archive");
     store.close().unwrap();
+}
+
+#[test]
+fn files_in_a_subfolder_of_the_attachment_folder_neither_travel_nor_block_a_backup() {
+    // #429: attachments live at the top of attachments/resume-files/. Anything in a subfolder
+    // belongs to no record: the backup leaves it out instead of stopping on it as an orphan.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let bytes = [b"%PDF-1.7\n".as_slice(), b"resume bytes"].concat();
+    let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    let folder = source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR);
+    std::fs::create_dir_all(folder.join("sub")).unwrap();
+    std::fs::write(folder.join("sub").join("stray"), b"not an attachment").unwrap();
+    let check = store.check_resume_file_folder();
+    assert!(check.leftovers.is_empty() && check.unchecked.is_none(), "{check:?}");
+    assert_eq!(check.manual, vec![format!("{}/sub", archive_store::RESUME_FILES_DIR)]);
+    let package = export_to(&store, &source.paths, "backup.zip");
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().any(|entry| entry.path.ends_with(&file.sha256)));
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains("sub/stray")));
+    store.close().unwrap();
+}
+
+#[test]
+fn a_record_whose_file_location_is_a_folder_can_be_deleted_and_the_backup_still_runs() {
+    // #429: something other than a file sits where a record's bytes should be. Deleting the record
+    // leaves that folder alone and lists it; the backup neither packs it nor stops on it.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let bytes = [b"%PDF-1.7\n".as_slice(), b"resume bytes"].concat();
+    let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    let home = source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR).join(&file.sha256);
+    std::fs::remove_file(&home).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(home.join("inside"), b"not an attachment").unwrap();
+    let deletion = store.delete_resume_file(&file.id).unwrap();
+    assert!(deletion.deleted, "{deletion:?}");
+    assert_eq!(deletion.folder.manual, vec![format!("{}/{}", archive_store::RESUME_FILES_DIR, file.sha256)]);
+    assert!(home.join("inside").is_file());
+    let package = export_to(&store, &source.paths, "backup.zip");
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains(&file.sha256)));
+    store.close().unwrap();
+}
+
+#[test]
+fn subfolders_of_the_attachment_folder_are_skipped_without_being_read() {
+    // #429: the backup skips anything in attachments/resume-files/ that is not a regular file
+    // before it would walk into it, so an empty or an unreadable subfolder does not matter.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let bytes = [b"%PDF-1.7\n".as_slice(), b"resume bytes"].concat();
+    let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    let folder = source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR);
+    std::fs::create_dir_all(folder.join("empty")).unwrap();
+    let locked = folder.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(locked.join("inside"), b"x").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    let package = export_to(&store, &source.paths, "backup.zip");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().any(|entry| entry.path.ends_with(&file.sha256)));
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains("empty") && !entry.path.contains("locked")));
+    store.close().unwrap();
+}
+
+/// 把 `link` 做成指向 `target` 目录的链接：Unix 上是符号链接，Windows 上是目录连接（不用管理员权限）。
+fn link_dir(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        // cmd 把路径里的正斜杠当成开关，先换成反斜杠。
+        let native = |path: &std::path::Path| path.to_string_lossy().replace('/', "\\");
+        let made = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(native(link))
+            .arg(native(target))
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&made.stderr));
+    }
+}
+
+#[test]
+fn an_attachment_folder_that_is_a_link_is_skipped_by_the_backup_and_never_read() {
+    // #429: attachments/resume-files itself was replaced by a link to a folder outside the archive.
+    // The backup walks it only when it is a real directory, so nothing out there is read or packed.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let outside = source.paths.data_root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.pdf"), b"%PDF-1.7\nnot part of the archive").unwrap();
+    std::fs::write(outside.join("0".repeat(64)), b"looks like an attachment").unwrap();
+    let folder = source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR);
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.parent().unwrap()).unwrap();
+    link_dir(&outside, &folder);
+    let package = export_to(&store, &source.paths, "backup.zip");
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains("resume-files") && !entry.path.contains("secret")));
+    store.close().unwrap();
+    // 收拾测试：先拆掉链接，免得删临时目录时顺着链接删外面。
+    #[cfg(windows)]
+    std::fs::remove_dir(&folder).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&folder).unwrap();
+    assert!(outside.join("secret.pdf").is_file());
 }
 
 #[test]

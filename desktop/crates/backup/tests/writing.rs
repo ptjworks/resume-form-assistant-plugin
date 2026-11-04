@@ -402,4 +402,9 @@ fn the_disposition_of_every_top_level_name_is_a_deliberate_decision() {
     // 前缀匹配必须按路径段来：`attachments-old/` 不是 `attachments/`。
     assert_eq!(classify("attachments-old/x"), Disposition::Unknown);
     assert_eq!(classify("tmpfile"), Disposition::Unknown);
+    // 网申附件只在附件目录顶层；子目录里的不归任何记录，不进包。
+    assert_eq!(classify("attachments/resume-files/0123abcd"), Disposition::Include);
+    assert_eq!(classify("attachments/resume-files/sub"), Disposition::Include);
+    assert!(matches!(classify("attachments/resume-files/sub/stray"), Disposition::Exclude(_)));
+    assert!(matches!(classify("attachments/resume-files/a/b/c"), Disposition::Exclude(_)));
 }
