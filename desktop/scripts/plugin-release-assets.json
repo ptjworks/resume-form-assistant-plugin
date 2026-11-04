@@ -39,6 +39,7 @@
   "link/staging.mjs",
   "link/store.mjs",
   "link/transport.mjs",
+  "link/upload-grants.mjs",
   "link/uploads.mjs",
   "link/worker.mjs",
   "usage-signals.js",

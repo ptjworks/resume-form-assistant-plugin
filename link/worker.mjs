@@ -1,4 +1,4 @@
-import { idbStore, nativePort, nativeSender, sleep, storageAdapter } from './chrome.mjs';
+import { idbStore, nativeChannel, nativePort, nativeSender, sleep, storageAdapter } from './chrome.mjs';
 import { createStore } from './store.mjs';
 import { createUsage, handleUsageMessage } from './usage.mjs';
 import { createSession } from './session.mjs';
@@ -6,6 +6,7 @@ import { createResume } from './resume.mjs';
 import { createAi } from './ai.mjs';
 import { createLegacy, LEGACY_ALARM } from './legacy.mjs';
 import '../profile-fields.js';
+import '../upload-slots.js';
 import { createIntents } from './intents.mjs';
 import { createOutbox } from './outbox.mjs';
 import { createReconcile } from './reconcile.mjs';
@@ -16,6 +17,9 @@ import { createStaging } from './staging.mjs';
 import { createUploads } from './uploads.mjs';
 import { createMail } from './mail.mjs';
 import { createSiteAnswers, siteOfSender, SITE_ANSWERS_READ, SITE_ANSWERS_SAVE } from './site-answers.mjs';
+import { createResumeFiles } from './resume-files.mjs';
+import { createUploadGrants, handleUploadMessage, revokeOnNavigation } from './upload-grants.mjs';
+import { HOST_NAME } from './transport.mjs';
 import { createQQExporter } from './qq-export.mjs';
 import { DESKTOP_MESSAGE_TYPES } from './messages.mjs';
 
@@ -50,6 +54,11 @@ export function installDesktopLink(api) {
   const resume = createResume({ ...deps, session });
   const mail = createMail({ ...deps, session });
   const siteAnswers = createSiteAnswers({ ...deps, session });
+  // #429 item 4: files kept on the desktop for upload; one port per file read, see resume-files.mjs.
+  const openNativeChannel = nativeChannel(api);
+  const resumeFiles = createResumeFiles({ ...deps, session, openChannel: () => openNativeChannel(HOST_NAME) });
+  const uploadGrants = createUploadGrants();
+  revokeOnNavigation(api, uploadGrants);
   const exportQQ = createQQExporter(api);
   const ai = createAi({ ...deps, session, port: nativePort(api) });
   const legacy = createLegacy({
@@ -89,6 +98,8 @@ export function installDesktopLink(api) {
       mail.save(message).then(sendResponse, () => sendResponse({ status: 'unavailable' }));
       return true;
     }
+    const uploadHandled = handleUploadMessage({ api, grants: uploadGrants, files: resumeFiles, slots: globalThis.ResumeProUploadSlots }, message, sender, sendResponse);
+    if (uploadHandled !== null) return uploadHandled;
     if (message?.type === SITE_ANSWERS_READ || message?.type === SITE_ANSWERS_SAVE) {
       const site = siteOfSender(sender, api.runtime.id);
       if (site === null) { sendResponse({ status: 'forbidden' }); return false; }
