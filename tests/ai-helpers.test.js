@@ -997,3 +997,11 @@ test("id type: a blocked match survives the validity filter and keeps the field 
   assert.deepEqual(JSON.parse(body.user.split("\n")[1]).map((item) => item.label), ["专业"], "the type field is not sent to the AI");
   assert.deepEqual(JSON.parse(JSON.stringify(result.matches)), [{ fieldId: "type", value: "护照", blocked: "id_type_mismatch" }]);
 });
+
+// #429 C20：日期的哪一头、哪一部分，题目写在 name、id、aria-label 上的也认。
+test("a date part reads which end of a span to take from the name or id when the label does not say it", () => {
+  assert.equal(helpers.datePart("2019.09-2023.06", "month", { label: "月", name: "graduationMonth", options: [] }), "06");
+  assert.equal(helpers.datePart("2019.09-2023.06", "year", { label: "年", idAttr: "start-year", options: [] }), "2019");
+  assert.equal(helpers.datePart("2019.09-2023.06", "year", { label: "年", ariaLabel: "End year", options: [] }), "2023");
+  assert.equal(helpers.questionHint({ label: "a", placeholder: "b", ariaLabel: "c", name: "d", idAttr: "e" }), "a b c d e");
+});

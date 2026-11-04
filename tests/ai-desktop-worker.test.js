@@ -464,7 +464,7 @@ test('a select whose fitting items were all trimmed away is counted as trimmed, 
   const result = await env.run({
     formFields: [{ fieldId: 'politics', label: '政治面貌', inputType: 'select', options: ['共青团员', '群众'] },
       { fieldId: 'plan', label: '方案', inputType: 'select', options: ['乙方案', '丙方案'] }],
-    resumeFields: [...BIG_CATALOG.map((entry) => ({ ...entry, value: '共青团员' })), { group: '自定义', key: '方案', value: '乙方案' }]
+    resumeFields: [...BIG_CATALOG.map((entry) => ({ ...entry, value: '共青团员' })), { group: '自定义', key: '方案' + '甲'.repeat(55), value: '乙方案' }]
   });
   assert.deepEqual(JSON.parse(sent.user.split('\n')[1]).map((field) => field.fieldId), ['politics']);
   assert.equal(result.matches.find((match) => match.fieldId === 'politics').value, '共青团员');
@@ -473,6 +473,20 @@ test('a select whose fitting items were all trimmed away is counted as trimmed, 
   assert.doesNotMatch(result.warning, /内容太多/);
   assert.equal(result.diagnostics.trimmedUnanswered, 1);
   assert.ok(result.diagnostics.catalogTrimmed >= 1);
+});
+
+test('a select with a fits list too long for the budget still gets items picked, its fits cut to them', () => {
+  const env = worker();
+  const relevantEntries = vm.runInContext('relevantEntries', env.context);
+  const promptBytes = vm.runInContext('promptBytes', env.context);
+  const budget = vm.runInContext('AI_USER_BUDGET', env.context);
+  const entries = Array.from({ length: 7000 }, (_, i) => ({ ref: `r${i + 1}`, group: '自定义', key: `资料${i}` }));
+  const field = { fieldId: 'politics', label: '政治面貌', inputType: 'select', options: ['群众'], fits: entries.map((entry) => entry.ref) };
+  assert.ok(promptBytes([field], [], true) > budget, 'the whole fits list alone is over the budget');
+  const chosen = relevantEntries([field], entries);
+  assert.ok(chosen.length > 100, `${chosen.length} items picked`);
+  const refs = new Set(chosen.map((entry) => entry.ref));
+  assert.ok(promptBytes([{ ...field, fits: field.fits.filter((ref) => refs.has(ref)) }], chosen, true) <= budget);
 });
 
 test('the bytes counted for each catalog item add up to what the prompt really takes', () => {
@@ -497,6 +511,10 @@ test('two different answers to one field in one reply leave it out and say why; 
   const torn = await two.run({ formFields: [{ fieldId: 'school', label: '学校' }],
     resumeFields: [{ group: '教育', key: '本科学校', value: '大学甲' }, { group: '教育', key: '硕士学校', value: '大学乙' }] });
   assert.deepEqual(JSON.parse(JSON.stringify(torn.matches.find((match) => match.fieldId === 'school'))), { fieldId: 'school', value: '', blocked: 'ai_conflict' });
+  // 一题只进一批，ai_conflict 只会是同一个回复里给了不同的值：网页上的原因照这个说。
+  const content = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
+  assert.match(content, /ai_conflict: "AI 对同一题给了不同的值"/);
+  assert.doesNotMatch(content + fs.readFileSync(path.join(__dirname, '..', 'ai-worker.js'), 'utf8'), /几批 ?(?:AI )?回答对不上|几批对不上/);
 });
 
 test('rate limiting stops later prompt batches', async () => {
