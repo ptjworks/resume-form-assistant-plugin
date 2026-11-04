@@ -986,6 +986,20 @@ test("a multi-select takes a long list of short options it can split", async () 
   assert.deepEqual(fieldsOf(env.calls[0]).find((field) => field.fieldId === "skills").fits, [refOf(env.calls[0].user, "专业技能")]);
 });
 
+test("a cascade not asking for a place gets its value as it is, never a city cut off its front", async () => {
+  const env = worker((message, catalog) => ["major", "group", "where"].map((fieldId) => ({ fieldId, ref: catalog[0].ref })));
+  const result = await env.run({
+    formFields: [{ fieldId: "major", label: "专业类别", inputType: "select", cascade: true, options: [] },
+      { fieldId: "group", label: "专业", inputType: "select", cascadeGroup: "group-0", cascadeLevel: 0, options: ["请选择"] },
+      { fieldId: "where", label: "学校所在地", inputType: "select", cascade: true, options: [] }],
+    resumeFields: [{ group: "教育经历", key: "教育经历1-校区", value: "上海交通大学闵行校区" }]
+  });
+  // 专业类别、专业这类不问地区的级联原样给；问「所在地」的才截到认得出的城市。
+  assert.equal(valueOf(result, "major"), "上海交通大学闵行校区");
+  assert.equal(valueOf(result, "group"), "上海交通大学闵行校区");
+  assert.equal(valueOf(result, "where"), "上海");
+});
+
 test("a cascade given only a province is not filled; a city or a municipality is", async () => {
   const env = worker((message, catalog) => catalog.map((entry, at) => ({ fieldId: `c${at}`, ref: entry.ref })));
   const result = await env.run({
