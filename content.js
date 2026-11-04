@@ -87,7 +87,7 @@
     cascade_unsupported: "两级选择暂不支持",
     control_disabled: "字段不可操作",
     invalid_date: "日期格式或范围不符",
-    ai_conflict: "几批 AI 回答对不上",
+    ai_conflict: "AI 对同一题给了不同的值",
     too_many_items: "AI 给的资料项太多",
     region_unavailable: "地区数据没加载",
     region_too_coarse: "地址只认出了省",

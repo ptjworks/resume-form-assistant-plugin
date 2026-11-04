@@ -286,18 +286,29 @@ function relevantEntries(fields, entries) {
   const rank = entry => fitted.has(entry.ref) ? 0 : topic([entry.key, entry.group, ...(entry.aka || [])].join(" ")).some(word => asked.has(word)) ? 1 : 2;
   const ordered = entries.map((entry, index) => ({ entry, index, rank: rank(entry) })).sort((a, b) => a.rank - b.rank || a.index - b.index);
   const picked = [];
-  let bytes = promptBytes(fields, [], true);
+  // fits 先按选进来的项裁：没选进来的项，它在 fits 里的编号也不发。所以起点按 fits 都空算，选进一项时加上它在各题 fits 里的编号
+  // （每个大约是引号、逗号和信封里的转义），一道 fits 很长的下拉不会让一项都选不进来。
+  const trimmedTo = keep => fields.map(field => (field.fits ? { ...field, fits: field.fits.filter(token => keep.has(REF_TOKEN.exec(token)?.[1])) } : field));
+  const fitBytes = new Map();
+  for (const field of fields) {
+    for (const token of field.fits || []) {
+      const ref = REF_TOKEN.exec(token)?.[1];
+      fitBytes.set(ref, (fitBytes.get(ref) || 0) + token.length + 5);
+    }
+  }
+  let bytes = promptBytes(trimmedTo(new Set()), [], true);
   for (const { entry } of ordered) {
-    if (bytes + entryBytes(entry) > AI_USER_BUDGET) continue;
+    const cost = entryBytes(entry) + (fitBytes.get(entry.ref) || 0);
+    if (bytes + cost > AI_USER_BUDGET) continue;
     picked.push(entry);
-    bytes += entryBytes(entry);
+    bytes += cost;
   }
   const inOrder = () => {
     const keep = new Set(picked);
     return entries.filter(entry => keep.has(entry));
   };
   let chosen = inOrder();
-  while (picked.length && promptBytes(fields, chosen, true) > AI_USER_BUDGET) {
+  while (picked.length && promptBytes(trimmedTo(new Set(chosen.map(entry => entry.ref))), chosen, true) > AI_USER_BUDGET) {
     picked.pop();
     chosen = inOrder();
   }
@@ -453,8 +464,8 @@ async function handleAiFill(message, controller = new AbortController()) {
     warnings.push(aiFailureMessage({ reason: "cancelled" }));
   }
   const seenMatchIds = new Set();
-  // 开放题（多行文本框、问动机的单行题）的回答被拦下时（资料项太多、几批对不上），和没有现成回答一样算开放题，不报成没写上。
-  const opinion = field => isOpenQuestion(field) || (isTextAnswer(field) && asksOpinion(field));
+  // 开放题（见 isOpinionField）的回答被拦下时（资料项太多、同一个回复里给了不同的值），和没有现成回答一样算开放题，不报成没写上。
+  const opinion = isOpinionField;
   const opinionIds = new Set(formFields.filter(opinion).map(field => field.fieldId));
   const answers = settleAnswers(aiMatches).filter(match => !(match.blocked && opinionIds.has(match.fieldId)));
   const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...answers])
@@ -463,7 +474,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       seenMatchIds.add(match.fieldId);
       return true;
     });
-  // 拦下不填、只报原因的（blocked：日期不对、几批回答对不上）不算 AI 填上的，另记 aiBlocked：网页把它们记作没写上。
+  // 拦下不填、只报原因的（blocked：日期不对、同一个回复里给了不同的值）不算 AI 填上的，另记 aiBlocked：网页把它们记作没写上。
   const aiAnswered = matches.filter(match => !matchedFieldIds.has(match.fieldId));
   diagnostics.aiMatches = aiAnswered.filter(match => !match.blocked).length;
   // 联动下拉看不出是哪一级、给了整段的。
@@ -719,7 +730,7 @@ function refMatches(payload, fields, catalog, allowed) {
   });
 }
 
-// 目录太大、同一题分几批问时，几批给的不一样（同一批里给了两个不同的值也算）：这一题不填，报原因。
+// 同一个回复里对同一题给了几个不一样的回答（一题只进一批，不会跨批）：这一题不填，报原因。
 // 其中有拦下的（日期不对、资料项太多、地区这类）报第一个拦下的原因；都是填得进的值、只是不一样时报 ai_conflict。
 function settleAnswers(matches) {
   const byField = new Map();
@@ -751,17 +762,32 @@ function asksOpinion(field) {
   return OPINION_QUESTION.test([field.label, field.placeholder].filter(Boolean).join(" "));
 }
 
+// 单行的叙述题：英文「Tell us about yourself」「Describe…」「What makes you…」「Walk us through…」，中文「请简单介绍一下你自己」这类。
+// 认得出是叙述、认不出问的是哪件事：按保守处理，只放行字段名（或别的叫法）和题目归一后一模一样的资料项（见 answersOnTopic）。
+const NARRATIVE_QUESTION = /\b(?:tell (?:us|me)|describe|introduce|walk (?:us|me) through|what makes you|share (?:a|an|one|your)|explain|elaborate)\b|介绍一下|自我介绍|介绍你|谈一谈|讲一讲|阐述|叙述/i;
+function asksNarrative(field) {
+  return NARRATIVE_QUESTION.test([field.label, field.placeholder].filter(Boolean).join(" "));
+}
+
+// 开放题：多行文本框，问动机、打算、优缺点、看法的单行题，和单行的叙述题。AI 不能现写回答，只能原样用一项说的是同一件事的资料。
+function isOpinionField(field) {
+  return isOpenQuestion(field) || (isTextAnswer(field) && (asksOpinion(field) || asksNarrative(field)));
+}
+
 function answersOnTopic(field, tokens, catalog) {
-  if (!isOpenQuestion(field) && !asksOpinion(field)) return true;
+  if (!isOpinionField(field)) return true;
   const question = [field.label, field.placeholder].filter(Boolean).join(" ");
   const asked = topic([question, field.group].filter(Boolean).join(" "));
   const same = ResumeProAIHelpers.looseText(question);
+  // 只认得出是单行叙述题、认不出问的是哪件事的（不是多行文本框，也没有问动机、看法的词）：只认字段名和题目一模一样的。
+  const narrativeOnly = !isOpenQuestion(field) && !asksOpinion(field);
   return tokens.every(token => {
     const item = catalog.items.get(REF_TOKEN.exec(token)?.[1]);
     if (!item) return false;
     // 题目和字段名一模一样（存过的原题「你的优势和不足」去掉通用词就什么都不剩）直接算。
     const names = [item.key, ...(aliasesOf(item.key) || [])];
     if (names.some(name => ResumeProAIHelpers.looseText(name) === same)) return true;
+    if (narrativeOnly) return false;
     const hits = new Set(topic(names.join(" ")).filter(word => asked.includes(word)));
     return hits.size >= 2 || (hits.size === 1 && coveredBy(question, hits));
   });
@@ -797,7 +823,7 @@ function topicWords(text) {
 // 题目看不出取哪一头的一段起止、不是日期的值给空串：页面上也填不进去（评测里「参加工作时间」被给过一段实习时间）。
 function pickerDate(field, value) {
   const helpers = ResumeProAIHelpers;
-  const picked = helpers.rangeDateValue(value, [field.label, field.placeholder, field.ariaLabel].filter(Boolean).join(" "));
+  const picked = helpers.rangeDateValue(value, helpers.questionHint(field));
   if (helpers.rangeDateParts(picked)) return "";
   // 原生的 date、month、datetime-local 框写不进「至今」。
   if (helpers.isPresentDate(picked)) return ["date", "month", "datetime-local"].includes(field.inputType) ? "" : picked;
@@ -882,7 +908,7 @@ function refValue(token, field, catalog) {
   if (SPAN_SIDES.includes(part)) {
     const parts = ResumeProAIHelpers.rangeDateParts(value);
     if (!parts) return value;
-    const side = ResumeProAIHelpers.spanSide([field.label, field.placeholder, field.ariaLabel].filter(Boolean).join(" ")) || part;
+    const side = ResumeProAIHelpers.spanSide(ResumeProAIHelpers.questionHint(field)) || part;
     return parts[side === "start" ? 0 : 1];
   }
   return part ? ResumeProAIHelpers.datePart(value, part, field) : value;

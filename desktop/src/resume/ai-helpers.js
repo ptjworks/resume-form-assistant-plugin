@@ -212,6 +212,7 @@
     choiceValue,
     controlChoiceValue,
     spanSide,
+    questionHint,
     valueShape,
     datePart,
     catalogKeys,
@@ -964,6 +965,11 @@
     return side ? parts[side === "start" ? 0 : 1] : raw;
   }
 
+  // 判断题目要日期的哪一头、哪一部分时看的文字：题目、占位文字、aria-label、name、id（英文表常只写在 name、id 上，如 graduationMonth）。
+  function questionHint(field) {
+    return [field?.label, field?.placeholder, field?.ariaLabel, field?.name, field?.idAttr].filter(Boolean).join(" ");
+  }
+
   // 题目要一段起止的哪一头：写明开始、入学这类的给 start，写明结束、毕业、离职这类的给 end；两样都写了、都没写给空串。
   function spanSide(hint) {
     const text = String(hint ?? "");
@@ -1051,7 +1057,7 @@
   // 下拉读得到选项时按选项的写法给（「5」「05」「5月」），要和一个选项归一后完全相同：「9」不能靠「包含」落到「1999年」上。
   // 对不上给空串；没有选项给补零的数字。
   function datePart(value, part, field) {
-    const hint = [field?.label, field?.placeholder].filter(Boolean).join(" ");
+    const hint = questionHint(field);
     const text = String(rangeDateValue(value, hint)).trim();
     const yearOnly = /^((?:19|20)\d{2})\s*年?$/.exec(text);
     const parsed = yearOnly ? { year: yearOnly[1] } : parseDateParts(text);

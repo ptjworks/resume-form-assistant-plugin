@@ -432,6 +432,27 @@ test("a word saying what the question asks stays: a date is no reason and a skil
   assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["leave2", "plan2"]);
 });
 
+test("a single-line narrative question takes no resume item but one saved under the very same question", async () => {
+  const resume = [{ group: "教育经历", key: "教育经历1-学历", value: "硕士" }, { group: "求职意向", key: "期望工作地点", value: "虚构城" },
+    { group: "自我评价", key: "自我评价", value: "踏实认真" }];
+  const env = worker((message, catalog) => {
+    const ref = (key) => catalog.find((entry) => entry.key === key).ref;
+    return [{ fieldId: "about", ref: ref("教育经历1-学历") }, { fieldId: "fit", ref: ref("期望工作地点") },
+      { fieldId: "intro", ref: ref("自我评价") }, { fieldId: "walk", ref: ref("教育经历1-学历") }];
+  });
+  const result = await env.run({
+    formFields: [{ fieldId: "about", label: "Tell us about yourself", inputType: "text" }, { fieldId: "fit", label: "What makes you a good fit?", inputType: "text" },
+      { fieldId: "intro", label: "请简单介绍一下你自己", inputType: "text" }, { fieldId: "walk", label: "Walk us through your background", inputType: "text" }],
+    resumeFields: resume
+  });
+  // 单行的叙述题认得出、认不出问的是哪件事：学历、工作地点、自我评价都不放行，记作开放题没有现成回答。
+  assert.deepEqual(result.matches, []);
+  assert.equal(result.diagnostics.openUnanswered, 4);
+  // 「介绍人姓名」不是叙述题。
+  assert.equal(env.context.asksNarrative({ label: "介绍人姓名" }), false);
+  assert.equal(env.context.isOpinionField({ label: "Tell us about yourself", inputType: "text" }), true);
+});
+
 test("an open question whose answer is held back counts as having no ready answer, not as unwritten", async () => {
   const resume = Array.from({ length: 10 }, (_, i) => ({ group: "自我评价", key: `自我评价${i}`, value: `评价${i}` }));
   const env = worker((message, catalog) => [{ fieldId: "self", refs: catalog.map((entry) => entry.ref) }]);
