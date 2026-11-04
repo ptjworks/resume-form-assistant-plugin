@@ -356,6 +356,83 @@ fn a_record_whose_home_is_not_a_file_is_deleted_and_the_home_is_left_for_the_use
 }
 
 #[test]
+fn bytes_of_the_wrong_content_at_home_never_overwrite_the_right_copy_in_tmp() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    let archive = dir.path().join("archive");
+    let home = archive.join(RESUME_FILES_DIR).join(&file.sha256);
+    let staged = archive.join("tmp").join(format!("resume-file-{}.deleting", file.sha256));
+    // 对的那份在 tmp/ 里（上一次没能挪回去），原位置上是一个内容不对的文件。
+    std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+    std::fs::rename(&home, &staged).unwrap();
+    std::fs::write(&home, b"other bytes").unwrap();
+    // 删除不挪原位置的东西，不盖掉 tmp/ 里那份，按查不清报错，记录不动。
+    let error = db.delete_resume_file(&file.id).unwrap_err();
+    assert_eq!(code(error), "validation_failed");
+    assert_eq!(std::fs::read(&staged).unwrap(), pdf(1));
+    assert_eq!(std::fs::read(&home).unwrap(), b"other bytes");
+    assert!(db.resume_file(&file.id).unwrap().is_some());
+}
+
+/// 把 `link` 做成指向 `target` 目录的链接：Unix 上是符号链接，Windows 上是目录连接（不用管理员权限）。
+fn link_dir(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        // cmd 把路径里的正斜杠当成开关，先换成反斜杠。
+        let native = |path: &std::path::Path| path.to_string_lossy().replace('/', "\\");
+        let made = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(native(link))
+            .arg(native(target))
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&made.stderr));
+    }
+}
+
+#[test]
+fn an_attachment_folder_that_became_a_link_is_never_cleaned_through() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = open(dir.path());
+    let file = db.add_resume_file(ResumeFileKind::Resume, "简历.pdf", &pdf(1)).unwrap();
+    db.close().unwrap();
+    // 让这条记录读不出来（删的时候走坏记录那条路），哈希也写坏，最容易只删一行就走到清理。
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    raw.execute("UPDATE resume_files SET sha256 = 'not-a-hash' WHERE id = ?1", rusqlite::params![file.id]).unwrap();
+    drop(raw);
+    let db = open(dir.path());
+    // 打开档案以后，附件目录被换成指向档案外面一个目录的链接，那边有几个没人引用的文件。
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("victim.pdf"), b"not part of the archive").unwrap();
+    std::fs::write(outside.join("0".repeat(64)), b"looks like an attachment").unwrap();
+    let folder = dir.path().join("archive").join(RESUME_FILES_DIR);
+    std::fs::remove_dir_all(&folder).unwrap();
+    link_dir(&outside, &folder);
+    // 删除只删记录，一个文件都不动，按没能核对报；外面的文件都还在。
+    let result = db.delete_resume_file(&file.id).unwrap();
+    assert!(result.deleted, "{result:?}");
+    assert!(result.folder.unchecked.is_some() && result.folder.leftovers.is_empty(), "{result:?}");
+    assert_eq!(std::fs::read(outside.join("victim.pdf")).unwrap(), b"not part of the archive");
+    assert!(outside.join("0".repeat(64)).is_file());
+    // 添加也不往链接里写。
+    assert_eq!(code(db.add_resume_file(ResumeFileKind::Photo, "照片.png", &png()).unwrap_err()), "validation_failed");
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 2);
+    db.close().unwrap();
+    // 收拾测试：先拆掉链接，免得删临时目录时顺着链接删外面。
+    #[cfg(windows)]
+    std::fs::remove_dir(&folder).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&folder).unwrap();
+}
+
+#[test]
 fn leftovers_in_tmp_are_swept_and_a_locked_file_is_not_reported_deleted() {
     let dir = tempfile::tempdir().unwrap();
     let db = open(dir.path());

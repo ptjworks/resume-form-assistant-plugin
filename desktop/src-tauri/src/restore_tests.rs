@@ -208,6 +208,36 @@ fn a_record_whose_file_location_is_a_folder_can_be_deleted_and_the_backup_still_
 }
 
 #[test]
+fn subfolders_of_the_attachment_folder_are_skipped_without_being_read() {
+    // #429: the backup skips anything in attachments/resume-files/ that is not a regular file
+    // before it would walk into it, so an empty or an unreadable subfolder does not matter.
+    let source = layout();
+    let (store, _app) = seeded(&source.paths);
+    let bytes = [b"%PDF-1.7\n".as_slice(), b"resume bytes"].concat();
+    let file = store.add_resume_file(archive_store::ResumeFileKind::Resume, "简历.pdf", &bytes).unwrap();
+    let folder = source.paths.archive_dir.join(archive_store::RESUME_FILES_DIR);
+    std::fs::create_dir_all(folder.join("empty")).unwrap();
+    let locked = folder.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(locked.join("inside"), b"x").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    let package = export_to(&store, &source.paths, "backup.zip");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().any(|entry| entry.path.ends_with(&file.sha256)));
+    assert!(manifest.entries.iter().all(|entry| !entry.path.contains("empty") && !entry.path.contains("locked")));
+    store.close().unwrap();
+}
+
+#[test]
 fn restoring_the_same_backup_twice_mints_two_different_epochs() {
     let source = layout();
     let (store, _app) = seeded(&source.paths);

@@ -136,10 +136,11 @@ fn build(
                 Disposition::Include => {}
             }
             let kind = child.file_type()?;
-            if kind.is_dir() {
-                walk.push(path);
-            } else if !kind.is_file() && in_resume_files(&rel) {
+            // 附件目录里不是普通文件的东西（子目录、链接）不归任何附件：入队之前就跳过，不去读里面。
+            if in_resume_files(&rel) && !kind.is_file() {
                 skipped.push((rel, "附件目录里不是普通文件".to_string()));
+            } else if kind.is_dir() {
+                walk.push(path);
             } else {
                 entries.push(add_file(
                     &mut zip,
