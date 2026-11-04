@@ -8,7 +8,8 @@ export const STORAGE_KEY = 'feedbackStateV1';
 // whether an unfilled select's popup opened and had any option, and a report when the AI request fails;
 // #299 adds how long the AI service took to start answering and where a timeout stopped, before any
 // release carried version 2, so it stays 2.
-export const CONSENT_VERSION = 2;
+// 3 (#301 U2 U5): every unfilled field counted by its failure reason code, not only the ten listed.
+export const CONSENT_VERSION = 3;
 // chrome.management.getSelf().installType; getSelf needs no "management" permission.
 const INSTALL_TYPES = ['normal', 'development', 'sideload', 'admin', 'other'];
 const HOUR = 3600000;
