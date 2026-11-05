@@ -320,7 +320,7 @@ test("发版工作流自己也要跑这个检查，并且把该说的话说清�
   assert.match(flow, /--assets dist-release --write-checksums/);
   assert.match(flow, /--assets dist-release\n/);
   assert.match(flow, /pack-plugin\.js/);
-  assert.match(flow, /plugin_version=\$\(node -p 'require\("\.\/manifest\.json"\)\.version'\)/);
+  assert.match(flow, /plugin_version=\$\(node -p 'require\("\.\/extension\/manifest\.json"\)\.version'\)/);
   assert.match(flow, /wangshen-kuaitian-plugin-\$\{plugin_version\}\.zip/);
   assert.match(flow, /--require-plugin-zip/);
   assert.match(flow, /wangshen-kuaitian-plugin/);

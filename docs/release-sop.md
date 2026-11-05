@@ -4,7 +4,7 @@
 
 | 发布对象 | 版本号来源 | 触发动作 | GitHub 产物 | 用户如何得到新版 |
 | --- | --- | --- | --- | --- |
-| 浏览器插件 | 根目录 `manifest.json` | **发布正式** GitHub Release `vX.Y.Z` | `wangshen-kuaitian-vX.Y.Z-chrome.zip` | Chrome 商店审核后手动上线；ZIP 可手动安装 |
+| 浏览器插件 | `extension/manifest.json` | **发布正式** GitHub Release `vX.Y.Z` | `wangshen-kuaitian-vX.Y.Z-chrome.zip` | Chrome 商店审核后手动上线；ZIP 可手动安装 |
 | 桌面正式版 | `desktop/src-tauri/tauri.conf.json`、`Cargo.toml`、`Cargo.lock` | 推送标签 `desktop-vX.Y.Z` | Windows x64 EXE、macOS ARM64 DMG、各自 SHA-256、备用插件 ZIP | 工作流自动创建正式 GitHub Release；应用只提示下载，不自动安装 |
 | 桌面测试版 | 由 `release-beta.js` 从 `main` 生成 `X.Y.Z-beta.N` | 推送标签 `desktop-vX.Y.Z-beta.N` | 同上 | 工作流自动创建 GitHub 预发布；正式版用户不会收到更新提示 |
 
@@ -22,7 +22,7 @@
 
 首次商店 API、服务账号、GitHub Secret 已配置。细节与故障处理见 [Chrome 商店发版说明](chrome-web-store-release.md)。
 
-1. 在 PR 中把根目录 `manifest.json` 的 `version` 升为未使用的 `X.Y.Z`，合入 `main`。Chrome 扩展版本不用 `-beta`。商店的 `0.4.0` 已手动上线；首次自动送审从 `0.4.1` 或更高版本开始，**不要补建 `v0.4.0` 正式 Release**。
+1. 在 PR 中把 `extension/manifest.json` 的 `version` 升为未使用的 `X.Y.Z`，合入 `main`。Chrome 扩展版本不用 `-beta`。商店的 `0.4.0` 已手动上线；首次自动送审从 `0.4.1` 或更高版本开始，**不要补建 `v0.4.0` 正式 Release**。
 2. 在 Actions 手动运行 **Release Extension**，保持 `dry_run=true`、`release_staged=false`。它会检查、测试、打 ZIP，并留下临时 artifact；不会动商店或 GitHub Release。下载 ZIP 核对 `manifest.json`、版本、扩展 ID 和主要功能。这个试跑结果不是正式 Release 附件。
 3. 更新本地 `main`，核对版本与准备发布的 commit，然后创建**正式** GitHub Release。只推 `vX.Y.Z` tag 不会启动插件商店工作流；创建草稿也不会，必须点 Publish release。不要勾 Pre-release。
 

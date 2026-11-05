@@ -11,7 +11,7 @@
 <label>原生单选 <input name="radio" id="radio-a" type="radio" value="A"><input name="radio" id="radio-b" type="radio" value="B"></label>
 <label>原生复选 <input id="checkbox" type="checkbox"></label>
 <button type="button" id="blank">空白焦点目标</button><pre id="results"></pre>
-<script src="../../../ai-helpers.js"></script><script src="../../../control-adapters.js"></script>
+<script src="../../../extension/ai-helpers.js"></script><script src="../../../extension/control-adapters.js"></script>
 <script>
 reverted.addEventListener('blur', () => setTimeout(() => { reverted.value = ''; }, 60));
 removed.addEventListener('blur', () => setTimeout(() => { removed.replaceWith(removed.cloneNode()); }, 60));

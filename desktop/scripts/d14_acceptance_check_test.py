@@ -16,7 +16,7 @@ SPEC.loader.exec_module(D14)
 
 class D14AcceptanceCheckTests(unittest.TestCase):
     def test_store_key_resolves_to_fixed_extension_id(self):
-        manifest = json.loads((D14.ROOT / "manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads((D14.ROOT / "extension" / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(D14.extension_id_from_key(manifest["key"]), D14.EXPECTED_EXTENSION_ID)
 
     def test_unsafe_zip_path_is_rejected(self):
@@ -52,7 +52,7 @@ class D14AcceptanceCheckTests(unittest.TestCase):
         expected = D14.CORE_EXTENSION_FILES | set(D14.read_json(D14.REVIEWED_ASSETS))
         with tempfile.TemporaryDirectory() as temp:
             archive_path = Path(temp) / "extension.zip"
-            manifest = json.loads((D14.ROOT / "manifest.json").read_text(encoding="utf-8"))
+            manifest = json.loads((D14.ROOT / "extension" / "manifest.json").read_text(encoding="utf-8"))
             with zipfile.ZipFile(archive_path, "w") as archive:
                 for name in expected:
                     content = json.dumps(manifest).encode() if name == "manifest.json" else b"safe"
@@ -194,7 +194,7 @@ class D14AcceptanceCheckTests(unittest.TestCase):
     def test_source_versions_are_derived_from_the_candidate_commit(self):
         blobs = {
             "desktop/src-tauri/tauri.conf.json": b'{"version":"0.1.0"}',
-            "link/envelope.mjs": b"export const PROTOCOL_VERSION = 7;",
+            "extension/link/envelope.mjs": b"export const PROTOCOL_VERSION = 7;",
         }
         with patch.object(D14, "git_blob", side_effect=lambda _commit, name: blobs[name]):
             self.assertEqual(D14.source_candidate_versions("a" * 40), ("0.1.0", 7))

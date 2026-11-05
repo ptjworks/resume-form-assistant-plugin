@@ -44,7 +44,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 DESKTOP = Path(__file__).resolve().parent.parent
-PLUGIN = DESKTOP.parent
+PLUGIN = DESKTOP.parent / "extension"
 
 EXCLUDE = {
     ".git", ".github", ".playwright-cli", ".secrets", ".edge-icon-profile",
