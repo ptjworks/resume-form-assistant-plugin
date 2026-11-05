@@ -360,23 +360,24 @@ test('an install or update that leaves the choice open shows it right away; a ma
   }
 });
 
-// #301：告知版本升到 2（自动报告多了安装方式、填写入口和网页焦点、AI 档位、下拉弹层有没有选项，AI 请求失败也上报）。
-test('a grant given under the version-1 notice is asked again: nothing is sent until the user agrees; an opt-out stays', async () => {
+// #301：告知版本升到 2（自动报告多了安装方式、填写入口和网页焦点、AI 档位、下拉弹层有没有选项，AI 请求失败也上报）；
+// 升到 3（U2 U5：全部没填上的字段按失败原因码计数）。之前任一版本的同意都要重新询问。
+for (const old of [1, 2]) test(`a grant given under the version-${old} notice is asked again: nothing is sent until the user agrees; an opt-out stays`, async () => {
   const { CONSENT_VERSION, installFeedback } = await import('../link/feedback.mjs');
-  assert.equal(CONSENT_VERSION, 2);
-  const v1 = { consent: true, consentVersion: 1, anonymousId: 'v1-id', recent: {}, hourly: [], fillHourly: [] };
-  const f = await fixture({ data: { feedbackStateV1: structuredClone(v1) } });
+  assert.equal(CONSENT_VERSION, 3);
+  const earlier = { consent: true, consentVersion: old, anonymousId: 'earlier-id', recent: {}, hourly: [], fillHourly: [] };
+  const f = await fixture({ data: { feedbackStateV1: structuredClone(earlier) } });
   // Marked as renewed, so the choice can say the notice changed.
   const renewed = { consent: false, decided: false, renewed: true };
   assert.deepEqual(await f.service.status(), renewed);
   await f.service.automatic(crash, 'c.liepin.com');
   await f.service.automatic({ kind: 'fill_partial', diagnostics: '[错误]\nerror_category: timeout' }, 'c.liepin.com');
   assert.equal(f.calls.length, 0, 'nothing is sent on the old grant');
-  assert.ok(!JSON.stringify(f.data).includes('v1-id'), 'the old installation id is gone');
+  assert.ok(!JSON.stringify(f.data).includes('earlier-id'), 'the old installation id is gone');
   assert.deepEqual(await (await fixture({ data: f.data })).service.status(), renewed, 'still undecided after a restart');
-  // An update that leaves the version-1 grant behind opens the choice right away.
+  // An update that leaves the older grant behind opens the choice right away.
   const opened = []; let onInstalled;
-  const stored = { feedbackStateV1: structuredClone(v1) };
+  const stored = { feedbackStateV1: structuredClone(earlier) };
   installFeedback({
     runtime: { id: 'test', getURL: p => `chrome-extension://test/${p}`, getManifest: () => ({ version: '0.4.5' }),
       onMessage: { addListener: () => {} }, onInstalled: { addListener: fn => { onInstalled = fn; } } },
@@ -388,13 +389,13 @@ test('a grant given under the version-1 notice is asked again: nothing is sent u
   assert.deepEqual(opened, ['chrome-extension://test/popup.html']);
   // Agreeing to the current notice starts sending again, under a new id.
   assert.deepEqual(await f.service.setConsent(true), { consent: true, decided: true });
-  assert.equal(f.data[f.key].consentVersion, 2);
+  assert.equal(f.data[f.key].consentVersion, 3);
   assert.equal('renewed' in f.data[f.key], false, 'a made choice clears the mark');
   await f.service.automatic(crash, 'c.liepin.com');
   assert.equal(f.calls.length, 1);
-  assert.notEqual(f.calls[0].payload.anonymous_id, 'v1-id');
-  // Opting out under version 1 stays an opt-out.
-  for (const optOut of [{ consent: false, consentVersion: 0, anonymousId: null }, { consent: false, consentVersion: 1 }, { consent: false }]) {
+  assert.notEqual(f.calls[0].payload.anonymous_id, 'earlier-id');
+  // Opting out under an older version stays an opt-out.
+  for (const optOut of [{ consent: false, consentVersion: 0, anonymousId: null }, { consent: false, consentVersion: old }, { consent: false }]) {
     const out = await fixture({ data: { feedbackStateV1: optOut } });
     assert.deepEqual(await out.service.status(), { consent: false, decided: true }, JSON.stringify(optOut));
     await out.service.automatic(crash, 'c.liepin.com');

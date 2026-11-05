@@ -1044,6 +1044,12 @@ fn export_resume_template_cmd(state: State<AppState>, id: String, path: String) 
     with_store(&state, |store| resume_commands::export_template(store, &id, std::path::Path::new(&path)))
 }
 
+/// AI 解析结果还没存成模板时导出成 Excel（#301 U1），不碰档案。返回剔掉的密码类字段数。
+#[tauri::command]
+fn export_resume_groups_cmd(groups: Vec<archive_store::TemplateGroup>, path: String) -> Result<usize, CommandError> {
+    resume_commands::export_groups(groups, std::path::Path::new(&path))
+}
+
 #[tauri::command]
 fn rename_resume_template_cmd(
     state: State<AppState>,
@@ -2226,6 +2232,7 @@ pub fn run() {
             get_resume_template_cmd,
             import_resume_template_cmd,
             export_resume_template_cmd,
+            export_resume_groups_cmd,
             rename_resume_template_cmd,
             save_resume_template_fields_cmd,
             delete_resume_template_cmd,

@@ -1,0 +1,274 @@
+[
+  {
+    "name": "\u4e2d\u6587\u5185\u5bb9\u539f\u6837\u8ba1\u5b57\u8282",
+    "groups": [
+      {
+        "name": "\u57fa\u672c\u4fe1\u606f",
+        "fields": [
+          {
+            "key": "\u59d3\u540d",
+            "value": "\u5f20\u4e09"
+          },
+          {
+            "key": "\u624b\u673a\u53f7\u7801",
+            "value": "13800000000"
+          }
+        ]
+      }
+    ],
+    "stored": [
+      {
+        "name": "\u57fa\u672c\u4fe1\u606f",
+        "fields": [
+          {
+            "key": "\u59d3\u540d",
+            "value": "\u5f20\u4e09"
+          },
+          {
+            "key": "\u624b\u673a\u53f7\u7801",
+            "value": "13800000000"
+          }
+        ]
+      }
+    ],
+    "skipped": 0,
+    "bytes": 115
+  },
+  {
+    "name": "\u7ec4\u540d\u3001\u5b57\u6bb5\u540d\u53bb\u4e24\u7aef\u7a7a\u767d\uff0c\u503c\u539f\u6837\uff1b\u7a7a\u5b57\u6bb5\u540d\u3001\u7a7a\u7ec4\u4e22\u6389\uff0c\u7a7a\u7ec4\u540d\u8bb0\u4e3a\u672a\u5206\u7c7b",
+    "groups": [
+      {
+        "name": "  \u6559\u80b2\u7ecf\u5386 ",
+        "fields": [
+          {
+            "key": " \u5b66\u6821 ",
+            "value": " \u67d0\u5927\u5b66 "
+          },
+          {
+            "key": "  ",
+            "value": "\u4e22\u6389"
+          }
+        ]
+      },
+      {
+        "name": "\u7a7a\u7ec4",
+        "fields": []
+      },
+      {
+        "name": " \t",
+        "fields": [
+          {
+            "key": "\u5907\u6ce8",
+            "value": "x"
+          }
+        ]
+      }
+    ],
+    "stored": [
+      {
+        "name": "\u6559\u80b2\u7ecf\u5386",
+        "fields": [
+          {
+            "key": "\u5b66\u6821",
+            "value": " \u67d0\u5927\u5b66 "
+          }
+        ]
+      },
+      {
+        "name": "\u672a\u5206\u7c7b",
+        "fields": [
+          {
+            "key": "\u5907\u6ce8",
+            "value": "x"
+          }
+        ]
+      }
+    ],
+    "skipped": 0,
+    "bytes": 136
+  },
+  {
+    "name": "\u53bb\u7a7a\u767d\u6309 Unicode White_Space\uff1a\u53bb U+00A0\u3001U+3000\u3001U+0085\uff0c\u4e0d\u53bb U+FEFF",
+    "groups": [
+      {
+        "name": "\u5176\u4ed6",
+        "fields": [
+          {
+            "key": "\u00a0\u5907\u6ce8\u3000",
+            "value": "a"
+          },
+          {
+            "key": "\u8bf4\u660e\u0085",
+            "value": "b"
+          },
+          {
+            "key": "\ufeff\u9644\u6ce8",
+            "value": "c"
+          }
+        ]
+      }
+    ],
+    "stored": [
+      {
+        "name": "\u5176\u4ed6",
+        "fields": [
+          {
+            "key": "\u5907\u6ce8",
+            "value": "a"
+          },
+          {
+            "key": "\u8bf4\u660e",
+            "value": "b"
+          },
+          {
+            "key": "\ufeff\u9644\u6ce8",
+            "value": "c"
+          }
+        ]
+      }
+    ],
+    "skipped": 0,
+    "bytes": 120
+  },
+  {
+    "name": "\u50cf\u5bc6\u7801\u7684\u5b57\u6bb5\u540d\u6216\u5185\u5bb9\u5254\u6389\uff0c\u5254\u7a7a\u7684\u7ec4\u4e0d\u7559\uff1b\u5bc6\u7801\u5b66\u8fd9\u7c7b\u6b63\u5e38\u6587\u5b57\u7559\u4e0b",
+    "groups": [
+      {
+        "name": "\u8d26\u53f7",
+        "fields": [
+          {
+            "key": "\u90ae\u7bb1\u5bc6\u7801",
+            "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "key": "\u77ed\u4fe1\u9a8c\u8bc1\u7801",
+            "value": "123456"
+          }
+        ]
+      },
+      {
+        "name": "\u8bfe\u7a0b",
+        "fields": [
+          {
+            "key": "\u9009\u4fee",
+            "value": "\u5bc6\u7801\u5b66"
+          },
+          {
+            "key": "\u5907\u6ce8",
+            "value": "\u5bc6\u7801\uff1aabc123"
+          },
+          {
+            "key": "API Token",
+            "value": "t"
+          }
+        ]
+      }
+    ],
+    "stored": [
+      {
+        "name": "\u8bfe\u7a0b",
+        "fields": [
+          {
+            "key": "\u9009\u4fee",
+            "value": "\u5bc6\u7801\u5b66"
+          }
+        ]
+      }
+    ],
+    "skipped": 4,
+    "bytes": 67
+  },
+  {
+    "name": "\u5927\u5c0f\u5199\u6309 Unicode \u6298\u53e0\uff1a\u017f \u7b97 s\uff0c\u5f00\u5c14\u6587\u7b26\u53f7 K \u7b97 k",
+    "groups": [
+      {
+        "name": "\u5176\u4ed6",
+        "fields": [
+          {
+            "key": "PA\u017f\u017fWORD",
+            "value": "1"
+          },
+          {
+            "key": "to\u212aen",
+            "value": "2"
+          },
+          {
+            "key": "\u5907\u6ce8",
+            "value": "\u6b63\u5e38"
+          }
+        ]
+      }
+    ],
+    "stored": [
+      {
+        "name": "\u5176\u4ed6",
+        "fields": [
+          {
+            "key": "\u5907\u6ce8",
+            "value": "\u6b63\u5e38"
+          }
+        ]
+      }
+    ],
+    "skipped": 2,
+    "bytes": 64
+  },
+  {
+    "name": "\u5185\u5bb9\u91cc\u7684\u5192\u53f7\u524d\u540e\u7a7a\u767d\u6309 Unicode White_Space\uff1aU+0085 \u7b97\uff0cU+FEFF \u4e0d\u7b97",
+    "groups": [
+      {
+        "name": "\u5176\u4ed6",
+        "fields": [
+          {
+            "key": "\u5907\u6ce8\u4e00",
+            "value": "\u5bc6\u7801\u0085:x"
+          },
+          {
+            "key": "\u5907\u6ce8\u4e8c",
+            "value": "\u5bc6\u7801\ufeff:x"
+          }
+        ]
+      }
+    ],
+    "stored": [
+      {
+        "name": "\u5176\u4ed6",
+        "fields": [
+          {
+            "key": "\u5907\u6ce8\u4e8c",
+            "value": "\u5bc6\u7801\ufeff:x"
+          }
+        ]
+      }
+    ],
+    "skipped": 1,
+    "bytes": 72
+  },
+  {
+    "name": "\u63a7\u5236\u5b57\u7b26\u548c U+2028 \u7684 JSON \u8f6c\u4e49\u4e24\u8fb9\u4e00\u81f4",
+    "groups": [
+      {
+        "name": "\u5176\u4ed6",
+        "fields": [
+          {
+            "key": "\u5907\u6ce8",
+            "value": "a\u0001b\n\t\"\\/\u007f\u2028c"
+          }
+        ]
+      }
+    ],
+    "stored": [
+      {
+        "name": "\u5176\u4ed6",
+        "fields": [
+          {
+            "key": "\u5907\u6ce8",
+            "value": "a\u0001b\n\t\"\\/\u007f\u2028c"
+          }
+        ]
+      }
+    ],
+    "skipped": 0,
+    "bytes": 80
+  }
+]
