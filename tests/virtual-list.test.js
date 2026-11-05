@@ -423,11 +423,13 @@ test("virtual list without search that does not redraw on scrolling: a value wri
 });
 
 // #429 跟着滚动重画的虚拟列表：真 rc-virtual-list、el-select-v2 在滚动层设了 scrollTop 以后，下一帧按新位置重画
-// （2026-11-03 在 antd 4.24.16、5.21.6、6.6.8 和 Element Plus 2.8.8 上看到）。jsdom 不派发 scroll，设 scrollTop 时补一个。
+// （2026-11-03 在 antd 4.24.16、5.21.6、6.6.8 和 Element Plus 2.8.8 上看到）。jsdom 不派发 scroll，设 scrollTop 时补一个
+// （用页面窗口的 setTimeout，换成假时钟时一起走，见 fakeClock）。
 function followScroll(scroller, total, view, redraw) {
   let top = 0;
+  const w = scroller.ownerDocument.defaultView;
   Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => top,
-    set: (value) => { top = Math.max(0, Math.min(Number(value) || 0, total() - view)); setTimeout(() => scroller.dispatchEvent(new scroller.ownerDocument.defaultView.Event("scroll")), 0); } });
+    set: (value) => { top = Math.max(0, Math.min(Number(value) || 0, total() - view)); w.setTimeout(() => scroller.dispatchEvent(new w.Event("scroll")), 0); } });
   scroller.addEventListener("scroll", redraw);
 }
 
@@ -454,7 +456,7 @@ function scrollingAntd(choices, { multiple = false, grow = false, laidOutAfter =
     scrolls.push(holder.scrollTop);
     if (grow && holder.scrollTop + 256 >= total() - 32) {
       if (grow === true) append(Array.from({ length: 20 }, (_, i) => `加载${String(choices.length + i).padStart(4, "0")}`));
-      else if (pages.length && !loading) { loading = true; setTimeout(() => { loading = false; append(pages.shift()); redraw(); }, grow.delay); }
+      else if (pages.length && !loading) { loading = true; h.w.setTimeout(() => { loading = false; append(pages.shift()); redraw(); }, grow.delay); }
     }
     start = Math.floor(holder.scrollTop / 32);
     const inner = dropdown.querySelector(".rc-virtual-list-holder-inner");
@@ -587,25 +589,52 @@ test("virtual list without search that keeps loading more at the bottom stops sc
   assert.equal(h.holder().scrollTop, 0);
 });
 
-// #429 懒加载的列表：滚到底以后过 200ms 才接上下一页（比等列表停住的 80ms 晚）。
+// 假时钟：页面窗口里的 setTimeout、Date.now、performance.now 不跟墙钟走。计时器按到点先后一个一个跑，
+// 跑完一个、页面上的 Promise 和 MutationObserver 都处理完了，再把时钟拨到下一个。
+// 懒加载的几条要比的是下一页什么时候到、扫描在等什么：用墙钟时，下一页从滚到倒数第二屏算起 200ms 才到，
+// 扫描在这期间要等两屏各停住 80ms，两边只差几毫秒。下一页偶尔落在最后一屏还没停住的时候，这一屏要从头再等 80ms，
+// 超过了这里给的 200ms 上限（load 的 timeoutMs），按没有匹配报（#474 的一次 Windows CI）。按假时钟就只看时间先后，不看机器快慢。
+function fakeClock(h) {
+  const { w } = h, timers = [], wall = w.Date.now(), perf = w.performance.now();
+  let now = 0, seq = 0, waking = false;
+  const next = () => {
+    waking = false;
+    if (!timers.length) return;
+    timers.sort((a, b) => a.at - b.at || a.id - b.id);
+    const timer = timers.shift();
+    now = Math.max(now, timer.at);
+    timer.run();
+    wake();
+  };
+  // 用 setImmediate 跑下一个：轮到它之前，前一个引出的 Promise 和 MutationObserver 回调都跑完了。
+  const wake = () => { if (!waking) { waking = true; setImmediate(next); } };
+  w.setTimeout = (fn, ms, ...args) => { const id = ++seq; timers.push({ id, at: now + Math.max(0, Number(ms) || 0), run: () => fn(...args) }); wake(); return id; };
+  w.clearTimeout = (id) => { const at = timers.findIndex((timer) => timer.id === id); if (at >= 0) timers.splice(at, 1); };
+  w.Date.now = () => wall + now;
+  Object.defineProperty(w.performance, "now", { configurable: true, value: () => perf + now });
+  return h;
+}
+
+// #429 懒加载的列表：滚到最后一屏以后过 200ms 才接上下一页。比等列表停住的 80ms 晚：扫描等最后两屏停住以后，
+// 是在到底以后再等的 500ms 里看到列表变长的。这几条按假时钟跑（见 fakeClock）。
 const LAZY = Array.from({ length: 30 }, (_, i) => i === 20 ? "北京大学医学部" : i === 25 ? "人工智能与大数据" : `示例大学${String(i).padStart(3, "0")}`);
 const PAGE = Array.from({ length: 20 }, (_, i) => `补充大学${String(i).padStart(2, "0")}`);
 
 test("a lazily loaded list whose next page comes late is scanned to its real end: the same name there is chosen, not a longer one seen first", async () => {
-  const h = scrollingAntd(LAZY, { grow: { delay: 200, more: [[...PAGE.slice(0, 10), "北京大学", ...PAGE.slice(10)]] } });
+  const h = fakeClock(scrollingAntd(LAZY, { grow: { delay: 200, more: [[...PAGE.slice(0, 10), "北京大学", ...PAGE.slice(10)]] } }));
   const result = await h.api.operate(h.target, "北京大学");
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(h.picked, ["北京大学"]);
 });
 
 test("a list that grew while being scanned only takes an option written the same; one that merely holds the value is not guessed", async () => {
-  const h = scrollingAntd(LAZY, { grow: { delay: 200, more: [PAGE] } });
+  const h = fakeClock(scrollingAntd(LAZY, { grow: { delay: 200, more: [PAGE] } }));
   const result = await h.api.operate(h.target, "人工智能");
   assert.equal(result.reason, "no_option_match", JSON.stringify(result));
   assert.deepEqual(h.picked, []);
   assert.equal(h.holder().scrollTop, 0);
   // 写法相同的照样选上。
-  const same = scrollingAntd(LAZY, { grow: { delay: 200, more: [PAGE] } });
+  const same = fakeClock(scrollingAntd(LAZY, { grow: { delay: 200, more: [PAGE] } }));
   const found = await same.api.operate(same.target, "补充大学15");
   assert.equal(found.ok, true, JSON.stringify(found));
   assert.deepEqual(same.picked, ["补充大学15"]);
@@ -613,7 +642,7 @@ test("a list that grew while being scanned only takes an option written the same
 
 // 下一页 1 秒后才到（比到底以后等的 500ms 还晚）：滚完时列表没变长过，也不当作看全了，已经看到的「人工智能与大数据」不选。
 test("a lazily loaded list whose next page comes after a second is not taken as complete: a longer option holding the value is not chosen", async () => {
-  const h = scrollingAntd(LAZY, { grow: { delay: 1000, more: [PAGE] } });
+  const h = fakeClock(scrollingAntd(LAZY, { grow: { delay: 1000, more: [PAGE] } }));
   const result = await h.api.operate(h.target, "人工智能");
   assert.equal(result.reason, "no_option_match", JSON.stringify(result));
   assert.deepEqual(h.picked, []);
