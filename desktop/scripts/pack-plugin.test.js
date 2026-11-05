@@ -72,6 +72,23 @@ test("插件文件在 extension/ 里，包根目录仍直接是 manifest.json", 
   }
 });
 
+test("挪目录之前的提交也能打出同样的包", () => {
+  const git = (args, input) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8", input, env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "pack", GIT_AUTHOR_EMAIL: "pack@example.test",
+      GIT_COMMITTER_NAME: "pack", GIT_COMMITTER_EMAIL: "pack@example.test",
+    } }).trim();
+  // 插件文件和 README、LICENSE 都放在根目录，就是挪目录前的布局。
+  const entries = `${git(["ls-tree", `HEAD:${PLUGIN_DIR}`])}\n${git(["ls-tree", "HEAD", "--", "README.md", "LICENSE"])}\n`;
+  const old = git(["commit-tree", git(["mktree"], entries), "-m", "old layout"]);
+  assert.deepEqual(listPluginArchive(repo, old), listPluginArchive(repo));
+});
+
+test("只从提交打包，树对象会被拒绝", () => {
+  assert.throws(() => listPluginArchive(repo, "HEAD^{tree}"), /不是提交/);
+});
+
 test("输出不是 zip 就拒绝", () => {
   assert.throws(() => packPlugin(repo, join(tmpdir(), "plugin.tar")), /\.zip/);
 });

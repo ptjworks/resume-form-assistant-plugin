@@ -88,26 +88,46 @@ function git(root, args, input) {
 
 const lines = (text) => text.split(/\r?\n/).filter(Boolean);
 
-/** 拼一棵包根目录的树：`PLUGIN_DIR` 下的清单条目，加上仓库根目录的 `REPO_ROOT_ENTRIES`。 */
-function archiveTree(root, treeish) {
+/** 先把 treeish 解析成提交号，后面每一步都读同一个提交，中途分支移动也不会混进别的提交。 */
+function resolveCommit(root, treeish) {
+  try {
+    return git(root, ["rev-parse", "--verify", "--quiet", `${treeish}^{commit}`]).trim();
+  } catch {
+    throw new Error(`${treeish} 不是提交，插件包只从提交打`);
+  }
+}
+
+/** 插件文件所在的树。挪进 `PLUGIN_DIR` 之前的提交里，它们在仓库根目录。 */
+function pluginTreeOf(root, commit) {
+  try {
+    git(root, ["cat-file", "-e", `${commit}:${PLUGIN_DIR}/manifest.json`]);
+    return `${commit}:${PLUGIN_DIR}`;
+  } catch {
+    return commit;
+  }
+}
+
+/** 拼一棵包根目录的树：插件目录下的清单条目，加上仓库根目录的 `REPO_ROOT_ENTRIES`。 */
+function archiveTree(root, commit) {
   const plugin = PLUGIN_ARCHIVE_OPERANDS.filter((entry) => !REPO_ROOT_ENTRIES.includes(entry));
   const repo = PLUGIN_ARCHIVE_OPERANDS.filter((entry) => REPO_ROOT_ENTRIES.includes(entry));
   const entries = [
-    ...lines(git(root, ["ls-tree", `${treeish}:${PLUGIN_DIR}`, "--", ...plugin])),
-    ...lines(git(root, ["ls-tree", treeish, "--", ...repo])),
+    ...lines(git(root, ["ls-tree", pluginTreeOf(root, commit), "--", ...plugin])),
+    ...lines(git(root, ["ls-tree", commit, "--", ...repo])),
   ];
   // git archive 碰到不存在的路径会报错，ls-tree 只会静默跳过，这里补上同样的检查。
   const names = new Set(entries.map((line) => line.slice(line.indexOf("\t") + 1)));
   const missing = PLUGIN_ARCHIVE_OPERANDS.filter((entry) => !names.has(entry));
   if (missing.length) {
-    throw new Error(`${treeish} 里找不到这些插件文件：${missing.map(sourcePathOf).join(", ")}`);
+    throw new Error(`${commit} 里找不到这些插件文件：${missing.join(", ")}`);
   }
   return git(root, ["mktree"], `${entries.join("\n")}\n`).trim();
 }
 
 /** 包里的全部文件路径，和 `packPlugin` 打出来的一致。 */
 export function listPluginArchive(root, treeish = "HEAD") {
-  return lines(git(root, ["ls-tree", "-r", "--name-only", archiveTree(root, treeish)]));
+  const tree = archiveTree(root, resolveCommit(root, treeish));
+  return lines(git(root, ["ls-tree", "-r", "--name-only", tree]));
 }
 
 export function packPlugin(root, output, treeish = "HEAD") {
@@ -116,11 +136,19 @@ export function packPlugin(root, output, treeish = "HEAD") {
   }
   const absolute = resolve(output);
   mkdirSync(dirname(absolute), { recursive: true });
-  const tree = archiveTree(root, treeish);
+  const commit = resolveCommit(root, treeish);
+  const tree = archiveTree(root, commit);
   // 直接打一棵树时 git archive 会用当前时间、不写注释。这里沿用提交时间，再把提交号写进
   // zip 注释，和挪目录前直接打提交时一样。
-  const [commit, mtime] = lines(git(root, ["log", "-1", "--format=%H%n%cI", treeish]));
-  git(root, ["archive", "--format=zip", `--mtime=${mtime}`, `--output=${absolute}`, tree]);
+  const mtime = git(root, ["show", "-s", "--no-show-signature", "--format=%cI", commit]).trim();
+  try {
+    git(root, ["archive", "--format=zip", `--mtime=${mtime}`, `--output=${absolute}`, tree]);
+  } catch (error) {
+    if (/mtime/.test(String(error.stderr))) {
+      throw new Error("git archive 不认 --mtime，打插件包需要 Git 2.42 或更新版本");
+    }
+    throw error;
+  }
   setZipComment(absolute, commit);
   return absolute;
 }

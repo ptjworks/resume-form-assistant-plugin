@@ -215,6 +215,22 @@ class D14AcceptanceCheckTests(unittest.TestCase):
             with patch.object(D14, "ROOT", root):
                 self.assertEqual(D14.source_candidate_versions(commit), ("0.1.0", 7))
 
+    def test_source_blobs_key_extension_files_by_zip_path_but_keep_root_documents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "extension").mkdir()
+            (root / "extension" / "manifest.json").write_text("{}", encoding="utf-8")
+            (root / "extension" / "README.md").write_text("not packed", encoding="utf-8")
+            (root / "README.md").write_text("packed", encoding="utf-8")
+            git = ["git", "-c", "user.name=d14", "-c", "user.email=d14@example.test", "-c", f"safe.directory={root.as_posix()}"]
+            subprocess.run([*git, "init", "-q"], cwd=root, check=True)
+            subprocess.run([*git, "add", "."], cwd=root, check=True)
+            subprocess.run([*git, "commit", "-q", "-m", "layout"], cwd=root, check=True)
+            with patch.object(D14, "ROOT", root):
+                algorithm, blobs = D14.git_tree_blob_ids("HEAD")
+            self.assertEqual(blobs["README.md"], D14.git_object_id(b"packed", algorithm))
+            self.assertEqual(blobs["manifest.json"], D14.git_object_id(b"{}", algorithm))
+
     def test_git_object_id_matches_the_standard_empty_blob(self):
         self.assertEqual(
             D14.git_object_id(b"", "sha1"),

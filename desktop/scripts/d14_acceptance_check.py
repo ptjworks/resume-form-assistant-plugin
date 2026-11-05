@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_DIR = "extension"
+REPO_ROOT_ENTRIES = {"README.md", "LICENSE"}
 ACCEPTANCE = ROOT / "docs" / "desktop-mvp" / "acceptance"
 REPORT_TEMPLATE = ACCEPTANCE / "report-template.json"
 REVIEWED_ASSETS = Path(__file__).with_name("plugin-release-assets.json")
@@ -158,9 +159,10 @@ def git_tree_blob_ids(commit: str) -> tuple[str, dict[str, str]]:
         if kind == "blob":
             blobs[name.decode("utf-8")] = object_id
     # Key extension files by their path inside the ZIP, whichever layout the commit used.
+    # README.md and LICENSE always come from the repository root, as pack-plugin.js packs them.
     prefix = f"{PLUGIN_DIR}/"
     for name, object_id in list(blobs.items()):
-        if name.startswith(prefix):
+        if name.startswith(prefix) and name[len(prefix):].split("/")[0] not in REPO_ROOT_ENTRIES:
             blobs[name[len(prefix):]] = object_id
     return algorithm, blobs
 
