@@ -16,7 +16,7 @@ import {
   registrationCompleted,
 } from "./browser-link.ts";
 import type { NativeMessagingRegistrationOutcome } from "./browser-link.ts";
-import { describeCheckFailure, describeUpdate, formatCheckedAt, parseCheckedAt, shouldCheck } from "./update-check.ts";
+import { compareVersions, describeCheckFailure, describeUpdate, formatCheckedAt, parseCheckedAt, shouldCheck, updateNotice } from "./update-check.ts";
 import type { UpdateInfo, UpdatePreference } from "./update-check.ts";
 import { mountApplications } from "./applications-ui.ts";
 import { mountInbox } from "./inbox-ui.ts";
@@ -631,6 +631,35 @@ function showUpdate(message: { tone: string; text: string; available: boolean })
   (must("update-open") as HTMLButtonElement).hidden = !message.available;
 }
 
+/** 主界面顶栏下的提示条，以及「设置」「关于与诊断」上的小圆点。 */
+let shownNotice: UpdateInfo | null = null;
+let lastPref: UpdatePreference | null = null;
+// 这次运行里查成的结果（undefined 是还没查成过）和关掉的版本。偏好文件写不进去时，
+// 不能让读回来的旧文件把它们盖掉；文件只管跨启动接着提示。
+let checkedThisRun: UpdateInfo | null | undefined;
+let dismissedThisRun: string | null = null;
+
+function withThisRun(pref: UpdatePreference): UpdatePreference {
+  const saved = pref.dismissedVersion ?? null;
+  const dismissed = saved && dismissedThisRun
+    ? (compareVersions(saved, dismissedThisRun) >= 0 ? saved : dismissedThisRun)
+    : saved ?? dismissedThisRun;
+  return {
+    ...pref,
+    available: checkedThisRun === undefined ? pref.available : checkedThisRun,
+    dismissedVersion: dismissed,
+  };
+}
+
+function showNotice(pref: UpdatePreference | null) {
+  lastPref = pref;
+  const notice = pref && currentAppVersion ? updateNotice(withThisRun(pref), currentAppVersion) : null;
+  shownNotice = notice;
+  must("update-notice").hidden = !notice;
+  must("update-notice-text").textContent = notice ? describeUpdate(currentAppVersion, notice).text : "";
+  document.querySelectorAll<HTMLElement>("[data-update-dot]").forEach((dot) => { dot.hidden = !notice; });
+}
+
 /** 只有拿到真实的检查时间才显示「上次检查」，读不出来就不显示，不编一个。 */
 function showCheckedAt(at: Date | null) {
   const line = must("update-checked-at");
@@ -647,15 +676,18 @@ async function checkUpdate(currentVersion: string) {
   showUpdate({ tone: "pending", text: "正在检查更新…", available: false });
   try {
     pendingUpdate = (await invoke<UpdateInfo | null>("check_update_cmd")) ?? null;
+    checkedThisRun = pendingUpdate;
     showUpdate(describeUpdate(currentVersion, pendingUpdate));
   } catch (error) {
     pendingUpdate = null;
     showUpdate(describeCheckFailure(error));
   } finally {
     // 检查失败也可能记录尝试时间，但只有宿主实际保存的记录才是显示依据。
+    // 主界面的提示也照宿主记下的结果来：查到的版本、关掉过哪一版都在里面。
     try {
       const pref = await invoke<UpdatePreference>("get_update_preference_cmd");
       showCheckedAt(parseCheckedAt(pref.lastCheckedAt));
+      showNotice(pref);
     } catch {
       showCheckedAt(null);
     }
@@ -681,6 +713,30 @@ must("update-open").addEventListener("click", async () => {
   }
 });
 
+must("update-notice-open").addEventListener("click", async () => {
+  const notice = shownNotice;
+  if (!invoke || !notice) return;
+  try {
+    await invoke("open_update_page_cmd");
+  } catch {
+    must("update-notice-text").textContent = `打不开下载页，请手动访问：${notice.url}`;
+  }
+});
+
+must("update-notice-close").addEventListener("click", async () => {
+  const version = shownNotice?.version;
+  if (!version) return;
+  // 先在这次运行里记下并收起：存不上也不该让一条提示关不掉，最多下次启动再出现一次。
+  dismissedThisRun = version;
+  showNotice(lastPref);
+  if (!invoke) return;
+  try {
+    showNotice(await invoke<UpdatePreference>("dismiss_update_cmd", { version }));
+  } catch {
+    // 见上。
+  }
+});
+
 must("update-auto").addEventListener("change", async (event) => {
   const toggle = event.target as HTMLInputElement;
   const enabled = toggle.checked;
@@ -699,6 +755,8 @@ must("update-auto").addEventListener("change", async (event) => {
   try {
     const saved = await invoke<UpdatePreference>("set_update_preference_cmd", { enabled });
     toggle.checked = saved?.enabled ?? enabled;
+    // 关掉自动检查，主界面的提示一起收起；再打开时照记下的结果恢复。
+    showNotice(saved ?? null);
   } catch (error) {
     // 存不上就把勾选还原，免得界面说的和实际不一样。
     toggle.checked = !enabled;
@@ -730,6 +788,13 @@ async function maybeAutoCheck(status: { appVersion: string }) {
   toggle.checked = pref.enabled;
   toggle.disabled = false;
   showCheckedAt(parseCheckedAt(pref.lastCheckedAt));
+  // 今天已经查过、不再查的时候，靠上次记下的结果接着提示。
+  showNotice(pref);
+  const cached = pref.available ?? null;
+  if (cached && describeUpdate(currentAppVersion, cached).available) {
+    pendingUpdate = cached;
+    showUpdate(describeUpdate(currentAppVersion, cached));
+  }
   if (!shouldCheck(pref, new Date().toISOString())) return;
   await checkUpdate(status.appVersion);
 }

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fireEvent } from "@testing-library/dom";
 import type { Invoke, RuntimeStatus } from "./api.ts";
 import { formatCheckedAt, parseCheckedAt } from "./update-check.ts";
+import type { UpdateInfo, UpdatePreference } from "./update-check.ts";
 
 const runtime = vi.hoisted(() => ({ update: vi.fn(), fail: vi.fn() }));
 
@@ -150,4 +151,127 @@ test.each(["read error", "missing", "invalid"])("a timestamp that cannot be read
   expect(document.getElementById("update-checked-at")!.hidden).toBe(true);
   expect(document.getElementById("update-msg-text")!.textContent).toContain("最新版");
   expect(document.getElementById("update-check")!.getAttribute("aria-busy")).toBeNull();
+});
+
+/** 带一份 update-check.json 的假宿主：命令照真宿主的规则改这份偏好。 */
+function updateHost(initial: UpdatePreference, check: () => UpdateInfo | null | Promise<never>) {
+  let pref: UpdatePreference = { ...initial };
+  const calls: string[] = [];
+  const handler = async (command: string, args?: Record<string, unknown>) => {
+    calls.push(command);
+    if (command === "get_runtime_status") return status("0.4.2");
+    if (command === "get_update_preference_cmd") return { ...pref };
+    if (command === "check_update_cmd") {
+      pref.lastCheckedAt = "2026-10-09T15:00:00Z";
+      const found = await check();
+      pref.available = found;
+      return found;
+    }
+    if (command === "dismiss_update_cmd") {
+      pref.dismissedVersion = String(args?.version);
+      return { ...pref };
+    }
+    if (command === "set_update_preference_cmd") {
+      pref.enabled = Boolean(args?.enabled);
+      return { ...pref };
+    }
+    return null;
+  };
+  return { handler, calls, pref: () => pref };
+}
+
+const notice = () => document.getElementById("update-notice")!;
+const dots = () => [...document.querySelectorAll<HTMLElement>("[data-update-dot]")];
+const release = (version: string) => ({ version, url: `https://github.com/ptjworks/resume-form-assistant-plugin/releases/tag/desktop-v${version}` });
+
+test("a newer version found at startup shows the strip on the main screen and marks settings", async () => {
+  const host = updateHost({ enabled: true }, () => release("0.5.0"));
+  await start(host.handler);
+  expect(host.calls).toContain("check_update_cmd");
+  expect(notice().hidden).toBe(false);
+  expect(document.getElementById("update-notice-text")!.textContent).toBe("有新版本 0.5.0（现在是 0.4.2）。下载后手动安装，装之前不用卸载旧版。");
+  expect(dots()).toHaveLength(2);
+  expect(dots().every((dot) => !dot.hidden)).toBe(true);
+  fireEvent.click(document.getElementById("update-notice-open")!);
+  await settle();
+  expect(host.calls).toContain("open_update_page_cmd");
+});
+
+test("closing the strip remembers that version and hides the marks", async () => {
+  const host = updateHost({ enabled: true }, () => release("0.5.0"));
+  await start(host.handler);
+  fireEvent.click(document.getElementById("update-notice-close")!);
+  expect(notice().hidden).toBe(true);
+  await settle();
+  expect(host.pref().dismissedVersion).toBe("0.5.0");
+  expect(dots().every((dot) => dot.hidden)).toBe(true);
+});
+
+test.each([
+  ["the dismissed version stays hidden", "0.5.0", true],
+  ["a newer version shows again", "0.6.0", false],
+])("after a restart on the same day, without checking again: %s", async (_name, version, hidden) => {
+  const host = updateHost(
+    { enabled: true, lastCheckedAt: "2026-10-09T06:20:00Z", available: release(version), dismissedVersion: "0.5.0" },
+    () => { throw new Error("should not check twice a day"); },
+  );
+  await start(host.handler);
+  expect(host.calls).not.toContain("check_update_cmd");
+  expect(notice().hidden).toBe(hidden);
+  expect(dots().every((dot) => dot.hidden === hidden)).toBe(true);
+});
+
+test("with automatic checks off, nothing is shown even if an update was recorded", async () => {
+  const host = updateHost({ enabled: false, lastCheckedAt: "2026-10-09T06:20:00Z", available: release("0.5.0") }, () => release("0.5.0"));
+  await start(host.handler);
+  expect(notice().hidden).toBe(true);
+  // 手动检查查到了，也只在「关于与诊断」里说。
+  fireEvent.click(document.getElementById("update-check")!);
+  await settle();
+  expect(document.getElementById("update-msg-text")!.textContent).toContain("有新版本 0.5.0");
+  expect(notice().hidden).toBe(true);
+});
+
+test("turning automatic checks off hides the strip", async () => {
+  const host = updateHost({ enabled: true }, () => release("0.5.0"));
+  await start(host.handler);
+  expect(notice().hidden).toBe(false);
+  const toggle = document.getElementById("update-auto") as HTMLInputElement;
+  toggle.checked = false;
+  fireEvent.change(toggle);
+  await settle();
+  expect(notice().hidden).toBe(true);
+  expect(dots().every((dot) => dot.hidden)).toBe(true);
+});
+
+test("a failed check shows nothing on the main screen", async () => {
+  const host = updateHost({ enabled: true }, () => Promise.reject({ code: "UPDATE_OFFLINE" }));
+  await start(host.handler);
+  expect(host.calls).toContain("check_update_cmd");
+  expect(notice().hidden).toBe(true);
+  expect(dots().every((dot) => dot.hidden)).toBe(true);
+});
+
+test("when the preference file cannot be written, this run still shows what was found and keeps a closed version closed", async () => {
+  // 宿主照常返回结果，但 update-check.json 一直写不进去：读回来的永远是旧文件。
+  const stale: UpdatePreference = { enabled: true };
+  const calls: string[] = [];
+  await start(async (command) => {
+    calls.push(command);
+    if (command === "get_runtime_status") return status("0.4.2");
+    if (command === "get_update_preference_cmd") return { ...stale };
+    if (command === "check_update_cmd") return release("0.5.0");
+    if (command === "dismiss_update_cmd") throw { code: "UPDATE_PREF_FAILED", message: "disk full" };
+    return null;
+  });
+  expect(notice().hidden).toBe(false);
+  fireEvent.click(document.getElementById("update-notice-close")!);
+  await settle();
+  expect(notice().hidden).toBe(true);
+  // 再手动查一次，查到的还是同一版：这次运行里已经关掉了，不再冒出来。
+  fireEvent.click(document.getElementById("update-check")!);
+  await settle();
+  expect(calls.filter((call) => call === "check_update_cmd")).toHaveLength(2);
+  expect(notice().hidden).toBe(true);
+  expect(dots().every((dot) => dot.hidden)).toBe(true);
 });
