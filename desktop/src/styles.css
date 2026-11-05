@@ -53,7 +53,8 @@ label.button-like:focus-within { outline: 2px solid var(--accent); outline-offse
 /* macOS 11 最低支持的 WebKit 不认 :has()，禁用态改由 React 切换这个类。 */
 label.button-like.disabled { cursor: default; opacity: .45; }
 
-#app { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; overflow: hidden; }
+#app { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100dvh; overflow: hidden; }
+#app > main { grid-row: 3; }
 .icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 24px; background: #1c2330; border-bottom: 1px solid #303b4c; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -75,6 +76,13 @@ label.button-like.disabled { cursor: default; opacity: .45; }
 .status-pill[data-tone="error"]::before { background: var(--danger); }
 /* AI 设置页与「我的信息」补充字段里的小标签沿用原样式。 */
 .pill { margin: auto 0 0; padding: 12px; font-size: 12px; color: #9ba8bd; overflow-wrap: anywhere; }
+/* 有新版本：顶栏下面一条，不挡操作，可以关掉。 */
+.update-notice { grid-row: 2; display: flex; align-items: center; gap: 10px; padding: 7px 24px; border-bottom: 1px solid #ecd9ae; background: #fdf7ea; color: #7c5a12; font-size: 13px; line-height: 1.5; }
+.update-notice p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.update-notice button { flex: none; min-height: 28px; padding: 3px 12px; font-size: 13px; }
+.update-notice .update-notice-close { display: grid; place-items: center; width: 28px; padding: 0; border-color: transparent; background: transparent; color: inherit; }
+.update-notice .update-notice-close:hover:not(:disabled) { background: #f6ead0; border-color: transparent; }
+.update-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: #d9a53c; vertical-align: 2px; }
 #nav-install-extension { flex: none; font-size: 13px; border-radius: 999px; padding-inline: 14px; border-color: #3b4656; }
 main { min-width: 0; min-height: 0; overflow: auto; }
 .view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos) { padding: 28px 32px 40px; max-width: 1160px; margin: auto; }

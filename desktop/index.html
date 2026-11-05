@@ -20,13 +20,18 @@
           <button type="button" data-route="resume">简历</button>
           <button type="button" data-route="inbox">招聘通知</button>
           <button type="button" data-route="todos">待办</button>
-          <button type="button" data-route="settings">设置</button>
+          <button type="button" data-route="settings">设置<span class="update-dot" data-update-dot aria-hidden="true" hidden></span></button>
         </nav>
         <div class="topbar-status">
           <p id="runtime-pill" class="status-pill" data-tone="pending">正在读取浏览器注册…</p>
           <button type="button" id="nav-install-extension">安装扩展</button>
         </div>
       </header>
+      <div id="update-notice" class="update-notice" role="status" hidden>
+        <p id="update-notice-text"></p>
+        <button type="button" id="update-notice-open" class="primary">去下载页</button>
+        <button type="button" id="update-notice-close" class="update-notice-close" aria-label="不再提示这个版本" title="不再提示这个版本"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
       <main>
         <div id="feedback-consent"></div>
         <div id="usage-notice"></div>
@@ -349,7 +354,7 @@
               <button type="button" role="tab" id="settings-tab-ai" data-settings-tab="ai" aria-controls="settings-ai" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg><span>AI 设置</span></button>
               <button type="button" role="tab" id="settings-tab-data" data-settings-tab="data" aria-controls="settings-data" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg><span>数据与备份</span></button>
               <button type="button" role="tab" id="settings-tab-privacy" data-settings-tab="privacy" aria-controls="settings-privacy" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/></svg><span>隐私</span></button>
-              <button type="button" role="tab" id="settings-tab-about" data-settings-tab="about" aria-controls="settings-about" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>关于与诊断</span></button>
+              <button type="button" role="tab" id="settings-tab-about" data-settings-tab="about" aria-controls="settings-about" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>关于与诊断</span><span class="update-dot" data-update-dot aria-hidden="true" hidden></span></button>
             </nav>
             <div class="settings-content">
               <section id="settings-general" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-general" tabindex="0" data-settings-panel="general">
