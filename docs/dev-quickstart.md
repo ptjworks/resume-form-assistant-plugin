@@ -155,7 +155,7 @@ macOS 没这个问题。
 
 ### 改了协议校验器没生效
 
-`link/protocol/` 是 `desktop/crates/protocol/js/` 的副本。改源文件后要重新复制过去，`tests/protocol-vendor.test.js` 锁死两边一致。
+`extension/link/protocol/` 是 `desktop/crates/protocol/js/` 的副本。改源文件后要重新复制过去，`tests/protocol-vendor.test.js` 锁死两边一致。
 
 ## 平台差异一览
 
