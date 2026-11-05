@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -198,6 +199,21 @@ class D14AcceptanceCheckTests(unittest.TestCase):
         }
         with patch.object(D14, "git_blob", side_effect=lambda _commit, name: blobs[name]):
             self.assertEqual(D14.source_candidate_versions("a" * 40), ("0.1.0", 7))
+
+    def test_source_versions_fall_back_to_the_layout_before_extension_dir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "desktop" / "src-tauri").mkdir(parents=True)
+            (root / "desktop" / "src-tauri" / "tauri.conf.json").write_text('{"version":"0.1.0"}', encoding="utf-8")
+            (root / "link").mkdir()
+            (root / "link" / "envelope.mjs").write_text("export const PROTOCOL_VERSION = 7;", encoding="utf-8")
+            git = ["git", "-c", "user.name=d14", "-c", "user.email=d14@example.test", "-c", f"safe.directory={root.as_posix()}"]
+            subprocess.run([*git, "init", "-q"], cwd=root, check=True)
+            subprocess.run([*git, "add", "."], cwd=root, check=True)
+            subprocess.run([*git, "commit", "-q", "-m", "old layout"], cwd=root, check=True)
+            commit = subprocess.run([*git, "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            with patch.object(D14, "ROOT", root):
+                self.assertEqual(D14.source_candidate_versions(commit), ("0.1.0", 7))
 
     def test_git_object_id_matches_the_standard_empty_blob(self):
         self.assertEqual(
