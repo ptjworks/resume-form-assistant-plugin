@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const recipes = require("../page-recipe.js");
+const recipes = require("../extension/page-recipe.js");
 
 const source = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 const KEY = recipes.STORAGE_KEY;

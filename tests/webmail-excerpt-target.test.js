@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const webmail = require('../webmail.js');
+const webmail = require('../extension/webmail.js');
 
 const fixtures = [
   {name:'QQ', url:'https://mail.qq.com/cgi-bin/readmail?sid=synthetic&mailid=one',

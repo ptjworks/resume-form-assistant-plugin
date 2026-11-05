@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const helpers = require("../ai-helpers.js");
+const helpers = require("../extension/ai-helpers.js");
 
 const options = (texts) => texts.map((text) => ({ value: text, text }));
 
@@ -11,7 +11,7 @@ const options = (texts) => texts.map((text) => ({ value: text, text }));
 function loadWorker(onRequest) {
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: helpers,
-    ResumeProProfile: require('../profile-fields.js'),
+    ResumeProProfile: require('../extension/profile-fields.js'),
     AbortController, TextEncoder, SyntaxError, performance,
     crypto: { randomUUID: () => 'synthetic-call' }
   });
@@ -20,7 +20,7 @@ function loadWorker(onRequest) {
     onRequest(message);
     queueMicrotask(() => context.self.onmessage({ data: { kind: 'desktop-result', callId: message.callId, reply: { ok: true, text: '[]' } } }));
   } };
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../ai-worker.js"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "../extension/ai-worker.js"), "utf8"), context);
   return context;
 }
 
@@ -202,7 +202,7 @@ test("select validation keeps an ID type that only matches by its other name", (
 
 // #429 同义词表（ai-helpers.js 的 OPTION_SYNONYMS）：从源码里取出这张表，查每种写法只在一组里、民族是 56 个。
 function synonymTable() {
-  const source = fs.readFileSync(path.join(__dirname, "..", "ai-helpers.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "extension", "ai-helpers.js"), "utf8");
   const start = source.indexOf("  const ETHNIC_NAMES");
   const end = source.indexOf("  const SYNONYM_GROUPS");
   assert.ok(start > 0 && end > start, "the synonym table is found in ai-helpers.js");
@@ -680,7 +680,7 @@ test("person scope: family and emergency numbers stay with their own person and 
 
 // 合并后模板字段排在「我的信息」前面：模板里的微信、QQ、学号、准考证号不能顶替「我的信息」里的手机和证件号码。
 test("rules: other numbers in the template do not stand in for the profile's mobile and ID number", () => {
-  const profile = require("../profile-fields.js");
+  const profile = require("../extension/profile-fields.js");
   const mine = profile.profileToResumeFields({ values: { phone: "13800138000", idNumber: "110101199003071234" } });
   const forms = [textField("name", "姓名"), textField("phone", "手机号码"), textField("id", "证件号码"), textField("mail", "邮箱")];
   for (const other of [
@@ -719,7 +719,7 @@ test("rules: a DOB key fills the birth date and is not taken for the phone", () 
 
 // 性别按值猜时整个值要像性别：模板里带「女」字的经历描述排在「我的信息」的性别前面，也不进性别框。
 test("rules: a description that mentions 女 is not taken for the gender", () => {
-  const profile = require("../profile-fields.js");
+  const profile = require("../extension/profile-fields.js");
   const resume = profile.mergeResumeFields([
     { group: "基本信息", key: "姓名", value: "测试用户" },
     { group: "实习经历", key: "示例服饰实习经历-工作内容", value: "负责女装线上店铺的商品上新" }
@@ -987,7 +987,7 @@ test("id type: a stated type wins, and one the number contradicts is blocked ins
 test("id type: a blocked match survives the validity filter and keeps the field away from the AI", async () => {
   const field = idTypeField(["身份证", "港澳台居民居住证"]);
   const resume = idResume("护照", "810000199408230021");
-  const profile = require("../profile-fields.js");
+  const profile = require("../extension/profile-fields.js");
   // 资料写的「护照」选项里没有，也照样留着，填写时报出来。
   assert.deepEqual(helpers.localRuleMatches([field], resume, profile), [{ fieldId: "type", value: "护照", blocked: "id_type_mismatch" }]);
   let body = null;

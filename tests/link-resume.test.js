@@ -7,7 +7,7 @@ const TEMPLATE = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const PROFILE = { values: {}, family: [], custom: [] };
 
 async function harness({ mode = 'ready', answer = () => ({ ok: true, payload: {} }) } = {}) {
-  const { createResume } = await import('../link/resume.mjs');
+  const { createResume } = await import('../extension/link/resume.mjs');
   const sent = [];
   const resume = createResume({
     session: { probe: async () => ({ mode, identity: mode === 'ready' ? { archiveId: ARCHIVE, restoreEpoch: EPOCH } : null }) },
@@ -100,7 +100,7 @@ test('ui.open sends no archive identity', async () => {
 });
 
 test('an explicit open reaches the host even when background probes cannot reach the desktop', async () => {
-  const { createResume } = await import('../link/resume.mjs');
+  const { createResume } = await import('../extension/link/resume.mjs');
   const sent = [];
   const resume = createResume({
     session: { probe: async () => { throw new Error('a background probe must not precede a manual open'); } },

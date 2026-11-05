@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const load = () => import('../link/copy.mjs');
+const load = () => import('../extension/link/copy.mjs');
 const ID = 'abcdefghijklmnopabcdefghijklmnop';
 
 // The §9 degradation matrix, as a table. Each row states what the user must be told and what

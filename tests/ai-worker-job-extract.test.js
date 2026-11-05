@@ -11,7 +11,7 @@ const FRAGMENTS = [
 // Runs ai-worker.js the way the offscreen host does: a dedicated worker with no chrome.runtime,
 // whose only way out is posting desktop-complete back to the host.
 function startWorker() {
-  const script = path.join(__dirname, '..', 'ai-worker.js');
+  const script = path.join(__dirname, '..', 'extension', 'ai-worker.js');
   const worker = new Worker(`
     const { parentPort } = require('node:worker_threads');
     const fs = require('node:fs');

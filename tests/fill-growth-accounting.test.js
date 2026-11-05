@@ -4,8 +4,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadHighlightHelpers, fakeFieldScan } = require("./helpers/content-harness");
 const { createStack, until } = require("./helpers/fill-archive-harness.js");
-const feedback = require("../feedback-core.js");
-const aiHelpers = require("../ai-helpers.js");
+const feedback = require("../extension/feedback-core.js");
+const aiHelpers = require("../extension/ai-helpers.js");
 
 const APP = "11111111-1111-4111-8111-111111111111";
 const COMPANY = "金发科技股份有限公司";
@@ -108,8 +108,8 @@ function afterWrite(el, action) {
 }
 
 async function archiveModules(capture = null) {
-  const copy = await import("../link/copy.mjs");
-  const fillrecords = await import("../link/fillrecords.mjs");
+  const copy = await import("../extension/link/copy.mjs");
+  const fillrecords = await import("../extension/link/fillrecords.mjs");
   return { copy, snapshot: { templateVersionOf: async () => "" },
     extract: { extractJobFields: () => ({ company: "", title: "", sourceUrl: "" }) },
     fillrecords: { ...fillrecords, buildFillPayload: (raw) => { capture?.push(raw); return fillrecords.buildFillPayload(raw); } } };

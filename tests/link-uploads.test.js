@@ -114,16 +114,16 @@ function desktop({ online = true, dropCompleteAcks = 0, failCompletions = 0 } = 
 
 /** One service-worker lifetime over persistent storage. Build another to simulate a restart. */
 async function worker({ storage, kv, model, clock = { value: Date.parse('2026-09-12T08:00:00.000Z') } }) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createSession } = await import('../link/session.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
-  const { createOutbox } = await import('../link/outbox.mjs');
-  const { createReconcile } = await import('../link/reconcile.mjs');
-  const { createDrain } = await import('../link/drain.mjs');
-  const { createFillRecords } = await import('../link/fillrecords.mjs');
-  const { createStaging } = await import('../link/staging.mjs');
-  const { createUploads } = await import('../link/uploads.mjs');
-  const { createRouter } = await import('../link/router.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
+  const { createOutbox } = await import('../extension/link/outbox.mjs');
+  const { createReconcile } = await import('../extension/link/reconcile.mjs');
+  const { createDrain } = await import('../extension/link/drain.mjs');
+  const { createFillRecords } = await import('../extension/link/fillrecords.mjs');
+  const { createStaging } = await import('../extension/link/staging.mjs');
+  const { createUploads } = await import('../extension/link/uploads.mjs');
+  const { createRouter } = await import('../extension/link/router.mjs');
 
   let minted = 0;
   const prefix = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
@@ -153,7 +153,7 @@ async function worker({ storage, kv, model, clock = { value: Date.parse('2026-09
 const PAIRED = () => fakeStorage({ desktopPairing: { archiveId: ARCHIVE, restoreEpoch: EPOCH, at: 1 } });
 
 async function snapshotSha(tpl) {
-  const { buildSnapshot } = await import('../link/snapshot.mjs');
+  const { buildSnapshot } = await import('../extension/link/snapshot.mjs');
   return (await buildSnapshot(tpl, { now: () => new Date('2026-09-12T08:00:00.000Z') })).sha256;
 }
 
@@ -247,7 +247,7 @@ test('every chunk has its own id, none shared with the fill event', async () => 
 });
 
 test('every chunk envelope passes the vendored validator', async () => {
-  const { validateRequest } = await import('../link/protocol/validate.mjs');
+  const { validateRequest } = await import('../extension/link/protocol/validate.mjs');
   const storage = PAIRED();
   const model = desktop();
   const { router, drain } = await worker({ storage, kv: fakeKv(), model });
@@ -341,7 +341,7 @@ test('a lost complete ACK keeps the copy until a resend is answered with one', a
 });
 
 test('a chunk ACK that skips ahead does not move the cursor past a gap', async () => {
-  const { applyChunkAck } = await import('../link/uploads.mjs');
+  const { applyChunkAck } = await import('../extension/link/uploads.mjs');
   const entry = {
     chunkCount: 3, chunkCursor: 0,
     chunks: [0, 1, 2].map(chunkIndex => ({ chunkIndex, chunkMessageId: `c${chunkIndex}`, chunkSha256: 'x', acked: false }))
@@ -440,7 +440,7 @@ test('a staged snapshot nobody references is cleaned up once it is clearly aband
   const storage = PAIRED();
   const kv = fakeKv();
   const { uploads, staging, clock } = await worker({ storage, kv, model: desktop({ online: false }) });
-  const { buildSnapshot, planChunks } = await import('../link/snapshot.mjs');
+  const { buildSnapshot, planChunks } = await import('../extension/link/snapshot.mjs');
   const built = await buildSnapshot(template());
   built.chunks = await planChunks(built.bytes);
   await staging.stage(built); // staged, then the worker died before the record was written
@@ -504,7 +504,7 @@ test('a snapshot the user gave up on is never sent, even when deleting the copy 
 });
 
 test('a bind refused for a full queue leaves no binding for repair to send', async () => {
-  const { MAX_OUTBOX } = await import('../link/limits.mjs');
+  const { MAX_OUTBOX } = await import('../extension/link/limits.mjs');
   const filler = Array.from({ length: MAX_OUTBOX }, (_, i) => ({
     messageId: `filler-${i}`, messageType: 'job.save', payload: {}, status: 'stalled', nextAttemptAt: null, attempts: 9
   }));
@@ -554,14 +554,14 @@ test('the snapshot waits until its fill event has been accepted', async () => {
 });
 
 test('an upload held behind a failed fill event does not keep the desktop awake', async () => {
-  const { waitsForFill } = await import('../link/drain.mjs');
+  const { waitsForFill } = await import('../extension/link/drain.mjs');
   const fill = { messageId: 'f', messageType: 'fill.submit', recordId: 'r1', status: 'failed' };
   const upload = { messageId: 's', messageType: 'snapshot.upload', recordId: 'r1', status: 'pending', nextAttemptAt: '2026-09-12T08:00:00.000Z' };
   assert.equal(waitsForFill(upload, [fill, upload]), true);
   assert.equal(waitsForFill(upload, [upload]), false);
   assert.equal(waitsForFill(fill, [fill, upload]), false);
 
-  const { createDrain } = await import('../link/drain.mjs');
+  const { createDrain } = await import('../extension/link/drain.mjs');
   let probes = 0;
   const alarms = [];
   const drain = createDrain({
@@ -616,7 +616,7 @@ test('a bind still in progress is not mistaken for an interrupted one', async ()
 });
 
 test('a fill with a snapshot needs two free places in the queue, or it is not bound at all', async () => {
-  const { MAX_OUTBOX } = await import('../link/limits.mjs');
+  const { MAX_OUTBOX } = await import('../extension/link/limits.mjs');
   const storage = PAIRED();
   const kv = fakeKv();
   const model = desktop({ online: false });

@@ -23,8 +23,8 @@ import { randomUUID } from "node:crypto";
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const helpers = require("../ai-helpers.js");
-const profileApi = require("../profile-fields.js");
+const helpers = require("../extension/ai-helpers.js");
+const profileApi = require("../extension/profile-fields.js");
 const regions = (() => {
   const scope = {};
   vm.runInNewContext(readFileSync(join(ROOT, "region-data.js"), "utf8"), { self: scope });

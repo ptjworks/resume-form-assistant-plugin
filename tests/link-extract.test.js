@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const load = () => import('../link/extract.mjs');
+const load = () => import('../extension/link/extract.mjs');
 
 // A minimal stand-in for the four things extraction reads from a page.
 function fakeDoc({ jsonLd = [], meta = {}, h1 = null, title = '' } = {}) {
@@ -369,7 +369,7 @@ test('interactive controls, generic organisation words and company counts never 
 
 test('a short name with no organisation shape is only a candidate for the AI, never a settled company', async () => {
   const { extractJobFields } = await load();
-  const { nextSaveStep } = await import('../link/save-flow.mjs');
+  const { nextSaveStep } = await import('../extension/link/save-flow.mjs');
   // "星河": a plausible short name, but no organisation shape. ("公安", the example this test
   // used to carry, is now page noise outright — see the test below.)
   const fields = extractJobFields(beisenPage('星河'), 'https://kingfa.zhiye.com/form');
@@ -388,7 +388,7 @@ test('a short name with no organisation shape is only a candidate for the AI, ne
 // either could make the local read "reliable" and skip the AI.
 test('"公安" and a bare "招聘" are page noise on every path, so they never let the local read skip the AI', async () => {
   const { extractJobFields } = await load();
-  const { nextSaveStep } = await import('../link/save-flow.mjs');
+  const { nextSaveStep } = await import('../extension/link/save-flow.mjs');
 
   const selector = extractJobFields(beisenPage('公安'), 'https://kingfa.zhiye.com/form');
   assert.equal(selector.company, '');
@@ -475,7 +475,7 @@ test('junk in a JobPosting is dropped as well', async () => {
 
 test('a page with clear company and job evidence is reliable and needs no AI', async () => {
   const { extractJobFields } = await load();
-  const { nextSaveStep } = await import('../link/save-flow.mjs');
+  const { nextSaveStep } = await import('../extension/link/save-flow.mjs');
   for (const doc of [
     richDoc({
       title: '招聘',
@@ -645,7 +645,7 @@ function fixturePage(name, url) {
 
 test('a hotjob pb detail page reads the title and the labelled 所属公司 item, and nothing else', async () => {
   const { extractJobFields } = await load();
-  const { nextSaveStep } = await import('../link/save-flow.mjs');
+  const { nextSaveStep } = await import('../extension/link/save-flow.mjs');
   const fields = extractJobFields(fixturePage('hotjob-pb-company.html', HOTJOB_PB), HOTJOB_PB);
 
   assert.equal(fields.title, '数据分析师', 'the post code is dropped, the category tag and badge are not read');
@@ -660,7 +660,7 @@ test('a hotjob pb detail page reads the title and the labelled 所属公司 item
 
 test('a hotjob pb page without a company item fills the title and leaves the company to the user', async () => {
   const { extractJobFields } = await load();
-  const { nextSaveStep } = await import('../link/save-flow.mjs');
+  const { nextSaveStep } = await import('../extension/link/save-flow.mjs');
   const fields = extractJobFields(fixturePage('hotjob-pb-no-company.html', HOTJOB_PB), HOTJOB_PB);
 
   assert.equal(fields.title, '科研助理(2027届)', 'a meaningful bracket stays');
@@ -801,7 +801,7 @@ test('a hotjob tenant id in upper case still matches the detail rule', async () 
 
 test('the hotjob rule stays off on list pages and on other hosts with the same markup', async () => {
   const { extractJobFields } = await load();
-  const { nextSaveStep } = await import('../link/save-flow.mjs');
+  const { nextSaveStep } = await import('../extension/link/save-flow.mjs');
   const pages = [
     ['hotjob-mc-list.html', 'https://wecruit.hotjob.cn/SU0123456789abcdef01234567/mc/position/campus'],
     ['hotjob-pb-company.html', 'https://wecruit.hotjob.cn/SU0123456789abcdef01234567/pb/school.html'],

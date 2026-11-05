@@ -31,11 +31,11 @@ const RAW = {
 };
 
 async function load() {
-  return import('../link/fillrecords.mjs');
+  return import('../extension/link/fillrecords.mjs');
 }
 
 async function makeRecords(storage = fakeStorage()) {
-  const { createStore } = await import('../link/store.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
   const { createFillRecords } = await load();
   let minted = 0;
   const store = createStore({ storage, uuid: () => 'client-1' });
@@ -182,7 +182,7 @@ test('claiming, unbinding and removing a record', async () => {
 });
 
 test('the fill records key is the only new key and the plugin keys are untouched', async () => {
-  const { KEYS, RESERVED_KEYS } = await import('../link/store.mjs');
+  const { KEYS, RESERVED_KEYS } = await import('../extension/link/store.mjs');
   assert.equal(KEYS.fillRecords, 'desktopFillRecords');
   assert.equal(RESERVED_KEYS.includes('desktopFillRecords'), false);
 

@@ -6,13 +6,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "ai-worker.js"), "utf8");
-const helpers = require("../ai-helpers.js");
+const source = fs.readFileSync(path.join(__dirname, "..", "extension", "ai-worker.js"), "utf8");
+const helpers = require("../extension/ai-helpers.js");
 const { catalogOf, refOf } = require("./helpers/ai-refs.js");
 const { pathToFileURL } = require("node:url");
 const regions = (() => {
   const scope = {};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "region-data.js"), "utf8"), { self: scope });
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "extension", "region-data.js"), "utf8"), { self: scope });
   return scope.ResumeProRegions;
 })();
 
@@ -21,7 +21,7 @@ function worker(respond = () => [], { withRegions = true } = {}) {
   const calls = [];
   let sequence = 0;
   const context = vm.createContext({
-    importScripts() {}, ResumeProAIHelpers: helpers, ResumeProProfile: require("../profile-fields.js"),
+    importScripts() {}, ResumeProAIHelpers: helpers, ResumeProProfile: require("../extension/profile-fields.js"),
     AbortController, TextEncoder, performance: { now: () => 0 }, crypto: { randomUUID: () => `call-${++sequence}` },
     ResumeProRegions: regions
   });
@@ -895,8 +895,8 @@ test("a name of two characters from any name field is masked wherever it appears
 });
 
 test("a generated label holding regex characters neither throws nor leaves a value in the catalog", () => {
-  const changed = fs.readFileSync(path.join(__dirname, "..", "ai-helpers.js"), "utf8").replace('label: "论文" }', 'label: "论文(+" }');
-  assert.notEqual(changed, fs.readFileSync(path.join(__dirname, "..", "ai-helpers.js"), "utf8"));
+  const changed = fs.readFileSync(path.join(__dirname, "..", "extension", "ai-helpers.js"), "utf8").replace('label: "论文" }', 'label: "论文(+" }');
+  assert.notEqual(changed, fs.readFileSync(path.join(__dirname, "..", "extension", "ai-helpers.js"), "utf8"));
   const scope = {};
   vm.runInNewContext(changed, { self: scope });
   const masked = scope.ResumeProAIHelpers.maskResumeValues(["论文(+1-发表于虚构理工学院学报"], [{ group: "教育经历", key: "学校", value: "虚构理工学院" }]);

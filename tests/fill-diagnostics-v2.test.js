@@ -3,8 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadHighlightHelpers, fakeFieldScan } = require("./helpers/content-harness.js");
-const realProbe = require("../fill-probe.js");
-const core = require("../feedback-core.js");
+const realProbe = require("../extension/fill-probe.js");
+const core = require("../extension/feedback-core.js");
 
 const lineOf = (report, key) => (report.match(new RegExp(`^${key}: (.*)$`, "m")) || [])[1];
 const BASE = { path: "/campus/apply", pageType: { type: "application_form", reason: "url" }, readyAtScan: true,
@@ -86,7 +86,7 @@ test("the allowlist keeps the new values and drops anything else, including resu
 });
 
 test("the worker drops an option count a page puts in: only options=0 and options=1+ are sent", async () => {
-  const { createFeedback } = await import("../link/feedback.mjs");
+  const { createFeedback } = await import("../extension/link/feedback.mjs");
   const data = {}; const bodies = [];
   const worker = createFeedback({ storage: { get: async () => structuredClone(data), set: async value => Object.assign(data, structuredClone(value)) },
     version: "0.4.5", os: "Windows / Chrome 140", install: () => "normal",
@@ -480,7 +480,7 @@ test("a fill on a page full of personal data leaves none of it in the report, th
       matches: [{ fieldId: message.formFields[0].fieldId, value: "示例大学" }, { fieldId: message.formFields[1].fieldId, value: "13912345678" }],
       diagnostics: diag({ ruleMatches: 1, errorCode: "timeout", aiFields: 1 }) }) });
   assert.equal(reports.length, 1);
-  const { createFeedback } = await import("../link/feedback.mjs");
+  const { createFeedback } = await import("../extension/link/feedback.mjs");
   const data = {}; const bodies = [];
   const worker = createFeedback({ storage: { get: async () => structuredClone(data), set: async value => Object.assign(data, structuredClone(value)) },
     version: "0.4.4", os: "Windows / Chrome 140", install: () => "development",
@@ -533,7 +533,7 @@ async function linkedCity(kind, province) {
     assert.equal((await api.operate(target(prov), province)).ok, true, province);
     return api.operate(target(city), "示例市");
   }
-  const scanner = require("../field-scan.js");
+  const scanner = require("../extension/field-scan.js");
   const shownCities = [];
   const prov = wireSelect(doc, "prov", { choices: Object.keys(CITIES), rows: 50 });
   wireSelect(doc, "city", { choices: shownCities, rows: 50 });
@@ -548,7 +548,7 @@ async function linkedCity(kind, province) {
 }
 
 test("a city select loaded for the province picked from the resume carries no count: every province with cities reads the same", async () => {
-  const { createFeedback } = await import("../link/feedback.mjs");
+  const { createFeedback } = await import("../extension/link/feedback.mjs");
   for (const [kind, opened] of [["aria", "listbox"], ["beisen", "component"]]) {
     const lines = [];
     for (const province of Object.keys(CITIES)) {

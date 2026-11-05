@@ -8,7 +8,7 @@ const path = require("node:path");
 const { JSDOM } = require("jsdom");
 const { ETHNIC, textItem, wireForm, selectItem, wireSelect, wireRegion } = require("./helpers/beisen-form.js");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "extension");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
 const DEGREE = ["博士研究生", "硕士研究生", "本科及以上", "大专及以上", "本科", "大专", "高中", "初中"];
 

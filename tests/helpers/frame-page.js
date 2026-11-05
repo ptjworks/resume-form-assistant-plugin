@@ -5,7 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
 
-const root = path.join(__dirname, "..", "..");
+const root = path.join(__dirname, "..", "..", "extension");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const SCRIPTS = manifest.content_scripts.find((entry) => entry.js?.includes("content.js")).js;
 const SOURCES = Object.fromEntries(SCRIPTS.map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]));

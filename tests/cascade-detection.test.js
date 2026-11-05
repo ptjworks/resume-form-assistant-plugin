@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const helpers = require("../ai-helpers.js");
+const helpers = require("../extension/ai-helpers.js");
 
 function createMockElement(tagName, optionsCount = 2, attributes = {}) {
   const el = {

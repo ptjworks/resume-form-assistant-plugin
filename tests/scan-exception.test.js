@@ -7,10 +7,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const core = require("../feedback-core.js");
+const scanner = require("../extension/field-scan.js");
+const core = require("../extension/feedback-core.js");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "extension");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
 const ORIGIN = "chrome-extension://test-extension/";
 

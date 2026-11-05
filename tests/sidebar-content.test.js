@@ -181,7 +181,7 @@ function loadContentScript({ width = 1200, height = 900, desktopReply = null } =
     HTMLSelectElement: class {},
     HTMLTextAreaElement: class {},
     HTMLLabelElement: class {},
-    self: { __RESUME_PRO_TEST__: true, ResumeProResumeData: require('../resume-data.js'), ResumeProProfile: require('../profile-fields.js') }
+    self: { __RESUME_PRO_TEST__: true, ResumeProResumeData: require('../extension/resume-data.js'), ResumeProProfile: require('../extension/profile-fields.js') }
   };
   context.setTimeout = setTimeout;
   context.clearTimeout = clearTimeout;
@@ -189,7 +189,7 @@ function loadContentScript({ width = 1200, height = 900, desktopReply = null } =
   context.self.window = window;
   context.window.document = document;
 
-  const root = path.join(__dirname, "..");
+  const root = path.join(__dirname, "..", "extension");
   vm.runInNewContext(fs.readFileSync(path.join(root, "sidebar-state.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(root, "control-adapters.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(root, "content.js"), "utf8"), context);
@@ -507,8 +507,8 @@ test("an unreliable extraction asks the desktop AI with the fragments only, then
   context.document.createElement = () => ({ textContent: '' });
   // A leftover plugin AI config must not be read or sent anywhere.
   hooks.setCurrentStore({ aiConfig: { apiUrl: 'https://ai.example.test', model: 'demo', apiKey: 'sk-test' } });
-  const saveFlow = await import('../link/save-flow.mjs');
-  const copy = await import('../link/copy.mjs');
+  const saveFlow = await import('../extension/link/save-flow.mjs');
+  const copy = await import('../extension/link/copy.mjs');
   hooks.setDesktopModules({ extract: { extractJobFields: () => UNRELIABLE_JOB }, saveFlow, copy });
   const sent = [];
   let answer;
@@ -555,8 +555,8 @@ test("a desktop without AI settings opens the form with the reason and a setting
   const { hooks, context } = loadContentScript();
   const page = saveJobPage(hooks);
   context.document.createElement = () => ({ textContent: '' });
-  const saveFlow = await import('../link/save-flow.mjs');
-  const copy = await import('../link/copy.mjs');
+  const saveFlow = await import('../extension/link/save-flow.mjs');
+  const copy = await import('../extension/link/copy.mjs');
   hooks.setDesktopModules({ extract: { extractJobFields: () => UNRELIABLE_JOB }, saveFlow, copy });
   let calls = 0;
   context.self.ResumeProAIClient = {
@@ -606,8 +606,8 @@ test("the native side panel sees a running recognition and can cancel it", async
   const { hooks, context, listeners } = loadContentScript();
   const page = saveJobPage(hooks);
   context.document.createElement = () => ({ textContent: '' });
-  const saveFlow = await import('../link/save-flow.mjs');
-  const copy = await import('../link/copy.mjs');
+  const saveFlow = await import('../extension/link/save-flow.mjs');
+  const copy = await import('../extension/link/copy.mjs');
   hooks.setDesktopModules({ extract: { extractJobFields: () => UNRELIABLE_JOB }, saveFlow, copy });
   let answer;
   const cancelled = [];
@@ -739,8 +739,8 @@ test("save again after a duplicate resends the confirmed fields, including the r
       }[selector] ?? null;
     }
   });
-  const saveFlow = await import('../link/save-flow.mjs');
-  const copy = await import('../link/copy.mjs');
+  const saveFlow = await import('../extension/link/save-flow.mjs');
+  const copy = await import('../extension/link/copy.mjs');
   hooks.setDesktopModules({
     extract: {
       extractJobFields: () => ({
@@ -774,7 +774,7 @@ test("save again after a duplicate resends the confirmed fields, including the r
 
 test("a full outbound queue reports the retained intent instead of claiming nothing was kept", async () => {
   const { hooks } = loadContentScript();
-  const copy = await import('../link/copy.mjs');
+  const copy = await import('../extension/link/copy.mjs');
   const result = hooks.describeCommit(copy, {
     status: 'rejected', reason: 'queue_full', intent: { intentId: 'intent-1' }
   });
@@ -786,7 +786,7 @@ test("a bound write failure closes the save form and points to the retained queu
   const { hooks } = loadContentScript();
   const form = { hidden: false };
   hooks.setShadowRoot({ querySelector: selector => selector === '#resume-pro-save-form' ? form : null });
-  const copy = await import('../link/copy.mjs');
+  const copy = await import('../extension/link/copy.mjs');
 
   hooks.presentSaveResult(copy, {
     status: 'failed', code: 'invalid_payload', intent: { intentId: 'intent-1' }
@@ -833,7 +833,7 @@ test('the page reads the desktop only while its own panel is on screen', async (
 });
 
 test('loading a page does not read the desktop', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'extension', 'content.js'), 'utf8');
   const init = source.slice(source.indexOf('async function init()'), source.indexOf('function inPageUiVisible()'));
   assert.ok(init.length > 0);
   assert.equal(init.includes('StorageService.getState'), false);
@@ -852,8 +852,8 @@ async function panelJobPage({ extraction = RELIABLE_JOB, desktop = null, ai = nu
   const { hooks, context, listeners, writes } = loaded;
   let ids = 0;
   context.crypto.randomUUID = () => `id-${++ids}`;
-  const saveFlow = await import('../link/save-flow.mjs');
-  const copy = await import('../link/copy.mjs');
+  const saveFlow = await import('../extension/link/save-flow.mjs');
+  const copy = await import('../extension/link/copy.mjs');
   hooks.setDesktopModules({ extract: { extractJobFields: () => structuredClone(extraction) }, saveFlow, copy });
   const sent = [];
   context.chrome.runtime.sendMessage = async message => {
@@ -1189,7 +1189,7 @@ test('#172 re-recognition invalidates the draft when the page changes while modu
   });
   await tick();
   page.context.location.href = 'https://jobs.example.com/999';
-  const [saveFlow, copy] = await Promise.all([import('../link/save-flow.mjs'), import('../link/copy.mjs')]);
+  const [saveFlow, copy] = await Promise.all([import('../extension/link/save-flow.mjs'), import('../extension/link/copy.mjs')]);
   release({ extract: { extractJobFields: () => structuredClone(extraction) }, saveFlow, copy });
   const reply = await reassisting;
 

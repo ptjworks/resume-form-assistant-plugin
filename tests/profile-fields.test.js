@@ -1,8 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const profileApi = require("../profile-fields.js");
-const helpers = require("../ai-helpers.js");
+const profileApi = require("../extension/profile-fields.js");
+const helpers = require("../extension/ai-helpers.js");
 
 test("normalizeProfile drops blanks and empty members, keeps pending custom fields once", () => {
   const profile = profileApi.normalizeProfile({

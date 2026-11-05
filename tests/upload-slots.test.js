@@ -2,8 +2,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { JSDOM } = require("jsdom");
-const slots = require("../upload-slots.js");
-const scan = require("../field-scan.js");
+const slots = require("../extension/upload-slots.js");
+const scan = require("../extension/field-scan.js");
 
 const hidden = el => Boolean(el.closest("[hidden], [style*='display: none'], [style*='display:none']"));
 const isVisible = el => !hidden(el);

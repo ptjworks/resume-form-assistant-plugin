@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const fields = require('../template-fields.js');
-const profileApi = require('../profile-fields.js');
+const fields = require('../extension/template-fields.js');
+const profileApi = require('../extension/profile-fields.js');
 
 const TEMPLATE = {
   id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',

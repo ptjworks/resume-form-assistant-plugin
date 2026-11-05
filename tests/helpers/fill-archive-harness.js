@@ -10,7 +10,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const nodeCrypto = require("node:crypto");
 
-const root = path.join(__dirname, "..", "..");
+const root = path.join(__dirname, "..", "..", "extension");
 const ARCHIVE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const EPOCH = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const EVENT = "99999999-9999-4999-8999-999999999999";
@@ -105,7 +105,7 @@ function createDesktop(applications = []) {
         });
       }
       if (message.messageType === "fill.submit") {
-        const { validateRequest } = await import("../../link/protocol/validate.mjs");
+        const { validateRequest } = await import("../../extension/link/protocol/validate.mjs");
         try {
           await validateRequest(message);
         } catch (error) {
@@ -128,16 +128,16 @@ function createDesktop(applications = []) {
 }
 
 async function createWorker({ storage, kv, desktop }) {
-  const { createStore } = await import("../../link/store.mjs");
-  const { createSession } = await import("../../link/session.mjs");
-  const { createIntents } = await import("../../link/intents.mjs");
-  const { createOutbox } = await import("../../link/outbox.mjs");
-  const { createReconcile } = await import("../../link/reconcile.mjs");
-  const { createDrain } = await import("../../link/drain.mjs");
-  const { createFillRecords } = await import("../../link/fillrecords.mjs");
-  const { createStaging } = await import("../../link/staging.mjs");
-  const { createUploads } = await import("../../link/uploads.mjs");
-  const { createRouter } = await import("../../link/router.mjs");
+  const { createStore } = await import("../../extension/link/store.mjs");
+  const { createSession } = await import("../../extension/link/session.mjs");
+  const { createIntents } = await import("../../extension/link/intents.mjs");
+  const { createOutbox } = await import("../../extension/link/outbox.mjs");
+  const { createReconcile } = await import("../../extension/link/reconcile.mjs");
+  const { createDrain } = await import("../../extension/link/drain.mjs");
+  const { createFillRecords } = await import("../../extension/link/fillrecords.mjs");
+  const { createStaging } = await import("../../extension/link/staging.mjs");
+  const { createUploads } = await import("../../extension/link/uploads.mjs");
+  const { createRouter } = await import("../../extension/link/router.mjs");
 
   const uuid = () => nodeCrypto.randomUUID();
   const now = () => new Date();
@@ -233,7 +233,7 @@ function createPage({ worker, job, href = "https://jobs.example.test/apply" }) {
     CSS: { escape: (value) => String(value) },
     Event: class {}, MouseEvent: class {}, FocusEvent: class {}, HTMLElement: class {}, HTMLInputElement: class {},
     HTMLSelectElement: class {}, HTMLTextAreaElement: class {}, HTMLLabelElement: class {},
-    self: { __RESUME_PRO_TEST__: true, ResumeProResumeData: require("../../resume-data.js"), ResumeProProfile: require("../../profile-fields.js") },
+    self: { __RESUME_PRO_TEST__: true, ResumeProResumeData: require("../../extension/resume-data.js"), ResumeProProfile: require("../../extension/profile-fields.js") },
     setTimeout, clearTimeout
   };
   context.globalThis = context;
@@ -250,7 +250,7 @@ function createPage({ worker, job, href = "https://jobs.example.test/apply" }) {
     received: [],
     async ready() {
       const [copy, fillrecords, snapshot] = await Promise.all([
-        import("../../link/copy.mjs"), import("../../link/fillrecords.mjs"), import("../../link/snapshot.mjs")
+        import("../../extension/link/copy.mjs"), import("../../extension/link/fillrecords.mjs"), import("../../extension/link/snapshot.mjs")
       ]);
       hooks.setDesktopModules({
         copy, fillrecords, snapshot,
@@ -322,7 +322,7 @@ async function createPanel({ pages, worker, storage }) {
   const pageMessages = [];
   const state = { tabId: 1, poll: null, activated: null };
   get("panel-toast");
-  const copy = await import("../../link/copy.mjs");
+  const copy = await import("../../extension/link/copy.mjs");
   const chrome = {
     runtime: {
       id: EXTENSION_ID,
@@ -362,8 +362,8 @@ async function createPanel({ pages, worker, storage }) {
     document: documentStub, chrome, console,
     navigator: { clipboard: { writeText: async () => {} } },
     self: {
-      ResumeProProfile: require("../../profile-fields.js"), ResumeProResumeData: require("../../resume-data.js"),
-      ResumeProCompose: require("../../sidepanel-compose.js"), ResumeProQueue: require("../../sidepanel-queue.js"),
+      ResumeProProfile: require("../../extension/profile-fields.js"), ResumeProResumeData: require("../../extension/resume-data.js"),
+      ResumeProCompose: require("../../extension/sidepanel-compose.js"), ResumeProQueue: require("../../extension/sidepanel-queue.js"),
       ResumeProLinkCopy: copy
     },
     setTimeout: (fn) => { toasts.push(get("panel-toast").textContent); return 1; },

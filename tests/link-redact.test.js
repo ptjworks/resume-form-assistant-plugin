@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 
 async function load() {
   return {
-    redact: await import('../link/redact.mjs'),
-    validate: await import('../link/protocol/validate.mjs')
+    redact: await import('../extension/link/redact.mjs'),
+    validate: await import('../extension/link/protocol/validate.mjs')
   };
 }
 

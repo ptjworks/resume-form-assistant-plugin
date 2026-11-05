@@ -69,10 +69,10 @@ async function harness(initial = { status: 'ok', data: data() }, { legacy = null
   };
   const context = vm.createContext({
     document, chrome, navigator: { clipboard: { writeText: async value => { copied.push(value); } } },
-    self: { ResumeProProfile: require('../profile-fields.js'), ResumeProResumeData: require('../resume-data.js'), ResumeProCompose: require('../sidepanel-compose.js') },
+    self: { ResumeProProfile: require('../extension/profile-fields.js'), ResumeProResumeData: require('../extension/resume-data.js'), ResumeProCompose: require('../extension/sidepanel-compose.js') },
     setTimeout: () => 1, clearTimeout() {}, setInterval: listener => { poll = listener; }
   });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sidepanel.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'extension', 'sidepanel.js'), 'utf8'), context);
   await new Promise(resolve => setImmediate(resolve));
   return { get, profileAdd, calls, copied, document, documentEvents, tabEvents,
     setResponse: value => { response = value; }, setUpdateResult: value => { updateResult = value; },
@@ -305,7 +305,7 @@ test('a job recognition running in the page shows in the panel with a cancel but
 });
 
 test('the side panel does not access the four old local data keys', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'sidepanel.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'extension', 'sidepanel.js'), 'utf8');
   // The only local key the panel may read is the migration state (#130 PR 5).
   const reads = [...source.matchAll(/chrome\.storage\.local\.(\w+)\(([^)]*)\)/g)];
   assert.ok(reads.length > 0);

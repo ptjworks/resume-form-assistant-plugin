@@ -5,13 +5,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
-const fields = require('../template-fields.js');
-const profileApi = require('../profile-fields.js');
-const { create } = require('../sidepanel-template-editor.js');
+const fields = require('../extension/template-fields.js');
+const profileApi = require('../extension/profile-fields.js');
+const { create } = require('../extension/sidepanel-template-editor.js');
 
 const ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const OTHER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-const html = fs.readFileSync(path.join(__dirname, '..', 'sidepanel.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '..', 'extension', 'sidepanel.html'), 'utf8');
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 const settle = async () => { for (let i = 0; i < 8; i += 1) await tick(); };
 async function waitFor(predicate, description) {

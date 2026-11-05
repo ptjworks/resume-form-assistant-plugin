@@ -7,7 +7,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
+const scanner = require("../extension/field-scan.js");
 const { loadHighlightHelpers, fakeFieldScan } = require("./helpers/content-harness");
 
 const FRAME = (placeholder, frameClass = "select_info no-adaptive-tooltip") => `<div class="sd-Dropdown-container-1CigZ" style="width: 100%;">

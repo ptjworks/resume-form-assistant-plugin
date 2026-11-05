@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
-const webmail = require('../webmail.js');
+const webmail = require('../extension/webmail.js');
 const RAW = Buffer.from('From: hr@example.test\r\nSubject: Invitation\r\nMessage-ID: <synthetic@example.test>\r\nContent-Type: multipart/mixed; boundary=test\r\n\r\n--test\r\nContent-Type: text/plain\r\n\r\nHello\r\n--test\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename="guide.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n--test--\r\n');
 // Structural details transcribed from the user's DevTools screenshots. Values are synthetic.
 function reader({ host = 'mail.163.com', prefix = '101', mid = 'demo', session = true } = {}) {

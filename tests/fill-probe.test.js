@@ -1,7 +1,7 @@
 // #206 填写诊断的页面探测：只读结构，不读字段值、正文或完整网址。
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const probe = require("../fill-probe.js");
+const probe = require("../extension/fill-probe.js");
 
 // 只有探测会用到的那几个 DOM 接口。
 function node({ tag = "div", text = "", attrs = {}, className = "", visible = true, parent = null,
@@ -343,7 +343,7 @@ test("the report lists at most ten fields and hides contact-like field names", (
 test("the manifest loads the probe before the content script", () => {
   const fs = require("node:fs");
   const path = require("node:path");
-  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"));
   const scripts = manifest.content_scripts.find(entry => entry.js?.includes("content.js"))?.js ?? [];
   assert.ok(scripts.includes("fill-probe.js"));
   assert.ok(scripts.indexOf("fill-probe.js") < scripts.indexOf("content.js"));

@@ -25,7 +25,7 @@ test('protocol.d.ts is in sync with the D05 schemas', async () => {
 test('every messageType resolves to a request and a response payload type', async () => {
   const { renderTypes } = await load();
   const rendered = renderTypes();
-  const schemaLite = await import('../link/protocol/schema-lite.mjs');
+  const schemaLite = await import('../extension/link/protocol/schema-lite.mjs');
   const messageTypes = schemaLite.envelopeSchema().properties.messageType.enum;
 
   // The generator throws if a mapping is missing, so reaching here already proves

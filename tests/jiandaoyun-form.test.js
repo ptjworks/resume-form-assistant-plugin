@@ -5,8 +5,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const core = require("../feedback-core.js");
+const scanner = require("../extension/field-scan.js");
+const core = require("../extension/feedback-core.js");
 
 const isVisible = (el) => !el.closest("[hidden], [style*='display: none'], [style*='display:none']");
 const JDY = fs.readFileSync(path.join(__dirname, "fixtures", "field-scan", "jiandaoyun-application.html"), "utf8");

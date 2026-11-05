@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'ai-worker.js'), 'utf8');
-const helpers = require('../ai-helpers.js');
+const source = fs.readFileSync(path.join(__dirname, '..', 'extension', 'ai-worker.js'), 'utf8');
+const helpers = require('../extension/ai-helpers.js');
 const { refsFor, catalogOf } = require('./helpers/ai-refs.js');
 const BASE = {
   formFields: [{ fieldId: 'name', label: '姓名' }, { fieldId: 'school', label: '学校' }],
@@ -19,8 +19,8 @@ function worker(respond = () => ({ ok: true, text: '[{"fieldId":"school","value"
   let resume = [];
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: helpers,
-    ResumeProProfile: require('../profile-fields.js'),
-    ResumeProFormAgent: require('../form-agent.js'),
+    ResumeProProfile: require('../extension/profile-fields.js'),
+    ResumeProFormAgent: require('../extension/form-agent.js'),
     AbortController, TextEncoder, performance: { now },
     crypto: { randomUUID: () => `synthetic-${++sequence}` }
   });
@@ -102,7 +102,7 @@ test('oversized form prompts are split beneath the UTF-8 user budget', async () 
   const calls = env.sent.filter(item => item.kind === 'desktop-complete');
   assert.ok(calls.length > 1);
   const budget = vm.runInContext('AI_USER_BUDGET', env.context);
-  const { buildEnvelope } = await import('../link/envelope.mjs');
+  const { buildEnvelope } = await import('../extension/link/envelope.mjs');
   for (const call of calls) {
     assert.ok(Buffer.byteLength(JSON.stringify(call.user)) <= budget);
     const envelope = await buildEnvelope({
@@ -235,7 +235,7 @@ test('a daily-tier timeout says where the request stopped', async () => {
 
 // #402：网页先填用的本地匹配和 worker 的 ruleMatches 是同一份口径：像密码的字段和资料都不参与。
 test('the local matches a page fills first are the worker\'s rule matches', async () => {
-  const profile = require('../profile-fields.js');
+  const profile = require('../extension/profile-fields.js');
   const input = {
     formFields: [{ fieldId: 'name', label: '姓名' }, { fieldId: 'pwd', label: '登录密码', inputType: 'password' },
       { fieldId: 'mail', label: '邮箱', inputType: 'email' }, { fieldId: 'school', label: '学校' }, { fieldId: 'phone', label: '手机号码' }],
@@ -254,7 +254,7 @@ test('the local matches a page fills first are the worker\'s rule matches', asyn
 
 // #429 第五项：补充字段里题目原样对得上的回答，worker 和网页先填一样算本地匹配，不发给 AI；期望薪资照旧发给 AI。
 test('the worker fills a saved answer to the same question itself and still sends a salary question to the AI', async () => {
-  const profile = require('../profile-fields.js');
+  const profile = require('../extension/profile-fields.js');
   const formFields = [{ fieldId: 'name', label: '姓名' }, { fieldId: 'adjust', label: '是否服从调剂', tagName: 'input', inputType: 'radio', options: ['是', '否'] },
     { fieldId: 'salary', label: '期望薪资' }, { fieldId: 'school', label: '学校' }];
   const resumeFields = profile.mergeResumeFields([{ group: '基本信息', key: '姓名', value: '测试用户' }, { group: '教育背景', key: '学校', value: '大学乙' }],
@@ -272,7 +272,7 @@ test('the worker fills a saved answer to the same question itself and still send
 
 // 补填新出现的字段时网页带上整张表的题目：和页面上原有的同名，就不用存过的回答，交给 AI。
 test('a catch-up request with the page\'s labels does not use a saved answer for a question the page already has', async () => {
-  const profile = require('../profile-fields.js');
+  const profile = require('../extension/profile-fields.js');
   const formFields = [{ fieldId: 'days2', label: '每周可实习天数' }];
   const resumeFields = profile.mergeResumeFields([{ group: '基本信息', key: '姓名', value: '测试用户' }],
     profile.profileToResumeFields({ custom: [{ key: '每周可实习天数', value: '5天' }] }));
@@ -287,7 +287,7 @@ test('a catch-up request with the page\'s labels does not use a saved answer for
 
 // 手机排在身份证号前、或者反过来，网页先填和 worker 都不能把一个号码填进另一个框。
 test('the page\'s local matches and the worker keep a mobile and an ID number apart', async () => {
-  const profile = require('../profile-fields.js');
+  const profile = require('../extension/profile-fields.js');
   const phone = { group: '基本信息', key: '手机', value: '13800138000' };
   const id = { group: '基本信息', key: '身份证号', value: '110101199003071234' };
   const formFields = [{ fieldId: 'name', label: '姓名' }, { fieldId: 'id', label: '证件号码' },
@@ -307,7 +307,7 @@ test('the page\'s local matches and the worker keep a mobile and an ID number ap
 
 // 简历按真实顺序合并（模板在前、「我的信息」在后），模板里的微信、QQ 不能填进证件号码。
 test('the page\'s local matches and the worker do not take a WeChat or QQ number for the ID number', async () => {
-  const profile = require('../profile-fields.js');
+  const profile = require('../extension/profile-fields.js');
   const formFields = [{ fieldId: 'name', label: '姓名' }, { fieldId: 'phone', label: '手机号码' },
     { fieldId: 'id', label: '证件号码' }, { fieldId: 'school', label: '学校' }];
   const mine = profile.profileToResumeFields({ values: { idNumber: '110101199003071234' } });
@@ -325,7 +325,7 @@ test('the page\'s local matches and the worker do not take a WeChat or QQ number
 
 // 分组名里有「证件」「手机」：排在前面的准考证号、微信不能填进证件号码和手机。
 test('the page\'s local matches and the worker do not fill an admission ticket or WeChat number by its group name', async () => {
-  const profile = require('../profile-fields.js');
+  const profile = require('../extension/profile-fields.js');
   const formFields = [{ fieldId: 'name', label: '姓名' }, { fieldId: 'id', label: '证件号码' },
     { fieldId: 'phone', label: '手机号码' }, { fieldId: 'school', label: '学校' }];
   const resumeFields = [{ group: '基本信息', key: '姓名', value: '测试用户' },
@@ -341,7 +341,7 @@ test('the page\'s local matches and the worker do not fill an admission ticket o
 
 // 字段名「证件编号」「手机/邮箱」自己带着「证件」「手机」：网页先填和 worker 都照样填进证件号码和手机。
 test('the page\'s local matches and the worker still fill keys named 证件编号 and 手机/邮箱', async () => {
-  const profile = require('../profile-fields.js');
+  const profile = require('../extension/profile-fields.js');
   const formFields = [{ fieldId: 'name', label: '姓名' }, { fieldId: 'id', label: '证件号码' },
     { fieldId: 'phone', label: '手机号码' }, { fieldId: 'school', label: '学校' }];
   const resumeFields = [{ group: '基本信息', key: '姓名', value: '测试用户' },
@@ -512,9 +512,9 @@ test('two different answers to one field in one reply leave it out and say why; 
     resumeFields: [{ group: '教育', key: '本科学校', value: '大学甲' }, { group: '教育', key: '硕士学校', value: '大学乙' }] });
   assert.deepEqual(JSON.parse(JSON.stringify(torn.matches.find((match) => match.fieldId === 'school'))), { fieldId: 'school', value: '', blocked: 'ai_conflict' });
   // 一题只进一批，ai_conflict 只会是同一个回复里给了不同的值：网页上的原因照这个说。
-  const content = fs.readFileSync(path.join(__dirname, '..', 'content.js'), 'utf8');
+  const content = fs.readFileSync(path.join(__dirname, '..', 'extension', 'content.js'), 'utf8');
   assert.match(content, /ai_conflict: "AI 对同一题给了不同的值"/);
-  assert.doesNotMatch(content + fs.readFileSync(path.join(__dirname, '..', 'ai-worker.js'), 'utf8'), /几批 ?(?:AI )?回答对不上|几批对不上/);
+  assert.doesNotMatch(content + fs.readFileSync(path.join(__dirname, '..', 'extension', 'ai-worker.js'), 'utf8'), /几批 ?(?:AI )?回答对不上|几批对不上/);
 });
 
 test('rate limiting stops later prompt batches', async () => {
@@ -570,7 +570,7 @@ test('repeat planner exposes a structured desktop AI settings action', async () 
 
 test('the worker no longer parses resumes; the host does not forward the request', () => {
   assert.equal(source.includes('PARSE_RESUME'), false);
-  const host = fs.readFileSync(path.join(__dirname, '..', 'ai-host.js'), 'utf8');
+  const host = fs.readFileSync(path.join(__dirname, '..', 'extension', 'ai-host.js'), 'utf8');
   assert.equal(host.includes('PARSE_RESUME'), false);
 });
 

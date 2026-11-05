@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const load = () => import('../link/save-flow.mjs');
+const load = () => import('../extension/link/save-flow.mjs');
 
 test('a reliable company and title go to review as extracted', async () => {
   const { nextSaveStep } = await load();
@@ -33,7 +33,7 @@ test('an unreliable result with page fragments asks the desktop AI first', async
 
 test('the panel gets exactly the fragments that will be sent', async () => {
   const { nextSaveStep } = await load();
-  const { allowFragments } = await import('../link/job-extract.mjs');
+  const { allowFragments } = await import('../extension/link/job-extract.mjs');
   const fragments = [
     { id: 1, source: 'jobposting-company', role: 'company', text: '星河科技股份有限公司' },
     { id: 2, source: 'document.title', role: 'page-title', text: 'Cookie 设置 - 星河科技' },
@@ -82,8 +82,8 @@ test('every fragment source the extractor can produce is allowed and has a label
   const fs = require('node:fs');
   const path = require('node:path');
   const { allowFragments } = await load();
-  const { describeJobAssist } = await import('../link/copy.mjs');
-  const source = fs.readFileSync(path.join(__dirname, '..', 'link', 'extract.mjs'), 'utf8');
+  const { describeJobAssist } = await import('../extension/link/copy.mjs');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'extension', 'link', 'extract.mjs'), 'utf8');
   const body = source.slice(source.indexOf('function buildFragments'), source.indexOf('function pageHost'));
   const pairs = [...body.matchAll(/push\('([^']+)', '([^']+)'/g)].map(match => [match[1], match[2]]);
   assert.ok(pairs.length >= 8, 'buildFragments was not found');
@@ -156,7 +156,7 @@ test('a failed or partial AI answer opens the form with what is known', async ()
 
 test('#278: when the AI found neither field, the note names only what the page read could not fill', async () => {
   const { afterAssist } = await load();
-  const { describeManualSave } = await import('../link/copy.mjs');
+  const { describeManualSave } = await import('../extension/link/copy.mjs');
   const reply = { status: 'manual', reason: 'missing_both', reliable: false, fields: { company: '', title: '' } };
   const empty = { company: '', title: '', location: '', sourceUrl: '', dedupeUrl: '' };
 
@@ -188,7 +188,7 @@ test('an extraction that is not "reliable" by confidence asks the AI even if it 
 
 test('#278: with no fragments left the form opens without the AI, and a double gap names both fields', async () => {
   const { nextSaveStep } = await load();
-  const { describeManualSave } = await import('../link/copy.mjs');
+  const { describeManualSave } = await import('../extension/link/copy.mjs');
   const neither = nextSaveStep({
     company: '', title: '', reliable: false, confidence: 'invalid',
     assistReasons: ['missing_company', 'missing_title', 'title_unconfirmed'], fragments: []

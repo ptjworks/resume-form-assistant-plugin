@@ -2,8 +2,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadHighlightHelpers } = require("./helpers/content-harness.js");
-const realProbe = require("../fill-probe.js");
-const core = require("../feedback-core.js");
+const realProbe = require("../extension/fill-probe.js");
+const core = require("../extension/feedback-core.js");
 
 const PRIVATE = ["张三", "13800138000", "zhangsan@example.com", "李四"];
 const STORE = { templates: [{ id: "one", groups: [{ name: "基本信息", fields: [

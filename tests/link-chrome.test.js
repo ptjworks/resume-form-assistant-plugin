@@ -33,7 +33,7 @@ function fakeChrome({ reply, error } = {}) {
 }
 
 test('a native reply is handed back as a response', async () => {
-  const { nativeSender } = await import('../link/chrome.mjs');
+  const { nativeSender } = await import('../extension/link/chrome.mjs');
   const api = fakeChrome({ reply: { ok: true } });
 
   const result = await nativeSender(api)('com.resumepro.desktop', { messageType: 'health' });
@@ -43,7 +43,7 @@ test('a native reply is handed back as a response', async () => {
 });
 
 test('a port failure is handed back as lastError instead of throwing', async () => {
-  const { nativeSender } = await import('../link/chrome.mjs');
+  const { nativeSender } = await import('../extension/link/chrome.mjs');
   // lastError is only readable inside the callback; reading it later gives undefined, and a
   // failure that reads as an empty reply would look like a malformed response instead of a
   // closed port.
@@ -56,7 +56,7 @@ test('a port failure is handed back as lastError instead of throwing', async () 
 });
 
 test('the storage adapter reads back what it wrote', async () => {
-  const { storageAdapter } = await import('../link/chrome.mjs');
+  const { storageAdapter } = await import('../extension/link/chrome.mjs');
   const storage = storageAdapter(fakeChrome());
 
   await storage.set({ desktopOutbox: [{ messageId: 'm' }] });

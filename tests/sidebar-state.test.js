@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const sidebarState = require("../sidebar-state.js");
+const sidebarState = require("../extension/sidebar-state.js");
 
 test("sidebar state preserves a valid fixed position and collapsed mode", () => {
   assert.deepEqual(sidebarState.normalize({ collapsed: true, left: 240, top: 128 }), {
@@ -92,7 +92,7 @@ test("normalized sidebar states can be compared before writing", () => {
 });
 
 test("the sidebar state helper loads before the content script", () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"));
   const scripts = manifest.content_scripts.find((entry) => entry.js?.includes("content.js"))?.js ?? [];
 
   assert.ok(scripts.indexOf("sidebar-state.js") < scripts.indexOf("content.js"));

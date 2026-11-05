@@ -40,8 +40,8 @@ function desktop(bytes, { patch = () => ({}), fail = () => null } = {}) {
 }
 
 async function client(bytes, { capabilities = CAPABILITIES, send, openChannel, port, closeFails = false, ...desk } = {}) {
-  const { createResumeFiles } = await import('../link/resume-files.mjs');
-  const { validateRequest } = await import('../link/protocol/validate.mjs');
+  const { createResumeFiles } = await import('../extension/link/resume-files.mjs');
+  const { validateRequest } = await import('../extension/link/protocol/validate.mjs');
   const fake = desktop(bytes, desk);
   const channels = [];
   const answer = async (_host, message) => {
@@ -125,7 +125,7 @@ test('only the first chunk is retried; a failure later ends the read and closes 
 });
 
 test('nativeChannel keeps one port for a run of requests and answers anything waiting when it closes', async () => {
-  const { nativeChannel } = await import('../link/chrome.mjs');
+  const { nativeChannel } = await import('../extension/link/chrome.mjs');
   const posted = [];
   const listeners = { message: null, disconnect: null };
   let connects = 0;
@@ -195,7 +195,7 @@ test('a port the browser refuses to open is unavailable, not a rejected promise'
 });
 
 test('a port that drops while the desktop starts is replaced for the retry of the first chunk', async () => {
-  const { nativeChannel } = await import('../link/chrome.mjs');
+  const { nativeChannel } = await import('../extension/link/chrome.mjs');
   const bytes = pdf(CHUNK + 10);
   const listing = { fileId: FILE, sha256: sha(bytes), byteSize: bytes.length, name: 'a.pdf', mime: 'application/pdf' };
   let connects = 0;

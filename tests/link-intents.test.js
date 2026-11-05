@@ -23,8 +23,8 @@ const FIELDS = {
 };
 
 async function makeIntents({ storage = fakeStorage(), clock = { value: 1000 } } = {}) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
   let minted = 0;
   const store = createStore({ storage, uuid: () => 'client-1' });
   const intents = createIntents({
@@ -153,7 +153,7 @@ test('a different posting at the same company queues separately', async () => {
 
 test('a full queue refuses new work instead of dropping old work', async () => {
   const { intents, storage } = await makeIntents();
-  const { MAX_INTENTS } = await import('../link/limits.mjs');
+  const { MAX_INTENTS } = await import('../extension/link/limits.mjs');
 
   for (let i = 0; i < MAX_INTENTS; i += 1) {
     await intents.save({ fields: { ...FIELDS, title: `岗位 ${i}` }, mode: 'unavailable' });
@@ -215,7 +215,7 @@ test('two clicks handled at the same time still produce one intent', async () =>
 
 test('a race cannot push the queue past its limit', async () => {
   const { intents, storage } = await makeIntents();
-  const { MAX_INTENTS } = await import('../link/limits.mjs');
+  const { MAX_INTENTS } = await import('../extension/link/limits.mjs');
   for (let i = 0; i < MAX_INTENTS - 1; i += 1) {
     await intents.save({ fields: { ...FIELDS, title: `岗位 ${i}` }, mode: 'unavailable' });
   }

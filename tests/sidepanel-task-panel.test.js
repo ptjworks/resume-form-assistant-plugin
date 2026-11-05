@@ -109,7 +109,7 @@ test('the job summary shows only the job read on this page, and goes when the ta
 });
 
 test('the field rows no longer reveal a whole value on hover', () => {
-  const compose = require('../sidepanel-compose.js');
+  const compose = require('../extension/sidepanel-compose.js');
   const row = compose.renderRow({ chipId: 't:0:0', key: '身份证号', value: '110101199001011234' }, 'group');
   assert.doesNotMatch(row, /title=/);
 });

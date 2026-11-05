@@ -8,10 +8,10 @@ const path = require("node:path");
 const vm = require("node:vm");
 const crypto = require("node:crypto");
 const { JSDOM } = require("jsdom");
-const SLOTS = require("../upload-slots.js");
+const SLOTS = require("../extension/upload-slots.js");
 const { refsFor } = require("./helpers/ai-refs.js");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "extension");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
 const within = (promise, ms = 20000) => Promise.race([promise,
   new Promise((_, reject) => setTimeout(() => reject(new Error("still waiting")), ms).unref())]);
@@ -60,8 +60,8 @@ function fileInputs(w) {
 function aiWorker(answers, sent) {
   let lastResume = [];
   const context = vm.createContext({
-    importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
-    ResumeProFormAgent: require("../form-agent.js"), AbortController, TextEncoder, performance: { now: () => 0 },
+    importScripts() {}, ResumeProAIHelpers: require("../extension/ai-helpers.js"), ResumeProProfile: require("../extension/profile-fields.js"),
+    ResumeProFormAgent: require("../extension/form-agent.js"), AbortController, TextEncoder, performance: { now: () => 0 },
     crypto: { randomUUID: () => crypto.randomUUID() }, console
   });
   context.self = {
@@ -121,7 +121,7 @@ const elementPhoto = (id, title) => `
     <ul class="el-upload-list el-upload-list--picture-card"></ul></div></div>`;
 
 async function page(t, body, { url = "https://app.mokahr.com/campus_apply/example/1", answers = {}, files = [RESUME_FILE, PHOTO_FILE], listStatus = "ok", hold = null, silent = [], gate = null, replies = {}, skip = [], tabEvents = true } = {}) {
-  const { createUploadGrants, handleUploadMessage, revokeOnNavigation } = await import("../link/upload-grants.mjs");
+  const { createUploadGrants, handleUploadMessage, revokeOnNavigation } = await import("../extension/link/upload-grants.mjs");
   const dom = new JSDOM(`<!doctype html><html><head><title>网上申请</title></head><body><form id="apply">${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url });
   const w = dom.window;

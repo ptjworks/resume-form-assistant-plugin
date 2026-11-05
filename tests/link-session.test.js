@@ -39,8 +39,8 @@ function handshakeReply(over = {}) {
 }
 
 async function makeSession({ reply, storage = fakeStorage() }) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createSession } = await import('../link/session.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
   const sent = [];
   const store = createStore({ storage, uuid: () => '11111111-1111-4111-8111-111111111111' });
   const session = createSession({
@@ -111,8 +111,8 @@ test('a handshake that gets past transport validation with no shared version is 
   // The D05 validator rejects a non-overlapping range before probe() sees it, so this branch
   // is only reachable if the validator and session.mjs ever disagree. It must still answer
   // `incompatible` rather than throw.
-  const { createStore } = await import('../link/store.mjs');
-  const { createSession } = await import('../link/session.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
   const storage = fakeStorage();
   const session = createSession({
     store: createStore({ storage, uuid: () => '11111111-1111-4111-8111-111111111111' }),

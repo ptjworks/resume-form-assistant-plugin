@@ -6,8 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const Compose = require('../sidepanel-compose.js');
-const root = path.join(__dirname, '..');
+const Compose = require('../extension/sidepanel-compose.js');
+const root = path.join(__dirname, '..', 'extension');
 const TEMPLATE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const NAME = `${TEMPLATE}:0:0`;
 const SCHOOL = `${TEMPLATE}:0:1`;
@@ -98,7 +98,7 @@ async function panel({ target = { ok: true, targetAvailable: false } } = {}) {
   const context = vm.createContext({
     document: documentStub, chrome,
     navigator: { clipboard: { writeText: async (value) => { copied.push(value); } } },
-    self: { ResumeProProfile: require('../profile-fields.js'), ResumeProResumeData: require('../resume-data.js'), ResumeProCompose: Compose },
+    self: { ResumeProProfile: require('../extension/profile-fields.js'), ResumeProResumeData: require('../extension/resume-data.js'), ResumeProCompose: Compose },
     setTimeout: () => 1, clearTimeout() {}, setInterval: (listener) => { poll = listener; }
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'sidepanel.js'), 'utf8'), context);

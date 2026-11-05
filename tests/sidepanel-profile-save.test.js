@@ -59,10 +59,10 @@ async function harness({ desktop = { status: 'ok', data: store() } } = {}) {
   };
   const context = vm.createContext({
     document, chrome, navigator: { clipboard: { writeText: async () => {} } },
-    self: { ResumeProProfile: require('../profile-fields.js'), ResumeProResumeData: require('../resume-data.js'), ResumeProCompose: require('../sidepanel-compose.js') },
+    self: { ResumeProProfile: require('../extension/profile-fields.js'), ResumeProResumeData: require('../extension/resume-data.js'), ResumeProCompose: require('../extension/sidepanel-compose.js') },
     setTimeout: () => 1, clearTimeout() {}, setInterval: listener => { poll = listener; }
   });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sidepanel.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'extension', 'sidepanel.js'), 'utf8'), context);
   const tick = () => new Promise(resolve => setImmediate(resolve));
   await tick();
   const ui = {

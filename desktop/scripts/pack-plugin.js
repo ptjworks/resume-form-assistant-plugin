@@ -8,8 +8,14 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+/** 插件运行文件在仓库里的位置。包里去掉这一层，`manifest.json` 直接在包根目录。 */
+export const PLUGIN_DIR = "extension";
+
+/** 放在仓库根目录、原样进包根目录的文件。 */
+export const REPO_ROOT_ENTRIES = ["README.md", "LICENSE"];
+
 /**
- * 交给 `git archive` 的路径。目录会按 Git 树展开。
+ * 包里的路径。目录会按 Git 树展开。除了 `REPO_ROOT_ENTRIES`，都相对 `PLUGIN_DIR`。
  * 增删这里时，`check-plugin-release-allowlist.js` 会核对运行时引用是否都在包里。
  */
 export const PLUGIN_ARCHIVE_OPERANDS = [
@@ -65,17 +71,55 @@ export const PLUGIN_ARCHIVE_OPERANDS = [
   "LICENSE",
 ];
 
+/** 包里的路径在仓库里对应的路径。 */
+export function sourcePathOf(entry) {
+  const top = entry.split("/")[0];
+  return REPO_ROOT_ENTRIES.includes(top) ? entry : `${PLUGIN_DIR}/${entry}`;
+}
+
+function git(root, args, input) {
+  return execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    input,
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+  });
+}
+
+const lines = (text) => text.split(/\r?\n/).filter(Boolean);
+
+/** 拼一棵包根目录的树：`PLUGIN_DIR` 下的清单条目，加上仓库根目录的 `REPO_ROOT_ENTRIES`。 */
+function archiveTree(root, treeish) {
+  const plugin = PLUGIN_ARCHIVE_OPERANDS.filter((entry) => !REPO_ROOT_ENTRIES.includes(entry));
+  const repo = PLUGIN_ARCHIVE_OPERANDS.filter((entry) => REPO_ROOT_ENTRIES.includes(entry));
+  const entries = [
+    ...lines(git(root, ["ls-tree", `${treeish}:${PLUGIN_DIR}`, "--", ...plugin])),
+    ...lines(git(root, ["ls-tree", treeish, "--", ...repo])),
+  ];
+  // git archive 碰到不存在的路径会报错，ls-tree 只会静默跳过，这里补上同样的检查。
+  const names = new Set(entries.map((line) => line.slice(line.indexOf("\t") + 1)));
+  const missing = PLUGIN_ARCHIVE_OPERANDS.filter((entry) => !names.has(entry));
+  if (missing.length) {
+    throw new Error(`${treeish} 里找不到这些插件文件：${missing.map(sourcePathOf).join(", ")}`);
+  }
+  return git(root, ["mktree"], `${entries.join("\n")}\n`).trim();
+}
+
+/** 包里的全部文件路径，和 `packPlugin` 打出来的一致。 */
+export function listPluginArchive(root, treeish = "HEAD") {
+  return lines(git(root, ["ls-tree", "-r", "--name-only", archiveTree(root, treeish)]));
+}
+
 export function packPlugin(root, output, treeish = "HEAD") {
   if (!output.endsWith(".zip")) {
     throw new Error(`插件包必须是 .zip，拿到的是 ${output}`);
   }
   const absolute = resolve(output);
   mkdirSync(dirname(absolute), { recursive: true });
-  execFileSync(
-    "git",
-    ["archive", "--format=zip", `--output=${absolute}`, treeish, ...PLUGIN_ARCHIVE_OPERANDS],
-    { cwd: root, stdio: ["ignore", "pipe", "pipe"] },
-  );
+  const tree = archiveTree(root, treeish);
+  // 直接打一棵树时 git archive 会用当前时间，这里沿用提交时间，和挪目录前打出来的一样。
+  const mtime = git(root, ["log", "-1", "--format=%cI", treeish]).trim();
+  git(root, ["archive", "--format=zip", `--mtime=${mtime}`, `--output=${absolute}`, tree]);
   return absolute;
 }
 

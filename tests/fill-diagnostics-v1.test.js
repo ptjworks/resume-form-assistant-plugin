@@ -1,7 +1,7 @@
 // fill_failed 诊断载荷 v1（#215 后续）：一次上报就能看出失败卡在哪一步，且只含结构和计数。
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const core = require("../feedback-core.js");
+const core = require("../extension/feedback-core.js");
 
 test("url paths keep only common route words; names, ids, tokens and non-ASCII segments become :id", () => {
   assert.equal(core.pathTemplate("/atsc/apply/12345"), "/:id/apply/:id");

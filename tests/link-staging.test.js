@@ -23,7 +23,7 @@ function fakeKv({ failPut = false, corrupt = false } = {}) {
 const DAY = 24 * 60 * 60 * 1000;
 
 async function snapshotOf(size, fill = 1) {
-  const { planChunks, sha256Hex } = await import('../link/snapshot.mjs');
+  const { planChunks, sha256Hex } = await import('../extension/link/snapshot.mjs');
   const bytes = new Uint8Array(size).fill(fill);
   return {
     bytes,
@@ -37,7 +37,7 @@ async function snapshotOf(size, fill = 1) {
 }
 
 async function makeStaging(kv = fakeKv(), clock = { value: Date.parse('2026-09-12T08:00:00.000Z') }) {
-  const { createStaging } = await import('../link/staging.mjs');
+  const { createStaging } = await import('../extension/link/staging.mjs');
   let minted = 0;
   const staging = createStaging({
     kv,

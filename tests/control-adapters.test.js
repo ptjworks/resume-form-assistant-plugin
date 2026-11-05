@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const helpers = require('../ai-helpers.js');
+const helpers = require('../extension/ai-helpers.js');
 
 function harness(options = {}) {
   class Element {
@@ -25,7 +25,7 @@ function harness(options = {}) {
     HTMLElement: Element, Event: class { constructor(type) { this.type = type; } },
     MouseEvent: class { constructor(type) { this.type = type; } }, FocusEvent: class { constructor(type) { this.type = type; } },
     setTimeout, clearTimeout, performance, console };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'control-adapters.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'extension', 'control-adapters.js'), 'utf8'), context);
   const operator = scope.ResumeProControls.create({ helpers, settleMs: 70, timeoutMs: 150, ...options });
   return { ...operator, Input, Select, Element, api: scope.ResumeProControls };
 }

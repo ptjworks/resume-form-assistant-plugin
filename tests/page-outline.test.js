@@ -5,8 +5,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const fieldScan = require("../field-scan.js");
-const outline = require("../page-outline.js");
+const fieldScan = require("../extension/field-scan.js");
+const outline = require("../extension/page-outline.js");
 
 // jsdom 不排版：只把 hidden 和行内 display:none 当成看不见。
 const isVisible = (el) => !el.closest("[hidden], [style*='display: none'], [style*='display:none']");

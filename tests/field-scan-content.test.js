@@ -73,7 +73,7 @@ test('a Jiandaoyun date box is described as a date, not a time: its class names 
 
 test('a failed parent blocks later fields in its cascade group', async () => {
   const late = lateScanner();
-  const aiHelpers = { ...require('../ai-helpers.js'), detectCascadeGroups(fields) {
+  const aiHelpers = { ...require('../extension/ai-helpers.js'), detectCascadeGroups(fields) {
     fields.forEach((field, index) => { field.cascadeGroup = 'region'; field.cascadeLevel = index; });
   } };
   let requested = false, requestedFields;
@@ -182,8 +182,8 @@ test("a field whose title binding went stale during matching is not written", as
 test("the report row of a field whose binding went stale carries its reason code", async () => {
   // #301 智齐家：这一行原来只有中文原因，诊断里没有 reason=。
   const late = lateScanner(); const sent = [];
-  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, feedback: require("../feedback-core.js"),
-    fillProbe: { ...require("../fill-probe.js"), probePage: () => ({ host: "jobs.example.test", frames: { total: 0, crossOrigin: 0, frameInputs: 0 },
+  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, feedback: require("../extension/feedback-core.js"),
+    fillProbe: { ...require("../extension/fill-probe.js"), probePage: () => ({ host: "jobs.example.test", frames: { total: 0, crossOrigin: 0, frameInputs: 0 },
       custom: { total: 0, byLibrary: {} }, editButtons: 0, locked: 0, shadowHosts: 0, elements: 40 }) },
     sendMessage: async (message) => { sent.push(message);
       return message.type === "AI_FILL" ? { success: true, matches: [{ fieldId: "field-0", value: "测试用户" }, { fieldId: "field-1", value: "测试用户" }] } : { ok: true }; } });
@@ -228,7 +228,7 @@ test("saving to 我的信息 re-checks the binding: a control that moved since t
 });
 
 test("diagnostics carry scan skips and label sources in the v1 block, and survive the feedback allowlist", async () => {
-  const feedback = require("../feedback-core.js");
+  const feedback = require("../extension/feedback-core.js");
   const allInputs = [];
   const late = lateScanner();
   const ctx = loadHighlightHelpers({ formElements: [], allInputs, fieldScan: late.proxy, feedback,
@@ -334,7 +334,7 @@ test('a rebuilt form whose field now holds something else is not written', async
 function grownForm({ newLabel, newValue = '', resume, aiMore = [] }) {
   const late = lateScanner();
   const requests = [];
-  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, aiHelpers: require('../ai-helpers.js'),
+  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, aiHelpers: require('../extension/ai-helpers.js'),
     sendMessage: async (message) => {
       if (message.type !== 'AI_FILL') return { success: true, matches: [] };
       requests.push(message);
@@ -393,7 +393,7 @@ test('a field whose repeat number shifts because a same-named field appeared is 
   // 序号随之变化。只看序号会把它当新字段再填一次，第二次写入时被当成用户改过，整次填写停下。
   const late = lateScanner();
   const requests = [];
-  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, aiHelpers: require('../ai-helpers.js'),
+  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, aiHelpers: require('../extension/ai-helpers.js'),
     sendMessage: async (message) => {
       if (message.type !== 'AI_FILL') return { success: true, matches: [] };
       requests.push(message);
@@ -452,7 +452,7 @@ test(`a date field rebuilt right after the write is checked at the page's precis
   // 审查 A9 + 需求方：按页面要求的精度核对。页面只显示到月（只能选到月）时年月对上就算填上；
   // 页面显示到日时，资料里的 15 日对不上就不算。
   const late = lateScanner();
-  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, aiHelpers: require('../ai-helpers.js'),
+  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, aiHelpers: require('../extension/ai-helpers.js'),
     sendMessage: async () => ({ success: true, matches: [{ fieldId: 'field-0', value: '2023-07-15' }] }) });
   const oldDate = new ctx.HTMLInputElement(), newDate = new ctx.HTMLInputElement();
   const stale = new Set();

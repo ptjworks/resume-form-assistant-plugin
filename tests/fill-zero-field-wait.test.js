@@ -3,8 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadHighlightHelpers, fakeFieldScan } = require("./helpers/content-harness.js");
-const realProbe = require("../fill-probe.js");
-const deep = require("../deep-analysis.js");
+const realProbe = require("../extension/fill-probe.js");
+const deep = require("../extension/deep-analysis.js");
 const { JSDOM } = require("jsdom");
 
 const STORE = { templates: [{ id: "one", groups: [{ name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }] }] }], activeTemplateId: "one" };

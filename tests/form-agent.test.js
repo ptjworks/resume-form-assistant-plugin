@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const agent = require('../form-agent.js');
+const agent = require('../extension/form-agent.js');
 
 function fixture({ label = '新增论文', heading = '论文', type = 'button', current = 1, effect = 'add' } = {}) {
   const values = [{ value: '用户已填', checked: false, isConnected: true, getClientRects: () => [1] }];
@@ -56,7 +56,7 @@ test('suffix-numbered fields identify separate records and do not suppress addit
 });
 
 test('same-anchor normalized records preserve the uniqueness suffix', () => {
-  const helpers = require('../ai-helpers.js');
+  const helpers = require('../extension/ai-helpers.js');
   const fields = helpers.normalizeParsedFields([
     { group: '教育背景', key: '教育1学校', value: '同一大学' },
     { group: '教育背景', key: '教育1专业', value: '本科专业' },

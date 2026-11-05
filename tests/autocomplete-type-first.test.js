@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
+const scanner = require("../extension/field-scan.js");
 
 // 宿主替身：文本框按 content.js 的 runTextLifecycle 写（聚焦、写值、input、change、失焦），核对比较框里的字。
 function load(html, options = {}) {
@@ -464,8 +464,8 @@ test("a plain YUI 2 autocomplete without ARIA that forces a selection gets the s
 });
 
 test("fill diagnostics name YUI and UI5 controls, and the report keeps them", () => {
-  const probe = require("../fill-probe.js");
-  const core = require("../feedback-core.js");
+  const probe = require("../extension/fill-probe.js");
+  const core = require("../extension/feedback-core.js");
   const { doc } = load(`<div class="yui-ac"><input class="yui-ac-input" role="combobox"></div>
     <div class="sapMInput"><input class="sapMInputBaseInner" role="combobox"></div>`);
   const [yuiInput, ui5Input] = doc.querySelectorAll("input");

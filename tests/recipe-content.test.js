@@ -5,9 +5,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const deep = require("../deep-analysis.js");
-const outlineApi = require("../page-outline.js");
-const recipes = require("../page-recipe.js");
+const deep = require("../extension/deep-analysis.js");
+const outlineApi = require("../extension/page-outline.js");
+const recipes = require("../extension/page-recipe.js");
 const { loadHighlightHelpers, fakeFieldScan } = require("./helpers/content-harness.js");
 
 // 假扫描：查看状态下还没出现的输入框（isConnected 为 false）不算。
@@ -82,7 +82,7 @@ function recipePage({ labels = ["姓名", "现居城市"], analyze, fill, button
     fillProbe,
     fieldScan: scanVisibleOnly(),
     pageActions,
-    formAgent: require("../form-agent.js"),
+    formAgent: require("../extension/form-agent.js"),
     pageOutline: { ...outlineApi, ...fakeOutline(inputs, buttons, outlineCalls) },
     sendMessage: async (message) => {
       sent.push(message);

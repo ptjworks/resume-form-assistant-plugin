@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
-const scanner = require('../field-scan.js');
+const scanner = require('../extension/field-scan.js');
 const antd6 = require('./helpers/antd6-select.js');
 
 const visible = el => !el.closest('[hidden]');

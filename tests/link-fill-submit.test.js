@@ -56,14 +56,14 @@ const closed = () => ({ lastError: 'Error when communicating with the native mes
  * `desktop(message)` answers every native message; tests switch it between phases.
  */
 async function harness({ storage = PAIRED(), desktop = closed } = {}) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createSession } = await import('../link/session.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
-  const { createOutbox } = await import('../link/outbox.mjs');
-  const { createReconcile } = await import('../link/reconcile.mjs');
-  const { createDrain } = await import('../link/drain.mjs');
-  const { createFillRecords } = await import('../link/fillrecords.mjs');
-  const { createRouter } = await import('../link/router.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
+  const { createOutbox } = await import('../extension/link/outbox.mjs');
+  const { createReconcile } = await import('../extension/link/reconcile.mjs');
+  const { createDrain } = await import('../extension/link/drain.mjs');
+  const { createFillRecords } = await import('../extension/link/fillrecords.mjs');
+  const { createRouter } = await import('../extension/link/router.mjs');
 
   let minted = 0;
   const uuid = () => `00000000-0000-4000-8000-${String(++minted).padStart(12, '0')}`;
@@ -120,7 +120,7 @@ test('a fill recorded against a chosen application becomes exactly one fill.subm
 });
 
 test('the envelope the plugin builds passes the vendored validator', async () => {
-  const { validateRequest } = await import('../link/protocol/validate.mjs');
+  const { validateRequest } = await import('../extension/link/protocol/validate.mjs');
   const { router, writes } = await harness({ desktop: onlineDesktop });
   await router.handle({ type: 'DESKTOP_RECORD_FILL', raw: RAW, applicationId: APPLICATION });
   await validateRequest(writes('fill.submit')[0]);
@@ -383,7 +383,7 @@ test('a late request cannot recreate a fill while its completed record is being 
 // 0.4.4 could store a fill that wrote more fields than it counted; the desktop refuses those.
 const validatingDesktop = async message => {
   if (message.messageType === 'handshake') return handshake(message);
-  const { validateRequest } = await import('../link/protocol/validate.mjs');
+  const { validateRequest } = await import('../extension/link/protocol/validate.mjs');
   try {
     await validateRequest(message);
   } catch (error) {

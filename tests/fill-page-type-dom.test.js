@@ -4,10 +4,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const probeApi = require("../fill-probe.js");
-const core = require("../feedback-core.js");
-const deep = require("../deep-analysis.js");
+const scanner = require("../extension/field-scan.js");
+const probeApi = require("../extension/fill-probe.js");
+const core = require("../extension/feedback-core.js");
+const deep = require("../extension/deep-analysis.js");
 
 // jsdom 不排版：hidden、行内 display:none / visibility:hidden 的祖先（含 Shadow DOM 宿主）算看不见，
 // 其余框架默认 600×800、别的元素 300×32；data-w / data-h 可以改尺寸。

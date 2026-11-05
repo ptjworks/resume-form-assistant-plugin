@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const root = path.join(__dirname, '..', '..');
+const root = path.join(__dirname, '..', '..', 'extension');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const settle = async () => { for (let i = 0; i < 6; i += 1) await tick(); };
@@ -74,8 +74,8 @@ function loadPage({ extraction, desktop, userAgent, feedback = false }) {
     },
     self: {
       __RESUME_PRO_TEST__: true,
-      ResumeProResumeData: require('../../resume-data.js'),
-      ResumeProProfile: require('../../profile-fields.js'),
+      ResumeProResumeData: require('../../extension/resume-data.js'),
+      ResumeProProfile: require('../../extension/profile-fields.js'),
       ResumeProAIClient: {
         send: message => { ai.sent.push(message); return new Promise(resolve => { ai.answer = resolve; }); },
         cancel: async requestId => { ai.cancelled.push(requestId); return { cancelled: true }; }
@@ -97,7 +97,7 @@ function loadPage({ extraction, desktop, userAgent, feedback = false }) {
   return {
     hooks, desktopCalls, storageWrites, ai, location: context.location,
     async ready(copyOverride = {}) {
-      const [saveFlow, copy] = await Promise.all([import('../../link/save-flow.mjs'), import('../../link/copy.mjs')]);
+      const [saveFlow, copy] = await Promise.all([import('../../extension/link/save-flow.mjs'), import('../../extension/link/copy.mjs')]);
       hooks.setDesktopModules({ extract: { extractJobFields: () => structuredClone(extraction) }, saveFlow, copy: { ...copy, ...copyOverride } });
     },
     deliver(message) {
@@ -209,9 +209,9 @@ async function openPanel({ extraction = RELIABLE_JOB, desktop = () => ({ status:
     document, chrome,
     navigator: { userAgent: USER_AGENTS[browser], clipboard: { writeText: async value => { if (clipboardRejects) throw new Error('denied'); clipboardWrites.push(value); } } },
     self: {
-      ResumeProProfile: require('../../profile-fields.js'),
-      ResumeProResumeData: require('../../resume-data.js'),
-      ResumeProCompose: require('../../sidepanel-compose.js')
+      ResumeProProfile: require('../../extension/profile-fields.js'),
+      ResumeProResumeData: require('../../extension/resume-data.js'),
+      ResumeProCompose: require('../../extension/sidepanel-compose.js')
     },
     URL, setTimeout: () => 1, clearTimeout() {}, setInterval: listener => { poll = listener; }
   });

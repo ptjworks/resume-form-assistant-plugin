@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
-const webmail = require('../webmail.js');
-const transport = require('../gmail-download.js');
+const webmail = require('../extension/webmail.js');
+const transport = require('../extension/gmail-download.js');
 
 async function capture(doc, fetcher) {
   const source = await webmail.capture(doc, fetcher);
@@ -176,7 +176,7 @@ test('Gmail adapter installation does not inspect mail before an explicit side-p
   const context = { URL: globalThis.URL, chrome: { runtime: { id: 'own', getURL: file => `chrome-extension://own/${file}`, onMessage: { addListener: fn => { listener = fn; } } } } };
   context.self = context; context.window = context; context.top = context; context.location = { href: URL };
   Object.defineProperty(context, 'document', { get() { throw new Error('pre-read'); } });
-  vm.runInNewContext(fs.readFileSync(require.resolve('../webmail.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(require.resolve('../extension/webmail.js'), 'utf8'), context);
   assert.equal(typeof listener, 'function');
   let reply;
   assert.equal(listener({ type: 'WEBMAIL_VALIDATE', target: 'x' }, { id: 'own', url: URL }, value => { reply = value; }), false);
@@ -307,7 +307,7 @@ function controlledAdapter() {
     setInterval(fn) {const id=++next;intervals.set(id,fn);return id;}, clearInterval(id) {intervals.delete(id);},
     setTimeout(fn) {const id=++next;deadlines.set(id,fn);return id;}, clearTimeout(id) {deadlines.delete(id);} };
   context.self = context;
-  vm.runInNewContext(fs.readFileSync(require.resolve('../webmail.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(require.resolve('../extension/webmail.js'), 'utf8'), context);
   return { api:context.module.exports, intervals, deadlines };
 }
 test('hash, history traversal, pagehide and modern navigation immediately release target resources', async () => {

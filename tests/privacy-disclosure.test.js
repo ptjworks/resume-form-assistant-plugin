@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const core = require("../feedback-core.js");
+const core = require("../extension/feedback-core.js");
 
 const read = file => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 const policy = read("docs/privacy-policy.md");
@@ -46,7 +46,7 @@ test("every diagnostic key and section is named in the privacy policy", () => {
 });
 
 test("the worker's [来源] lines and the unfilled-control tokens are the ones listed above", async () => {
-  const { createFeedback } = await import("../link/feedback.mjs");
+  const { createFeedback } = await import("../extension/link/feedback.mjs");
   const data = {};
   const worker = createFeedback({ storage: { get: async () => structuredClone(data), set: async value => Object.assign(data, structuredClone(value)) },
     version: "0.4.5", os: "Windows / Chrome 140", install: () => "normal", fetchImpl: async () => new Response("{}") });

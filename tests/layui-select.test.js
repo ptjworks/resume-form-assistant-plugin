@@ -5,7 +5,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
+const scanner = require("../extension/field-scan.js");
 
 const OPTIONS = [["", "请选择"], ["1", "大专"], ["2", "本科"], ["3", "硕士"], ["4", "博士"], ["5", "其他", true]];
 function layui({ disabled = false, search = false, value = "" } = {}) {

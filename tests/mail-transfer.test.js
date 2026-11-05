@@ -3,9 +3,9 @@ const assert = require('node:assert/strict');
 const ID = '11111111-1111-4111-8111-111111111111';
 const identity = { archiveId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', restoreEpoch: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
 async function client(overrides = {}) {
-  const { createMail } = await import('../link/mail.mjs');
+  const { createMail } = await import('../extension/link/mail.mjs');
   const sent = []; let probes = 0;
-  const { validateRequest } = await import('../link/protocol/validate.mjs');
+  const { validateRequest } = await import('../extension/link/protocol/validate.mjs');
   const mail = createMail({ session: { probe: async () => { probes++; return { mode: 'ready', identity, capabilities: ['mail.import'] }; } },
     store: { clientInstanceId: async () => ID }, uuid: () => ID, now: () => new Date('2026-10-26T00:00:00Z'),
     send: async msg => { await validateRequest(msg); sent.push(msg); return { status: 'ok', response: { payload: { status: msg.payload.chunkIndex + 1 === msg.payload.chunkCount ? 'saved' : 'chunk', uploadId: ID, chunkIndex: msg.payload.chunkIndex, evidenceId: ID, duplicate: false } } }; }, ...overrides });
@@ -37,7 +37,7 @@ test('excerpt bytes retain their explicit kind and chosen application', async ()
   assert.deepEqual(JSON.parse(Buffer.from(c.sent[0].payload.bytesBase64, 'base64')), excerpt);
 });
 test('mail writes are accepted only from this extension native side panel', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const listeners = [];
   const api = { runtime: { id: 'own', getURL: p => `chrome-extension://own/${p}`, getManifest: () => ({ version: '0.4.4' }), onMessage: { addListener: l => listeners.push(l) } },
     storage: { local: { get: async () => ({}), set: async () => {}, remove: async () => {} } },

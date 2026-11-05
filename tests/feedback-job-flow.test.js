@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 const { openPanel, settle, RELIABLE_JOB, UNRELIABLE_JOB } = require('./helpers/sidepanel-harness.js');
-const core = require('../feedback-core.js');
+const core = require('../extension/feedback-core.js');
 
 // What extract.mjs reports: 北森 gave the company by its site rule, the title is missing.
 const BEISEN_JOB = { ...UNRELIABLE_JOB,
@@ -20,7 +20,7 @@ const block = lines => ['[岗位]', ...lines].join('\n');
 // The side panel's 手动反馈问题 (the real feedback-ui.js, in jsdom) against the real worker router; the page
 // answers RESUME_PANEL_STATUS from the real content.js. Only a preview is made: nothing is sent.
 async function preview(panel) {
-  const { installFeedback } = await import('../link/feedback.mjs');
+  const { installFeedback } = await import('../extension/link/feedback.mjs');
   const origin = 'chrome-extension://test/';
   let listener;
   const data = {};
@@ -42,8 +42,8 @@ async function preview(panel) {
         onActivated: { addListener() {} }, onUpdated: { addListener() {} } },
       storage: { onChanged: { addListener() {} } }
     };
-    window.eval(fs.readFileSync(path.join(__dirname, '..', 'feedback-core.js'), 'utf8'));
-    window.eval(fs.readFileSync(path.join(__dirname, '..', 'feedback-ui.js'), 'utf8'));
+    window.eval(fs.readFileSync(path.join(__dirname, '..', 'extension', 'feedback-core.js'), 'utf8'));
+    window.eval(fs.readFileSync(path.join(__dirname, '..', 'extension', 'feedback-ui.js'), 'utf8'));
     const $ = id => window.document.getElementById(id);
     $('feedback-expand').click();
     $('feedback-description').value = '保存岗位时岗位名没读出来';

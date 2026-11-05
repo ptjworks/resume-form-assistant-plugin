@@ -4,13 +4,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '..', 'extension', 'popup.js'), 'utf8');
 function page() {
   const context = vm.createContext({ self: { __RESUME_PRO_TEST__: true } });
   vm.runInContext(source, context);
   return context.self.ResumeProStatusPage;
 }
-const { modeCopy } = require('../resume-data.js');
+const { modeCopy } = require('../extension/resume-data.js');
 
 test('the desktop card mirrors the side panel downgrade states', () => {
   const { describeDesktop } = page();
@@ -55,7 +55,7 @@ test('the status page manages nothing locally and loads no parsing or spreadshee
   for (const pattern of [/xlsx/i, /mammoth/i, /pdfjs/i, /\bfetch\s*\(/, /storage\.local\.set/, /storage\.local\.remove/, /ai-models/]) {
     assert.doesNotMatch(source, pattern);
   }
-  const html = fs.readFileSync(path.join(__dirname, '..', 'popup.html'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'extension', 'popup.html'), 'utf8');
   assert.deepEqual([...html.matchAll(/<script src="([^"]+)"/g)].map(match => match[1]), ['usage-signals.js', 'feedback-core.js', 'feedback-ui.js', 'usage-ui.js', 'resume-data.js', 'popup.js']);
   // Deleting data and the old key are behind the page's own confirmation box (#261).
   assert.match(source, /"drop-key": async \(\) => \{\s*if \(!await confirmDanger\(/);
@@ -64,7 +64,7 @@ test('the status page manages nothing locally and loads no parsing or spreadshee
 });
 
 test('the confirmation box focuses 取消, never the dangerous button, and only 主动作 confirms', () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'popup.html'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'extension', 'popup.html'), 'utf8');
   const dialog = html.slice(html.indexOf('<dialog id="confirm-dialog"'), html.indexOf('</dialog>'));
   assert.match(dialog, /<form method="dialog"/, 'Escape and 取消 close it without submitting anything');
   assert.match(dialog, /<button type="submit" value="cancel" id="confirm-cancel" autofocus>取消<\/button>/);
@@ -110,7 +110,7 @@ test('a migration action is reported from the status it returns, never from the 
 // #429「AI 填写时发送资料原文」：开关默认关；读不到时不能点，也不说按关闭处理，给一个重新读取；改动交给后台存，这一页不写存储。
 test('the send-values switch starts off, follows the stored setting and saves through the service worker', async () => {
   const { JSDOM } = require('jsdom');
-  const html = fs.readFileSync(path.join(__dirname, '..', 'popup.html'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'extension', 'popup.html'), 'utf8');
   const markup = html.slice(html.indexOf('<section class="card" id="send-values"'), html.indexOf('<section class="card" id="migration"'));
   assert.match(markup, /<input type="checkbox" id="send-values-toggle" disabled>/, 'off and locked until the setting is read');
   const open = async (status, saved = { ok: true, enabled: true }) => {
@@ -128,7 +128,7 @@ test('the send-values switch starts off, follows the stored setting and saves th
       },
       storage: { local: { get: async () => ({}) }, onChanged: { addListener() {} } }
     };
-    dom.window.eval(fs.readFileSync(path.join(__dirname, '..', 'resume-data.js'), 'utf8'));
+    dom.window.eval(fs.readFileSync(path.join(__dirname, '..', 'extension', 'resume-data.js'), 'utf8'));
     dom.window.eval(source);
     await new Promise((resolve) => setTimeout(resolve, 20));
     const doc = dom.window.document;

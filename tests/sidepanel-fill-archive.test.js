@@ -262,7 +262,7 @@ test("desktop closed, not paired or incompatible: the fixed wording, and no pend
   await unpaired.panel.waitCard((next) => next.hidden, "the card to close");
   assert.equal(records(unpaired.storage).length, 0);
 
-  const { describeFillArchiveBlocked } = await import("../link/copy.mjs");
+  const { describeFillArchiveBlocked } = await import("../extension/link/copy.mjs");
   assert.match(describeFillArchiveBlocked("incompatible").text, /协议版本和插件对不上/);
   assert.equal(describeFillArchiveBlocked("incompatible").canQueue, true);
   assert.equal(describeFillArchiveBlocked("not_installed").canQueue, false);

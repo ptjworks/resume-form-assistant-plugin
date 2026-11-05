@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
-const webmail = require('../webmail.js');
+const webmail = require('../extension/webmail.js');
 const RAW = Buffer.from('From: hr@example.test\r\nTo: user@example.test\r\nSubject: Interview\r\nDate: Mon, 26 Oct 2026 08:00:00 +0000\r\nMessage-ID: <invitation@example.test>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=demo\r\n\r\n--demo\r\nContent-Type: text/plain\r\n\r\nInterview tomorrow\r\n--demo\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename="guide.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n--demo--\r\n');
 function qq(extra = '') {
   return new JSDOM(`<h1 id="subject">面试邀请</h1><span id="fromaddr">hr@example.test</span><span id="mail_date">2026-10-26</span><div id="mailContentContainer">明天面试${extra}</div>`, { url: 'https://mail.qq.com/cgi-bin/readmail?sid=synthetic&mailid=demo&t=mail' }).window.document;
@@ -67,7 +67,7 @@ test('loading the content adapter installs a listener without inspecting the doc
   const context = { URL, self: null, chrome: { runtime: { id: 'own', getURL: p => `chrome-extension://own/${p}`, onMessage: { addListener: l => { listener = l; } } } } };
   context.self = context; context.window = context; context.top = context; context.location = { href: 'https://mail.qq.com' };
   Object.defineProperty(context, 'document', { get() { throw new Error('read before click'); } });
-  vm.runInNewContext(fs.readFileSync(require.resolve('../webmail.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(require.resolve('../extension/webmail.js'), 'utf8'), context);
   assert.equal(typeof listener, 'function');
   let answer;
   assert.equal(listener({ type: 'WEBMAIL_CAPTURE' }, { id: 'own', url: 'https://mail.qq.com/' }, r => { answer = r; }), false);

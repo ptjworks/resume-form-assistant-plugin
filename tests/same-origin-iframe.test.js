@@ -4,10 +4,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const probeApi = require("../fill-probe.js");
-const core = require("../feedback-core.js");
-const deep = require("../deep-analysis.js");
+const scanner = require("../extension/field-scan.js");
+const probeApi = require("../extension/fill-probe.js");
+const core = require("../extension/feedback-core.js");
+const deep = require("../extension/deep-analysis.js");
 const { openFramedPage, installLayout, formState, FORM, FILLED, EMPTY_FORM, EXTENSION_ID } = require("./helpers/frame-page.js");
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

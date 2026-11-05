@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const outline = require("../page-outline.js");
+const outline = require("../extension/page-outline.js");
 
 const load = () => import("../scripts/eval-deep-analysis.mjs");
 
@@ -40,7 +40,7 @@ test("the real-model client sends the plugin's prompt, keeps the key in the head
   assert.equal(requests[0].url, "https://llm.example.test/v1/chat/completions");
   assert.equal(requests[0].init.headers.authorization, "Bearer sk-test-not-real");
   const body = JSON.parse(requests[0].init.body);
-  assert.equal(body.messages[0].content, require("../deep-analysis.js").ANALYZE_SYSTEM_PROMPT);
+  assert.equal(body.messages[0].content, require("../extension/deep-analysis.js").ANALYZE_SYSTEM_PROMPT);
   assert.ok(!requests[0].init.body.includes("sk-test-not-real"), "the key is never in the body");
   assert.equal(result.total.promptTokens, 900);
   assert.equal(result.total.fieldPrecision, 1);

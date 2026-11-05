@@ -8,7 +8,7 @@ const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
 const STORE_ID = "diagjmploldedipjdenmecmjokckelkl";
-const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8"));
+const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "extension", "manifest.json"), "utf8"));
 
 /** Chrome maps the first 16 bytes of SHA-256(SPKI DER) to a-p. */
 function extensionIdFromPublicKey(key) {

@@ -2,7 +2,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadHighlightHelpers } = require("./helpers/content-harness.js");
-const realProbe = require("../fill-probe.js");
+const realProbe = require("../extension/fill-probe.js");
 
 const STORE = { templates: [{ id: "one", groups: [{ name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }] }] }], activeTemplateId: "one" };
 const LIEPIN_VIEW = { host: "c.liepin.com", frames: { total: 0, crossOrigin: 0, frameInputs: 0 },
@@ -232,7 +232,7 @@ test("a view page where the one matched field refuses its value keeps the unfill
 test("an AI timeout with local matches that would not stick says nothing about 编辑 and does not report an edit hint", async () => {
   const timeout = "日常模型等了 120 秒没有返回，可在桌面设置换模型后重试。";
   const calls = [];
-  const feedback = { ...require("../feedback-core.js") };
+  const feedback = { ...require("../extension/feedback-core.js") };
   const fillFailure = feedback.fillFailure;
   feedback.fillFailure = input => { calls.push(input); return fillFailure(input); };
   const { status, result } = await runOnViewPage({ success: true, warning: timeout, error: timeout,
@@ -324,7 +324,7 @@ for (const [label, hidden] of [
 }
 
 test('#208 actual fill lifecycle reports empty and rejected fields without user values; success and assisted stay silent', async () => {
-  const core = require('../feedback-core.js');
+  const core = require('../extension/feedback-core.js');
   for (const scenario of ['empty', 'refused', 'success', 'assisted']) {
     const sent = []; const formElements = [];
     const { helpers, HTMLInputElement } = loadHighlightHelpers({

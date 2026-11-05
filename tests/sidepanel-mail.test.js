@@ -155,7 +155,7 @@ test('missing non-Gmail bindings and an unloaded page cannot bypass excerpt targ
 });
 
 test('actual QQ capture and content validation block a retry after switching mail at the same URL',async t=>{
-  const webmail=require('../webmail.js');
+  const webmail=require('../extension/webmail.js');
   const d=new JSDOM('<h1 id="subject">Mail A</h1><div id="mailContentContainer">Body A</div>',{url:'https://mail.qq.com/'}).window.document;
   const p=await panel(()=>webmail.capture(d,async()=>new Response('Unavailable',{status:503})));t.after(p.close);
   await p.change({id:1,url:d.location.href});
@@ -198,7 +198,7 @@ test('a foreground switch during final original validation blocks the archive wr
 });
 
 test('actual QQ original capture rejects a same-URL mail switch at the final transfer boundary',async t=>{
-  const webmail=require('../webmail.js');
+  const webmail=require('../extension/webmail.js');
   const d=new JSDOM('<h1 id="subject">Mail A</h1><div id="mailContentContainer">Body A</div>',{url:'https://mail.qq.com/cgi-bin/readmail?sid=synthetic&mailid=one'}).window.document;
   const raw='From: hr@example.test\r\nSubject: Original\r\nMessage-ID: <guard@example.test>\r\n\r\nBody';
   const p=await panel(()=>webmail.capture(d,async()=>new Response(raw)));t.after(p.close);

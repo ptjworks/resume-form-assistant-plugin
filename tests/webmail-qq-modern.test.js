@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
-const webmail = require('../webmail.js');
-const source = fs.readFileSync(require.resolve('../link/qq-export.mjs'), 'utf8');
+const webmail = require('../extension/webmail.js');
+const source = fs.readFileSync(require.resolve('../extension/link/qq-export.mjs'), 'utf8');
 const RAW = Buffer.from('From: hr@example.test\r\nSubject: Interview\r\nMessage-ID: <modern@example.test>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=demo\r\n\r\n--demo\r\nContent-Type: text/plain\r\n\r\nTest\r\n--demo\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n--demo--\r\n');
 async function fixture({ url = 'https://wx.mail.qq.com/home/index?sid=synthetic#/list/1', nativeUrl = '/read/readmail?func=3&mailid=ZL_test&sid=synthetic', throwExport = false } = {}) {
   const dom = new JSDOM('<div class="mail-list-page-reader-body"><div class="mail-detail-subject">Interview</div><div class="mail-detail-basic"><div class="mail-detail-basic-action-bar"><button class="more-btn">更多操作</button></div></div><div class="mail-detail-content">Test</div></div>', { url, runScripts: 'outside-only' });
@@ -22,7 +22,7 @@ async function fixture({ url = 'https://wx.mail.qq.com/home/index?sid=synthetic#
     });
     doc.body.appendChild(panel);
   });
-  const {createQQExporter} = await import('../link/qq-export.mjs');
+  const {createQQExporter} = await import('../extension/link/qq-export.mjs');
   const sender = {id:'own',url,tab:{id:1},frameId:0,documentId:'doc'};
   const injections = [];
   const api = {runtime:{id:'own'},scripting:{executeScript:async options=>{

@@ -17,7 +17,7 @@ async function panel(capture = { status: 'original', bytesBase64: 'eA==', target
     runtime: { sendMessage: async msg => { calls.push({ destination: 'desktop', msg }); return typeof result === 'function' ? result(msg) : result; } }
   };
   vm.runInContext(fs.readFileSync('webmail.js', 'utf8'), dom.getInternalVMContext());
-  const transport = require('../gmail-download.js');
+  const transport = require('../extension/gmail-download.js');
   dom.window.ResumeProGmailDownload = { resolveSource: (source, validate) => transport.resolveSource(source, async url => {
     calls.push({ destination: 'download', url }); return download(url);
   }, validate) };

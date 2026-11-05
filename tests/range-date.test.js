@@ -9,8 +9,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const helpers = require("../ai-helpers.js");
+const scanner = require("../extension/field-scan.js");
+const helpers = require("../extension/ai-helpers.js");
 
 const visible = (el) => !el.closest("[hidden], .ant-picker-dropdown-hidden");
 const pad = (n) => String(n).padStart(2, "0");
