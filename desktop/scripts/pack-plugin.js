@@ -4,7 +4,7 @@
 //   node desktop/scripts/pack-plugin.js --output dist/wangshen-kuaitian-plugin-0.4.0.zip
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -117,10 +117,25 @@ export function packPlugin(root, output, treeish = "HEAD") {
   const absolute = resolve(output);
   mkdirSync(dirname(absolute), { recursive: true });
   const tree = archiveTree(root, treeish);
-  // 直接打一棵树时 git archive 会用当前时间，这里沿用提交时间，和挪目录前打出来的一样。
-  const mtime = git(root, ["log", "-1", "--format=%cI", treeish]).trim();
+  // 直接打一棵树时 git archive 会用当前时间、不写注释。这里沿用提交时间，再把提交号写进
+  // zip 注释，和挪目录前直接打提交时一样。
+  const [commit, mtime] = lines(git(root, ["log", "-1", "--format=%H%n%cI", treeish]));
   git(root, ["archive", "--format=zip", `--mtime=${mtime}`, `--output=${absolute}`, tree]);
+  setZipComment(absolute, commit);
   return absolute;
+}
+
+/** git archive 写出的 zip 末尾是不带注释的 End of Central Directory，把注释接在后面。 */
+function setZipComment(file, comment) {
+  const zip = readFileSync(file);
+  const eocd = zip.length - 22;
+  if (eocd < 0 || zip.readUInt32LE(eocd) !== 0x06054b50 || zip.readUInt16LE(eocd + 20) !== 0) {
+    throw new Error(`${file} 的结尾不是 git archive 写出的 zip`);
+  }
+  const text = Buffer.from(comment, "utf8");
+  const out = Buffer.concat([zip, text]);
+  out.writeUInt16LE(text.length, eocd + 20);
+  writeFileSync(file, out);
 }
 
 function main(argv) {
