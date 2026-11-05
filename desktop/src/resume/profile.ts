@@ -36,6 +36,9 @@ export interface Profile {
 
 interface ProfileApi {
   PROFILE_SCHEMA: ProfileGroupDef[];
+  /** 像密码、验证码的字段名 / 内容；与 archive-store 的 resume_secrets 同一口径。 */
+  SECRET_LABEL: RegExp;
+  SECRET_VALUE: RegExp;
   FAMILY_FIELDS: ProfileFieldDef[];
   FAMILY_RELATIONS: string[];
   FAMILY_GROUP: string;

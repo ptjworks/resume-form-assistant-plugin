@@ -1,5 +1,6 @@
 //! 密码、验证码类内容的识别（data-privacy §4.1）。与插件 `profile-fields.js` 的
-//! `SECRET_LABEL` / `SECRET_VALUE` 同一口径，改这里要同步改那边。
+//! `SECRET_LABEL` / `SECRET_VALUE` 同一口径，改这里要同步改那边（桌面的 `parse-trim.test.ts`
+//! 逐字核对两边的正则）。
 //!
 //! 放在存储层而不是命令层：档案会整库进 D12 备份，任何写入口（桌面界面、
 //! 插件经协议写回、将来的导入）都得经过同一道拦截。
