@@ -7,7 +7,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const recipes = require("../extension/page-recipe.js");
 
-const source = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+const source = (file) => fs.readFileSync(path.join(__dirname, "..", "extension", file), "utf8");
 const KEY = recipes.STORAGE_KEY;
 
 function loadBackground({ failSet = false } = {}) {

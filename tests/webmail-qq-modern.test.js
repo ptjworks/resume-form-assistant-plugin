@@ -101,7 +101,7 @@ test('QQ modern content body cannot supply a forged native export menu', async (
 test('no private React/store state or idle page-world listener is installed', () => {
   assert.doesNotMatch(source, /__react|memoizedProps|webpackChunk/);
   assert.doesNotMatch(source, /addEventListener|qq-export-request|qq-export-response/);
-  const manifest = JSON.parse(fs.readFileSync('manifest.json','utf8'));
+  const manifest = JSON.parse(fs.readFileSync('extension/manifest.json','utf8'));
   assert.equal(manifest.content_scripts.some(script=>script.world==='MAIN'),false);
   assert.ok(manifest.permissions.includes('scripting'));
 });

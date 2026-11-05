@@ -108,7 +108,7 @@ test('content-script validation messages always answer once on DOM errors and al
     const win=dom.window;let listener;
     win.fetch=unavailable;win.TextEncoder=TextEncoder;
     win.chrome={runtime:{id:'own',getURL:file=>'chrome-extension://own/'+file,onMessage:{addListener:fn=>{listener=fn;}}}};
-    vm.runInContext(fs.readFileSync('webmail.js','utf8'),dom.getInternalVMContext());
+    vm.runInContext(fs.readFileSync('extension/webmail.js','utf8'),dom.getInternalVMContext());
     const proposal=await win.ResumeProWebmail.capture(win.document,unavailable);
     const original=win.document.querySelectorAll;
     win.document.querySelectorAll=()=>{throw new Error('DOM read failed');};

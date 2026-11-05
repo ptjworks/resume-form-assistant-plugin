@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
-const read = name => fs.readFileSync(name, 'utf8');
+const read = name => fs.readFileSync(`extension/${name}`, 'utf8');
 const emptyStore = { templates: [], activeTemplate: null, profile: { values: {}, family: [], custom: [] }, profileRevision: 1 };
 async function panel({ url = 'https://mail.163.com/js6/main.jsp?sid=synthetic', desktop = { status: 'ok', data: emptyStore }, capture = { status: 'original', bytesBase64: 'eA==' }, query = { status: 'ok', exact: [{ applicationId: 'app', company: '示例公司', title: '前端工程师' }], sameCompany: [] } } = {}) {
   const dom = new JSDOM(read('sidepanel.html'), { url: 'chrome-extension://own/sidepanel.html', runScripts: 'outside-only' });

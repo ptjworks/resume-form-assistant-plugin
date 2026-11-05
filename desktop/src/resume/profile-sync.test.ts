@@ -18,7 +18,7 @@ test("类型化入口拿得到字段定义与规范化", async () => {
 
 test("解析用的 resume-utils.js、ai-helpers.js 与插件一字不差", () => {
   for (const name of ["resume-utils.js", "ai-helpers.js"]) {
-    const plugin = readFileSync(new URL(`../../../${name}`, import.meta.url), "utf8");
+    const plugin = readFileSync(new URL(`../../../extension/${name}`, import.meta.url), "utf8");
     const desktop = readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
     assert.equal(desktop, plugin, name);
   }

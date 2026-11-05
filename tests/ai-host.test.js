@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const source = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+const source = file => fs.readFileSync(path.join(__dirname, '..', 'extension', file), 'utf8');
 // background.js is an ES module since the desktop link landed, and vm.runInContext only
 // takes a classic script. The import is replaced with a stub so these tests keep exercising
 // the offscreen AI host, which is what they are about.

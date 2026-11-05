@@ -44,7 +44,7 @@ const DIALOGS = {
 function load(shell) {
   const dom = new JSDOM(`<div class="page">${shell.replace("{form}", `<form>${FIELD}</form>`)}</div>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: (el) => !el.closest("[hidden]") });
   const doc = w.document;
   const root = doc.querySelector(".phoenix-select"), input = root.querySelector("input");
@@ -149,7 +149,7 @@ test("a read-only date box in an Element UI dialog that cannot take the date sen
     <div class="el-date-editor el-input"><input class="el-input__inner" readonly placeholder="请选择日期"></div></div></form>`);
   const dom = new JSDOM(`<div class="page">${shell}</div>`, { runScripts: "outside-only" });
   const w = dom.window, doc = w.document;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: (el) => !el.closest("[hidden]") });
   let closed = 0, escapes = 0, layer = null;
   w.addEventListener("keydown", (event) => { if (event.keyCode === 27) { escapes += 1; closed += 1; } });

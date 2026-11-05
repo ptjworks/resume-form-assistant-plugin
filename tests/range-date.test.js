@@ -26,7 +26,7 @@ const shift = (month, by) => { const index = month.y * 12 + month.m - 1 + by; re
 function load(html) {
   const dom = new JSDOM(`<form>${html}</form><button type="button" id="away">空白</button>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 400, settleMs: 30, isVisible: visible });
   return { w, doc: w.document, api };
 }

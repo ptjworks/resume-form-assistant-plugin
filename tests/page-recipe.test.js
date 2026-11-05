@@ -478,7 +478,7 @@ test("recipes stay out of the legacy migration, feedback and desktop link: nothi
     assert.ok(!/storage\.local\.get\(\s*(?:null)?\s*\)|\.get\(\s*null\s*\)/.test(source), `${file} must not read the whole storage`);
   }
   for (const file of ["feedback-core.js", "feedback-ui.js", "ai-worker.js", "popup.js", "sidepanel.js"]) {
-    const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "extension", file), "utf8");
     assert.ok(!source.includes("fillRecipes"), `${file} must not read recipes`);
   }
 });

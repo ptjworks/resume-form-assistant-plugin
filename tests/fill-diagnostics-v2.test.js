@@ -512,7 +512,7 @@ async function linkedCity(kind, province) {
     ? ["prov", "city"].map(id => `<label id="${id}-label">${id}</label><button type="button" id="${id}" role="combobox" aria-labelledby="${id}-label" aria-controls="${id}-list" aria-expanded="false">请选择</button>`).join("")
     : `${selectItem("prov", "籍贯", 100)}${selectItem("city", "当前城市", 200)}`;
   const w = new JSDOM(`<form>${html}</form>`, { runScripts: "outside-only" }).window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(path.join(__dirname, "..", "extension", file), "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: kind === "aria" ? 200 : 400, settleMs: 35, isVisible: el => !el.closest("[hidden]") });
   const doc = w.document;
   if (kind === "aria") {

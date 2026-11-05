@@ -169,7 +169,7 @@ function jdyDateBox({ format = "yyyy-MM-dd", min = "", max = "", value = "", cle
     <div class="fx-field"><div class="field-label"><div class="field-name">姓名</div></div><div class="field-component"><input type="text" id="other"></div></div>
   </div></div>`, { runScripts: "outside-only" });
   const w = dom.window, doc = w.document;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(path.join(__dirname, "..", "extension", file), "utf8"));
   const input = doc.querySelector(".fx-form-datetime input"), root = doc.querySelector(".x-datetime"), label = doc.querySelector(".datetime-label");
   const pad = (n) => String(n).padStart(2, "0");
   const key = (date) => `${date.y}-${pad(date.m)}-${pad(date.d)}`;

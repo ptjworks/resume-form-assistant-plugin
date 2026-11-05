@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
 async function panel(capture = { status: 'original', bytesBase64: 'eA==', target: 'opaque-target' }, download = async () => ({ status: 'original', kind: 'eml', bytesBase64: 'eA==' })) {
-  const dom = new JSDOM(fs.readFileSync('sidepanel.html', 'utf8'), { url: 'chrome-extension://own/sidepanel.html', runScripts: 'outside-only' });
+  const dom = new JSDOM(fs.readFileSync('extension/sidepanel.html', 'utf8'), { url: 'chrome-extension://own/sidepanel.html', runScripts: 'outside-only' });
   let tab = { id: 1, url: 'https://mail.google.com/mail/u/0/#inbox/thread' };
   let validation = { status: 'current' }, result = { status: 'saved' };
   const calls = [], handlers = {};
@@ -16,12 +16,12 @@ async function panel(capture = { status: 'original', bytesBase64: 'eA==', target
     }, onActivated: { addListener: fn => { handlers.activate = fn; } }, onUpdated: { addListener: fn => { handlers.update = fn; } } },
     runtime: { sendMessage: async msg => { calls.push({ destination: 'desktop', msg }); return typeof result === 'function' ? result(msg) : result; } }
   };
-  vm.runInContext(fs.readFileSync('webmail.js', 'utf8'), dom.getInternalVMContext());
+  vm.runInContext(fs.readFileSync('extension/webmail.js', 'utf8'), dom.getInternalVMContext());
   const transport = require('../extension/gmail-download.js');
   dom.window.ResumeProGmailDownload = { resolveSource: (source, validate) => transport.resolveSource(source, async url => {
     calls.push({ destination: 'download', url }); return download(url);
   }, validate) };
-  vm.runInContext(fs.readFileSync('sidepanel-mail.js', 'utf8'), dom.getInternalVMContext());
+  vm.runInContext(fs.readFileSync('extension/sidepanel-mail.js', 'utf8'), dom.getInternalVMContext());
   const flush = async () => { for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve)); };
   await flush();
   return { get: id => dom.window.document.getElementById(id), calls, flush,

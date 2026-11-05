@@ -10,7 +10,7 @@ const scanner = require("../extension/field-scan.js");
 function load(html, options = {}) {
   const dom = new JSDOM(`<form>${html}</form>`, { runScripts: "outside-only", pretendToBeVisual: true });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
   const visible = (el) => {
     for (let node = el; node && node.nodeType === 1; node = node.parentElement) {

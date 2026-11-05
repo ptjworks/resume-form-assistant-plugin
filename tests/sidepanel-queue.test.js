@@ -173,7 +173,7 @@ test("the panel only listens for the queue's keys and always reads them through 
 
 test("Chrome and Edge run the same panel code: nothing branches on the browser", () => {
   for (const file of ["sidepanel.js", "sidepanel-queue.js", "content.js", "background.js"]) {
-    const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "extension", file), "utf8");
     assert.doesNotMatch(source, /userAgent|\bEdg\/|navigator\.vendor|userAgentData/, file);
   }
   // Only the side panel API's presence decides between the panel and the page overlay.

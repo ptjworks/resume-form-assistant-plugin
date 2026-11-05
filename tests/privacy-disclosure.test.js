@@ -62,14 +62,14 @@ test("the worker's [来源] lines and the unfilled-control tokens are the ones l
   assert.deepEqual([...new Set(tokens)].sort(), Object.keys(TOKENS).sort());
   // Every keyed token CONTROL_TOKEN accepts (role=, lib=, opened=...), read from its source, so a
   // token that only some other input produces is caught too.
-  const definition = read("feedback-core.js").match(/const CONTROL_TOKEN = new RegExp\(([\s\S]*?)\);\r?\n/)[1];
+  const definition = read("extension/feedback-core.js").match(/const CONTROL_TOKEN = new RegExp\(([\s\S]*?)\);\r?\n/)[1];
   const keyed = [...definition.matchAll(/(?:\(\?:([a-z|]+)\)|\b([a-z]+))=/g)].flatMap(match => (match[1] || match[2]).split("|"));
   assert.ok(keyed.includes("opened") && keyed.includes("lib"), keyed.join());
   assert.deepEqual([...new Set(keyed)].sort(), Object.keys(TOKENS).filter(key => !["tag", "type", "readonly"].includes(key)).sort());
 });
 
 test("the notice names what reports now carry, and when they are sent", () => {
-  const ui = read("feedback-ui.js");
+  const ui = read("extension/feedback-ui.js");
   const notice = ui.slice(ui.indexOf("const explanation"), ui.indexOf("if (compact && noticeRoot)"));
   for (const words of ["AI 请求失败", "安装方式", "从哪里开始填写", "网页当时是否在前台", "有没有弹出、里面有没有选项", "模型档位", "多久开始回复",
     "没写上的输入框后来是空的还是被改了", "写入后有没有冒出建议框或别的弹层", "没填上的字段各是什么原因",

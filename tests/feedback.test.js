@@ -282,7 +282,7 @@ test('the real AI worker leaves uncaught errors to its host and reports rejectio
   const handlers = {}; const messages = [];
   const self = { location: { href: 'chrome-extension://test/ai-worker.js' }, addEventListener: (name, fn) => { handlers[name] = fn; }, postMessage: message => messages.push(message) };
   const context = vm.createContext({ self, console, URL, TextEncoder, AbortController, setTimeout, clearTimeout });
-  context.importScripts = (...files) => files.forEach(file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context));
+  context.importScripts = (...files) => files.forEach(file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'extension', file), 'utf8'), context));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../extension/ai-worker.js'), 'utf8'), context);
   assert.equal(handlers.error, undefined);
   handlers.unhandledrejection({ reason: { name: 'TypeError', message: 'private', stack: 'TypeError: private\n at chrome-extension://test/ai-worker.js:10:2' } });
@@ -539,7 +539,7 @@ test('a choice brought back by a new notice says the report contents changed; a 
   const { JSDOM } = require('jsdom');
   const fs = require('node:fs');
   const path = require('node:path');
-  const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const read = file => fs.readFileSync(path.join(__dirname, '..', 'extension', file), 'utf8');
   const mount = async (variant, status) => {
     const { window } = new JSDOM(variant === 'compact'
       ? '<div id="feedback-notice-root" hidden></div><div id="feedback-manual-root"></div><div id="feedback-auto-root" data-variant="compact"></div>'

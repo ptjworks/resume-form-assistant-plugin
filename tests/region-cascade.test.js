@@ -91,7 +91,7 @@ test("region data: 34 provincial divisions, the statistics cities, and no towns 
 function load(html) {
   const dom = new JSDOM(`<form>${html}</form>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "region-data.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "region-data.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: (el) => !el.closest("[hidden]") });
   return { w, doc: w.document, api };
 }

@@ -81,7 +81,7 @@ test('the confirmation box focuses 取消, never the dangerous button, and only 
 
 test('removed manager files are gone from the package', () => {
   for (const file of ['xlsx.full.min.js', 'mammoth.browser.min.js', 'ai-models.js', 'vendor/pdfjs']) {
-    assert.equal(fs.existsSync(path.join(__dirname, '..', file)), false, file);
+    assert.equal(fs.existsSync(path.join(__dirname, '..', 'extension', file)), false, file);
   }
 });
 
