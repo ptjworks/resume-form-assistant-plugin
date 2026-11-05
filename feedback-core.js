@@ -104,6 +104,8 @@
   const AFTER = ["empty", "previous", "other"];
   const OVERLAYS = ["list", "other", "none"];
   const INPUT_MODES = ["numeric", "decimal", "tel", "email", "url", "search", "text", "none"];
+  // Every unfilled field counts under its reason code (#301), not only the ten listed; a code outside FILL_REASONS is `other`.
+  const UNFILLED_REASONS = [...FILL_REASONS, "other"];
   const MAX_UNFILLED = 10;
   const INT = /^(?:\d{1,9}|-)$/;
   const tally = names => new RegExp(`^(?:-|(?:${names.join("|")})=\\d{1,6}(?:,(?:${names.join("|")})=\\d{1,6})*)$`);
@@ -124,7 +126,7 @@
     ai_first_byte_ms: INT, ai_timeout_stage: oneOf(TIMEOUT_STAGES, "|-"),
     resume_fields: INT, resume_candidates: INT, prompt_bytes: INT,
     timings_ms: /^scan=(?:\d{1,9}|-),match=(?:\d{1,9}|-),fill=(?:\d{1,9}|-),total=(?:\d{1,9}|-)$/,
-    unlisted: INT,
+    reasons: tally(UNFILLED_REASONS), unlisted: INT,
     job_company_source: oneOf(JOB_SOURCES), job_title_source: oneOf(JOB_SOURCES),
     job_missing: /^(?:none|company|title|company,title)$/, job_ai_called: /^(?:true|false)$/,
     job_ai_code: oneOf([...ERROR_CODES, ...JOB_CODES], "|http_\\d{3}|-"), job_end: oneOf(JOB_ENDS)
@@ -358,7 +360,13 @@
     ];
     const unfilled = Array.isArray(input.unfilledControls) ? input.unfilledControls : [];
     if (unfilled.length) {
-      lines.push("", "[未填字段]");
+      const reasons = {};
+      for (const item of unfilled) {
+        const key = FILL_REASONS.includes(item?.reasonCode) ? item.reasonCode : "other";
+        reasons[key] = (reasons[key] || 0) + 1;
+      }
+      // First in the section, so the 3500-character cap on the block cuts listed fields before it.
+      lines.push("", "[未填字段]", `reasons: ${listed(reasons, UNFILLED_REASONS)}`);
       for (const item of unfilled.slice(0, MAX_UNFILLED)) {
         const c = item?.control || {};
         const tokens = [`${c.tag || "?"}${c.type ? `[${c.type}]` : ""}`];
@@ -394,8 +402,8 @@
         continue;
       }
       // Every value has its own closed pattern; the length cap only bounds the regex work.
-      // The longest reachable value is drop_reasons with every reason at six digits (398 chars).
-      const entry = /^([a-z_]{1,32}): (.{1,400})$/.exec(line);
+      // The longest reachable value is reasons with every code at six digits (773 chars).
+      const entry = /^([a-z_]{1,32}): (.{1,800})$/.exec(line);
       if (entry) {
         const known = Object.prototype.hasOwnProperty.call(VALUES, entry[1]) && VALUES[entry[1]].test(entry[2])
           && (manual || !JOB_KEYS.test(entry[1]));

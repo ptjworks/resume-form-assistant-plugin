@@ -23,7 +23,7 @@ const KEYS = {
   local_matches: "本地和 AI 各匹配了几个", ai_fields: "送 AI 的字段数", ai_called: "是否调用了 AI", ai_tier: "所用模型档位",
   ai_matches: "本地和 AI 各匹配了几个", ai_latency_ms: "AI 耗时", ai_first_byte_ms: "首字节耗时", ai_timeout_stage: "AI 超时卡在哪一步",
   resume_fields: "简历字段", resume_candidates: "候选字段",
-  prompt_bytes: "提示词字节数", timings_ms: "各阶段耗时", unlisted: "其余只计数",
+  prompt_bytes: "提示词字节数", timings_ms: "各阶段耗时", reasons: "全部没填上的字段另按失败原因码分别计数", unlisted: "其余只计数",
   job_company_source: "公司和岗位名分别从哪里读到", job_title_source: "公司和岗位名分别从哪里读到", job_missing: "还缺哪一项",
   job_ai_called: "是否调用了 AI 识别", job_ai_code: "结果码", job_end: "这次保存怎样结束"
 };
@@ -72,7 +72,7 @@ test("the notice names what reports now carry, and when they are sent", () => {
   const ui = read("feedback-ui.js");
   const notice = ui.slice(ui.indexOf("const explanation"), ui.indexOf("if (compact && noticeRoot)"));
   for (const words of ["AI 请求失败", "安装方式", "从哪里开始填写", "网页当时是否在前台", "有没有弹出、里面有没有选项", "模型档位", "多久开始回复",
-    "没写上的输入框后来是空的还是被改了", "写入后有没有冒出建议框或别的弹层",
+    "没写上的输入框后来是空的还是被改了", "写入后有没有冒出建议框或别的弹层", "没填上的字段各是什么原因",
     "保存岗位的过程", "不含公司和岗位名"]) {
     assert.ok(notice.includes(words), words);
   }
