@@ -204,7 +204,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          plugin_version=$(node -p 'require("./manifest.json").version')
+          plugin_version=$(node -p 'require("./extension/manifest.json").version')
           node desktop/scripts/pack-plugin.js --output "dist-release/wangshen-kuaitian-plugin-${plugin_version}.zip"
           node desktop/scripts/check-desktop-release.js --assets dist-release --write-checksums --require-plugin-zip
 

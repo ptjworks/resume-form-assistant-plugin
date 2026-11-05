@@ -81,32 +81,32 @@ jobs:
 
       - name: Check JavaScript syntax
         run: |
-          node --check control-adapters.js
-          node --check antd-prefix.js
-          node --check custom-controls.js
-          node --check ai-helpers.js
-          node --check form-agent.js
-          node --check fill-probe.js
-          node --check field-scan.js
-          node --check page-outline.js
-          node --check deep-analysis.js
-          node --check page-actions.js
-          node --check page-recipe.js
-          node --check feedback-core.js
-          node --check feedback-ui.js
-          node --check link/feedback.mjs
-          node --check background.js
-          node --check ai-worker.js
-          node --check ai-host.js
-          node --check ai-client.js
-          node --check content.js
-          node --check popup.js
-          node --check resume-utils.js
-          node --check profile-fields.js
+          node --check extension/control-adapters.js
+          node --check extension/antd-prefix.js
+          node --check extension/custom-controls.js
+          node --check extension/ai-helpers.js
+          node --check extension/form-agent.js
+          node --check extension/fill-probe.js
+          node --check extension/field-scan.js
+          node --check extension/page-outline.js
+          node --check extension/deep-analysis.js
+          node --check extension/page-actions.js
+          node --check extension/page-recipe.js
+          node --check extension/feedback-core.js
+          node --check extension/feedback-ui.js
+          node --check extension/link/feedback.mjs
+          node --check extension/background.js
+          node --check extension/ai-worker.js
+          node --check extension/ai-host.js
+          node --check extension/ai-client.js
+          node --check extension/content.js
+          node --check extension/popup.js
+          node --check extension/resume-utils.js
+          node --check extension/profile-fields.js
 
       - name: Verify manifest
         run: |
-          node -e "JSON.parse(require('node:fs').readFileSync('manifest.json', 'utf8'))"
+          node -e "JSON.parse(require('node:fs').readFileSync('extension/manifest.json', 'utf8'))"
 
       - name: Type check
         run: |

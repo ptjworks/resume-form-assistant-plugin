@@ -4,12 +4,7 @@ on:
     branches: [main]
     paths:
       - 'desktop/**'
-      - 'link/**'
-      - 'icons/**'
-      - '*.js'
-      - '*.html'
-      - '*.css'
-      - 'manifest.json'
+      - 'extension/**'
       - 'README.md'
       - 'LICENSE'
       - '.github/workflows/metrics-acceptance.yml'

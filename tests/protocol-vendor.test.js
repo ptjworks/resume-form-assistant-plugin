@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // The extension cannot load files from outside its own root, so the D05 validator is
-// vendored into link/protocol/. This test is the lock: change the source and the plugin
+// vendored into extension/link/protocol/. This test is the lock: change the source and the plugin
 // suite goes red until the copy is refreshed. There is deliberately no second
 // implementation of the protocol rules in this repository.
 const SOURCE_DIR = path.join(__dirname, '..', 'desktop', 'crates', 'protocol', 'js');
