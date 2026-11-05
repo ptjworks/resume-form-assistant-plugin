@@ -2,7 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const FIXTURE_DIR = path.join(ROOT, 'docs', 'desktop-mvp', 'acceptance', 'fixtures', 'd14-v1');
@@ -13,8 +12,8 @@ function fixture(list, logicalId) {
 }
 
 test('D14 F11: every fixture marker is removed at its plugin boundary', async () => {
-  const { redactUrl } = await import('../link/redact.mjs');
-  const { buildSnapshot } = await import('../link/snapshot.mjs');
+  const { redactUrl } = await import('../extension/link/redact.mjs');
+  const { buildSnapshot } = await import('../extension/link/snapshot.mjs');
   const notice = fixture('notices', 'notice-bare-code');
   const redacted = redactUrl(notice.sourceUrl);
 
@@ -44,12 +43,8 @@ test('D14 F11: every fixture marker is removed at its plugin boundary', async ()
 
 test('D14 F11: the reviewed plugin release contains no fixture or forbidden marker', async () => {
   const release = await import('../desktop/scripts/check-plugin-release-allowlist.js');
-  const { PLUGIN_ARCHIVE_OPERANDS } = await import('../desktop/scripts/pack-plugin.js');
-  const leaves = execFileSync(
-    'git',
-    ['ls-tree', '-r', '--name-only', 'HEAD', '--', ...PLUGIN_ARCHIVE_OPERANDS],
-    { cwd: ROOT, encoding: 'utf8' }
-  ).trim().split(/\r?\n/).filter(Boolean);
+  const { listPluginArchive, sourcePathOf } = await import('../desktop/scripts/pack-plugin.js');
+  const leaves = listPluginArchive(ROOT);
 
   release.assertPluginOnlyArchive(leaves);
   assert.ok(leaves.length > 0);
@@ -60,7 +55,7 @@ test('D14 F11: the reviewed plugin release contains no fixture or forbidden mark
   );
 
   for (const name of leaves) {
-    const bytes = fs.readFileSync(path.join(ROOT, name));
+    const bytes = fs.readFileSync(path.join(ROOT, sourcePathOf(name)));
     for (const marker of dataset.syntheticMarkers) {
       assert.equal(bytes.includes(marker), false, `${marker} reached release file ${name}`);
     }

@@ -10,8 +10,8 @@ const IDENTITY = { archiveId: ARCHIVE, restoreEpoch: EPOCH };
 
 async function load() {
   return {
-    envelope: await import('../link/envelope.mjs'),
-    validate: await import('../link/protocol/validate.mjs')
+    envelope: await import('../extension/link/envelope.mjs'),
+    validate: await import('../extension/link/protocol/validate.mjs')
   };
 }
 

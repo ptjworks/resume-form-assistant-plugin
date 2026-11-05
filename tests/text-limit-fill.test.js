@@ -10,7 +10,7 @@ const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
 const { refsFor } = require("./helpers/ai-refs.js");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "extension");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
 const within = (promise, ms = 15000) => Promise.race([promise,
   new Promise((_, reject) => setTimeout(() => reject(new Error("the fill is still waiting")), ms).unref())]);
@@ -37,8 +37,8 @@ function layout(w) {
 function aiWorker(answers, resume) {
   const calls = [];
   const context = vm.createContext({
-    importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
-    ResumeProFormAgent: require("../form-agent.js"), AbortController, TextEncoder, performance: { now: () => 0 },
+    importScripts() {}, ResumeProAIHelpers: require("../extension/ai-helpers.js"), ResumeProProfile: require("../extension/profile-fields.js"),
+    ResumeProFormAgent: require("../extension/form-agent.js"), AbortController, TextEncoder, performance: { now: () => 0 },
     crypto: { randomUUID: () => `call-${calls.length + 1}` }, console
   });
   context.self = {

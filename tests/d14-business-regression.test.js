@@ -156,16 +156,16 @@ function desktopModel() {
 }
 
 async function harness(model) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createSession } = await import('../link/session.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
-  const { createOutbox } = await import('../link/outbox.mjs');
-  const { createReconcile } = await import('../link/reconcile.mjs');
-  const { createDrain } = await import('../link/drain.mjs');
-  const { createFillRecords } = await import('../link/fillrecords.mjs');
-  const { createStaging } = await import('../link/staging.mjs');
-  const { createUploads } = await import('../link/uploads.mjs');
-  const { createRouter } = await import('../link/router.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
+  const { createOutbox } = await import('../extension/link/outbox.mjs');
+  const { createReconcile } = await import('../extension/link/reconcile.mjs');
+  const { createDrain } = await import('../extension/link/drain.mjs');
+  const { createFillRecords } = await import('../extension/link/fillrecords.mjs');
+  const { createStaging } = await import('../extension/link/staging.mjs');
+  const { createUploads } = await import('../extension/link/uploads.mjs');
+  const { createRouter } = await import('../extension/link/router.mjs');
 
   const storage = fakeStorage({ desktopPairing: { archiveId: ARCHIVE, restoreEpoch: EPOCH, at: 1 } });
   const kv = fakeKv();

@@ -2,13 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
-const scanner = require('../field-scan.js');
+const scanner = require('../extension/field-scan.js');
 
 function harness(html, options = {}) {
   const dom = new JSDOM(`<form>${html}</form>`, { runScripts: 'outside-only' });
   const w = dom.window;
   for (const file of ['ai-helpers.js', 'custom-controls.js', 'control-adapters.js']) {
-    if (fs.existsSync(file)) w.eval(fs.readFileSync(file, 'utf8'));
+    if (fs.existsSync(`extension/${file}`)) w.eval(fs.readFileSync(`extension/${file}`, 'utf8'));
   }
   const api = w.ResumeProControls.create({ timeoutMs: 160, settleMs: 35,
     isVisible: el => !el.closest('[hidden]'), ...options });

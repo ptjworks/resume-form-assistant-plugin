@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.join(__dirname, '..');
+const repo = path.join(__dirname, '..');
+const root = path.join(repo, 'extension');
 const manifest = () => JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
 const background = () => fs.readFileSync(path.join(root, 'background.js'), 'utf8');
 
@@ -128,9 +129,9 @@ test('the sidebar offers confirming a submission separately from saving', async 
 });
 
 test('the desktop link is documented where a maintainer will look', async () => {
-  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const readme = fs.readFileSync(path.join(repo, 'README.md'), 'utf8');
   assert.match(readme, /docs\/extension-development\.md/);
-  const guide = fs.readFileSync(path.join(root, 'docs/extension-development.md'), 'utf8');
+  const guide = fs.readFileSync(path.join(repo, 'docs/extension-development.md'), 'utf8');
   assert.match(guide, /link\/ +桌面连接/);
   assert.match(guide, /sourceRestoreEpoch/);
 });
@@ -225,13 +226,13 @@ test('an application id typed by hand is checked before anything is bound', asyn
   const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8');
   const body = source.slice(source.indexOf('async function chooseFillApplication'), source.indexOf('async function chooseFillApplication') + 900);
   assert.match(body, /APPLICATION_ID_PATTERN\.test\(/);
-  const { describeFillRecordResult } = await import('../link/copy.mjs');
+  const { describeFillRecordResult } = await import('../extension/link/copy.mjs');
   assert.match(describeFillRecordResult({ status: 'rejected', reason: 'invalid_application_id' }).text, /申请 ID/);
 });
 
 test('every reconcile button hands resolvePaused the entry itself', async () => {
   const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8');
   assert.equal(/resolvePaused\(entry\.messageId/.test(source), false);
-  const { describeSnapshotResolveResult } = await import('../link/copy.mjs');
+  const { describeSnapshotResolveResult } = await import('../extension/link/copy.mjs');
   assert.match(describeSnapshotResolveResult({ status: 'pending' }).text, /重新上传/);
 });

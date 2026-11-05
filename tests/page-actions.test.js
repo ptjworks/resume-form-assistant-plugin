@@ -4,11 +4,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { JSDOM } = require("jsdom");
-const fieldScan = require("../field-scan.js");
-const outline = require("../page-outline.js");
-const deep = require("../deep-analysis.js");
-const agent = require("../form-agent.js");
-const actions = require("../page-actions.js");
+const fieldScan = require("../extension/field-scan.js");
+const outline = require("../extension/page-outline.js");
+const deep = require("../extension/deep-analysis.js");
+const agent = require("../extension/form-agent.js");
+const actions = require("../extension/page-actions.js");
 
 const isVisible = (el) => el.isConnected && !el.closest("[hidden], [style*='display: none'], [style*='display:none']");
 const FAST = { quietMs: 40, maxMs: 400, pollMs: 5 };

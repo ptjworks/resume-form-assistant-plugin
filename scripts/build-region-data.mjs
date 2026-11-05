@@ -59,7 +59,7 @@ for (const [province, cities] of Object.entries(others)) {
 }
 const data = provinces.join("|");
 
-const target = resolve(fileURLToPath(new URL("../region-data.js", import.meta.url)));
+const target = resolve(fileURLToPath(new URL("../extension/region-data.js", import.meta.url)));
 const source = readFileSync(target, "utf8");
 const line = /^  const DATA = ".*";$/m;
 if (!line.test(source)) throw new Error("DATA line not found in region-data.js");

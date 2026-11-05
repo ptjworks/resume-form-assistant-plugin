@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalize, modeCopy } = require('../resume-data.js');
+const { normalize, modeCopy } = require('../extension/resume-data.js');
 
 test('desktop read becomes the same view model in both sidebars', () => {
   const template = { id: 'template-id', name: '简历', groups: [{ name: '基本信息', fields: [{ key: '姓名', value: '测试' }] }] };

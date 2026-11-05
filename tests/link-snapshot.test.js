@@ -13,7 +13,7 @@ const TEMPLATE = {
 const at = iso => () => new Date(iso);
 
 async function load() {
-  return import('../link/snapshot.mjs');
+  return import('../extension/link/snapshot.mjs');
 }
 
 test('the same template always serialises to the same bytes', async () => {
@@ -127,7 +127,7 @@ test('chunks are 32 KiB, cover the bytes exactly and carry their own digests', a
 
 test('a maximal chunk still fits a valid snapshot.chunk envelope', async () => {
   const { planChunks, encodeBase64, CHUNK_BYTES, sha256Hex } = await load();
-  const { validateRequest, utf8JsonLen, MAX_ENVELOPE_BYTES } = await import('../link/protocol/validate.mjs');
+  const { validateRequest, utf8JsonLen, MAX_ENVELOPE_BYTES } = await import('../extension/link/protocol/validate.mjs');
   const bytes = new Uint8Array(CHUNK_BYTES * 2).map((_, i) => (i * 7) % 256);
   const [first] = await planChunks(bytes);
   const envelope = {

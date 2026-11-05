@@ -173,7 +173,7 @@
 
 ## 开发与贡献
 
-扩展源码位于仓库根目录，桌面端源码位于 `desktop/`。扩展可直接加载源码；桌面端需要单独的开发环境与构建流程。
+扩展源码位于 `extension/`，桌面端源码位于 `desktop/`。扩展可直接加载源码；桌面端需要单独的开发环境与构建流程。
 
 [开发快速开始](docs/dev-quickstart.md) · [扩展架构与调试](docs/extension-development.md) · [桌面端开发说明](desktop/README.md) · [构建与安装](docs/desktop-mvp/install-and-update.md) · [发版 SOP](docs/release-sop.md)
 

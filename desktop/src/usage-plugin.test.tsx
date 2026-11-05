@@ -40,7 +40,7 @@ function mount(page: "popup" | "sidepanel", initial?: Partial<UsageStatus>, seen
       onChanged: { addListener: vi.fn() },
     },
   };
-  vm.runInContext(readFileSync("../usage-ui.js", "utf8"), vm.createContext({ document, chrome }));
+  vm.runInContext(readFileSync("../extension/usage-ui.js", "utf8"), vm.createContext({ document, chrome }));
   return { calls, chrome, status: () => status, storage };
 }
 
@@ -72,7 +72,7 @@ test("plugin explains when an old or stopped desktop cannot manage the setting",
     runtime: { sendMessage: vi.fn(async () => ({ ok: false, code: "unavailable" })), openOptionsPage: vi.fn() },
     storage: { local: { get: vi.fn(async () => ({})), set: vi.fn() }, onChanged: { addListener: vi.fn() } },
   };
-  vm.runInContext(readFileSync("../usage-ui.js", "utf8"), vm.createContext({ document, chrome }));
+  vm.runInContext(readFileSync("../extension/usage-ui.js", "utf8"), vm.createContext({ document, chrome }));
   expect(await screen.findByText("未连接桌面程序，启动或更新桌面后才能管理。")).toBeTruthy();
   expect((screen.getByRole("checkbox", { name: "分享使用数量统计" }) as HTMLInputElement).disabled).toBe(true);
 });
@@ -104,7 +104,7 @@ test("a failed disable explains the current stop and uncertain restart persisten
     storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) },
       onChanged: { addListener: vi.fn() } },
   };
-  vm.runInContext(readFileSync("../usage-ui.js", "utf8"), vm.createContext({ document, chrome }));
+  vm.runInContext(readFileSync("../extension/usage-ui.js", "utf8"), vm.createContext({ document, chrome }));
   const toggle = await screen.findByRole("checkbox", { name: "分享使用数量统计" }) as HTMLInputElement;
   await waitFor(() => expect(toggle.disabled).toBe(false));
   fireEvent.click(toggle);
@@ -132,7 +132,7 @@ test("an older focus refresh cannot overwrite a completed disable", async () => 
   };
   const context = vm.createContext({ document, chrome,
     addEventListener: (name: string, listener: () => void) => { if (name === "focus") focus = listener; } });
-  vm.runInContext(readFileSync("../usage-ui.js", "utf8"), context);
+  vm.runInContext(readFileSync("../extension/usage-ui.js", "utf8"), context);
   const toggle = await screen.findByRole("checkbox", { name: "分享使用数量统计" }) as HTMLInputElement;
   await waitFor(() => expect(toggle.disabled).toBe(false));
   focus();
@@ -157,7 +157,7 @@ test("storage failures keep the notice usable and explain that it may reappear",
       set: vi.fn(async () => { throw new Error("storage unavailable"); }),
     }, onChanged: { addListener: vi.fn() } },
   };
-  vm.runInContext(readFileSync("../usage-ui.js", "utf8"), vm.createContext({ document, chrome }));
+  vm.runInContext(readFileSync("../extension/usage-ui.js", "utf8"), vm.createContext({ document, chrome }));
   const notice = await screen.findByRole("region", { name: "使用数量统计" });
   expect(within(notice).getByText(/无法读取公告状态/)).toBeTruthy();
   const acknowledge = within(notice).getByRole("button", { name: "知道了，保持开启" }) as HTMLButtonElement;

@@ -28,7 +28,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "..", "..");
-const manifest = JSON.parse(readFileSync(join(repo, "manifest.json"), "utf8"));
+const manifest = JSON.parse(readFileSync(join(repo, "extension", "manifest.json"), "utf8"));
 const storeId = "diagjmploldedipjdenmecmjokckelkl";
 
 function jsonResponse(body, status = 200) {

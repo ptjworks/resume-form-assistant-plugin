@@ -97,7 +97,7 @@ def click_accessible(context, page, name: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser", choices=("chromium", "edge"), default="chromium")
-    parser.add_argument("--extension-dir", type=Path, default=ROOT)
+    parser.add_argument("--extension-dir", type=Path, default=ROOT / "extension")
     parser.add_argument("--screenshot-dir", type=Path)
     args = parser.parse_args()
     extension_dir = args.extension_dir.resolve()

@@ -3,12 +3,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { JSDOM } = require("jsdom");
-const fieldScan = require("../field-scan.js");
-const outline = require("../page-outline.js");
-const deep = require("../deep-analysis.js");
-const agent = require("../form-agent.js");
-const actions = require("../page-actions.js");
-const recipes = require("../page-recipe.js");
+const fieldScan = require("../extension/field-scan.js");
+const outline = require("../extension/page-outline.js");
+const deep = require("../extension/deep-analysis.js");
+const agent = require("../extension/form-agent.js");
+const actions = require("../extension/page-actions.js");
+const recipes = require("../extension/page-recipe.js");
 
 const RESUME = ["林测试", "13800138000", "lin@example.test", "杭州", "浙江测试大学"];
 const isVisible = (el) => el.isConnected && !el.closest("[hidden]");
@@ -470,15 +470,15 @@ test("lookup reads only the one recipe for this page and ignores anything malfor
 test("recipes stay out of the legacy migration, feedback and desktop link: nothing there reads the whole storage or the recipe key", () => {
   const fs = require("node:fs");
   const path = require("node:path");
-  const legacy = fs.readFileSync(path.join(__dirname, "..", "link", "legacy.mjs"), "utf8");
+  const legacy = fs.readFileSync(path.join(__dirname, "..", "extension", "link", "legacy.mjs"), "utf8");
   assert.match(legacy, /export const OLD_KEYS = \['templates', 'activeTemplateId', 'profile', 'aiConfig'\];/);
-  for (const file of fs.readdirSync(path.join(__dirname, "..", "link")).filter((name) => name.endsWith(".mjs"))) {
-    const source = fs.readFileSync(path.join(__dirname, "..", "link", file), "utf8");
+  for (const file of fs.readdirSync(path.join(__dirname, "..", "extension", "link")).filter((name) => name.endsWith(".mjs"))) {
+    const source = fs.readFileSync(path.join(__dirname, "..", "extension", "link", file), "utf8");
     assert.ok(!source.includes("fillRecipes"), `${file} must not touch recipes`);
     assert.ok(!/storage\.local\.get\(\s*(?:null)?\s*\)|\.get\(\s*null\s*\)/.test(source), `${file} must not read the whole storage`);
   }
   for (const file of ["feedback-core.js", "feedback-ui.js", "ai-worker.js", "popup.js", "sidepanel.js"]) {
-    const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "extension", file), "utf8");
     assert.ok(!source.includes("fillRecipes"), `${file} must not read recipes`);
   }
 });

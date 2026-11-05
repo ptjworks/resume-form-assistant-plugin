@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const load = () => import('../link/normalize.mjs');
+const load = () => import('../extension/link/normalize.mjs');
 
 test('a company folds its legal suffix away', async () => {
   const { normalizeCompany } = await load();

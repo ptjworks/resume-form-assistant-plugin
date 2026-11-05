@@ -735,7 +735,7 @@ test('a new draft starts with no red border left over from the last one', async 
 // --- #175 review: "unknown" wording is one fixed sentence for old and new UI ----------------------
 
 test('an unknown bind or save is worded the same by the page overlay and the side panel, and claims neither saved nor queued', async () => {
-  const copy = await import('../link/copy.mjs');
+  const copy = await import('../extension/link/copy.mjs');
   const fixed = copy.describeBindResult({ status: 'unknown' });
   assert.equal(fixed.text, '没能确认保存结果，请到桌面或待同步列表核对后再操作。');
   assert.equal(fixed.text, copy.UNKNOWN_SAVE_TEXT);

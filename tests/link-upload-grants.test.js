@@ -3,7 +3,7 @@
 // page learns which file id would go into each of its boxes, never the list itself. Fake values only.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const slots = require('../upload-slots.js');
+const slots = require('../extension/upload-slots.js');
 
 const SHA = 'a'.repeat(64);
 const OTHER_SHA = 'b'.repeat(64);
@@ -18,7 +18,7 @@ const page = (tabId, url, frameId = 0) => ({ id: 'ext', tab: { id: tabId }, fram
 const took = (grants, ...args) => grants.take(...args)?.sha256 ?? '';
 
 async function load() {
-  return import('../link/upload-grants.mjs');
+  return import('../extension/link/upload-grants.mjs');
 }
 
 function call(mod, deps, message, sender) {

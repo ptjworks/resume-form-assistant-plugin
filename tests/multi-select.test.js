@@ -10,15 +10,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const helpers = require("../ai-helpers.js");
+const scanner = require("../extension/field-scan.js");
+const helpers = require("../extension/ai-helpers.js");
 const antd6 = require("./helpers/antd6-select.js");
 
 const visible = (el) => !el.closest("[hidden]");
 function load(label, control, { wrap = (html) => html } = {}) {
   const dom = new JSDOM(`<form>${wrap(`<div class="form-item"><label>${label}</label><div class="form-item-control">${control}</div></div>`)}</form>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: visible });
   const found = scanner.scanPage(w.document, { isVisible: visible }).controls.find((item) => item.label === label);
   assert.ok(found, `scanned ${label}`);
@@ -427,7 +427,7 @@ test("Element Plus multiple select: an empty one is recognised once open, one wi
 test("native multiple select: every part chooses one option, any unmatched part leaves it untouched", async () => {
   const dom = new JSDOM(`<form><label for="lang">外语语种</label><select id="lang" multiple><option value="">请选择</option>${LANGS.map((t, i) => `<option value="${i}">${t}</option>`).join("")}</select></form>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: visible });
   const select = w.document.getElementById("lang");
   const target = { kind: "element", element: select, elements: [select], root: select, controlKind: "select" };

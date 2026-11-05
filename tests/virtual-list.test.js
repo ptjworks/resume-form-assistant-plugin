@@ -11,7 +11,7 @@ const visible = (el) => !el.closest("[hidden]");
 function load(control) {
   const dom = new JSDOM(`<form><div class="form-item"><label>毕业院校</label>${control}</div></form>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: visible });
   return { w, doc: w.document, api };
 }

@@ -1,6 +1,6 @@
 # 网申快填桌面端
 
-桌面端统一维护简历模板、「我的信息」、AI 设置和本地求职档案，通过 Native Messaging 与仓库根目录的浏览器扩展协作。
+桌面端统一维护简历模板、「我的信息」、AI 设置和本地求职档案，通过 Native Messaging 与 `extension/` 里的浏览器扩展协作。
 
 普通用户请从[项目首页](../README.md)下载正式安装包。本页面向开发者；首次拉起桌面与扩展，按[开发快速开始](../docs/dev-quickstart.md)操作。
 
@@ -33,7 +33,7 @@ npm run desktop:build   # 本地构建；正式发布另走发布流程
 
 正式 Windows 包使用 MSVC target，签名、安装、升级、卸载与资产校验按[构建、安装与升级](../docs/desktop-mvp/install-and-update.md)及[发版 SOP](../docs/release-sop.md)执行。仅用浏览器打开前端不能替代 Tauri 或安装包验收。
 
-扩展本身无需构建，加载仓库根目录后还需完成开发用 Native Messaging 注册。参见[连接注册说明](DEV-NATIVE-MESSAGING.md)。
+扩展本身无需构建，加载 `extension/` 文件夹后还需完成开发用 Native Messaging 注册。参见[连接注册说明](DEV-NATIVE-MESSAGING.md)。
 
 ## 代码导航
 

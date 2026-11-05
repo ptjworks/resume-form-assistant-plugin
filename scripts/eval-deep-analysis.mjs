@@ -12,8 +12,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
-const deep = require("../deep-analysis.js");
-const outlineApi = require("../page-outline.js");
+const deep = require("../extension/deep-analysis.js");
+const outlineApi = require("../extension/page-outline.js");
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const KIND_TO_DOM = {

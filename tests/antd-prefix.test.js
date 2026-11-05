@@ -10,7 +10,7 @@ const { JSDOM } = require("jsdom");
 const { openFramedPage, installLayout } = require("./helpers/frame-page.js");
 const antd6 = require("./helpers/antd6-select.js");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "extension");
 const SCRIPTS = ["antd-prefix.js", "ai-helpers.js", "custom-controls.js", "control-adapters.js", "field-scan.js", "fill-probe.js", "page-outline.js"];
 // antd 的 0×0 辅助列表（role=listbox）不算看得见：jsdom 里用 data-w / data-h 标出它的大小。
 const isVisible = (el) => !el.closest("[hidden], [data-h='0']");

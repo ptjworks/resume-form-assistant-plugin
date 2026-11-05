@@ -41,11 +41,11 @@ function fakeAlarms() {
 }
 
 async function harness({ desktop, storage = fakeStorage(), clock = { value: Date.parse('2026-09-09T00:00:00.000Z') } } = {}) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createSession } = await import('../link/session.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
-  const { createOutbox } = await import('../link/outbox.mjs');
-  const { createDrain } = await import('../link/drain.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
+  const { createOutbox } = await import('../extension/link/outbox.mjs');
+  const { createDrain } = await import('../extension/link/drain.mjs');
 
   let minted = 0;
   const uuid = () => `00000000-0000-4000-8000-${String(++minted).padStart(12, '0')}`;
@@ -101,8 +101,8 @@ async function bindOne(harnessed, { title = FIELDS.title } = {}) {
 }
 
 test('the backoff ladder is the documented one and it ends', async () => {
-  const { nextDelayMs } = await import('../link/drain.mjs');
-  const { BACKOFF_STEPS_MS } = await import('../link/limits.mjs');
+  const { nextDelayMs } = await import('../extension/link/drain.mjs');
+  const { BACKOFF_STEPS_MS } = await import('../extension/link/limits.mjs');
 
   BACKOFF_STEPS_MS.forEach((step, index) => {
     assert.equal(nextDelayMs(index + 1), step);
@@ -114,7 +114,7 @@ test('the backoff ladder is the documented one and it ends', async () => {
 
 test('a failed attempt schedules the next one instead of spinning', async () => {
   const bench = await harness({ desktop: message => (message.messageType === 'handshake' ? handshakeReply(message) : unavailable(message)) });
-  const { BACKOFF_STEPS_MS } = await import('../link/limits.mjs');
+  const { BACKOFF_STEPS_MS } = await import('../extension/link/limits.mjs');
 
   await bindOne(bench);
   const entry = bench.storage.data.desktopOutbox[0];
@@ -142,7 +142,7 @@ test('the entry is retried once its delay has passed', async () => {
     }
   });
   await bindOne(bench);
-  const { BACKOFF_STEPS_MS } = await import('../link/limits.mjs');
+  const { BACKOFF_STEPS_MS } = await import('../extension/link/limits.mjs');
 
   phase = 'up';
   bench.clock.value += BACKOFF_STEPS_MS[0];
@@ -154,7 +154,7 @@ test('the entry is retried once its delay has passed', async () => {
 
 test('a retry keeps the original message id across the whole ladder', async () => {
   const bench = await harness({ desktop: message => (message.messageType === 'handshake' ? handshakeReply(message) : unavailable(message)) });
-  const { BACKOFF_STEPS_MS } = await import('../link/limits.mjs');
+  const { BACKOFF_STEPS_MS } = await import('../extension/link/limits.mjs');
   await bindOne(bench);
   const original = bench.sent.at(-1).messageId;
 
@@ -170,7 +170,7 @@ test('a retry keeps the original message id across the whole ladder', async () =
 
 test('an exhausted ladder stops and asks for a person', async () => {
   const bench = await harness({ desktop: message => (message.messageType === 'handshake' ? handshakeReply(message) : unavailable(message)) });
-  const { BACKOFF_STEPS_MS } = await import('../link/limits.mjs');
+  const { BACKOFF_STEPS_MS } = await import('../extension/link/limits.mjs');
   await bindOne(bench);
 
   for (const step of BACKOFF_STEPS_MS) {
@@ -197,7 +197,7 @@ test('a manual retry sends a stalled entry again without a new identity', async 
       return phase === 'down' ? unavailable(message) : saved(message);
     }
   });
-  const { BACKOFF_STEPS_MS } = await import('../link/limits.mjs');
+  const { BACKOFF_STEPS_MS } = await import('../extension/link/limits.mjs');
   await bindOne(bench);
   const original = bench.sent.at(-1).messageId;
   for (const step of BACKOFF_STEPS_MS) {
@@ -316,7 +316,7 @@ test('a closed desktop schedules another look instead of failing the queue', asy
 
 test('the scheduled alarm respects the browser minimum', async () => {
   const bench = await harness({ desktop: message => (message.messageType === 'handshake' ? handshakeReply(message) : unavailable(message)) });
-  const { MIN_ALARM_DELAY_MS } = await import('../link/limits.mjs');
+  const { MIN_ALARM_DELAY_MS } = await import('../extension/link/limits.mjs');
   await bindOne(bench);
   await bench.store.setPairing({ archiveId: ARCHIVE, restoreEpoch: EPOCH, at: 1 });
 
@@ -327,12 +327,12 @@ test('the scheduled alarm respects the browser minimum', async () => {
 });
 
 test('a restored archive is noticed before anything is sent', async () => {
-  const { createReconcile } = await import('../link/reconcile.mjs');
-  const { createStore } = await import('../link/store.mjs');
-  const { createSession } = await import('../link/session.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
-  const { createOutbox } = await import('../link/outbox.mjs');
-  const { createDrain } = await import('../link/drain.mjs');
+  const { createReconcile } = await import('../extension/link/reconcile.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
+  const { createOutbox } = await import('../extension/link/outbox.mjs');
+  const { createDrain } = await import('../extension/link/drain.mjs');
 
   const NEW_EPOCH = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const storage = fakeStorage();
@@ -416,7 +416,7 @@ test('a queued write still schedules a look even when the desktop is closed', as
 
 test('entries that are only waiting for the user do not keep the worker awake', async () => {
   const bench = await harness({ desktop: message => (message.messageType === 'handshake' ? handshakeReply(message) : unavailable(message)) });
-  const { BACKOFF_STEPS_MS } = await import('../link/limits.mjs');
+  const { BACKOFF_STEPS_MS } = await import('../extension/link/limits.mjs');
   await bindOne(bench);
   for (const step of BACKOFF_STEPS_MS) {
     bench.clock.value += step;

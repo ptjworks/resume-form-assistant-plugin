@@ -31,6 +31,8 @@ from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PLUGIN_DIR = "extension"
+REPO_ROOT_ENTRIES = {"README.md", "LICENSE"}
 ACCEPTANCE = ROOT / "docs" / "desktop-mvp" / "acceptance"
 REPORT_TEMPLATE = ACCEPTANCE / "report-template.json"
 REVIEWED_ASSETS = Path(__file__).with_name("plugin-release-assets.json")
@@ -118,6 +120,14 @@ def git_blob(commit: str, name: str) -> bytes:
     return completed.stdout
 
 
+def plugin_blob(commit: str, name: str) -> bytes:
+    # Extension files live under extension/; commits from before that move kept them at the root.
+    try:
+        return git_blob(commit, f"{PLUGIN_DIR}/{name}")
+    except AcceptanceError:
+        return git_blob(commit, name)
+
+
 def git_tree_blob_ids(commit: str) -> tuple[str, dict[str, str]]:
     format_result = subprocess.run(
         ["git", "-c", f"safe.directory={ROOT.as_posix()}", "rev-parse", "--show-object-format"],
@@ -148,6 +158,12 @@ def git_tree_blob_ids(commit: str) -> tuple[str, dict[str, str]]:
         _mode, kind, object_id = metadata.decode("ascii").split(" ")
         if kind == "blob":
             blobs[name.decode("utf-8")] = object_id
+    # Key extension files by their path inside the ZIP, whichever layout the commit used.
+    # README.md and LICENSE always come from the repository root, as pack-plugin.js packs them.
+    prefix = f"{PLUGIN_DIR}/"
+    for name, object_id in list(blobs.items()):
+        if name.startswith(prefix) and name[len(prefix):].split("/")[0] not in REPO_ROOT_ENTRIES:
+            blobs[name[len(prefix):]] = object_id
     return algorithm, blobs
 
 
@@ -161,7 +177,7 @@ def git_object_id(content: bytes, algorithm: str) -> str:
 def source_candidate_versions(commit: str) -> tuple[str, int]:
     config = json.loads(git_blob(commit, "desktop/src-tauri/tauri.conf.json"))
     desktop_version = config.get("version")
-    envelope = git_blob(commit, "link/envelope.mjs").decode("utf-8")
+    envelope = plugin_blob(commit, "link/envelope.mjs").decode("utf-8")
     match = re.search(r"export const PROTOCOL_VERSION\s*=\s*(\d+)\s*;", envelope)
     if not desktop_version or not match:
         raise AcceptanceError("could not derive desktop/protocol version from source commit")
@@ -220,9 +236,9 @@ def inspect_extension_zip(path: Path, source_commit: str | None = None) -> dict:
                 f"extension key resolves to {extension_id}, expected {EXPECTED_EXTENSION_ID}"
             )
         reviewed_manifest_bytes = (
-            git_blob(source_commit, "manifest.json")
+            plugin_blob(source_commit, "manifest.json")
             if source_commit is not None
-            else (ROOT / "manifest.json").read_bytes()
+            else (ROOT / PLUGIN_DIR / "manifest.json").read_bytes()
         )
         reviewed_manifest = json.loads(reviewed_manifest_bytes)
         if manifest.get("manifest_version") != 3:

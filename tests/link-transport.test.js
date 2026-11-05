@@ -8,7 +8,7 @@ const MESSAGE = '33333333-3333-4333-8333-333333333333';
 const RESULT = '55555555-5555-4555-8555-555555555555';
 
 async function jobSave() {
-  const { buildEnvelope } = await import('../link/envelope.mjs');
+  const { buildEnvelope } = await import('../extension/link/envelope.mjs');
   return buildEnvelope({
     messageType: 'job.save',
     messageId: MESSAGE,
@@ -34,7 +34,7 @@ function port(...replies) {
 const deps = extra => ({ sleep: async () => {}, ...extra });
 
 test('a persisted write comes back as ok with its resultId', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   const wire = port({ response: { protocolVersion: 2, correlationId: MESSAGE, ok: true, resultId: RESULT, payload: {} } });
 
   const result = await sendOnce(await jobSave(), deps({ sendNative: wire.send }));
@@ -45,7 +45,7 @@ test('a persisted write comes back as ok with its resultId', async () => {
 });
 
 test('a missing host registration reads as not installed', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   const wire = port({ lastError: 'Specified native messaging host not found.' });
 
   const result = await sendOnce(await jobSave(), deps({ sendNative: wire.send }));
@@ -55,7 +55,7 @@ test('a missing host registration reads as not installed', async () => {
 });
 
 test('an unpaired extension reads as not paired, never as not installed', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   const wire = port({
     response: {
       protocolVersion: 2, correlationId: MESSAGE, ok: false,
@@ -70,7 +70,7 @@ test('an unpaired extension reads as not paired, never as not installed', async 
 });
 
 test('an unrecognised port error is retried rather than reported as not installed', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   // Chrome rewords its native messaging errors between versions. Guessing "not installed"
   // from an unknown string tells the user to reinstall a desktop they already have.
   const wire = port({ lastError: 'Error when communicating with the native messaging host.' });
@@ -82,7 +82,7 @@ test('an unrecognised port error is retried rather than reported as not installe
 });
 
 test('a cold start that answers unavailable succeeds on the retry', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   const wire = port(
     {
       response: {
@@ -101,7 +101,7 @@ test('a cold start that answers unavailable succeeds on the retry', async () => 
 });
 
 test('unavailable twice stays retryable and is not escalated to the user', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   const wire = port({
     response: {
       protocolVersion: 2, correlationId: MESSAGE, ok: false,
@@ -118,7 +118,7 @@ test('unavailable twice stays retryable and is not escalated to the user', async
 });
 
 test('a fatal protocol code is not retried', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   const wire = port({
     response: {
       protocolVersion: 2, correlationId: MESSAGE, ok: false,
@@ -135,7 +135,7 @@ test('a fatal protocol code is not retried', async () => {
 });
 
 test('a reply correlated to a different request is never taken as success', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   // Two writes can be in flight across separate host processes. Accepting a reply by shape
   // alone would record this resultId against the wrong outbox entry.
   const wire = port({
@@ -153,8 +153,8 @@ test('a reply correlated to a different request is never taken as success', asyn
 });
 
 test('a verdict the validator reaches on its own is fatal, not retryable', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
-  const { buildEnvelope } = await import('../link/envelope.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
+  const { buildEnvelope } = await import('../extension/link/envelope.mjs');
   const handshake = await buildEnvelope({
     messageType: 'handshake',
     messageId: MESSAGE,
@@ -181,7 +181,7 @@ test('a verdict the validator reaches on its own is fatal, not retryable', async
 });
 
 test('a failed write claiming a resultId is rejected', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   const wire = port({
     response: {
       protocolVersion: 2, correlationId: MESSAGE, ok: false, resultId: RESULT,
@@ -196,7 +196,7 @@ test('a failed write claiming a resultId is rejected', async () => {
 });
 
 test('the transport never reports success without a resultId for a write', async () => {
-  const { sendOnce } = await import('../link/transport.mjs');
+  const { sendOnce } = await import('../extension/link/transport.mjs');
   const wire = port({ response: { protocolVersion: 2, correlationId: MESSAGE, ok: true, payload: {} } });
 
   const result = await sendOnce(await jobSave(), deps({ sendNative: wire.send }));

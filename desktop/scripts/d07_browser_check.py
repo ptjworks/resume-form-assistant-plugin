@@ -36,7 +36,7 @@ from playwright.sync_api import sync_playwright
 from d14_acceptance_check import stop_browser_profile
 
 DESKTOP = Path(__file__).resolve().parent.parent
-PLUGIN = DESKTOP.parent
+PLUGIN = DESKTOP.parent / "extension"
 HOST_NAME = "com.resumepro.desktop"
 
 # Everything the extension does not ship. The desktop tree in particular is large and would

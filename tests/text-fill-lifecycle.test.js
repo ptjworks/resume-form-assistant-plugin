@@ -175,8 +175,8 @@ function createHarness({ inputEvent = true, labelFor = null } = {}) {
   if (labelFor) context.self.ResumeProFieldScan = { labelForElement: labelFor };
   context.globalThis = context;
   context.window.document = document;
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "control-adapters.js"), "utf8"), context);
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8"), context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "extension", "control-adapters.js"), "utf8"), context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "extension", "content.js"), "utf8"), context);
   return {
     setElementValue: context.self.ResumeProHighlightTest.setElementValue,
     reason: context.self.ResumeProHighlightTest.textFillFailureReason,

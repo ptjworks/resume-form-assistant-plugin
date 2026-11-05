@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const load = () => import('../link/copy.mjs');
+const load = () => import('../extension/link/copy.mjs');
 const ID = 'abcdefghijklmnopabcdefghijklmnop';
 
 test('a queued intent is described as pending, never as saved', async () => {
@@ -72,7 +72,7 @@ test('a duplicate offers saving again rather than silently doing nothing', async
 
 test('a full queue says how full and promises filling still works', async () => {
   const { describeSaveResult } = await load();
-  const { MAX_INTENTS } = await import('../link/limits.mjs');
+  const { MAX_INTENTS } = await import('../extension/link/limits.mjs');
 
   const copy = describeSaveResult({ status: 'rejected', reason: 'queue_full', mode: 'unavailable' });
 
@@ -154,7 +154,7 @@ test('a refused write names the reason without echoing the protocol', async () =
 
 test('a full bound queue explains itself and promises filling still works', async () => {
   const { describeBindResult } = await load();
-  const { MAX_OUTBOX } = await import('../link/limits.mjs');
+  const { MAX_OUTBOX } = await import('../extension/link/limits.mjs');
 
   const copy = describeBindResult({ status: 'rejected', reason: 'queue_full' });
 

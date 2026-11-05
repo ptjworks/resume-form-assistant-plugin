@@ -690,7 +690,7 @@ test("replacement clears a previously selected chip even when its value prefixes
 });
 
 test("highlight styles are not duplicated in content.css", () => {
-  const contentCss = fs.readFileSync(path.join(__dirname, "..", "content.css"), "utf8");
+  const contentCss = fs.readFileSync(path.join(__dirname, "..", "extension", "content.css"), "utf8");
 
   assert.doesNotMatch(contentCss, /\.resume-pro__field-highlight\b/);
   assert.doesNotMatch(contentCss, /@keyframes\s+resume-pro-field-highlight\b/);
@@ -698,7 +698,7 @@ test("highlight styles are not duplicated in content.css", () => {
 
 // ---- #174: the native side panel composes fields the way the old page overlay did ----
 
-const Compose = require("../sidepanel-compose.js");
+const Compose = require("../extension/sidepanel-compose.js");
 const ownerChips = (pairs) => pairs.map(([chipId, value]) => ({ chipId, value }));
 const AB = ownerChips([["a", "A"], ["b", "B"], ["c", "C"]]);
 
@@ -1354,7 +1354,7 @@ test('a text value changed by focus is rechecked before the delayed write', asyn
 
 test('an initially empty select can load a placeholder and complete its option retry', async () => {
   const formElements = [];
-  const ctx = loadHighlightHelpers({ formElements, aiHelpers: require('../ai-helpers.js'),
+  const ctx = loadHighlightHelpers({ formElements, aiHelpers: require('../extension/ai-helpers.js'),
     sendMessage: async () => ({ success: true, matches: [{ fieldId: 'field-0', value: 'A' }] })
   });
   const select = new ctx.HTMLSelectElement();
@@ -1401,7 +1401,7 @@ for (const mode of ['retry', 'rollback', 'user-edit']) {
 test('multi-select with only an empty placeholder does not ask for overwrite', async () => {
   const formElements = [];
   const sent = [];
-  const ctx = loadHighlightHelpers({ formElements, aiHelpers: require('../ai-helpers.js'),
+  const ctx = loadHighlightHelpers({ formElements, aiHelpers: require('../extension/ai-helpers.js'),
     confirm: () => { throw new Error('placeholder is not a real selection'); },
     sendMessage: async (message) => { if (message?.formFields) sent.push(...message.formFields); return { success: true, matches: [{ fieldId: 'field-0', value: 'A' }] }; }
   });

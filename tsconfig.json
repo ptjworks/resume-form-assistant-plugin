@@ -7,7 +7,7 @@
     "pragma on line 1, so this config can land while D07 is still in flight without",
     "turning every in-progress module red.",
     "",
-    "link/protocol/ is included so imports resolve, but must never be checked or edited:",
+    "extension/link/protocol/ is included so imports resolve, but must never be checked or edited:",
     "it is a byte-identical vendored copy of desktop/crates/protocol/js/, locked by",
     "tests/protocol-vendor.test.js. Adding a pragma there would fail that lock."
   ],
@@ -26,7 +26,7 @@
     "noUncheckedIndexedAccess": true
   },
   "include": [
-    "link/**/*.mjs",
+    "extension/link/**/*.mjs",
     "types/**/*.mjs",
     "desktop/crates/protocol/js/protocol.d.ts"
   ],

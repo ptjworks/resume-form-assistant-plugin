@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createStack, settle, until, TEMPLATE, EXTENSION_ID } = require("./helpers/fill-archive-harness.js");
-const Queue = require("../sidepanel-queue.js");
+const Queue = require("../extension/sidepanel-queue.js");
 
 const APP_A = "11111111-1111-4111-8111-111111111111";
 const APP_B = "22222222-2222-4222-8222-222222222222";
@@ -29,7 +29,7 @@ async function waitingFill(options = {}) {
 }
 
 test("the pending entry is always on the fill tab and counts what is waiting", async () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "sidepanel.html"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "..", "extension", "sidepanel.html"), "utf8");
   const fillView = html.slice(html.indexOf('id="fill-view"'), html.indexOf('id="fields-view"'));
   assert.match(fillView, /id="queue-center"/);
   assert.match(fillView, /id="queue-toggle"[^>]*>[\s\S]*待同步[\s\S]*id="queue-count"/);
@@ -148,7 +148,7 @@ test("an expired template snapshot is shown and can be dropped without losing th
 });
 
 test("rows are escaped and never print an application id", async () => {
-  const copy = await import("../link/copy.mjs");
+  const copy = await import("../extension/link/copy.mjs");
   const reply = {
     intents: [{ intentId: "i1", status: "pending", fields: { company: "<b>甲</b>", title: "乙" } }],
     outbox: [{ messageId: "m1", messageType: "fill.submit", recordId: "r2", applicationId: APP_A, status: "stalled", attempts: 6, lastError: "unavailable", payload: { applicationId: APP_A, templateName: "模板" } }],
@@ -164,7 +164,7 @@ test("rows are escaped and never print an application id", async () => {
 });
 
 test("the panel only listens for the queue's keys and always reads them through the worker", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "sidepanel.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "extension", "sidepanel.js"), "utf8");
   assert.match(source, /DESKTOP_LIST_QUEUE/);
   assert.doesNotMatch(source, /storage\.local\.get\(\[?"desktop/);
   // One queue: the panel never writes the desktop keys itself.
@@ -173,11 +173,11 @@ test("the panel only listens for the queue's keys and always reads them through 
 
 test("Chrome and Edge run the same panel code: nothing branches on the browser", () => {
   for (const file of ["sidepanel.js", "sidepanel-queue.js", "content.js", "background.js"]) {
-    const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+    const source = fs.readFileSync(path.join(__dirname, "..", "extension", file), "utf8");
     assert.doesNotMatch(source, /userAgent|\bEdg\/|navigator\.vendor|userAgentData/, file);
   }
   // Only the side panel API's presence decides between the panel and the page overlay.
-  const background = fs.readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
+  const background = fs.readFileSync(path.join(__dirname, "..", "extension", "background.js"), "utf8");
   assert.match(background, /chrome\.sidePanel\?\.setPanelBehavior/);
 });
 

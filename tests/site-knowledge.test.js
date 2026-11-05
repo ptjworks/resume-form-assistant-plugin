@@ -4,7 +4,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { JSDOM } = require("jsdom");
-const knowledge = require("../site-knowledge.js");
+const knowledge = require("../extension/site-knowledge.js");
 
 const page = (html = "") => new JSDOM(`<body>${html}</body>`).window.document;
 const id = (doc, href) => knowledge.detect(doc, href)?.id || null;
@@ -155,7 +155,7 @@ test("the Form2Offer license ships inside site-knowledge.js", () => {
   const root = path.join(__dirname, "..");
   const license = fs.readFileSync(path.join(root, "scripts/licenses/form2offer-e7be145.txt"), "utf8");
   const notice = license.slice(license.indexOf("MIT License")).trim().split("\n").map((line) => line.trimEnd()).join("\n");
-  const header = fs.readFileSync(path.join(root, "site-knowledge.js"), "utf8").split("\n")
+  const header = fs.readFileSync(path.join(root, "extension", "site-knowledge.js"), "utf8").split("\n")
     .filter((line) => line.startsWith("//")).map((line) => line.replace(/^\/\/ ?/, "").trimEnd()).join("\n");
   assert.ok(header.includes(notice), "the copyright and permission notice are in the file header");
   assert.match(fs.readFileSync(path.join(root, "desktop/scripts/pack-plugin.js"), "utf8"), /^\s*"site-knowledge\.js",$/m);

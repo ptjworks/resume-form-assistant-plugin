@@ -8,7 +8,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
 
-const root = path.join(__dirname, "..");
+const root = path.join(__dirname, "..", "extension");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const SCRIPTS = manifest.content_scripts.find((entry) => entry.js?.includes("content.js")).js;
 const SOURCES = Object.fromEntries(SCRIPTS.map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]));
@@ -135,7 +135,7 @@ test("#275: the scripts with a CommonJS export still export their api under Node
   for (const file of exporting) {
     assert.ok(Object.keys(require(path.join(root, file))).length > 0, `${file} exports its api`);
   }
-  assert.equal(typeof require("../sidebar-state.js").normalize, "function");
+  assert.equal(typeof require("../extension/sidebar-state.js").normalize, "function");
 });
 
 for (const [name, contentType, html] of [

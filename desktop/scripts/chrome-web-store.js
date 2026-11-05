@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { sourcePathOf } from "./pack-plugin.js";
 
 export const STORE_SCOPE = "https://www.googleapis.com/auth/chromewebstore";
 export const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -480,7 +481,7 @@ export function publicStatus(status) {
 }
 
 function readManifest(root) {
-  return JSON.parse(readFileSync(resolve(root, "manifest.json"), "utf8"));
+  return JSON.parse(readFileSync(resolve(root, sourcePathOf("manifest.json")), "utf8"));
 }
 
 function flag(argv, name) {

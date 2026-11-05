@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const profileApi = require('../profile-fields.js');
+const profileApi = require('../extension/profile-fields.js');
 
-const load = () => import('../link/legacy.mjs');
+const load = () => import('../extension/link/legacy.mjs');
 const IDENTITY = { archiveId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', restoreEpoch: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
 const KEY = 'sk-synthetic-legacy-key';
 
@@ -107,7 +107,7 @@ test('preparation keeps the current template first and only sends what the deskt
 
 test('a full send stages every part, keeps the key out of state, and opens the resume page', async () => {
   const { createLegacy, STATE_KEY } = await load();
-  const { payloadBodySha256 } = await import('../link/protocol/validate.mjs');
+  const { payloadBodySha256 } = await import('../extension/link/protocol/validate.mjs');
   const h = harness({ data: OLD });
   const state = await createLegacy(h.deps).run();
   assert.equal(state.phase, 'waiting');

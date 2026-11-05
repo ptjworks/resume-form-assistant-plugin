@@ -23,14 +23,14 @@ import { randomUUID } from "node:crypto";
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const helpers = require("../ai-helpers.js");
-const profileApi = require("../profile-fields.js");
+const helpers = require("../extension/ai-helpers.js");
+const profileApi = require("../extension/profile-fields.js");
 const regions = (() => {
   const scope = {};
-  vm.runInNewContext(readFileSync(join(ROOT, "region-data.js"), "utf8"), { self: scope });
+  vm.runInNewContext(readFileSync(join(ROOT, "extension", "region-data.js"), "utf8"), { self: scope });
   return scope.ResumeProRegions;
 })();
-const WORKER = readFileSync(join(ROOT, "ai-worker.js"), "utf8");
+const WORKER = readFileSync(join(ROOT, "extension", "ai-worker.js"), "utf8");
 const SITE_GROUP = profileApi.SITE_GROUP;
 
 // 和 content.js 一样拼资料：模板（桌面解析的字段按 semanticizeParsedFields 改过名）在前，「我的信息」里没重名的在后；

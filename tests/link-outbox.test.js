@@ -29,9 +29,9 @@ function fakeStorage(initial = {}) {
 }
 
 async function harness({ desktop, storage = fakeStorage(), clock = { value: Date.parse('2026-09-09T00:00:00.000Z') } } = {}) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
-  const { createOutbox } = await import('../link/outbox.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
+  const { createOutbox } = await import('../extension/link/outbox.mjs');
 
   let minted = 0;
   const uuid = () => `00000000-0000-4000-8000-${String(++minted).padStart(12, '0')}`;
@@ -222,7 +222,7 @@ test('a protocol refusal marks the entry failed instead of retrying it forever',
 });
 
 test('a full outbox refuses a new binding and keeps the intent', async () => {
-  const { MAX_OUTBOX } = await import('../link/limits.mjs');
+  const { MAX_OUTBOX } = await import('../extension/link/limits.mjs');
   const full = Array.from({ length: MAX_OUTBOX }, (unused, index) => ({
     messageId: `m-${index}`, status: 'pending', messageType: 'job.save'
   }));
@@ -260,7 +260,7 @@ test('a write is never sent without a fresh handshake identity', async () => {
 });
 
 test('a race cannot push the bound queue past its limit', async () => {
-  const { MAX_OUTBOX } = await import('../link/limits.mjs');
+  const { MAX_OUTBOX } = await import('../extension/link/limits.mjs');
   const nearlyFull = Array.from({ length: MAX_OUTBOX - 1 }, (unused, index) => ({
     messageId: `m-${index}`, status: 'pending', messageType: 'job.save'
   }));

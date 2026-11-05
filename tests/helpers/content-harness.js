@@ -285,7 +285,7 @@ function loadHighlightHelpers(options = {}) {
       ResumeProCustomControls: options.customControls,
       ResumeProDeepAnalysis: options.deepAnalysis, ResumeProPageOutline: options.pageOutline, ResumeProPageActions: options.pageActions,
       ResumeProPageRecipe: options.pageRecipe,
-      ResumeProResumeData: require('../../resume-data.js'), ResumeProProfile: require('../../profile-fields.js'),
+      ResumeProResumeData: require('../../extension/resume-data.js'), ResumeProProfile: require('../../extension/profile-fields.js'),
       ResumeProAIClient: { send: options.sendMessage || (async () => ({ success: true, matches: [] })),
         cancel: requestId => options.sendMessage({ type: 'CANCEL_AI_FILL', requestId }) } },
     window
@@ -301,8 +301,8 @@ function loadHighlightHelpers(options = {}) {
   };
   window.clearInterval = window.clearTimeout;
 
-  const contentJs = fs.readFileSync(path.join(__dirname, "..", "..", "content.js"), "utf8");
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "..", "control-adapters.js"), "utf8"), context);
+  const contentJs = fs.readFileSync(path.join(__dirname, "..", "..", "extension", "content.js"), "utf8");
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "..", "extension", "control-adapters.js"), "utf8"), context);
   // 假 DOM 造不出真实日历：需要时用替身代替控件层，只测 content.js 怎么用它的结果。
   if (options.controls) context.self.ResumeProControls = options.controls;
   vm.runInNewContext(contentJs, context);

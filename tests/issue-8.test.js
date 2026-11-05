@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const utils = require("../resume-utils.js");
+const utils = require("../extension/resume-utils.js");
 
 function buildPdf(objects) {
   let source = "%PDF-1.4\n";

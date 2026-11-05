@@ -50,7 +50,7 @@ function fakeChrome({ nativeError = 'Specified native messaging host not found.'
 }
 
 test('only the offscreen AI host may request or cancel desktop AI', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   installDesktopLink(api);
   const request = { type: 'DESKTOP_AI_COMPLETE', requestId: 'synthetic', purpose: 'fill', system: 's', user: 'u' };
@@ -78,7 +78,7 @@ const QUEUED_WRITE = [{
 }];
 
 test('the desktop listener answers a probe', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   installDesktopLink(api);
 
@@ -89,7 +89,7 @@ test('the desktop listener answers a probe', async () => {
 });
 
 test('continue-save reaches the router through the desktop message listener', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   installDesktopLink(api);
 
@@ -102,7 +102,7 @@ test('continue-save reaches the router through the desktop message listener', as
 });
 
 test('the desktop listener keeps the message channel open for its async answer', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   installDesktopLink(api);
 
@@ -112,7 +112,7 @@ test('the desktop listener keeps the message channel open for its async answer',
 });
 
 test('the desktop listener does not answer messages it does not own', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   installDesktopLink(api);
 
@@ -123,7 +123,7 @@ test('the desktop listener does not answer messages it does not own', async () =
 });
 
 test('a failure inside the desktop link answers an error instead of hanging the sidebar', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   api.storage.local.get = async () => { throw new Error('storage is unavailable'); };
   installDesktopLink(api);
@@ -135,8 +135,8 @@ test('a failure inside the desktop link answers an error instead of hanging the 
 });
 
 test('the worker wakes the queue when its alarm fires', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
-  const { ALARM_NAME } = await import('../link/drain.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
+  const { ALARM_NAME } = await import('../extension/link/drain.mjs');
   const api = fakeChrome();
   api.storage.local._data.desktopPairing = PAIRED;
   api.storage.local._data.desktopOutbox = QUEUED_WRITE;
@@ -153,7 +153,7 @@ test('the worker wakes the queue when its alarm fires', async () => {
 });
 
 test('an alarm that belongs to someone else is ignored', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   installDesktopLink(api);
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -166,7 +166,7 @@ test('an alarm that belongs to someone else is ignored', async () => {
 });
 
 test('a queued write is retried when the worker starts', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   api.storage.local._data.desktopPairing = PAIRED;
   api.storage.local._data.desktopOutbox = QUEUED_WRITE;
@@ -179,7 +179,7 @@ test('a queued write is retried when the worker starts', async () => {
 });
 
 test('a worker with nothing queued neither probes nor sets an alarm', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   api.storage.local._data.desktopPairing = PAIRED;
   installDesktopLink(api);
@@ -190,7 +190,7 @@ test('a worker with nothing queued neither probes nor sets an alarm', async () =
 });
 
 test('only the extension\'s own pages may discard old plugin data', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const api = fakeChrome();
   api.storage.local._data.templates = [{ id: 't', name: 'x', groups: [] }];
   installDesktopLink(api);

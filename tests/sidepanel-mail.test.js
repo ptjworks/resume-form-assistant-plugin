@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
 const vm = require('node:vm');
 async function panel(capture = { status: 'original', bytesBase64: 'eA==' }) {
-  const dom = new JSDOM(fs.readFileSync('sidepanel.html', 'utf8'), { url: 'chrome-extension://own/sidepanel.html', runScripts: 'outside-only' });
+  const dom = new JSDOM(fs.readFileSync('extension/sidepanel.html', 'utf8'), { url: 'chrome-extension://own/sidepanel.html', runScripts: 'outside-only' });
   const calls = []; const handlers = {};
   let tab = { id: 1, url: 'https://mail.qq.com/cgi-bin/frame_html?sid=synthetic' };
   let result = { status: 'saved', duplicate: false };
@@ -21,7 +21,7 @@ async function panel(capture = { status: 'original', bytesBase64: 'eA==' }) {
     runtime: { sendMessage: async msg => { calls.push({ target: 'desktop', msg }); return msg.type === 'DESKTOP_CANDIDATES_FOR'
       ? { status: 'ok', exact: [], sameCompany: [{ applicationId: 'app', company: '某公司', title: '产品经理' }] } : typeof result === 'function' ? result() : result; } }
   };
-  for (const file of ['webmail.js', 'sidepanel-mail.js']) vm.runInContext(fs.readFileSync(file, 'utf8'), dom.getInternalVMContext());
+  for (const file of ['webmail.js', 'sidepanel-mail.js']) vm.runInContext(fs.readFileSync(`extension/${file}`, 'utf8'), dom.getInternalVMContext());
   const flush = () => new Promise(resolve => setImmediate(resolve)); await flush();
   return { calls, get: id => dom.window.document.getElementById(id), flush,
     async change(next) { tab = next; handlers.activate(); await flush(); }, result: value => { result = value; }, validation: value => {validation=value;}, close: () => dom.window.close() };
@@ -155,7 +155,7 @@ test('missing non-Gmail bindings and an unloaded page cannot bypass excerpt targ
 });
 
 test('actual QQ capture and content validation block a retry after switching mail at the same URL',async t=>{
-  const webmail=require('../webmail.js');
+  const webmail=require('../extension/webmail.js');
   const d=new JSDOM('<h1 id="subject">Mail A</h1><div id="mailContentContainer">Body A</div>',{url:'https://mail.qq.com/'}).window.document;
   const p=await panel(()=>webmail.capture(d,async()=>new Response('Unavailable',{status:503})));t.after(p.close);
   await p.change({id:1,url:d.location.href});
@@ -198,7 +198,7 @@ test('a foreground switch during final original validation blocks the archive wr
 });
 
 test('actual QQ original capture rejects a same-URL mail switch at the final transfer boundary',async t=>{
-  const webmail=require('../webmail.js');
+  const webmail=require('../extension/webmail.js');
   const d=new JSDOM('<h1 id="subject">Mail A</h1><div id="mailContentContainer">Body A</div>',{url:'https://mail.qq.com/cgi-bin/readmail?sid=synthetic&mailid=one'}).window.document;
   const raw='From: hr@example.test\r\nSubject: Original\r\nMessage-ID: <guard@example.test>\r\n\r\nBody';
   const p=await panel(()=>webmail.capture(d,async()=>new Response(raw)));t.after(p.close);

@@ -5,8 +5,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const profileApi = require("../profile-fields.js");
-const helpers = require("../ai-helpers.js");
+const profileApi = require("../extension/profile-fields.js");
+const helpers = require("../extension/ai-helpers.js");
 
 const web = (label, value, extra = {}) => ({ label, inputType: "text", matched: false, state: "ready", value, ...extra });
 const planOf = (candidates, extra = {}) => profileApi.planProfileOffer({ candidates, profile: {}, templateFields: [], ...extra });

@@ -9,7 +9,7 @@ const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
 const { refsFor, catalogOf } = require("./helpers/ai-refs.js");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "extension");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
 const RESUME = [["基本信息", "姓名", "测试用户"], ["基本信息", "邮箱", "tester@example.com"], ["基本信息", "手机号码", "13800138000"],
   ["基本信息", "性别", "男"], ["教育经历", "毕业院校", "示例大学"], ["教育经历", "专业", "示例专业"], ["求职意向", "期望城市", "示例市"]];
@@ -43,8 +43,8 @@ function aiWorker(clock, resume = RESUME) {
   const cancels = [];
   let lastResume = [];
   const context = vm.createContext({
-    importScripts() {}, ResumeProAIHelpers: require("../ai-helpers.js"), ResumeProProfile: require("../profile-fields.js"),
-    ResumeProFormAgent: require("../form-agent.js"), AbortController, TextEncoder, performance: { now: () => clock.now },
+    importScripts() {}, ResumeProAIHelpers: require("../extension/ai-helpers.js"), ResumeProProfile: require("../extension/profile-fields.js"),
+    ResumeProFormAgent: require("../extension/form-agent.js"), AbortController, TextEncoder, performance: { now: () => clock.now },
     crypto: { randomUUID: () => `call-${calls.length + cancels.length + 1}` }, console
   });
   context.self = {
@@ -489,7 +489,7 @@ test("after 30 seconds the wait hint says how many fields are already filled, an
   let finish;
   const formElements = [];
   const messages = [];
-  const ctx = loadHighlightHelpers({ formElements, aiHelpers: require("../ai-helpers.js"), performance: { now: () => clock },
+  const ctx = loadHighlightHelpers({ formElements, aiHelpers: require("../extension/ai-helpers.js"), performance: { now: () => clock },
     sendMessage: (message) => {
       messages.push(message);
       if (message.type === "CANCEL_AI_FILL") {

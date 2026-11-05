@@ -28,10 +28,10 @@ function fakeStorage(initial = {}) {
 }
 
 async function harness({ desktop, storage = fakeStorage(), clock = { value: Date.parse('2026-09-09T00:00:00.000Z') } } = {}) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
-  const { createOutbox } = await import('../link/outbox.mjs');
-  const { createReconcile } = await import('../link/reconcile.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
+  const { createOutbox } = await import('../extension/link/outbox.mjs');
+  const { createReconcile } = await import('../extension/link/reconcile.mjs');
 
   let minted = 0;
   const uuid = () => `00000000-0000-4000-8000-${String(++minted).padStart(12, '0')}`;
@@ -194,7 +194,7 @@ test('conflict and unverifiable both stop for the user', async () => {
 });
 
 test('reconcile batches stay within the protocol limit', async () => {
-  const { MAX_RECONCILE_ITEMS } = await import('../link/protocol/validate.mjs');
+  const { MAX_RECONCILE_ITEMS } = await import('../extension/link/protocol/validate.mjs');
   const writeState = { ok: false };
   const bench = await harness({ desktop: reconcileReply(() => 'not_found', writeState) });
   for (let i = 0; i < MAX_RECONCILE_ITEMS + 1; i += 1) {
@@ -327,8 +327,8 @@ test('reconciliation leaves intents alone so they get fresh candidates', async (
 });
 
 test('a manual retry cannot revive a paused message', async () => {
-  const { createSession } = await import('../link/session.mjs');
-  const { createDrain } = await import('../link/drain.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
+  const { createDrain } = await import('../extension/link/drain.mjs');
   const writeState = { ok: false };
   const bench = await harness({ desktop: reconcileReply(() => 'not_found', writeState) });
   const entry = await staleEntry(bench, writeState);
@@ -372,7 +372,7 @@ test('saving again is refused for a message that is not paused', async () => {
 });
 
 test('a snapshot chunk reconciles on its chunk identity, not its payload body', async () => {
-  const { snapshotChunkIdentitySha256 } = await import('../link/protocol/validate.mjs');
+  const { snapshotChunkIdentitySha256 } = await import('../extension/link/protocol/validate.mjs');
   const writeState = { ok: false };
   const bench = await harness({ desktop: reconcileReply(() => 'not_found', writeState) });
   const chunkPayload = {

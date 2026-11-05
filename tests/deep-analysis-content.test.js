@@ -4,8 +4,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const deep = require("../deep-analysis.js");
-const outlineApi = require("../page-outline.js");
+const deep = require("../extension/deep-analysis.js");
+const outlineApi = require("../extension/page-outline.js");
 const { loadHighlightHelpers } = require("./helpers/content-harness.js");
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -294,7 +294,7 @@ test("the deep fill's diagnostics name the control kinds the fill used", async (
 
 test("an unfilled deep field says in the diagnostics which control kind it was operated as", async () => {
   // AI 审查两次认为 operated 不会写出：noteControlFailure 收到的是 fieldMap 条目（带 deepRef、controlKind），不是 DOM 元素。
-  const page = deepPage({ fillProbe: require("../fill-probe.js"),
+  const page = deepPage({ fillProbe: require("../extension/fill-probe.js"),
     fill: (message) => ({ success: true, matches: message.formFields.map((field) => ({ fieldId: field.fieldId, value: "x" })),
       diagnostics: { ruleMatches: 0, aiMatches: 2, calls: 1, errorCode: "none" } }) });
   page.inputs.forEach((input) => { input.disabled = true; });
@@ -333,7 +333,7 @@ function actionPage({ execute } = {}) {
   const page = deepPage({
     buttons: [{ text: "编辑", element: editButton }],
     pageActions,
-    formAgent: require("../form-agent.js"),
+    formAgent: require("../extension/form-agent.js"),
     analyze: () => (++round === 1
       ? { success: true, tierUsed: "strong", spec: { pageState: "viewing", preActions: [{ ref: "e3", kind: "edit" }], fields: [] } }
       : { success: true, tierUsed: "strong", spec: { pageState: "editing", fields: [{ ref: "e1", label: "姓名", group: "基本信息", control: "text" }] } })

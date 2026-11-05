@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
-const scanner = require('../field-scan.js');
+const scanner = require('../extension/field-scan.js');
 const antd6 = require('./helpers/antd6-select.js');
 
 const visible = el => !el.closest('[hidden]');
@@ -14,7 +14,7 @@ function load(label, control) {
   const dom = new JSDOM(`<form><div class="ant-form-item"><div class="ant-form-item-label"><label title="${label}">${label}</label></div>
     <div class="ant-form-item-control">${control}</div></div></form>`, { runScripts: 'outside-only' });
   const w = dom.window;
-  for (const file of ['ai-helpers.js', 'custom-controls.js', 'control-adapters.js']) w.eval(fs.readFileSync(file, 'utf8'));
+  for (const file of ['ai-helpers.js', 'custom-controls.js', 'control-adapters.js']) w.eval(fs.readFileSync(`extension/${file}`, 'utf8'));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: visible });
   const found = scanner.scanPage(w.document, { isVisible: visible }).controls.find(item => item.label === label);
   assert.ok(found, `scanned ${label}`);

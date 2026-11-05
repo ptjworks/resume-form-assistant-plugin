@@ -1,9 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const loadExtract = () => import('../link/extract.mjs');
-const loadAssist = () => import('../link/job-extract.mjs');
-const loadFlow = () => import('../link/save-flow.mjs');
+const loadExtract = () => import('../extension/link/extract.mjs');
+const loadAssist = () => import('../extension/link/job-extract.mjs');
+const loadFlow = () => import('../extension/link/save-flow.mjs');
 
 const RAW_URL = 'https://kingfa.zhiye.com/form?access_token=abc&job=42';
 const PHONE = '13800138000';
@@ -302,7 +302,7 @@ test('a forbidden fragment never reaches the request, and a reliable local job s
 
 test('#278: an AI answer with neither company nor title says both are missing', async () => {
   const { judgeSuggestion } = await loadAssist();
-  const { describeManualSave } = await import('../link/copy.mjs');
+  const { describeManualSave } = await import('../extension/link/copy.mjs');
   const fragments = [{ id: 1, source: 'document.title', role: 'page-title', text: '星海示例' }];
   const result = judgeSuggestion({
     company: '', title: '', location: '', companyFragment: null, titleFragment: null, locationFragment: null

@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "extension");
 const HTML = fs.readFileSync(path.join(ROOT, "sidepanel.html"), "utf8");
 const SCRIPTS = [...HTML.matchAll(/<script src="([^"]+)"><\/script>/g)].map((hit) => hit[1]);
 const flush = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setImmediate(resolve)); };

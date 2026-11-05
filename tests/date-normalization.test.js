@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const helpers = require("../ai-helpers.js");
+const helpers = require("../extension/ai-helpers.js");
 
 test("中文格式 '1999年1月1日' → type=date → '1999-01-01'", () => {
   assert.equal(helpers.normalizeDateValue("1999年1月1日", "date"), "1999-01-01");

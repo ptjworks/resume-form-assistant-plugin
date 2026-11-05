@@ -40,8 +40,8 @@ function setup(failure = '', pathname = '/sidepanel.html', initial: { consent?: 
     storage: { onChanged: { addListener: () => {} } }
   };
   const context = vm.createContext({ document, chrome: api, self: {}, location: { pathname }, Date: Clock, setTimeout: (callback: () => void) => { timers.push(callback); return 0; } });
-  vm.runInContext(readFileSync('../feedback-core.js', 'utf8'), context);
-  vm.runInContext(readFileSync('../feedback-ui.js', 'utf8'), context);
+  vm.runInContext(readFileSync('../extension/feedback-core.js', 'utf8'), context);
+  vm.runInContext(readFileSync('../extension/feedback-ui.js', 'utf8'), context);
   return {
     calls, state,
     sends: () => calls.filter(c => c.type === 'FEEDBACK_SEND'),

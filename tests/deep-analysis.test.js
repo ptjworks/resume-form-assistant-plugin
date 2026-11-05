@@ -3,9 +3,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { JSDOM } = require("jsdom");
-const fieldScan = require("../field-scan.js");
-const outline = require("../page-outline.js");
-const deep = require("../deep-analysis.js");
+const fieldScan = require("../extension/field-scan.js");
+const outline = require("../extension/page-outline.js");
+const deep = require("../extension/deep-analysis.js");
 
 const isVisible = (el) => !el.closest("[hidden], [style*='display: none'], [style*='display:none']");
 const tick = () => new Promise((resolve) => setImmediate(resolve));

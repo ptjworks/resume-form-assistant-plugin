@@ -5,7 +5,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
+const scanner = require("../extension/field-scan.js");
 
 const OPTIONS = [["", "请选择"], ["1", "大专"], ["2", "本科"], ["3", "硕士"], ["4", "博士"], ["5", "其他", true]];
 function layui({ disabled = false, search = false, value = "" } = {}) {
@@ -19,7 +19,7 @@ function layui({ disabled = false, search = false, value = "" } = {}) {
 <dl class="layui-anim layui-anim-upbit">${OPTIONS.map(([key, text, off], index) => `<dd lay-value="${key}" class="${[index ? "" : "layui-select-tips", off ? "layui-disabled" : "", key && key === value ? "layui-this" : ""].join(" ").trim()}">${text}</dd>`).join("")}</dl></div>
 </div></div></form>`, { runScripts: "outside-only" });
   const w = dom.window, doc = w.document;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const select = doc.querySelector("select"), root = doc.querySelector(".layui-form-select");
   const title = root.querySelector(".layui-select-title"), input = title.querySelector("input");
   if (!disabled) {

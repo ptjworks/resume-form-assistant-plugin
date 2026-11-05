@@ -1,9 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const core = require('../feedback-core.js');
+const core = require('../extension/feedback-core.js');
 
 async function fixture(options = {}) {
-  const { createFeedback, STORAGE_KEY } = await import('../link/feedback.mjs');
+  const { createFeedback, STORAGE_KEY } = await import('../extension/link/feedback.mjs');
   const data = options.data || {};
   const calls = [];
   let time = 1800000000000;
@@ -28,7 +28,7 @@ test('new installs send and store nothing until the user agrees; opt out deletes
   assert.deepEqual(await f.service.setConsent(true), { consent: true, decided: true });
   assert.equal(f.calls.length, 0);
   const id = f.data[f.key].anonymousId; assert.match(id, /^[0-9a-f-]{36}$/);
-  assert.equal(f.data[f.key].consentVersion, (await import('../link/feedback.mjs')).CONSENT_VERSION);
+  assert.equal(f.data[f.key].consentVersion, (await import('../extension/link/feedback.mjs')).CONSENT_VERSION);
   await f.service.automatic(crash, 'c.liepin.com'); assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].payload.anonymous_id, id);
   assert.ok(!JSON.stringify(f.calls[0].payload).includes('Secret'));
@@ -184,7 +184,7 @@ test('fill auto triggers and exclusions', () => {
 });
 
 test('router rejects foreign senders and binds exact previews to one privileged document', async () => {
-  const { installFeedback } = await import('../link/feedback.mjs');
+  const { installFeedback } = await import('../extension/link/feedback.mjs');
   const originalFetch = global.fetch;
   const calls = []; const data = {}; let listener;
   global.fetch = async (_url, req) => { calls.push(JSON.parse(req.body)); return new Response('{"ok":true,"id":"router-test"}'); };
@@ -250,7 +250,7 @@ test('manual redaction removes quoted JSON tokens and Basic credentials before p
 test('content hooks reject synthetic events, filename-only errors and extension URLs embedded in messages', () => {
   const vm = require('node:vm'); const fs = require('node:fs'); const handlers = {}; const reports = [];
   const context = { addEventListener: (name, fn) => { handlers[name] = fn; } };
-  vm.runInNewContext(fs.readFileSync(require.resolve('../feedback-core.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(require.resolve('../extension/feedback-core.js'), 'utf8'), context);
   const origin = 'chrome-extension://example/';
   context.ResumeProFeedback.install(report => reports.push(report), { origin, requireOwn: true });
   const makeOwnError = vm.runInContext('(message, stack) => { const error = new Error(message); error.stack = stack; return error; }', context);
@@ -282,8 +282,8 @@ test('the real AI worker leaves uncaught errors to its host and reports rejectio
   const handlers = {}; const messages = [];
   const self = { location: { href: 'chrome-extension://test/ai-worker.js' }, addEventListener: (name, fn) => { handlers[name] = fn; }, postMessage: message => messages.push(message) };
   const context = vm.createContext({ self, console, URL, TextEncoder, AbortController, setTimeout, clearTimeout });
-  context.importScripts = (...files) => files.forEach(file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context));
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '../ai-worker.js'), 'utf8'), context);
+  context.importScripts = (...files) => files.forEach(file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'extension', file), 'utf8'), context));
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../extension/ai-worker.js'), 'utf8'), context);
   assert.equal(handlers.error, undefined);
   handlers.unhandledrejection({ reason: { name: 'TypeError', message: 'private', stack: 'TypeError: private\n at chrome-extension://test/ai-worker.js:10:2' } });
   assert.equal(messages.length, 1);
@@ -293,7 +293,7 @@ test('the real AI worker leaves uncaught errors to its host and reports rejectio
 
 
 test('upgrades treat earlier default grants as undecided and keep every opt-out', async () => {
-  const { CONSENT_VERSION } = await import('../link/feedback.mjs');
+  const { CONSENT_VERSION } = await import('../extension/link/feedback.mjs');
   const undecided = { consent: false, decided: false };
   const cases = [
     // Written by the default-on builds: never shown, folded with 「知道了」, or switched on by hand.
@@ -319,7 +319,7 @@ test('upgrades treat earlier default grants as undecided and keep every opt-out'
   }
 });
 test('storage failures never turn automatic reports on', async () => {
-  const { createFeedback } = await import('../link/feedback.mjs');
+  const { createFeedback } = await import('../extension/link/feedback.mjs');
   let requests = 0;
   const options = { fetchImpl: async () => { requests++; }, version: 'test', os: 'test' };
   const broken = createFeedback({ ...options, storage: { get: async () => ({}), set: async () => { throw new Error('disk'); } } });
@@ -335,7 +335,7 @@ test('storage failures never turn automatic reports on', async () => {
   assert.equal(requests, 0);
 });
 test('an install or update that leaves the choice open shows it right away; a made choice is not asked again', async () => {
-  const { installFeedback, CONSENT_VERSION } = await import('../link/feedback.mjs');
+  const { installFeedback, CONSENT_VERSION } = await import('../extension/link/feedback.mjs');
   const cases = [
     ['install', undefined, true],
     ['update', undefined, true],
@@ -363,7 +363,7 @@ test('an install or update that leaves the choice open shows it right away; a ma
 // #301：告知版本升到 2（自动报告多了安装方式、填写入口和网页焦点、AI 档位、下拉弹层有没有选项，AI 请求失败也上报）；
 // 升到 3（U2 U5：全部没填上的字段按失败原因码计数）。之前任一版本的同意都要重新询问。
 for (const old of [1, 2]) test(`a grant given under the version-${old} notice is asked again: nothing is sent until the user agrees; an opt-out stays`, async () => {
-  const { CONSENT_VERSION, installFeedback } = await import('../link/feedback.mjs');
+  const { CONSENT_VERSION, installFeedback } = await import('../extension/link/feedback.mjs');
   assert.equal(CONSENT_VERSION, 3);
   const earlier = { consent: true, consentVersion: old, anonymousId: 'earlier-id', recent: {}, hourly: [], fillHourly: [] };
   const f = await fixture({ data: { feedbackStateV1: structuredClone(earlier) } });
@@ -463,7 +463,7 @@ test('turning reports off and on while a report is being written down drops that
   // The report has passed its choice check and is saving its dedup record. Off and on again leaves
   // reports on, but the report still belongs to the choice before them. It was never sent, so the
   // same report after the choice goes out, also the same site's fill report.
-  const { createFeedback } = await import('../link/feedback.mjs');
+  const { createFeedback } = await import('../extension/link/feedback.mjs');
   for (const [input, slots] of [[crash, 'hourly'], [{ kind: 'fill_failed' }, 'fillHourly']]) {
     const data = {}; const calls = [];
     let gate = null;
@@ -497,7 +497,7 @@ test('turning reports off and on while a report is being written down drops that
 });
 
 test('the router reads the install type from chrome.management.getSelf, and goes on without it', async () => {
-  const { installFeedback } = await import('../link/feedback.mjs');
+  const { installFeedback } = await import('../extension/link/feedback.mjs');
   const originalFetch = global.fetch;
   try {
     for (const [management, line] of [[{ getSelf: async () => ({ id: 'x', installType: 'development', name: '网申快填' }) }, /^install: development$/m],
@@ -539,7 +539,7 @@ test('a choice brought back by a new notice says the report contents changed; a 
   const { JSDOM } = require('jsdom');
   const fs = require('node:fs');
   const path = require('node:path');
-  const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const read = file => fs.readFileSync(path.join(__dirname, '..', 'extension', file), 'utf8');
   const mount = async (variant, status) => {
     const { window } = new JSDOM(variant === 'compact'
       ? '<div id="feedback-notice-root" hidden></div><div id="feedback-manual-root"></div><div id="feedback-auto-root" data-variant="compact"></div>'

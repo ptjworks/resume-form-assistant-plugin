@@ -2,7 +2,7 @@
 // 两项都只是时长或固定的阶段名，来自桌面（新桌面才有）；后台 diagnostics() 再过一遍，对不上的整行丢掉。
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const core = require("../feedback-core.js");
+const core = require("../extension/feedback-core.js");
 
 const lineOf = (report, key) => (report.match(new RegExp(`^${key}: (.*)$`, "m")) || [])[1];
 const BASE = { path: "/campus/apply", pageType: { type: "application_form", reason: "url" }, readyAtScan: true,

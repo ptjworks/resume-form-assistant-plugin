@@ -7,11 +7,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const agent = require('../form-agent.js');
-const Compose = require('../sidepanel-compose.js');
+const agent = require('../extension/form-agent.js');
+const Compose = require('../extension/sidepanel-compose.js');
 const { loadHighlightHelpers } = require('./helpers/content-harness.js');
 
-const root = path.join(__dirname, '..');
+const root = path.join(__dirname, '..', 'extension');
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const TEMPLATE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const deferred = () => {
@@ -84,7 +84,7 @@ async function sidePanel() {
   const context = vm.createContext({
     document: documentStub, chrome,
     navigator: { clipboard: { writeText: async () => {} } },
-    self: { ResumeProProfile: require('../profile-fields.js'), ResumeProResumeData: require('../resume-data.js'), ResumeProCompose: Compose },
+    self: { ResumeProProfile: require('../extension/profile-fields.js'), ResumeProResumeData: require('../extension/resume-data.js'), ResumeProCompose: Compose },
     setTimeout: () => 1, clearTimeout() {}, setInterval: (listener) => { poll = listener; }
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'sidepanel.js'), 'utf8'), context);

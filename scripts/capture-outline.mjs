@@ -7,8 +7,8 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { JSDOM } = require("jsdom");
-const fieldScan = require("../field-scan.js");
-const outline = require("../page-outline.js");
+const fieldScan = require("../extension/field-scan.js");
+const outline = require("../extension/page-outline.js");
 
 const args = process.argv.slice(2);
 const file = args.find((arg) => !arg.startsWith("--"));

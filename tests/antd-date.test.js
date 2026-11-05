@@ -12,7 +12,7 @@ function monthPicker({ year = 2001, pageFocused = true } = {}) {
   const dom = new JSDOM(`<div class="ant-modal-wrap" role="dialog"><form><label>出生年月 <span class="ant-picker"><span class="ant-picker-input"><input readonly placeholder="请选择月份"></span></span></label></form></div>`,
     { runScripts: "outside-only" });
   const w = dom.window, doc = w.document;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const input = doc.querySelector("input"), picker = doc.querySelector(".ant-picker");
   const outside = [], keys = [], dialog = [];
   if (!pageFocused) {

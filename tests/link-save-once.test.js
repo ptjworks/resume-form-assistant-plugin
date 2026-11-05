@@ -43,13 +43,13 @@ function handshake(message, epoch = EPOCH) {
 }
 
 async function harness(answer) {
-  const { createStore } = await import('../link/store.mjs');
-  const { createSession } = await import('../link/session.mjs');
-  const { createIntents } = await import('../link/intents.mjs');
-  const { createOutbox } = await import('../link/outbox.mjs');
-  const { createDrain } = await import('../link/drain.mjs');
-  const { createReconcile } = await import('../link/reconcile.mjs');
-  const { createRouter } = await import('../link/router.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
+  const { createSession } = await import('../extension/link/session.mjs');
+  const { createIntents } = await import('../extension/link/intents.mjs');
+  const { createOutbox } = await import('../extension/link/outbox.mjs');
+  const { createDrain } = await import('../extension/link/drain.mjs');
+  const { createReconcile } = await import('../extension/link/reconcile.mjs');
+  const { createRouter } = await import('../extension/link/router.mjs');
   let minted = 0;
   const uuid = () => `00000000-0000-4000-8000-${String(++minted).padStart(12, '0')}`;
   const now = () => new Date('2026-09-09T00:00:00.000Z');
@@ -137,7 +137,7 @@ test('one online save persists a new saved application without a second confirma
 test('a full outbound queue keeps the save intent for later completion', async () => {
   const model = desktop();
   const { router, storage } = await harness(message => model.answer(message));
-  const { MAX_OUTBOX } = await import('../link/limits.mjs');
+  const { MAX_OUTBOX } = await import('../extension/link/limits.mjs');
   storage.data.desktopOutbox = Array.from({ length: MAX_OUTBOX }, (_, index) => ({
     messageId: `queued-${index}`
   }));

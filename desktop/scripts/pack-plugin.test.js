@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PLUGIN_ARCHIVE_OPERANDS, packPlugin } from "./pack-plugin.js";
+import { PLUGIN_ARCHIVE_OPERANDS, PLUGIN_DIR, listPluginArchive, packPlugin, sourcePathOf } from "./pack-plugin.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "..", "..");
@@ -18,13 +18,7 @@ test("清单覆盖插件运行文件，不含 desktop", () => {
     PLUGIN_ARCHIVE_OPERANDS.some((entry) => entry === "desktop" || entry.startsWith("desktop/")),
     false,
   );
-  const leaves = execFileSync(
-    "git",
-    ["ls-tree", "-r", "--name-only", "HEAD", "--", ...PLUGIN_ARCHIVE_OPERANDS],
-    { cwd: repo, encoding: "utf8" },
-  )
-    .trim()
-    .split(/\r?\n/);
+  const leaves = listPluginArchive(repo);
   assert.ok(leaves.includes("manifest.json"));
   assert.ok(leaves.some((name) => name.startsWith("link/")));
   assert.equal(
@@ -41,6 +35,58 @@ test("打出来的是一份真正的 zip", () => {
   assert.ok(statSync(zip).size > 0);
   // PK\x03\x04：不依赖 unzip，Windows runner 上也过。
   assert.equal(readFileSync(zip).subarray(0, 2).toString("utf8"), "PK");
+});
+
+// 读中央目录里的文件名和 zip 注释，不依赖 unzip。
+function readZipListing(file) {
+  const zip = readFileSync(file);
+  const eocd = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = zip.readUInt16LE(eocd + 10);
+  const comment = zip.subarray(eocd + 22, eocd + 22 + zip.readUInt16LE(eocd + 20)).toString("utf8");
+  const names = [];
+  let at = zip.readUInt32LE(eocd + 16);
+  for (let i = 0; i < count; i += 1) {
+    const nameLength = zip.readUInt16LE(at + 28);
+    names.push(zip.subarray(at + 46, at + 46 + nameLength).toString("utf8"));
+    at += 46 + nameLength + zip.readUInt16LE(at + 30) + zip.readUInt16LE(at + 32);
+  }
+  return { names, comment };
+}
+
+test("插件文件在 extension/ 里，包根目录仍直接是 manifest.json", () => {
+  const dir = mkdtempSync(join(tmpdir(), "plugin-pack-"));
+  try {
+    const zip = packPlugin(repo, join(dir, "plugin.zip"));
+    const { names, comment } = readZipListing(zip);
+    const files = names.filter((name) => !name.endsWith("/"));
+    assert.deepEqual(files.sort(), listPluginArchive(repo).sort());
+    for (const name of ["manifest.json", "background.js", "link/worker.mjs", "icons/icon16.png", "README.md", "LICENSE"]) {
+      assert.ok(files.includes(name), name);
+    }
+    assert.equal(names.some((name) => name.startsWith(`${PLUGIN_DIR}/`)), false);
+    assert.equal(comment, execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim());
+    assert.equal(sourcePathOf("manifest.json"), "extension/manifest.json");
+    assert.equal(sourcePathOf("README.md"), "README.md");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("挪目录之前的提交也能打出同样的包", () => {
+  const git = (args, input) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8", input, env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "pack", GIT_AUTHOR_EMAIL: "pack@example.test",
+      GIT_COMMITTER_NAME: "pack", GIT_COMMITTER_EMAIL: "pack@example.test",
+    } }).trim();
+  // 插件文件和 README、LICENSE 都放在根目录，就是挪目录前的布局。
+  const entries = `${git(["ls-tree", `HEAD:${PLUGIN_DIR}`])}\n${git(["ls-tree", "HEAD", "--", "README.md", "LICENSE"])}\n`;
+  const old = git(["commit-tree", git(["mktree"], entries), "-m", "old layout"]);
+  assert.deepEqual(listPluginArchive(repo, old), listPluginArchive(repo));
+});
+
+test("只从提交打包，树对象会被拒绝", () => {
+  assert.throws(() => listPluginArchive(repo, "HEAD^{tree}"), /不是提交/);
 });
 
 test("输出不是 zip 就拒绝", () => {

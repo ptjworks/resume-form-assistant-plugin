@@ -36,7 +36,7 @@ Windows 上如果报 `EACCES 127.0.0.1:1420`，看下面「端口被系统占了
 
 ### 2. 装插件
 
-插件**零构建**：不用 npm、不用打包、不用等商店过审，直接把仓库目录加载进去就行。
+插件**零构建**：不用 npm、不用打包、不用等商店过审，直接把仓库里的 `extension/` 文件夹加载进去就行。
 
 | | Chrome | Edge |
 | --- | --- | --- |
@@ -44,19 +44,20 @@ Windows 上如果报 `EACCES 127.0.0.1:1420`，看下面「端口被系统占了
 | 开发者模式开关 | 页面右上角 | 左侧栏底部 |
 | 加载按钮 | 「加载已解压的扩展程序」 | 「加载解压缩的扩展」 |
 
-选择的目录是**仓库根目录**，也就是 `manifest.json` 所在那一层：
+选择的目录是仓库里的 **`extension/`**，也就是 `manifest.json` 所在那一层：
 
 ```text
-<仓库根目录>/          ← 选这里
-├── manifest.json
-├── content.js
-├── popup.html
-├── link/
-├── desktop/           ← 不是这里
+<仓库根目录>/          ← 不是这里
+├── extension/         ← 选这里
+│   ├── manifest.json
+│   ├── content.js
+│   ├── popup.html
+│   └── link/
+├── desktop/           ← 也不是这里
 └── docs/
 ```
 
-选错成 `desktop/` 或某个子目录会提示找不到 manifest。
+选成仓库根目录、`desktop/` 或别的目录会提示找不到 manifest。
 
 两个浏览器可以同时装，注册脚本默认两边都写，互不干扰。
 
@@ -105,9 +106,9 @@ node scripts/nm-dev-register.mjs register --extension-id diagjmploldedipjdenmecm
 | --- | --- |
 | `desktop/src/`、`desktop/index.html` | vite 热更新，存盘即可 |
 | `desktop/src-tauri/`、`desktop/crates/` | `tauri dev` 自动重编并重启应用，等它编完 |
-| `popup.*`、`background.js`、`link/` | 扩展管理页点「重新加载」 |
-| `content.js`、`content.css` | 「重新加载」之后，**还要刷新被注入的那个网页**，已打开的标签页用的仍是旧脚本 |
-| `manifest.json` | 「重新加载」。**不要改 `key` 字段**——ID 会跟着变，连接注册立刻失效 |
+| `extension/` 里的 `popup.*`、`background.js`、`link/` | 扩展管理页点「重新加载」 |
+| `extension/content.js`、`extension/content.css` | 「重新加载」之后，**还要刷新被注入的那个网页**，已打开的标签页用的仍是旧脚本 |
+| `extension/manifest.json` | 「重新加载」。**不要改 `key` 字段**——ID 会跟着变，连接注册立刻失效 |
 
 ## 收尾（重要）
 
@@ -150,11 +151,11 @@ macOS 没这个问题。
 
 ### 扩展 ID 对不上
 
-正常情况下不会——`manifest.json` 有 `key`，ID 是从它算出来的。如果真对不上，说明加载的不是仓库根目录。
+正常情况下不会——`manifest.json` 有 `key`，ID 是从它算出来的。如果真对不上，说明加载的不是 `extension/` 文件夹。
 
 ### 改了协议校验器没生效
 
-`link/protocol/` 是 `desktop/crates/protocol/js/` 的副本。改源文件后要重新复制过去，`tests/protocol-vendor.test.js` 锁死两边一致。
+`extension/link/protocol/` 是 `desktop/crates/protocol/js/` 的副本。改源文件后要重新复制过去，`tests/protocol-vendor.test.js` 锁死两边一致。
 
 ## 平台差异一览
 

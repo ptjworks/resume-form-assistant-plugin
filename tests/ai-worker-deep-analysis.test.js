@@ -6,17 +6,17 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "ai-worker.js"), "utf8");
-const helpers = require("../ai-helpers.js");
-const deep = require("../deep-analysis.js");
+const source = fs.readFileSync(path.join(__dirname, "..", "extension", "ai-worker.js"), "utf8");
+const helpers = require("../extension/ai-helpers.js");
+const deep = require("../extension/deep-analysis.js");
 
 function worker(respond) {
   const sent = [];
   let sequence = 0;
   const context = vm.createContext({
     importScripts() {}, ResumeProAIHelpers: helpers,
-    ResumeProProfile: require("../profile-fields.js"),
-    ResumeProFormAgent: require("../form-agent.js"),
+    ResumeProProfile: require("../extension/profile-fields.js"),
+    ResumeProFormAgent: require("../extension/form-agent.js"),
     AbortController, TextEncoder, performance: { now: () => 0 },
     crypto: { randomUUID: () => `synthetic-${++sequence}` }
   });
@@ -148,7 +148,7 @@ test("an ordinary fill has no budget and its diagnostics have no call count", as
 });
 
 test("the AI host forwards the analysis message to the worker", () => {
-  const host = fs.readFileSync(path.join(__dirname, "..", "ai-host.js"), "utf8");
+  const host = fs.readFileSync(path.join(__dirname, "..", "extension", "ai-host.js"), "utf8");
   assert.match(host, /"AI_ANALYZE_PAGE"/);
   assert.match(source, /importScripts\([^)]*"deep-analysis\.js"/);
 });

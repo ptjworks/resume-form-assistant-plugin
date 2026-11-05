@@ -6,6 +6,8 @@
 
 ## 模块导航
 
+扩展运行时加载的文件都在 `extension/` 里，下面的路径相对这个文件夹。测试在仓库根目录的 `tests/`。
+
 ```text
 manifest.json          扩展清单与固定公钥
 popup.html/css/js      状态页、连接状态、旧数据迁移和取回
@@ -23,13 +25,12 @@ resume-utils.js        与桌面共用的字段整理和错误提示
 resume-data.js         桌面简历数据视图和降级文案
 link/                  桌面连接、简历读写、AI 转发和待同步队列
 link/protocol/         桌面协议校验器的 vendored 副本
-tests/                 扩展单元与回归测试
 icons/                 扩展图标
 ```
 
 ## 本地开发
 
-扩展没有构建步骤，可在 Chrome 或 Edge 的扩展管理页开启开发者模式，加载仓库根目录。网页填写同时依赖桌面端；只加载扩展不能替代桌面启动和 Native Messaging 注册。
+扩展没有构建步骤，可在 Chrome 或 Edge 的扩展管理页开启开发者模式，加载仓库里的 `extension/` 文件夹。网页填写同时依赖桌面端；只加载扩展不能替代桌面启动和 Native Messaging 注册。
 
 按[开发快速开始](dev-quickstart.md)启动桌面、注册连接，再重新加载扩展或重启浏览器。修改内容脚本后还需刷新被注入的网页。建议使用隔离的数据目录和独立浏览器 Profile，避免测试数据进入真实档案。
 
@@ -51,7 +52,7 @@ node --test tests/*.test.js
 
 待同步写入在绑定时记录 `sourceRestoreEpoch`，重试时不改写；恢复桌面备份后必须核对旧记录，不能直接把旧队列当作新档案中的有效写入。
 
-协议的源文件位于 `desktop/crates/protocol/js/`，`link/protocol/` 为副本。修改源文件后重新复制，由 `tests/protocol-vendor.test.js` 校验一致性。`resume-utils.js` 的扩展与桌面副本也需保持一致。
+协议的源文件位于 `desktop/crates/protocol/js/`，`extension/link/protocol/` 为副本。修改源文件后重新复制，由 `tests/protocol-vendor.test.js` 校验一致性。`resume-utils.js` 的扩展与桌面副本也需保持一致。
 
 开发注册细节见 [DEV-NATIVE-MESSAGING.md](../desktop/DEV-NATIVE-MESSAGING.md)。更改 host 注册后重新加载扩展或重启浏览器。
 

@@ -2,7 +2,7 @@
 // 按原因代码数全部没填上的字段；认不出的代码算 other。这一行只有固定代码和数字。
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const core = require("../feedback-core.js");
+const core = require("../extension/feedback-core.js");
 
 const BASE = { path: "/campus/apply", pageType: { type: "application_form", reason: "url" }, fieldCount: 40, matched: 40, filledCount: 9,
   unfilledCount: 31, unconfirmedCount: 0, requested: true, diagnostics: { ruleMatches: 40, aiFields: 0, aiMatches: 0, promptBytes: 0, errorCode: "none" } };
@@ -56,7 +56,7 @@ test("the reasons line carries no field name, value or address, whatever the pag
 
 test("a reasons line with every code at six digits still passes the allowlist", () => {
   // Read from the source, so a code added later is covered too.
-  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "feedback-core.js"), "utf8");
+  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "extension", "feedback-core.js"), "utf8");
   const codes = [...JSON.parse(source.match(/const FILL_REASONS = (\[[^\]]*\]);/)[1]), "other"];
   assert.ok(codes.length > 30, codes.join());
   const line = `reasons: ${codes.map(code => `${code}=999999`).join(",")}`;

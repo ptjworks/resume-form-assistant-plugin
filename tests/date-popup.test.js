@@ -9,15 +9,15 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const helpers = require("../ai-helpers.js");
-const core = require("../feedback-core.js");
+const scanner = require("../extension/field-scan.js");
+const helpers = require("../extension/ai-helpers.js");
+const core = require("../extension/feedback-core.js");
 
 const visible = (el) => !el.closest("[hidden]");
 function load(html, options = {}) {
   const dom = new JSDOM(`<form>${html}</form>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 300, settleMs: 35, isVisible: visible, ...options });
   return { w, doc: w.document, api };
 }
@@ -561,7 +561,7 @@ test("an Element read-only date and a native month box given a span take the sid
 // ---- 一键填写里：回车写成了别的日期 ----
 
 test("the fill report and the side panel say a date picker left another date in the field", async (t) => {
-  const ROOT = path.join(__dirname, "..");
+  const ROOT = path.join(__dirname, "..", "extension");
   const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
   const dom = new JSDOM(`<!doctype html><html><body><form><div class="ant-form-item"><div class="ant-form-item-label"><label title="毕业时间">毕业时间</label></div>
     <div class="ant-form-item-control"><span class="ant-calendar-picker"><div><input readonly placeholder="请选择日期" class="ant-calendar-picker-input ant-input"></div></span></div></div></form></body></html>`,

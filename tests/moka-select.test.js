@@ -7,7 +7,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
+const scanner = require("../extension/field-scan.js");
 const { loadHighlightHelpers, fakeFieldScan } = require("./helpers/content-harness");
 
 const FRAME = (placeholder, frameClass = "select_info no-adaptive-tooltip") => `<div class="sd-Dropdown-container-1CigZ" style="width: 100%;">
@@ -28,7 +28,7 @@ const RANGE = `<div class="apply-field-Q2iJ7AtQGX date_info-nCj8tT_zjw apply-fil
 function load(body) {
   const dom = new JSDOM(`<form><div class="apply-fields">${NAME_ROW}${body}</div></form>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   // 槽位、弹层都算看得见：写入前复查不能靠真机上槽位宽 0 才看不见弹层。
   const isVisible = (el) => !el.closest("[hidden]");
   const api = w.ResumeProControls.create({ timeoutMs: 300, settleMs: 35, isVisible });

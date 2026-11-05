@@ -25,7 +25,7 @@ function fakeStorage(initial = {}) {
 }
 
 test('the client instance id is minted once and then reused', async () => {
-  const { createStore } = await import('../link/store.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
   const storage = fakeStorage();
   let minted = 0;
   const store = createStore({ storage, uuid: () => `id-${++minted}` });
@@ -39,7 +39,7 @@ test('the client instance id is minted once and then reused', async () => {
 });
 
 test('a client instance id survives being read from storage by a fresh worker', async () => {
-  const { createStore, KEYS } = await import('../link/store.mjs');
+  const { createStore, KEYS } = await import('../extension/link/store.mjs');
   const storage = fakeStorage({ [KEYS.clientInstanceId]: 'already-here' });
   const store = createStore({ storage, uuid: () => 'should-not-be-used' });
 
@@ -47,7 +47,7 @@ test('a client instance id survives being read from storage by a fresh worker', 
 });
 
 test('completed fill receipts retain only recent ids and outcomes', async () => {
-  const { createStore } = await import('../link/store.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
   const storage = fakeStorage();
   const store = createStore({ storage, uuid: () => 'client' });
   for (let i = 0; i < 201; i += 1) await store.rememberFillReceipt(`fill-${i}`, 'saved');
@@ -57,7 +57,7 @@ test('completed fill receipts retain only recent ids and outcomes', async () => 
 });
 
 test('concurrent queue updates do not lose entries', async () => {
-  const { createStore } = await import('../link/store.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
   const storage = fakeStorage();
   const store = createStore({ storage, uuid: () => 'client' });
 
@@ -74,7 +74,7 @@ test('concurrent queue updates do not lose entries', async () => {
 });
 
 test('the desktop link never writes a key the rest of the extension owns', async () => {
-  const { createStore, KEYS, RESERVED_KEYS } = await import('../link/store.mjs');
+  const { createStore, KEYS, RESERVED_KEYS } = await import('../extension/link/store.mjs');
   const storage = fakeStorage();
   const store = createStore({ storage, uuid: () => 'client' });
 
@@ -94,7 +94,7 @@ test('the desktop link never writes a key the rest of the extension owns', async
 });
 
 test('pairing is remembered as a hint with no authority to submit', async () => {
-  const { createStore } = await import('../link/store.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
   const storage = fakeStorage();
   const store = createStore({ storage, uuid: () => 'client' });
 
@@ -106,7 +106,7 @@ test('pairing is remembered as a hint with no authority to submit', async () => 
 });
 
 test('an extension that never reached the desktop reports no pairing', async () => {
-  const { createStore } = await import('../link/store.mjs');
+  const { createStore } = await import('../extension/link/store.mjs');
   const store = createStore({ storage: fakeStorage(), uuid: () => 'client' });
 
   assert.equal(await store.hasEverPaired(), false);

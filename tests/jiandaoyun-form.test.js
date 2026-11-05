@@ -5,8 +5,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const core = require("../feedback-core.js");
+const scanner = require("../extension/field-scan.js");
+const core = require("../extension/feedback-core.js");
 
 const isVisible = (el) => !el.closest("[hidden], [style*='display: none'], [style*='display:none']");
 const JDY = fs.readFileSync(path.join(__dirname, "fixtures", "field-scan", "jiandaoyun-application.html"), "utf8");
@@ -169,7 +169,7 @@ function jdyDateBox({ format = "yyyy-MM-dd", min = "", max = "", value = "", cle
     <div class="fx-field"><div class="field-label"><div class="field-name">姓名</div></div><div class="field-component"><input type="text" id="other"></div></div>
   </div></div>`, { runScripts: "outside-only" });
   const w = dom.window, doc = w.document;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
+  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(path.join(__dirname, "..", "extension", file), "utf8"));
   const input = doc.querySelector(".fx-form-datetime input"), root = doc.querySelector(".x-datetime"), label = doc.querySelector(".datetime-label");
   const pad = (n) => String(n).padStart(2, "0");
   const key = (date) => `${date.y}-${pad(date.m)}-${pad(date.d)}`;

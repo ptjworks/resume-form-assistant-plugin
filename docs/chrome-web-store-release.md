@@ -2,7 +2,7 @@
 
 维护者文档。日常 push 和 PR 只跑 CI（`.github/workflows/test.yml`），不会碰 Chrome Web Store。正式发布从你创建的 **GitHub Release** 开始，由 `.github/workflows/release.yml` 完成检查、打包、把同一个 ZIP 挂到这个 Release，再上传商店并送审。插件与桌面端的完整操作顺序见 [发版 SOP](release-sop.md)。
 
-扩展本身没有编译步骤。正式「构建」就是仓库已有的 `node desktop/scripts/pack-plugin.js`：按允许清单从 Git 树打 ZIP，不包含 `desktop/`、`node_modules`、测试和 `.env`。版本号只看 `manifest.json`。根目录 `package.json` 的 `version` 是类型检查工具自己的版本，不参与商店发布。
+扩展本身没有编译步骤。正式「构建」就是仓库已有的 `node desktop/scripts/pack-plugin.js`：按允许清单从 Git 树打 ZIP，不包含 `desktop/`、`node_modules`、测试和 `.env`。版本号只看 `extension/manifest.json`。根目录 `package.json` 的 `version` 是类型检查工具自己的版本，不参与商店发布。
 
 商店 API 使用当前的 [Chrome Web Store API v2](https://developer.chrome.com/docs/webstore/using-api)。v2 不能新建条目，只能更新已经在 Developer Dashboard 里创建好的 item。审核通过后默认 **不自动公开**：流水线使用 `STAGED_PUBLISH`。你确认之后再上线。
 

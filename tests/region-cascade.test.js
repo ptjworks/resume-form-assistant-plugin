@@ -9,10 +9,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
+const scanner = require("../extension/field-scan.js");
 const { selectItem, wireSelect, wireRegion } = require("./helpers/beisen-form.js");
 
-require("../region-data.js");
+require("../extension/region-data.js");
 const R = globalThis.ResumeProRegions;
 const names = (value) => {
   const found = R.resolve(value);
@@ -71,7 +71,7 @@ test("region data: option texts are compared by full name, short name, or the si
 });
 
 test("region data: 34 provincial divisions, the statistics cities, and no towns or streets anywhere", () => {
-  const source = fs.readFileSync(require.resolve("../region-data.js"), "utf8");
+  const source = fs.readFileSync(require.resolve("../extension/region-data.js"), "utf8");
   const data = JSON.parse(/^ {2}const DATA = (".*");$/m.exec(source)[1]);
   const provinces = data.split("|").map((chunk) => chunk.split(">"));
   assert.equal(provinces.length, 34);
@@ -91,7 +91,7 @@ test("region data: 34 provincial divisions, the statistics cities, and no towns 
 function load(html) {
   const dom = new JSDOM(`<form>${html}</form>`, { runScripts: "outside-only" });
   const w = dom.window;
-  for (const file of ["ai-helpers.js", "region-data.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(file, "utf8"));
+  for (const file of ["ai-helpers.js", "region-data.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: (el) => !el.closest("[hidden]") });
   return { w, doc: w.document, api };
 }

@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
-const webmail = require('../webmail.js');
-const transport = require('../gmail-download.js');
+const webmail = require('../extension/webmail.js');
+const transport = require('../extension/gmail-download.js');
 const ID = '18abcdef12345678';
 const START = `https://mail.google.com/mail/u/0/?view=att&th=${ID}&attid=0&disp=comp&safe=1&zw`;
 const FINAL = `https://mail-attachment.googleusercontent.com/attachment/u/0/?view=att&th=${ID}&attid=0&disp=comp&safe=1&zw&saddbat=synthetic`;
@@ -24,7 +24,7 @@ test('final response is bound to the original account, mail ID and whole-message
   for (const bad of [FINAL.replace('/u/0/', '/u/1/'), FINAL.replace(ID, '18abcdef12345679'), FINAL.replace('attid=0', 'attid=0.1'), FINAL.replace('disp=comp','disp=inline'), FINAL.replace('mail-attachment.googleusercontent.com','other.googleusercontent.com'), FINAL.replace('mail-attachment.googleusercontent.com','evil.test'), FINAL+'&act=delete']) assert.equal(transport.finalMatches(bad, context), false, bad);
 });
 test('CSP child permits only the exact Google origins, including on automatic redirects', () => {
-  const doc = new JSDOM(fs.readFileSync('gmail-download.html', 'utf8')).window.document;
+  const doc = new JSDOM(fs.readFileSync('extension/gmail-download.html', 'utf8')).window.document;
   const policy = doc.querySelector('meta[http-equiv="Content-Security-Policy"]').content;
   const directive = policy.split(';').map(x=>x.trim()).find(x=>x.startsWith('connect-src '));
   assert.deepEqual(directive.split(/\s+/).slice(1).sort(), ['https://mail.google.com','https://mail.googlemail.com','https://mail-attachment.googleusercontent.com'].sort());
@@ -144,7 +144,7 @@ test('trusted child acknowledges initialization before fetching and emits a sepa
     fetch:async()=>{order.push('fetch');return response();},ResumeProWebmail:webmail};
   root.window=root;
   const context={self:root,globalThis:root,URL,AbortController,setTimeout,clearTimeout};
-  vm.runInNewContext(fs.readFileSync('gmail-download.js','utf8'),context);
+  vm.runInNewContext(fs.readFileSync('extension/gmail-download.js','utf8'),context);
   const data={type:'GMAIL_DOWNLOAD_START',id:'id',url:START};
   await handlers[0]({source:{},origin:'chrome-extension://own',data});assert.equal(order.length,0);
   await handlers[0]({source:root.parent,origin:'chrome-extension://own',data});

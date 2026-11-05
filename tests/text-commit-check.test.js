@@ -13,9 +13,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const core = require("../feedback-core.js");
+const core = require("../extension/feedback-core.js");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "extension");
 const SCRIPTS = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).content_scripts[0].js;
 
 // jsdom 不排版：隐藏的元素没有框，其余给一个默认的框。

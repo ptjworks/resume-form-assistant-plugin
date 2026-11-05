@@ -19,7 +19,7 @@ function fakePortApi() {
 }
 
 test('one native port returns one response and disconnects', async () => {
-  const { nativePort } = await import('../link/chrome.mjs');
+  const { nativePort } = await import('../extension/link/chrome.mjs');
   const api = fakePortApi();
   const pending = nativePort(api)('com.resumepro.desktop', { messageType: 'ai.complete' });
   assert.equal(api.runtime.host, 'com.resumepro.desktop');
@@ -30,7 +30,7 @@ test('one native port returns one response and disconnects', async () => {
 });
 
 test('abort closes the native port and ignores a late response', async () => {
-  const { nativePort } = await import('../link/chrome.mjs');
+  const { nativePort } = await import('../extension/link/chrome.mjs');
   const api = fakePortApi();
   const controller = new AbortController();
   const pending = nativePort(api)('com.resumepro.desktop', {}, { signal: controller.signal });
@@ -41,7 +41,7 @@ test('abort closes the native port and ignores a late response', async () => {
 });
 
 test('a missing host on disconnect keeps the browser error', async () => {
-  const { nativePort } = await import('../link/chrome.mjs');
+  const { nativePort } = await import('../extension/link/chrome.mjs');
   const api = fakePortApi();
   const pending = nativePort(api)('com.resumepro.desktop', {});
   api.runtime.lastError = { message: 'Specified native messaging host not found.' };
@@ -50,7 +50,7 @@ test('a missing host on disconnect keeps the browser error', async () => {
 });
 
 async function harness({ mode = 'ready', respond, maxProtocolVersion } = {}) {
-  const { createAi } = await import('../link/ai.mjs');
+  const { createAi } = await import('../extension/link/ai.mjs');
   const sent = [];
   const ai = createAi({
     session: { probe: async () => ({ mode, identity: mode === 'ready' ? IDENTITY : null, ...(maxProtocolVersion ? { maxProtocolVersion } : {}) }) },

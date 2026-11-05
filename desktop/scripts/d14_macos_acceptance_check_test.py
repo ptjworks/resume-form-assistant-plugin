@@ -19,7 +19,7 @@ SPEC.loader.exec_module(MAC)
 class MacAcceptanceCheckTests(unittest.TestCase):
     def write_extension_zip(self, path):
         expected = MAC.D14.CORE_EXTENSION_FILES | set(MAC.D14.read_json(MAC.D14.REVIEWED_ASSETS))
-        manifest = json.loads((MAC.ROOT / "manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads((MAC.ROOT / "extension" / "manifest.json").read_text(encoding="utf-8"))
         with zipfile.ZipFile(path, "w") as archive:
             for name in sorted(expected):
                 content = json.dumps(manifest).encode() if name == "manifest.json" else b"safe"
@@ -27,7 +27,7 @@ class MacAcceptanceCheckTests(unittest.TestCase):
 
     def candidate_args(self, root):
         # The synthetic ZIP carries the repository manifest, so expect whatever version it says.
-        plugin_version = json.loads((MAC.ROOT / "manifest.json").read_text(encoding="utf-8"))["version"]
+        plugin_version = json.loads((MAC.ROOT / "extension" / "manifest.json").read_text(encoding="utf-8"))["version"]
         dmg = root / "网申快填_0.4.0-beta.3_aarch64.dmg"
         extension = root / f"wangshen-kuaitian-v{plugin_version}.zip"
         dmg.write_bytes(b"synthetic-dmg-for-unit-test")

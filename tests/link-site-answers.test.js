@@ -7,8 +7,8 @@ const identity = { archiveId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', restoreEpo
 const CAPABILITIES = ['handshake', 'resume.read', 'siteAnswers.read', 'siteAnswers.save'];
 
 async function client({ capabilities = CAPABILITIES, reply } = {}) {
-  const { createSiteAnswers } = await import('../link/site-answers.mjs');
-  const { validateRequest } = await import('../link/protocol/validate.mjs');
+  const { createSiteAnswers } = await import('../extension/link/site-answers.mjs');
+  const { validateRequest } = await import('../extension/link/protocol/validate.mjs');
   const sent = [];
   const siteAnswers = createSiteAnswers({
     session: { probe: async () => ({ mode: 'ready', identity, capabilities }) },
@@ -70,7 +70,7 @@ test('a shared site, an empty batch and refusals come back as a status, never as
 });
 
 test('only this extension\'s content script in a top frame asks, and the site is that page\'s', async () => {
-  const { siteOfSender } = await import('../link/site-answers.mjs');
+  const { siteOfSender } = await import('../extension/link/site-answers.mjs');
   const tab = { id: 7 };
   assert.equal(siteOfSender({ id: 'own', tab, frameId: 0, url: 'https://app.mokahr.com/campus-recruitment/acme/1#/apply' }, 'own'), 'app.mokahr.com/acme');
   assert.equal(siteOfSender({ id: 'own', tab, frameId: 0, url: 'https://xyz.51job.com/apply.aspx?ctmid=1' }, 'own'), '');
@@ -81,7 +81,7 @@ test('only this extension\'s content script in a top frame asks, and the site is
 });
 
 test('the worker answers a content script about its own page and refuses anyone else', async () => {
-  const { installDesktopLink } = await import('../link/worker.mjs');
+  const { installDesktopLink } = await import('../extension/link/worker.mjs');
   const listeners = [];
   const api = { runtime: { id: 'own', getURL: (p) => `chrome-extension://own/${p}`, getManifest: () => ({ version: '0.5.1' }), onMessage: { addListener: (l) => listeners.push(l) } },
     storage: { local: { get: async () => ({}), set: async () => {}, remove: async () => {} } },
@@ -103,7 +103,7 @@ test('the worker answers a content script about its own page and refuses anyone 
 test('profile-fields.js loads as a strict ES module with no DOM, as the service worker imports it', async () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const source = fs.readFileSync(path.join(__dirname, '..', 'profile-fields.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'extension', 'profile-fields.js'), 'utf8');
   const saved = globalThis.ResumeProProfile;
   delete globalThis.ResumeProProfile;
   try {

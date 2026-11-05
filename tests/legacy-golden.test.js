@@ -8,13 +8,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const profileApi = require('../profile-fields.js');
+const profileApi = require('../extension/profile-fields.js');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 const GOLDEN = path.join(FIXTURES, 'legacy-import-0.4.0.json');
 
 test('a 0.4.0 store produces the golden legacy.import payloads', async () => {
-  const { createLegacy } = await import('../link/legacy.mjs');
+  const { createLegacy } = await import('../extension/link/legacy.mjs');
   const data = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'legacy-0.4.0-storage.json'), 'utf8'));
   const store = structuredClone(data);
   const sent = [];

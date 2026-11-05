@@ -4,11 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // The extension cannot load files from outside its own root, so the D05 validator is
-// vendored into link/protocol/. This test is the lock: change the source and the plugin
+// vendored into extension/link/protocol/. This test is the lock: change the source and the plugin
 // suite goes red until the copy is refreshed. There is deliberately no second
 // implementation of the protocol rules in this repository.
 const SOURCE_DIR = path.join(__dirname, '..', 'desktop', 'crates', 'protocol', 'js');
-const VENDOR_DIR = path.join(__dirname, '..', 'link', 'protocol');
+const VENDOR_DIR = path.join(__dirname, '..', 'extension', 'link', 'protocol');
 const FILES = ['validate.mjs', 'schema-lite.mjs', 'schema-data.mjs', 'time.mjs'];
 
 for (const file of FILES) {
@@ -33,7 +33,7 @@ test('the vendored validator imports nothing outside its own directory', () => {
 });
 
 test('the vendored validator runs under the browser globals the service worker has', async () => {
-  const validate = await import('../link/protocol/validate.mjs');
+  const validate = await import('../extension/link/protocol/validate.mjs');
   assert.equal(validate.MAX_ENVELOPE_BYTES, 65536);
   assert.equal(validate.MAX_RECONCILE_ITEMS, 32);
   // Digests come from Web Crypto, which the service worker and node both expose globally.

@@ -4,9 +4,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const scanner = require("../field-scan.js");
-const helpers = require("../ai-helpers.js");
-const profileApi = require("../profile-fields.js");
+const scanner = require("../extension/field-scan.js");
+const helpers = require("../extension/ai-helpers.js");
+const profileApi = require("../extension/profile-fields.js");
 
 // jsdom 不排版：没有尺寸，也不算样式。这里只把 hidden 和行内 display:none 当成看不见。
 const isVisible = (el) => !el.closest("[hidden], [style*='display: none'], [style*='display:none']");
@@ -348,7 +348,7 @@ test("a section title does not turn 地址 or QQ into a phone field for local ru
 });
 
 test("the content script loads the scanner before content.js", () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"));
   const scripts = manifest.content_scripts[0].js;
   assert.ok(scripts.includes("field-scan.js"));
   assert.ok(scripts.indexOf("field-scan.js") < scripts.indexOf("content.js"));
