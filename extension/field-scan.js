@@ -570,19 +570,18 @@
     return set;
   }
 
-  function elementText(el, ctx, control) {
+  function elementText(el, ctx, control, explicit = false) {
     const skip = new Set([control.root, ...optionLabelElements(control)]);
     // 包着控件的 label：去掉控件本身再取字。
     skip.delete(el);
-    const placeholders = placeholdersOf(control);
+    const placeholders = explicit ? [] : placeholdersOf(control);
     return cleanLabel(joinSegments(usefulSegments(textSegments(el, ctx, skip), placeholders)), placeholders);
   }
 
   function explicitLabel(control, ctx) {
-    const placeholders = placeholdersOf(control);
     const primary = control.element;
     const check = (text, source, labelEl = null) => {
-      const value = cleanLabel(text, placeholders);
+      const value = cleanLabel(text);
       return value ? { text: value, source, labelEl } : null;
     };
 
@@ -600,7 +599,7 @@
       const fieldset = control.root.closest("fieldset");
       const legend = fieldset && !hasForeignControl(fieldset, control.root, ctx) ? fieldset.querySelector("legend") : null;
       if (legend) {
-        const text = elementText(legend, ctx, control);
+        const text = elementText(legend, ctx, control, true);
         if (text) return { text, source: "explicit", labelEl: legend };
       }
       return null;
@@ -614,7 +613,7 @@
     for (const el of control.elements) {
       for (const label of Array.from(el.labels || [])) {
         if (ownFrame(label, el)) continue;
-        const text = elementText(label, ctx, control);
+        const text = elementText(label, ctx, control, true);
         if (text) return { text, source: "explicit", labelEl: label };
       }
     }
@@ -631,7 +630,7 @@
 
     const wrapping = primary.closest("label");
     if (wrapping && !ownFrame(wrapping, primary)) {
-      const text = elementText(wrapping, ctx, control);
+      const text = elementText(wrapping, ctx, control, true);
       if (text) return { text, source: "explicit", labelEl: wrapping };
     }
     return null;
@@ -641,8 +640,8 @@
     const ids = attr(el, "aria-labelledby").split(/\s+/).filter(Boolean);
     if (!ids.length) return null;
     const parts = ids.map((id) => ctx.doc.getElementById(id)).filter(Boolean)
-      .map((target) => elementText(target, ctx, control)).filter(Boolean);
-    const text = cleanLabel(parts.join(" "), placeholdersOf(control));
+      .map((target) => elementText(target, ctx, control, true)).filter(Boolean);
+    const text = cleanLabel(parts.join(" "));
     return text ? { text, source: "explicit", labelEl: ctx.doc.getElementById(ids[0]) } : null;
   }
 
@@ -1150,7 +1149,9 @@
       pickerType: control.pickerType || "",
       rangePart: control.rangePart || "",
       mixed: Boolean(control.mixed),
-      placeholder: attr(control.element, "placeholder")
+      placeholder: attr(control.element, "placeholder"),
+      // Local-only anchors: field descriptors and reports do not include these.
+      anchorId: attr(control.element, "id"), anchorName: attr(control.element, "name")
     };
   }
 

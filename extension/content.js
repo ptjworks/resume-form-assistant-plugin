@@ -5259,13 +5259,21 @@
     const old = entry?.binding;
     if (!old?.label || entry.deepRef) return null;
     let scan;
+    const doc = entryDocument(entry);
     try {
-      scan = self.ResumeProFieldScan.scanPage(entryDocument(entry), { isVisible, exclude: (element) => Boolean(element.closest(`#${SIDEBAR_ID}`)) });
+      scan = self.ResumeProFieldScan.scanPage(doc, { isVisible, exclude: (element) => Boolean(element.closest(`#${SIDEBAR_ID}`)) });
     } catch {
       return null;
     }
-    const same = scan.controls.filter((control) => control.controlKind === old.controlKind && control.label === old.label
-      && control.section === old.section && control.repeatIndex === old.repeatIndex && control.repeatCount === old.repeatCount);
+    const candidates = scan.controls.filter((control) => control.controlKind === old.controlKind && control.label === old.label
+      && control.section === old.section);
+    // A stable unique id can identify the original field even if another repeat was added.
+    // Duplicate ids, changed questions/names and changed values must never be guessed through.
+    const anchored = old.anchorId && entry.kind !== "radio"
+      ? Array.from(doc.querySelectorAll("[id]")).filter(node => node.id === old.anchorId) : [];
+    const same = anchored.length
+      ? (anchored.length === 1 ? candidates.filter(control => control.element === anchored[0] && control.anchorName === old.anchorName) : [])
+      : candidates.filter(control => control.repeatIndex === old.repeatIndex && control.repeatCount === old.repeatCount);
     if (same.length !== 1) return null;
     const control = same[0];
     const fresh = { ...entry, binding: control, root: control.root };
@@ -5496,40 +5504,46 @@
     element.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  function focusControl(element) {
+  function focusTransition(element, entering) {
+    const types = entering ? ["focus", "focusin"] : ["blur", "focusout"];
+    const seen = new Set();
+    const listeners = types.map(type => [type, () => seen.add(type)]);
+    const observe = typeof element.addEventListener === "function" && typeof element.removeEventListener === "function";
+    if (observe) for (const [type, listener] of listeners) element.addEventListener(type, listener, true);
+    let native = false;
     try {
-      if (typeof element.focus === "function") {
+      const method = entering ? "focus" : "blur";
+      if (typeof element[method] === "function") {
         try {
-          element.focus({ preventScroll: true });
+          if (entering) element.focus({ preventScroll: true });
+          else element.blur();
         } catch (_) {
+          if (!entering) throw _;
           element.focus();
         }
-        return;
+        native = true;
       }
     } catch (_) {
-      // focus() 不可用时下面补一个事件。
+      // Missing native methods and background pages still need the component lifecycle.
+    } finally {
+      if (observe) for (const [type, listener] of listeners) element.removeEventListener(type, listener, true);
     }
-    try {
-      element.dispatchEvent(new FocusEvent("focus", { bubbles: false }));
-    } catch (_) {
-      // 没有 FocusEvent 时不再额外发事件。
+    // A sidebar can leave the page without OS focus: focus()/blur() may change activeElement
+    // but emit no events. Complete only the missing events; never duplicate native ones.
+    if (native && docOf(element).hasFocus?.() !== false) return;
+    const Focus = viewOf(element).FocusEvent || (typeof FocusEvent === "function" ? FocusEvent : null);
+    if (!Focus || element.isConnected === false) return;
+    for (const type of types) {
+      if (!seen.has(type)) element.dispatchEvent(new Focus(type, { bubbles: type.endsWith("in") || type.endsWith("out") }));
     }
   }
 
+  function focusControl(element) {
+    focusTransition(element, true);
+  }
+
   function blurControl(element) {
-    try {
-      if (typeof element.blur === "function") {
-        element.blur();
-        return;
-      }
-    } catch (_) {
-      // blur() 不可用时下面补一个事件。
-    }
-    try {
-      element.dispatchEvent(new FocusEvent("blur", { bubbles: false }));
-    } catch (_) {
-      // 没有 FocusEvent 时不再额外发事件。
-    }
+    focusTransition(element, false);
   }
 
   function nextTask() {

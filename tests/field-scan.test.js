@@ -25,6 +25,19 @@ function labels(result) {
 
 const BEISEN = fs.readFileSync(path.join(__dirname, "fixtures", "field-scan", "beisen-application.html"), "utf8");
 
+test("#477 an explicit question is retained when its wording equals the input placeholder", (t) => {
+  const doc = load(`<form>
+    <div><label for="a">姓名</label><input id="a" placeholder="姓名"></div>
+    <div><input aria-label="学校" placeholder="学校"></div>
+    <div><span id="q">专业</span><input aria-labelledby="q" placeholder="专业"></div>
+    <div><input placeholder="请输入"></div>
+    </form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(labels(result), ["姓名", "学校", "专业"]);
+  assert.ok(result.controls.every(control => scanner.isBindingCurrent(control, doc, { isVisible })));
+});
+
 test("Beisen form: header search is not taken for 面试站点, and each dropdown is one field with its own title", () => {
   const doc = new JSDOM(BEISEN).window.document;
   const result = scan(doc);

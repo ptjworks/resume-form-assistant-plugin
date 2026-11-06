@@ -379,3 +379,40 @@ test('AntD 6 Cascader is picked column by column and its path is read back', asy
   assert.deepEqual(h.state.picked, ['广东省/深圳市/南山区']);
   assert.deepEqual(JSON.parse(JSON.stringify(h.w.ResumeProCustomControls.readSelection(h.target))), { texts: ['广东省', '深圳市', '南山区'], cascade: true });
 });
+
+test('#475 hidden parked selected labels do not invalidate the visible AntD selection', async (t) => {
+  const h = antd3(['本科', '硕士'], { selected: '本科' });
+  t.after(() => h.w.close());
+  const parked = h.doc.createElement('div');
+  parked.hidden = true;
+  parked.innerHTML = '<span class="ant-select-selection-selected-value">旧值</span>';
+  h.root.append(parked);
+  const result = await h.api.operate(h.target, '硕士');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ['硕士']);
+  assert.deepEqual(h.picked, ['硕士']);
+});
+
+test('#477 Element remote select without an initial popup is searched before reading options', async (t) => {
+  // The public Ningbo Bank bundle uses filterable + remote el-select with remote-method.
+  const h = load('学校', '<div class="el-select"><div class="el-input"><input class="el-input__inner" placeholder="请选择" readonly></div></div>');
+  t.after(() => h.w.close());
+  const input = h.doc.querySelector('input');
+  const searches = [];
+  h.doc.querySelector('.el-input').addEventListener('click', () => { input.readOnly = false; });
+  input.addEventListener('input', () => {
+    searches.push(input.value);
+    if (input.value !== '虚构大学') return;
+    const popup = h.doc.createElement('div');
+    popup.className = 'el-select-dropdown';
+    popup.innerHTML = '<ul role="listbox"><li class="el-select-dropdown__item">虚构大学</li></ul>';
+    popup.querySelector('li').addEventListener('click', () => {
+      input.value = '虚构大学'; input.readOnly = true; popup.hidden = true;
+    });
+    h.doc.body.append(popup);
+  });
+  const result = await h.api.operate(h.target, '虚构大学');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(searches, ['虚构大学']);
+  assert.equal(input.value, '虚构大学');
+});

@@ -41,7 +41,7 @@ function layout(w) {
 const item = (id, label, attrs = "") => `<div class="form-item"><label for="${id}">${label}</label><input id="${id}" ${attrs}></div>`;
 
 // resume：[[题目, 值]]，模板和 AI 替身的回答都按它来。测试结束时关掉窗口，停下页面上的定时器。
-function page(t, body, resume = []) {
+function page(t, body, resume = [], options = {}) {
   const dom = new JSDOM(`<!doctype html><html><body><form>${body}</form></body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://forms.example.test/f/demo" });
   const w = dom.window;
@@ -59,6 +59,7 @@ function page(t, body, resume = []) {
     profile: { values: {}, family: [], custom: [] }, profileRevision: 0 };
   const reports = [];
   const fill = (message) => {
+    options.onMatch?.(w);
     const matches = message.formFields.filter((field) => answers[field.label] !== undefined)
       .map((field) => ({ fieldId: field.fieldId, value: answers[field.label] }));
     return { success: true, matches, diagnostics: { ruleMatches: 0, aiFields: message.formFields.length, aiMatches: matches.length, promptBytes: 100, errorCode: "none" } };
@@ -100,6 +101,75 @@ function page(t, body, resume = []) {
 }
 
 const later = (fn) => setTimeout(fn, 0);
+
+test("#479 a stable unique field id survives a redraw that adds a same-titled field", async (t) => {
+  let changed = false;
+  const p = page(t, item("project", "项目名称") + item("note", "备注"), [["项目名称", "虚构项目"]], {
+    onMatch(w) {
+      if (changed) return;
+      changed = true;
+      const input = w.document.getElementById("project");
+      input.replaceWith(input.cloneNode());
+      w.document.querySelector("form").insertAdjacentHTML("beforeend", item("extra", "项目名称"));
+    }
+  });
+  await p.run();
+  assert.equal(p.input("project").value, "虚构项目");
+});
+
+for (const invalid of ["duplicate-id", "changed-title", "changed-value"]) {
+  test(`#479 redraw never rebinds through ${invalid}`, async (t) => {
+    let changed = false;
+    const p = page(t, item("project", "项目名称") + item("note", "备注"), [["项目名称", "虚构项目"]], {
+      onMatch(w) {
+        if (changed) return;
+        changed = true;
+        const input = w.document.getElementById("project");
+        const fresh = input.cloneNode();
+        input.replaceWith(fresh);
+        // Force the old repeat-index/count locator to become unusable.
+        w.document.querySelector("form").insertAdjacentHTML("beforeend", item(invalid === "duplicate-id" ? "project" : "extra", "项目名称"));
+        if (invalid === "changed-title") fresh.previousElementSibling.textContent = "其他题目";
+        if (invalid === "changed-value") fresh.value = "用户刚刚输入";
+      }
+    });
+    await p.run();
+    assert.notEqual(p.input("project").value, "虚构项目");
+    if (invalid === "changed-value") assert.equal(p.input("project").value, "用户刚刚输入");
+  });
+}
+
+test("#478 text state receives focus and blur once when the page has no native focus events", async (t) => {
+  const p = page(t, item("name", "姓名", 'value="待完善"'));
+  const input = p.input("name");
+  p.doc.hasFocus = () => false;
+  input.focus = () => {};
+  input.blur = () => {};
+  let focused = false;
+  const events = [];
+  for (const event of ["focus", "focusin", "blur", "focusout"]) input.addEventListener(event, () => events.push(event));
+  input.addEventListener("focusin", () => { focused = true; });
+  input.addEventListener("input", () => { if (!focused) input.value = "待完善"; });
+  assert.equal(await p.set("name", "虚构姓名"), true, p.reason("name"));
+  assert.equal(input.value, "虚构姓名");
+  assert.deepEqual(events, ["focus", "focusin", "blur", "focusout"]);
+});
+
+for (const partial of [false, true]) {
+  test(`#478 focus fallback does not duplicate native events (partial=${partial})`, async (t) => {
+    const p = page(t, item("name", "姓名"));
+    const input = p.input("name");
+    p.doc.hasFocus = () => false;
+    if (partial) {
+      input.focus = () => input.dispatchEvent(new p.w.FocusEvent("focus"));
+      input.blur = () => input.dispatchEvent(new p.w.FocusEvent("blur"));
+    }
+    const counts = {};
+    for (const event of ["focus", "focusin", "blur", "focusout"]) input.addEventListener(event, () => { counts[event] = (counts[event] || 0) + 1; });
+    assert.equal(await p.set("name", "虚构姓名"), true);
+    assert.deepEqual(counts, { focus: 1, focusin: 1, blur: 1, focusout: 1 });
+  });
+}
 // 受控组件的写法：框里的字以组件状态为准，状态变了就重画。
 function controlled(el, { onInput = (value) => value, onBlur = (value) => value, async = false } = {}) {
   let state = el.value;
