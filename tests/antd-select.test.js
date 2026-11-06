@@ -416,3 +416,10 @@ test('#477 Element remote select without an initial popup is searched before rea
   assert.deepEqual(searches, ['虚构大学']);
   assert.equal(input.value, '虚构大学');
 });
+
+test('#475 selected values outside the viewport are not treated as parked hidden labels', (t) => {
+  const h = antd3(['本科', '硕士'], { selected: '本科' });
+  t.after(() => h.w.close());
+  h.root.style.cssText = 'position:fixed;left:-10000px;opacity:0';
+  assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ['本科']);
+});

@@ -31,6 +31,9 @@ test("#477 an explicit question is retained when its wording equals the input pl
     <div><input aria-label="学校" placeholder="学校"></div>
     <div><span id="q">专业</span><input aria-labelledby="q" placeholder="专业"></div>
     <div><input placeholder="请输入"></div>
+    <div><label for="generic">请输入</label><input id="generic" placeholder="请输入"></div>
+    <div><input aria-label="请选择" placeholder="请选择"></div>
+    <div><span id="prompt">Please select</span><input aria-labelledby="prompt" placeholder="Please select"></div>
     </form>`);
   t.after(() => doc.defaultView.close());
   const result = scan(doc);

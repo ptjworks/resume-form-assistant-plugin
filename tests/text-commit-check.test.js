@@ -117,7 +117,7 @@ test("#479 a stable unique field id survives a redraw that adds a same-titled fi
   assert.equal(p.input("project").value, "虚构项目");
 });
 
-for (const invalid of ["duplicate-id", "changed-title", "changed-value"]) {
+for (const invalid of ["duplicate-id", "changed-title", "changed-value", "changed-name"]) {
   test(`#479 redraw never rebinds through ${invalid}`, async (t) => {
     let changed = false;
     const p = page(t, item("project", "项目名称") + item("note", "备注"), [["项目名称", "虚构项目"]], {
@@ -131,6 +131,7 @@ for (const invalid of ["duplicate-id", "changed-title", "changed-value"]) {
         w.document.querySelector("form").insertAdjacentHTML("beforeend", item(invalid === "duplicate-id" ? "project" : "extra", "项目名称"));
         if (invalid === "changed-title") fresh.previousElementSibling.textContent = "其他题目";
         if (invalid === "changed-value") fresh.value = "用户刚刚输入";
+        if (invalid === "changed-name") fresh.name = "another-field";
       }
     });
     await p.run();
@@ -170,6 +171,28 @@ for (const partial of [false, true]) {
     assert.deepEqual(counts, { focus: 1, focusin: 1, blur: 1, focusout: 1 });
   });
 }
+
+test("#478 focusing an already focused foreground input does not invent another focus transition", async (t) => {
+  const p = page(t, item("name", "姓名"));
+  const input = p.input("name");
+  input.focus();
+  p.doc.hasFocus = () => true;
+  const events = [];
+  for (const type of ["focus", "focusin", "blur", "focusout"]) input.addEventListener(type, () => events.push(type));
+  assert.equal(await p.set("name", "虚构姓名"), true);
+  assert.deepEqual(events, ["blur", "focusout"]);
+});
+
+test("#478 an unavailable fallback FocusEvent does not bypass the commit check or interrupt the fill", async (t) => {
+  const p = page(t, item("name", "姓名"));
+  const input = p.input("name");
+  p.doc.hasFocus = () => false;
+  input.focus = () => {}; input.blur = () => {};
+  p.w.FocusEvent = class { constructor() { throw new Error("unavailable"); } };
+  input.addEventListener("input", () => { input.value = ""; });
+  assert.equal(await p.set("name", "虚构姓名"), false);
+  assert.equal(p.reason("name"), "value_not_committed");
+});
 // 受控组件的写法：框里的字以组件状态为准，状态变了就重画。
 function controlled(el, { onInput = (value) => value, onBlur = (value) => value, async = false } = {}) {
   let state = el.value;

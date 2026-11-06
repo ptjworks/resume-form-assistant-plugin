@@ -5258,10 +5258,14 @@
   function rebindFieldEntry(entry) {
     const old = entry?.binding;
     if (!old?.label || entry.deepRef) return null;
-    let scan;
-    const doc = entryDocument(entry);
+    let scan, anchored = [];
     try {
+      const doc = entryDocument(entry);
       scan = self.ResumeProFieldScan.scanPage(doc, { isVisible, exclude: (element) => Boolean(element.closest(`#${SIDEBAR_ID}`)) });
+      if (old.anchorId && entry.kind !== "radio") {
+        const escaped = doc.defaultView?.CSS?.escape?.(old.anchorId);
+        anchored = Array.from(doc.querySelectorAll(escaped === undefined ? "[id]" : `#${escaped}`)).filter(node => node.id === old.anchorId);
+      }
     } catch {
       return null;
     }
@@ -5269,8 +5273,6 @@
       && control.section === old.section);
     // A stable unique id can identify the original field even if another repeat was added.
     // Duplicate ids, changed questions/names and changed values must never be guessed through.
-    const anchored = old.anchorId && entry.kind !== "radio"
-      ? Array.from(doc.querySelectorAll("[id]")).filter(node => node.id === old.anchorId) : [];
     const same = anchored.length
       ? (anchored.length === 1 ? candidates.filter(control => control.element === anchored[0] && control.anchorName === old.anchorName) : [])
       : candidates.filter(control => control.repeatIndex === old.repeatIndex && control.repeatCount === old.repeatCount);
@@ -5530,11 +5532,15 @@
     }
     // A sidebar can leave the page without OS focus: focus()/blur() may change activeElement
     // but emit no events. Complete only the missing events; never duplicate native ones.
-    if (native && docOf(element).hasFocus?.() !== false) return;
-    const Focus = viewOf(element).FocusEvent || (typeof FocusEvent === "function" ? FocusEvent : null);
-    if (!Focus || element.isConnected === false) return;
-    for (const type of types) {
-      if (!seen.has(type)) element.dispatchEvent(new Focus(type, { bubbles: type.endsWith("in") || type.endsWith("out") }));
+    try {
+      if (native && docOf(element).hasFocus?.() !== false) return;
+      const Focus = viewOf(element).FocusEvent || (typeof FocusEvent === "function" ? FocusEvent : null);
+      if (!Focus || element.isConnected === false) return;
+      for (const type of types) {
+        if (!seen.has(type)) element.dispatchEvent(new Focus(type, { bubbles: type.endsWith("in") || type.endsWith("out") }));
+      }
+    } catch (_) {
+      // Unavailable document/view or event constructor: the normal commit check still decides success.
     }
   }
 
