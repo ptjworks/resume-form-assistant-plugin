@@ -38,6 +38,7 @@ mod commands_regression;
 mod ipc_client;
 mod ipc_server;
 mod lifecycle;
+mod single_instance_guard;
 mod legacy_import_commands;
 mod nm;
 mod plugin_bridge;
@@ -1947,6 +1948,25 @@ pub fn run() {
             return;
         }
     }
+    // Before the single-instance plugin decides: a running instance that has its mutex but not
+    // yet its message window would otherwise let this process through as a second first
+    // instance (single_instance_guard explains the race). Waiting lets the plugin hand it over.
+    let launch_kind = if quit_launch { "quit" } else if hidden_launch { "hidden" } else { "manual" };
+    if single_instance_guard::wait_for_running(&context.config().identifier, single_instance_guard::WINDOW_WAIT)
+        == single_instance_guard::Running::Unreachable
+    {
+        eprintln!("launch blocked: another instance holds the single-instance mutex but has no window");
+        if let Ok(paths) = HostPaths::resolve() {
+            let _ = write_log(&paths, "warn", "SINGLE_INSTANCE_UNREACHABLE", &[("launch", launch_kind)]);
+        }
+        if quit_launch {
+            std::process::exit(1);
+        }
+        if !hidden_launch {
+            lifecycle::report_launch_failure(context);
+        }
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -1995,6 +2015,21 @@ pub fn run() {
             latest_update: Mutex::new(None),
         })
         .setup(move |app| {
+            if single_instance_guard::fell_through(&app.config().identifier) {
+                // The plugin let a second process through without a message window of its own.
+                // As the writer it could never be reached again, and a `--quit` here would quit
+                // only itself and report success while the running instance carries on.
+                eprintln!("launch blocked: let through by the single-instance plugin without a window of its own");
+                if let Ok(paths) = HostPaths::resolve() {
+                    let _ = write_log(&paths, "warn", "SINGLE_INSTANCE_FELL_THROUGH", &[("launch", launch_kind)]);
+                }
+                if quit_launch {
+                    app.handle().cleanup_before_exit();
+                    std::process::exit(1);
+                }
+                app.handle().exit(0);
+                return Ok(());
+            }
             if quit_launch {
                 // No writer/window exists in this first-instance CLI path. Unlike a
                 // running application's failed quit, the command must fail and exit
