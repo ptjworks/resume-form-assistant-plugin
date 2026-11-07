@@ -189,6 +189,8 @@
   let desktopVersion = "";
   let installType = "";
   let readyVersion = "";
+  // 启动时那次读取比变化通知晚回来时，不能拿旧值盖掉通知里的新值。
+  let readyVersionChanged = false;
   const UPDATE_READY_KEY = "extensionUpdateReady";
   let selectedView = "fill";
   let storeSnapshot = "";
@@ -2980,7 +2982,11 @@
     .then((info) => { installType = String(info?.installType || ""); renderUpdateReminder(); })
     .catch(() => {});
   Promise.resolve(chrome.storage.session?.get?.(UPDATE_READY_KEY))
-    .then((stored) => { readyVersion = String(stored?.[UPDATE_READY_KEY]?.version || ""); renderUpdateReminder(); })
+    .then((stored) => {
+      if (readyVersionChanged) return;
+      readyVersion = String(stored?.[UPDATE_READY_KEY]?.version || "");
+      renderUpdateReminder();
+    })
     .catch(() => {});
   document.getElementById("legacy-hint-open").addEventListener("click", async () => {
     const result = await chrome.runtime.sendMessage({ type: "DESKTOP_OPEN_VIEW", view: "resume" }).catch(() => null);
@@ -2992,6 +2998,7 @@
   const QUEUE_KEYS = ["desktopSaveIntents", "desktopOutbox", "desktopFillRecords"];
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "session" && changes[UPDATE_READY_KEY]) {
+      readyVersionChanged = true;
       readyVersion = String(changes[UPDATE_READY_KEY].newValue?.version || "");
       renderUpdateReminder();
     }

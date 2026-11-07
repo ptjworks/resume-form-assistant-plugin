@@ -30,7 +30,7 @@
       return { kind: 'reload', message: `插件新版本 ${readyVersion} 已下载，重新加载后生效。`, action: '重新加载' };
     }
     if (installType === 'development') {
-      return { kind: 'store', message: '这份插件是解压安装的，不会自动更新。请移除后从 Chrome 应用商店安装，桌面里的资料不受影响。', action: '去商店' };
+      return { kind: 'store', message: '这份插件是解压安装的，不会自动更新。请先处理完「待同步」里的记录，再移除它，从 Chrome 应用商店安装。', action: '去商店' };
     }
     if (desktopBehind(desktopVersion, extensionVersion)) {
       return { kind: 'download', message: `桌面程序版本较旧（${desktopVersion}），请更新到最新版。`, action: '去下载' };

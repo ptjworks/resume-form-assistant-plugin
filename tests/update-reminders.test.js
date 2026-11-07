@@ -149,7 +149,7 @@ function element() {
   };
 }
 
-async function panel({ read, installType = 'normal', ready = null }) {
+async function panel({ read, installType = 'normal', ready = null, sessionRead = null }) {
   const elements = new Map();
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   const created = [];
@@ -165,7 +165,7 @@ async function panel({ read, installType = 'normal', ready = null }) {
     management: { getSelf: async () => ({ installType }) },
     storage: {
       local: { get: async () => ({}) },
-      session: { get: async () => (ready ? { extensionUpdateReady: { version: ready } } : {}) },
+      session: { get: sessionRead || (async () => (ready ? { extensionUpdateReady: { version: ready } } : {})) },
       onChanged: { addListener(listener) { storageListeners.push(listener); } }
     },
     tabs: {
@@ -221,6 +221,7 @@ test('侧栏：解压安装的插件提示改装商店版', async () => {
   const p = await panel({ read: { status: 'ok', data, desktopVersion: '0.5.0' }, installType: 'development' });
   assert.equal(p.strip.hidden, false);
   assert.match(p.text(), /解压安装/);
+  assert.match(p.text(), /待同步/, '移除插件会删掉还没同步到桌面的记录');
   await p.click();
   assert.deepEqual(p.created, [reminders.STORE_URL]);
 });
@@ -237,4 +238,16 @@ test('侧栏：新版本已下载时给「重新加载」，后台记下的变�
   await later.sessionChanged('0.5.1');
   assert.equal(later.strip.hidden, false);
   assert.match(later.text(), /0\.5\.1/);
+});
+
+test('侧栏：启动时的读取比变化通知晚回来，不会盖掉新版本', async () => {
+  let answer;
+  const late = new Promise(resolve => { answer = resolve; });
+  const p = await panel({ read: { status: 'ok', data, desktopVersion: '0.5.0' }, sessionRead: () => late });
+  await p.sessionChanged('0.5.1');
+  assert.equal(p.action.textContent, '重新加载');
+  answer({});
+  await p.tick();
+  assert.equal(p.strip.hidden, false);
+  assert.equal(p.action.textContent, '重新加载');
 });
