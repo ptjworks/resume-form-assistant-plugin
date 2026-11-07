@@ -140,6 +140,36 @@ for (const invalid of ["duplicate-id", "changed-title", "changed-value", "change
   });
 }
 
+// 页面本来就有重复 id 时，id 说明不了是哪一题：仍按同名题目的序号和总数找回，和加锚点之前一样。
+test("#479 ids already duplicated before the redraw fall back to the repeat locator", async (t) => {
+  let changed = false;
+  const p = page(t, item("project", "项目名称") + item("project", "项目名称") + item("note", "备注"), [["项目名称", "虚构项目"]], {
+    onMatch(w) {
+      if (changed) return;
+      changed = true;
+      const input = w.document.querySelectorAll("input[id='project']")[0];
+      input.replaceWith(input.cloneNode());
+    }
+  });
+  await p.run();
+  assert.deepEqual(Array.from(p.doc.querySelectorAll("input[id='project']"), (input) => input.value), ["虚构项目", "虚构项目"]);
+  assert.deepEqual(p.unfilledLine(), []);
+});
+
+test("#479 a duplicated id never moves a removed field onto the remaining one", async (t) => {
+  let changed = false;
+  const p = page(t, item("project", "项目名称") + item("project", "项目名称") + item("note", "备注"), [["项目名称", "虚构项目"]], {
+    onMatch(w) {
+      if (changed) return;
+      changed = true;
+      w.document.querySelectorAll("input[id='project']")[0].closest(".form-item").remove();
+    }
+  });
+  await p.run();
+  assert.equal(p.doc.querySelectorAll("input[id='project']").length, 1);
+  assert.equal(p.unfilledLine().length, 1);
+});
+
 test("#478 text state receives focus and blur once when the page has no native focus events", async (t) => {
   const p = page(t, item("name", "姓名", 'value="待完善"'));
   const input = p.input("name");
