@@ -1654,25 +1654,6 @@ fn set_update_preference_cmd(
     Ok(pref)
 }
 
-/// 主界面上关掉某一版的提示。只记这一版，出了更新的版本还会再提示。
-#[tauri::command]
-fn dismiss_update_cmd(
-    state: State<AppState>,
-    version: String,
-) -> Result<update_check::UpdatePreference, CommandError> {
-    let root = ai_data_root(&state)?;
-    let mut pref = update_check::load(&root);
-    update_check::dismiss(&mut pref, &version).map_err(|message| CommandError {
-        code: "UPDATE_PREF_FAILED".into(),
-        message,
-    })?;
-    update_check::save(&root, &pref).map_err(|message| CommandError {
-        code: "UPDATE_PREF_FAILED".into(),
-        message,
-    })?;
-    Ok(pref)
-}
-
 /// 扩展的商店页。URL 只有这一份，前端不另抄：改成别的商店或换 ID 时只改这里。
 #[tauri::command]
 fn open_extension_store_cmd(app: AppHandle) -> Result<(), CommandError> {
@@ -2204,7 +2185,6 @@ pub fn run() {
             open_update_page_cmd,
             get_update_preference_cmd,
             set_update_preference_cmd,
-            dismiss_update_cmd,
             hide_main_window_cmd,
             take_requested_view_cmd,
             quit_app,

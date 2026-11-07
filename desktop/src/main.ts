@@ -16,7 +16,7 @@ import {
   registrationCompleted,
 } from "./browser-link.ts";
 import type { NativeMessagingRegistrationOutcome } from "./browser-link.ts";
-import { compareVersions, describeCheckFailure, describeUpdate, formatCheckedAt, parseCheckedAt, shouldCheck, updateNotice } from "./update-check.ts";
+import { describeCheckFailure, describeUpdate, formatCheckedAt, outstandingUpdate, parseCheckedAt, shouldCheck, updateNotice } from "./update-check.ts";
 import type { UpdateInfo, UpdatePreference } from "./update-check.ts";
 import { mountApplications } from "./applications-ui.ts";
 import { mountInbox } from "./inbox-ui.ts";
@@ -634,30 +634,26 @@ function showUpdate(message: { tone: string; text: string; available: boolean })
 /** 主界面顶栏下的提示条，以及「设置」「关于与诊断」上的小圆点。 */
 let shownNotice: UpdateInfo | null = null;
 let lastPref: UpdatePreference | null = null;
-// 这次运行里查成的结果（undefined 是还没查成过）和关掉的版本。偏好文件写不进去时，
-// 不能让读回来的旧文件把它们盖掉；文件只管跨启动接着提示。
+// 这次运行里查成的结果（undefined 是还没查成过）。偏好文件写不进去时，
+// 不能让读回来的旧文件把它盖掉；文件只管跨启动接着提示。
 let checkedThisRun: UpdateInfo | null | undefined;
-let dismissedThisRun: string | null = null;
+// 这次运行里收起的那一版。不写盘：下次打开还会提示，直到装上新版。
+let closedThisRun: string | null = null;
 
 function withThisRun(pref: UpdatePreference): UpdatePreference {
-  const saved = pref.dismissedVersion ?? null;
-  const dismissed = saved && dismissedThisRun
-    ? (compareVersions(saved, dismissedThisRun) >= 0 ? saved : dismissedThisRun)
-    : saved ?? dismissedThisRun;
-  return {
-    ...pref,
-    available: checkedThisRun === undefined ? pref.available : checkedThisRun,
-    dismissedVersion: dismissed,
-  };
+  return { ...pref, available: checkedThisRun === undefined ? pref.available : checkedThisRun };
 }
 
 function showNotice(pref: UpdatePreference | null) {
   lastPref = pref;
-  const notice = pref && currentAppVersion ? updateNotice(withThisRun(pref), currentAppVersion) : null;
+  const known = pref && currentAppVersion ? withThisRun(pref) : null;
+  const notice = known ? updateNotice(known, currentAppVersion, closedThisRun) : null;
   shownNotice = notice;
   must("update-notice").hidden = !notice;
   must("update-notice-text").textContent = notice ? describeUpdate(currentAppVersion, notice).text : "";
-  document.querySelectorAll<HTMLElement>("[data-update-dot]").forEach((dot) => { dot.hidden = !notice; });
+  // 收起提示条以后，小圆点还在，直到装上新版。
+  const outstanding = known ? outstandingUpdate(known, currentAppVersion) : null;
+  document.querySelectorAll<HTMLElement>("[data-update-dot]").forEach((dot) => { dot.hidden = !outstanding; });
 }
 
 /** 只有拿到真实的检查时间才显示「上次检查」，读不出来就不显示，不编一个。 */
@@ -723,18 +719,11 @@ must("update-notice-open").addEventListener("click", async () => {
   }
 });
 
-must("update-notice-close").addEventListener("click", async () => {
+must("update-notice-close").addEventListener("click", () => {
   const version = shownNotice?.version;
   if (!version) return;
-  // 先在这次运行里记下并收起：存不上也不该让一条提示关不掉，最多下次启动再出现一次。
-  dismissedThisRun = version;
+  closedThisRun = version;
   showNotice(lastPref);
-  if (!invoke) return;
-  try {
-    showNotice(await invoke<UpdatePreference>("dismiss_update_cmd", { version }));
-  } catch {
-    // 见上。
-  }
 });
 
 must("update-auto").addEventListener("change", async (event) => {
