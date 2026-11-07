@@ -81,6 +81,8 @@ test("主界面提示：收起只管这一次运行，查到更新的版本再�
   assert.equal(updateNotice(pref, "0.4.2", "0.5.0"), null);
   assert.equal(updateNotice(pref, "0.4.2")?.version, "0.5.0", "下次打开（没有收起记录）还提示");
   assert.equal(updateNotice({ ...pref, available: { version: "0.6.0", url: "u" } }, "0.4.2", "0.5.0")?.version, "0.6.0");
+  // 收起 0.6.0 以后那一版撤回了，查到的变回 0.5.0：收起的不是这一版，照样提示。
+  assert.equal(updateNotice(pref, "0.4.2", "0.6.0")?.version, "0.5.0");
 });
 
 test("主界面提示：文件里留着旧的「关掉的版本」也照样提示", () => {

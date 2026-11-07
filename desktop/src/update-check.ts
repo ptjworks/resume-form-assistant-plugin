@@ -61,12 +61,12 @@ export function outstandingUpdate(pref: UpdatePreference, current: string): Upda
 /**
  * 主界面上要不要提示、提示哪一版。用户收起的只管这一次运行：下次打开还会提示，
  * 直到装上新版。旧版本一直在用，反馈里就一直是早修好的问题。
- * 这次运行里查到了比收起的那一版更新的版本，再提示一次。
+ * 收起的只是那一版：这次运行里查到的版本变了（更新的，或者那一版撤回了），照样提示。
  */
 export function updateNotice(pref: UpdatePreference, current: string, closedThisRun?: string | null): UpdateInfo | null {
   const latest = outstandingUpdate(pref, current);
   if (!latest) return null;
-  if (closedThisRun && compareVersions(latest.version, closedThisRun) <= 0) return null;
+  if (closedThisRun && compareVersions(latest.version, closedThisRun) === 0) return null;
   return latest;
 }
 
