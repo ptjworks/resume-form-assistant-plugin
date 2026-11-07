@@ -16,6 +16,9 @@
 //! The names are the plugin's own (`{identifier}-sim`, `-sic`, `-siw`, unchanged up to 2.5.5,
 //! without its `semver` feature). If they ever change, both checks find no mutex and step aside,
 //! which leaves the plugin's own behaviour rather than stopping the application from starting.
+//! That holds only if the mutex name changes too: with the mutex name kept and the window names
+//! changed, [`fell_through`] would send every first instance away. So Cargo.toml pins the plugin
+//! at 2.4.4, and upgrading it means deleting this module.
 
 use std::time::{Duration, Instant};
 
