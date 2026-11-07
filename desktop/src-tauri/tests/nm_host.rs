@@ -928,9 +928,13 @@ impl ColdStart {
 #[cfg(windows)]
 impl Drop for ColdStart {
     fn drop(&mut self) {
-        self.processes.terminate();
-        let _ = self.host.wait();
         let mut problems = Vec::new();
+        // As in HiddenApplication: without the job, at least the host must not keep this waiting.
+        if !self.processes.terminate() {
+            problems.push(format!("cannot terminate the host's job object: {}", std::io::Error::last_os_error()));
+            let _ = self.host.kill();
+        }
+        let _ = self.host.wait();
         if let Err(problem) = self.processes.wait_until_empty(std::time::Duration::from_secs(10)) {
             problems.push(problem);
         }
