@@ -542,7 +542,16 @@ impl HiddenApplication {
             .spawn()
             .expect("isolated hidden desktop must start");
         // WebView2 starts after the archive is open, long after this.
-        let processes = ProcessTree::adopt(&child);
+        let processes = match ProcessTree::adopt(&child) {
+            Ok(processes) => processes,
+            Err(problem) => {
+                // Outside a job nothing else would stop it.
+                let mut child = child;
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{problem}");
+            }
+        };
         HiddenApplication { child, processes, data_dir: data_dir.to_path_buf(), _turn: turn }
     }
 
@@ -604,13 +613,28 @@ impl Drop for HiddenApplication {
         // the data directory open, so the directory could not be removed after the test.
         self.processes.terminate();
         let _ = self.child.wait();
-        if !self.processes.wait_until_empty(std::time::Duration::from_secs(10)) {
-            let message = "the desktop's processes were still running 10 s after being terminated";
-            if std::thread::panicking() {
-                eprintln!("{message}");
-            } else {
-                panic!("{message}");
-            }
+        let mut problems = Vec::new();
+        if let Err(problem) = self.processes.wait_until_empty(std::time::Duration::from_secs(10)) {
+            problems.push(problem);
+        }
+        // Checked once every process has exited, so nothing the desktop does later can be missed.
+        match registrations_into(&self.data_dir) {
+            Ok(found) if found.is_empty() => {}
+            Ok(found) => problems.push(format!(
+                "the desktop under test re-pointed the browser at its temporary data directory: {}",
+                found.join("; ")
+            )),
+            Err(problem) => problems.push(problem),
+        }
+        if problems.is_empty() {
+            return;
+        }
+        // A second panic while unwinding would abort the run and hide the first failure.
+        let message = problems.join("\n");
+        if std::thread::panicking() {
+            eprintln!("{message}");
+        } else {
+            panic!("{message}");
         }
     }
 }
@@ -623,18 +647,21 @@ struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 impl ProcessTree {
-    fn adopt(child: &std::process::Child) -> Self {
+    fn adopt(child: &std::process::Child) -> Result<Self, String> {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::System::JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
             SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         };
+        let failed = |step: &str| format!("cannot {step}: {}", std::io::Error::last_os_error());
         // SAFETY: plain Win32 calls on a handle this function owns and on the child's process
         // handle, which outlives the call; the limit structure is zeroed and then filled in.
         unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            assert!(!job.is_null(), "cannot create a job object: {}", std::io::Error::last_os_error());
+            if job.is_null() {
+                return Err(failed("create a job object"));
+            }
             let tree = ProcessTree(job);
             let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
             limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -644,10 +671,13 @@ impl ProcessTree {
                 std::ptr::from_ref(&limits).cast(),
                 std::mem::size_of_val(&limits) as u32,
             );
-            assert!(set != 0, "cannot limit the job object: {}", std::io::Error::last_os_error());
-            let assigned = AssignProcessToJobObject(job, child.as_raw_handle());
-            assert!(assigned != 0, "cannot put the desktop in a job object: {}", std::io::Error::last_os_error());
-            tree
+            if set == 0 {
+                return Err(failed("limit the job object"));
+            }
+            if AssignProcessToJobObject(job, child.as_raw_handle()) == 0 {
+                return Err(failed("put the desktop in a job object"));
+            }
+            Ok(tree)
         }
     }
 
@@ -658,7 +688,7 @@ impl ProcessTree {
         }
     }
 
-    fn active_processes(&self) -> u32 {
+    fn active_processes(&self) -> Result<u32, String> {
         use windows_sys::Win32::System::JobObjects::{
             JobObjectBasicAccountingInformation, QueryInformationJobObject,
             JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
@@ -673,20 +703,25 @@ impl ProcessTree {
                 std::mem::size_of_val(&info) as u32,
                 std::ptr::null_mut(),
             );
-            assert!(read != 0, "cannot read the job object: {}", std::io::Error::last_os_error());
-            info.ActiveProcesses
+            if read == 0 {
+                return Err(format!("cannot read the job object: {}", std::io::Error::last_os_error()));
+            }
+            Ok(info.ActiveProcesses)
         }
     }
 
-    fn wait_until_empty(&self, budget: std::time::Duration) -> bool {
+    fn wait_until_empty(&self, budget: std::time::Duration) -> Result<(), String> {
         let started = std::time::Instant::now();
-        while self.active_processes() > 0 {
+        loop {
+            let active = self.active_processes()?;
+            if active == 0 {
+                return Ok(());
+            }
             if started.elapsed() >= budget {
-                return false;
+                return Err(format!("{active} of the desktop's processes were still running {budget:?} after being terminated"));
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        true
     }
 }
 
@@ -704,22 +739,31 @@ impl Drop for ProcessTree {
 /// test must leave them alone: they are one per user, so re-pointing them at a directory the
 /// test is about to delete cuts the installed app off from the browser.
 #[cfg(windows)]
-fn registrations_into(data_dir: &std::path::Path) -> Vec<String> {
+fn registrations_into(data_dir: &std::path::Path) -> Result<Vec<String>, String> {
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;
     // The directory name is unique to this run; matching on it is indifferent to how the
     // desktop spelled the path.
     let name = data_dir.file_name().unwrap().to_string_lossy().to_lowercase();
-    [
+    let mut found = Vec::new();
+    for key in [
         r"Software\Google\Chrome\NativeMessagingHosts\com.resumepro.desktop",
         r"Software\Microsoft\Edge\NativeMessagingHosts\com.resumepro.desktop",
-    ]
-    .into_iter()
-    .filter_map(|key| {
-        let value: String = RegKey::predef(HKEY_CURRENT_USER).open_subkey(key).ok()?.get_value("").ok()?;
-        value.to_lowercase().contains(&name).then(|| format!(r"HKCU\{key} = {value}"))
-    })
-    .collect()
+    ] {
+        let value = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(key)
+            .and_then(|handle| handle.get_value::<String, _>(""));
+        let value = match value {
+            Ok(value) => value,
+            // No key, or a key without a value: nothing is registered there.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(format!(r"cannot read HKCU\{key}: {err}")),
+        };
+        if value.to_lowercase().contains(&name) {
+            found.push(format!(r"HKCU\{key} = {value}"));
+        }
+    }
+    Ok(found)
 }
 
 #[cfg(windows)]
@@ -741,12 +785,7 @@ fn a_hidden_start_opens_the_archive_before_webview2_starts() {
         "the archive was opened {:?} after WebView2 started",
         archive.duration_since(webview).unwrap_or_default()
     );
-    // The desktop goes through its registration step before it builds the window.
-    assert_eq!(
-        registrations_into(&tmp),
-        Vec::<String>::new(),
-        "the desktop under test re-pointed the browser at its temporary data directory"
-    );
+    // Also fails the test if the desktop re-pointed the browser's registration.
     drop(application);
 }
 
