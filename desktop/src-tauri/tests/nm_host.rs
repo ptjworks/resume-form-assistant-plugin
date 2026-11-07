@@ -1,9 +1,17 @@
-//! Drives the real binary over stdio, the way a browser would, with no browser involved.
-//! The Windows tests that start a real desktop let it register itself with the browsers,
-//! then put that registration back as it was.
+//! Drives the real binary over stdio, the way a browser would. No registration, no
+//! browser, no system state.
+//!
+//! Every process started here gets its own data directory and
+//! `RESUMEPRO_SKIP_NM_REGISTRATION=1`. A desktop on a fresh data directory otherwise points
+//! the per-user Native Messaging registration at that directory, and once the test deletes
+//! it the installed app can no longer be reached from the browser.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+
+/// Keeps the desktop off the machine's Native Messaging registration. Development builds
+/// only, which is why the tests that start a real desktop are skipped in release builds.
+const SKIP_NM_REGISTRATION: (&str, &str) = ("RESUMEPRO_SKIP_NM_REGISTRATION", "1");
 
 const HEALTH: &str = r#"{"protocolVersion":1,"messageId":"33333333-3333-4333-8333-333333333333","clientInstanceId":"11111111-1111-4111-8111-111111111111","messageType":"health","occurredAt":"2026-09-06T12:00:00.000Z","payload":{}}"#;
 const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
@@ -108,7 +116,6 @@ fn the_caller_origin_is_recorded_on_stderr() {
         stderr.contains(ORIGIN),
         "the caller must be recorded: {stderr}"
     );
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[test]
@@ -158,9 +165,11 @@ fn run_host_with_data_dir(
     data_dir: &std::path::Path,
     input: Vec<u8>,
 ) -> (i32, Vec<u8>, String) {
+    // A desktop the host cold-starts inherits this environment, the switch included.
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
         .args(args)
         .env("RESUMEPRO_DATA_DIR", data_dir)
+        .env(SKIP_NM_REGISTRATION.0, SKIP_NM_REGISTRATION.1)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -182,11 +191,48 @@ fn run_host_with_data_dir(
 
 /// A data directory of this test's own, so the developer's real ResumePro directory is
 /// never read or created by the suite.
-fn isolated_data_dir(label: &str) -> std::path::PathBuf {
+fn isolated_data_dir(label: &str) -> DataDir {
     let dir = std::env::temp_dir().join(format!("rp-nm-{label}-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    DataDir(dir)
+}
+
+/// Removed on drop, also when the test fails. Declare it before anything that runs in it,
+/// so that it is dropped after them.
+struct DataDir(std::path::PathBuf);
+
+impl std::ops::Deref for DataDir {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for DataDir {
+    fn drop(&mut self) {
+        // Windows will not delete a file that is still open, and a virus scanner can hold a
+        // freshly written one for a moment. A directory still there after that is a leak,
+        // and fails the test rather than piling up in the temp directory.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let err = match std::fs::remove_dir_all(&self.0) {
+                Ok(()) => return,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+                Err(err) => err,
+            };
+            if std::time::Instant::now() >= deadline {
+                let message = format!("the test data directory {} was left behind: {err}", self.0.display());
+                if std::thread::panicking() {
+                    eprintln!("{message}");
+                    return;
+                }
+                panic!("{message}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
 }
 
 fn error_code_of(stdout: &[u8]) -> String {
@@ -223,8 +269,6 @@ fn an_unpaired_caller_is_refused_per_message_and_the_port_stays_open() {
     let first = u32::from_ne_bytes(stdout[..4].try_into().unwrap()) as usize;
     assert_eq!(error_code_of(&stdout[..4 + first]), "identity_not_allowed");
     assert_eq!(error_code_of(&stdout[4 + first..]), "identity_not_allowed");
-
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[test]
@@ -244,8 +288,6 @@ fn a_paired_caller_is_served() {
         "the caller must be recorded as authorised: {stderr}"
     );
     assert_single_health_frame(&stdout);
-
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[test]
@@ -309,7 +351,7 @@ fn error_of(stdout: &[u8]) -> (String, bool) {
     )
 }
 
-fn paired_dir(label: &str) -> std::path::PathBuf {
+fn paired_dir(label: &str) -> DataDir {
     let dir = isolated_data_dir(label);
     std::fs::write(
         dir.join("settings.json"),
@@ -361,7 +403,6 @@ fn health_is_answered_without_starting_the_application() {
         started.elapsed() < std::time::Duration::from_secs(5),
         "health must not wait on a cold start"
     );
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[cfg(unix)]
@@ -416,7 +457,6 @@ fn relay_v2_through_real_host(kind: &str, payload: serde_json::Value, response_p
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["correlationId"], request["messageId"]);
     resume_pro_protocol::validate_response_value(&reply, resume_pro_protocol::MessageType::parse(kind).unwrap()).unwrap();
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[cfg(unix)]
@@ -475,67 +515,12 @@ const HIDDEN_DESKTOP_STARTUP_BUDGET: std::time::Duration = std::time::Duration::
 #[cfg(windows)]
 static ONE_DESKTOP_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// The two HKCU keys that tell Chrome and Edge where the `com.resumepro.desktop` manifest is.
-#[cfg(windows)]
-const REGISTRATION_KEYS: [&str; 2] = [
-    r"Software\Google\Chrome\NativeMessagingHosts\com.resumepro.desktop",
-    r"Software\Microsoft\Edge\NativeMessagingHosts\com.resumepro.desktop",
-];
-
-/// The browsers' registration as it was before a test started a real desktop.
-///
-/// A desktop registers itself on every start, pointing both keys at `nm` under its own data
-/// directory. Here that is a temporary directory the test deletes, which would leave the
-/// desktop installed on this machine unreachable from either browser. Dropping this puts the
-/// keys back; it must be dropped after the desktop has exited, or the desktop can rewrite them.
-///
-/// Each entry is the value to write back, or `None` for a key that did not exist. A key that
-/// exists but cannot be read is left out, so restoring never deletes anything of the user's.
-#[cfg(windows)]
-struct SavedRegistration(Vec<(&'static str, Option<String>)>);
-
-#[cfg(windows)]
-impl SavedRegistration {
-    fn save() -> Self {
-        let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-        SavedRegistration(
-            REGISTRATION_KEYS
-                .iter()
-                .filter_map(|key| match hkcu.open_subkey(key) {
-                    Ok(handle) => handle.get_value::<String, _>("").ok().map(|value| (*key, Some(value))),
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some((*key, None)),
-                    Err(_) => None,
-                })
-                .collect(),
-        )
-    }
-}
-
-#[cfg(windows)]
-impl Drop for SavedRegistration {
-    fn drop(&mut self) {
-        let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-        for (key, value) in &self.0 {
-            match value {
-                Some(value) => {
-                    if let Ok((handle, _)) = hkcu.create_subkey(key) {
-                        let _ = handle.set_value("", value);
-                    }
-                }
-                None => {
-                    let _ = hkcu.delete_subkey_all(key);
-                }
-            }
-        }
-    }
-}
-
 #[cfg(windows)]
 struct HiddenApplication {
     child: std::process::Child,
+    /// The desktop and everything it starts, WebView2's processes included.
+    processes: ProcessTree,
     data_dir: std::path::PathBuf,
-    // Fields drop in this order, after Drop has killed the desktop.
-    _registration: SavedRegistration,
     _turn: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -544,24 +529,30 @@ impl HiddenApplication {
     /// Start the real desktop with `--hidden` on `data_dir`. Its stderr goes to a file in
     /// that directory, so a failed start can say what the desktop reported.
     fn start(data_dir: &std::path::Path) -> Self {
-        // A test that failed while holding the turn has already killed its desktop.
+        // A test that failed while holding the turn has already stopped its desktop.
         let turn = ONE_DESKTOP_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let registration = SavedRegistration::save();
         let stderr = std::fs::File::create(data_dir.join("desktop-stderr.log")).unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
             .arg("--hidden")
             .env("RESUMEPRO_DATA_DIR", data_dir)
+            .env(SKIP_NM_REGISTRATION.0, SKIP_NM_REGISTRATION.1)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)
             .spawn()
             .expect("isolated hidden desktop must start");
-        HiddenApplication {
-            child,
-            data_dir: data_dir.to_path_buf(),
-            _registration: registration,
-            _turn: turn,
-        }
+        // WebView2 starts after the archive is open, long after this.
+        let processes = match ProcessTree::adopt(&child) {
+            Ok(processes) => processes,
+            Err(problem) => {
+                // Outside a job nothing else would stop it.
+                let mut child = child;
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{problem}");
+            }
+        };
+        HiddenApplication { child, processes, data_dir: data_dir.to_path_buf(), _turn: turn }
     }
 
     /// Wait for the desktop to open an archive and return the pointer it wrote.
@@ -618,30 +609,166 @@ impl HiddenApplication {
 #[cfg(windows)]
 impl Drop for HiddenApplication {
     fn drop(&mut self) {
-        match OpenedProcess::open(self.child.id()) {
-            Some(desktop) => end_process_tree(&desktop),
-            None => {
-                let _ = self.child.kill();
-            }
-        }
+        // Killing only the desktop leaves WebView2 running for a while with its profile under
+        // the data directory open, so the directory could not be removed after the test.
+        self.processes.terminate();
         let _ = self.child.wait();
+        let mut problems = Vec::new();
+        if let Err(problem) = self.processes.wait_until_empty(std::time::Duration::from_secs(10)) {
+            problems.push(problem);
+        }
+        // Checked once every process has exited, so nothing the desktop does later can be missed.
+        match registrations_into(&self.data_dir) {
+            Ok(found) if found.is_empty() => {}
+            Ok(found) => problems.push(format!(
+                "the desktop under test re-pointed the browser at its temporary data directory: {}",
+                found.join("; ")
+            )),
+            Err(problem) => problems.push(problem),
+        }
+        if problems.is_empty() {
+            return;
+        }
+        // A second panic while unwinding would abort the run and hide the first failure.
+        let message = problems.join("\n");
+        if std::thread::panicking() {
+            eprintln!("{message}");
+        } else {
+            panic!("{message}");
+        }
     }
 }
 
-/// Delete a data directory a real desktop ran on, once the desktop and its WebView2
-/// processes have gone. Files they had open can take a moment to be released.
+/// A Job Object holding the desktop under test. Processes the desktop starts join it, and it
+/// is set to kill them all when its last handle closes, so even a test run that is
+/// interrupted does not leave a hidden desktop behind.
 #[cfg(windows)]
-fn remove_desktop_data_dir(dir: &std::path::Path) {
-    let started = std::time::Instant::now();
-    while dir.exists() && started.elapsed() < std::time::Duration::from_secs(10) {
-        if std::fs::remove_dir_all(dir).is_err() {
-            std::thread::sleep(std::time::Duration::from_millis(200));
+struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl ProcessTree {
+    fn adopt(child: &std::process::Child) -> Result<Self, String> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+        let failed = |step: &str| format!("cannot {step}: {}", std::io::Error::last_os_error());
+        // SAFETY: plain Win32 calls on a handle this function owns and on the child's process
+        // handle, which outlives the call; the limit structure is zeroed and then filled in.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(failed("create a job object"));
+            }
+            let tree = ProcessTree(job);
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let set = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            );
+            if set == 0 {
+                return Err(failed("limit the job object"));
+            }
+            if AssignProcessToJobObject(job, child.as_raw_handle()) == 0 {
+                return Err(failed("put the desktop in a job object"));
+            }
+            Ok(tree)
         }
     }
+
+    fn terminate(&self) {
+        // SAFETY: the handle is owned by `self` and still open.
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
+        }
+    }
+
+    fn active_processes(&self) -> Result<u32, String> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicAccountingInformation, QueryInformationJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        };
+        // SAFETY: the handle is owned by `self`; the buffer is a zeroed structure of the size passed.
+        unsafe {
+            let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+            let read = QueryInformationJobObject(
+                self.0,
+                JobObjectBasicAccountingInformation,
+                std::ptr::from_mut(&mut info).cast(),
+                std::mem::size_of_val(&info) as u32,
+                std::ptr::null_mut(),
+            );
+            if read == 0 {
+                return Err(format!("cannot read the job object: {}", std::io::Error::last_os_error()));
+            }
+            Ok(info.ActiveProcesses)
+        }
+    }
+
+    fn wait_until_empty(&self, budget: std::time::Duration) -> Result<(), String> {
+        let started = std::time::Instant::now();
+        loop {
+            let active = self.active_processes()?;
+            if active == 0 {
+                return Ok(());
+            }
+            if started.elapsed() >= budget {
+                return Err(format!("{active} of the desktop's processes were still running {budget:?} after being terminated"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        // SAFETY: the handle is owned by `self` and closed only here.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+/// The browsers' Native Messaging registrations that point into `data_dir`. A desktop under
+/// test must leave them alone: they are one per user, so re-pointing them at a directory the
+/// test is about to delete cuts the installed app off from the browser.
+#[cfg(windows)]
+fn registrations_into(data_dir: &std::path::Path) -> Result<Vec<String>, String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    // The directory name is unique to this run; matching on it is indifferent to how the
+    // desktop spelled the path.
+    let name = data_dir.file_name().unwrap().to_string_lossy().to_lowercase();
+    let mut found = Vec::new();
+    for key in [
+        r"Software\Google\Chrome\NativeMessagingHosts\com.resumepro.desktop",
+        r"Software\Microsoft\Edge\NativeMessagingHosts\com.resumepro.desktop",
+    ] {
+        let value = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(key)
+            .and_then(|handle| handle.get_value::<String, _>(""));
+        let value = match value {
+            Ok(value) => value,
+            // No key, or a key without a value: nothing is registered there.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(format!(r"cannot read HKCU\{key}: {err}")),
+        };
+        if value.to_lowercase().contains(&name) {
+            found.push(format!(r"HKCU\{key} = {value}"));
+        }
+    }
+    Ok(found)
 }
 
 #[cfg(windows)]
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "release builds cannot keep the desktop off the Native Messaging registration")]
 fn a_hidden_start_opens_the_archive_before_webview2_starts() {
     // A hidden start is for the browser, which needs the archive and the endpoint, not the
     // window. WebView2 can take many seconds to start, longer than the host waits, so the
@@ -658,12 +785,13 @@ fn a_hidden_start_opens_the_archive_before_webview2_starts() {
         "the archive was opened {:?} after WebView2 started",
         archive.duration_since(webview).unwrap_or_default()
     );
+    // Also fails the test if the desktop re-pointed the browser's registration.
     drop(application);
-    remove_desktop_data_dir(&tmp);
 }
 
 #[cfg(windows)]
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "release builds cannot keep the desktop off the Native Messaging registration")]
 fn v2_resume_read_round_trips_through_the_real_host_and_application() {
     let tmp = paired_dir("v2-real-app");
     let mut application = HiddenApplication::start(&tmp);
@@ -724,20 +852,48 @@ fn v2_resume_read_round_trips_through_the_real_host_and_application() {
     let validated = resume_pro_protocol::validate_request_bytes(&serde_json::to_vec(&manifest).unwrap()).unwrap();
     resume_pro_protocol::validate_response_for_request(&staged, &validated).unwrap();
     drop(application);
-    remove_desktop_data_dir(&tmp);
 }
 
-/// A desktop that a host process started, which this test does not own a `Child` for.
-/// Dropping it ends the desktop and every process under it.
+/// A host under test and the desktop it cold-starts, all in one job. Dropping it stops them
+/// and checks what they left, the way `HiddenApplication` does.
 #[cfg(windows)]
-struct StartedDesktop(OpenedProcess);
+struct ColdStart {
+    host: std::process::Child,
+    processes: ProcessTree,
+    data_dir: std::path::PathBuf,
+    _turn: std::sync::MutexGuard<'static, ()>,
+}
 
 #[cfg(windows)]
-impl StartedDesktop {
-    /// Wait for `host` to start the desktop and take hold of it. The desktop is the host's
-    /// child running this same executable; a console the host had to create would also show
-    /// up as its child, as conhost.exe.
-    fn started_by(host: &mut std::process::Child, stderr_so_far: impl Fn() -> String) -> Self {
+impl ColdStart {
+    /// Start a host on `data_dir` with its stdio piped. Nothing is sent yet, so the host has
+    /// started nothing before it is in the job.
+    fn host(data_dir: &std::path::Path) -> Self {
+        let turn = ONE_DESKTOP_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut host = Command::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
+            .arg(ORIGIN)
+            .env("RESUMEPRO_DATA_DIR", data_dir)
+            .env(SKIP_NM_REGISTRATION.0, SKIP_NM_REGISTRATION.1)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the host must start");
+        let processes = match ProcessTree::adopt(&host) {
+            Ok(processes) => processes,
+            Err(problem) => {
+                let _ = host.kill();
+                let _ = host.wait();
+                panic!("{problem}");
+            }
+        };
+        ColdStart { host, processes, data_dir: data_dir.to_path_buf(), _turn: turn }
+    }
+
+    /// Wait for the host to start the desktop and take hold of it: the host's child running
+    /// this same executable. A console the host had to create would also be its child, as
+    /// conhost.exe.
+    fn desktop(&mut self, stderr_so_far: impl Fn() -> String) -> OpenedProcess {
         let program = std::path::Path::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
             .file_name()
             .unwrap()
@@ -745,15 +901,15 @@ impl StartedDesktop {
             .to_lowercase();
         let started = std::time::Instant::now();
         loop {
-            // Checked before looking, so a host that exits right after starting the desktop
-            // is still caught with it. The `Child` keeps the host's id from being reused.
-            let exited = host.try_wait().expect("the host can be polled");
+            // Checked before looking, so a host that exits right after starting the desktop is
+            // still caught with it. Its `Child` keeps the host's id from passing to another process.
+            let exited = self.host.try_wait().expect("the host can be polled");
             let desktop = process_snapshot()
                 .into_iter()
-                .filter(|p| p.parent == host.id() && p.name == program)
+                .filter(|p| p.parent == self.host.id() && p.name == program)
                 .find_map(|p| OpenedProcess::open(p.pid));
             if let Some(desktop) = desktop {
-                return StartedDesktop(desktop);
+                return desktop;
             }
             if let Some(status) = exited {
                 panic!("the host exited ({status}) without starting the desktop\n{}", stderr_so_far());
@@ -764,118 +920,74 @@ impl StartedDesktop {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
-
-    fn is_running(&self) -> bool {
-        self.0.is_running()
-    }
-
-    fn exit_code(&self) -> Option<u32> {
-        use windows_sys::Win32::System::Threading::GetExitCodeProcess;
-        let mut code = 0;
-        (unsafe { GetExitCodeProcess(self.0.handle, &mut code) } != 0).then_some(code)
-    }
 }
 
 #[cfg(windows)]
-impl Drop for StartedDesktop {
+impl Drop for ColdStart {
     fn drop(&mut self) {
-        end_process_tree(&self.0);
+        self.processes.terminate();
+        let _ = self.host.wait();
+        let mut problems = Vec::new();
+        if let Err(problem) = self.processes.wait_until_empty(std::time::Duration::from_secs(10)) {
+            problems.push(problem);
+        }
+        match registrations_into(&self.data_dir) {
+            Ok(found) if found.is_empty() => {}
+            Ok(found) => problems.push(format!(
+                "the cold-started desktop re-pointed the browser at its temporary data directory: {}",
+                found.join("; ")
+            )),
+            Err(problem) => problems.push(problem),
+        }
+        if problems.is_empty() {
+            return;
+        }
+        let message = problems.join("\n");
+        if std::thread::panicking() {
+            eprintln!("{message}");
+        } else {
+            panic!("{message}");
+        }
     }
 }
 
-/// End `root`, then every process started under it.
-///
-/// Ending a desktop alone is not enough: killed while it was still starting WebView2, its
-/// WebView2 browser process has been seen to keep running on its own, and to keep writing
-/// into the data directory after the test deleted it. The processes under `root` are looked
-/// for only once it has gone, so a child it was starting at that moment is found too; the
-/// open handle keeps `root`'s id from passing to another process meanwhile.
+/// A process opened so that it can be checked on. Holding it open keeps its id from passing to
+/// another process.
 #[cfg(windows)]
-fn end_process_tree(root: &OpenedProcess) {
-    root.end();
-    for process in processes_under(root) {
-        process.end();
-    }
-}
-
-/// A process opened so it can be timed, waited for and ended. Holding it open also keeps its
-/// id from passing to another process.
-#[cfg(windows)]
-struct OpenedProcess {
-    pid: u32,
-    handle: windows_sys::Win32::Foundation::HANDLE,
-}
+struct OpenedProcess(windows_sys::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 impl OpenedProcess {
     fn open(pid: u32) -> Option<Self> {
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
         };
-        let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE;
-        let handle = unsafe { OpenProcess(access, 0, pid) };
-        (!handle.is_null()).then_some(OpenedProcess { pid, handle })
-    }
-
-    /// When the process started, in 100 ns units since 1601.
-    fn started_at(&self) -> Option<u64> {
-        use windows_sys::Win32::Foundation::FILETIME;
-        use windows_sys::Win32::System::Threading::GetProcessTimes;
-        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
-        let ok = unsafe { GetProcessTimes(self.handle, &mut created, &mut exited, &mut kernel, &mut user) };
-        (ok != 0).then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+        // SAFETY: a plain Win32 call; a null handle is checked for below.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, pid) };
+        (!handle.is_null()).then_some(OpenedProcess(handle))
     }
 
     fn is_running(&self) -> bool {
         use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
         use windows_sys::Win32::System::Threading::WaitForSingleObject;
-        unsafe { WaitForSingleObject(self.handle, 0) == WAIT_TIMEOUT }
+        // SAFETY: the handle is owned by `self` and still open.
+        unsafe { WaitForSingleObject(self.0, 0) == WAIT_TIMEOUT }
     }
 
-    fn end(&self) {
-        use windows_sys::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
-        unsafe {
-            TerminateProcess(self.handle, 1);
-            WaitForSingleObject(self.handle, 10_000);
-        }
+    fn exit_code(&self) -> Option<u32> {
+        use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+        let mut code = 0;
+        // SAFETY: the handle is owned by `self` and still open; `code` outlives the call.
+        (unsafe { GetExitCodeProcess(self.0, &mut code) } != 0).then_some(code)
     }
 }
 
 #[cfg(windows)]
 impl Drop for OpenedProcess {
     fn drop(&mut self) {
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.handle) };
+        // SAFETY: the handle is owned by `self` and closed only here.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
     }
-}
-
-/// Every process started under `root`, opened. A parent id alone can name a process that
-/// took over the id of a parent that had already exited, so each one must also have
-/// started after the parent it names.
-#[cfg(windows)]
-fn processes_under(root: &OpenedProcess) -> Vec<OpenedProcess> {
-    let snapshot = process_snapshot();
-    let mut found: Vec<OpenedProcess> = Vec::new();
-    let Some(root_started) = root.started_at() else {
-        return found;
-    };
-    let mut parents = vec![(root.pid, root_started)];
-    while let Some((parent, parent_started)) = parents.pop() {
-        for entry in snapshot.iter().filter(|p| p.parent == parent && p.pid != root.pid) {
-            if found.iter().any(|p| p.pid == entry.pid) {
-                continue;
-            }
-            let Some(child) = OpenedProcess::open(entry.pid) else { continue };
-            match child.started_at() {
-                Some(started) if started >= parent_started => {
-                    parents.push((entry.pid, started));
-                    found.push(child);
-                }
-                _ => {}
-            }
-        }
-    }
-    found
 }
 
 #[cfg(windows)]
@@ -894,6 +1006,8 @@ fn process_snapshot() -> Vec<ProcessEntry> {
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     };
     let mut found = Vec::new();
+    // SAFETY: plain Win32 calls on a snapshot handle this function owns and closes; the entry
+    // is zeroed with its size filled in, as Process32FirstW requires.
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
@@ -916,7 +1030,8 @@ fn process_snapshot() -> Vec<ProcessEntry> {
     found
 }
 
-/// Read `pipe` to end of file on a thread of its own, and hand over what it held once it ends.
+/// Read `pipe` to end of file on a thread of its own. The receiver gets what it held once it
+/// ends; the shared buffer shows what has arrived so far.
 #[cfg(windows)]
 fn read_to_end_in_background(
     mut pipe: impl std::io::Read + Send + 'static,
@@ -939,6 +1054,7 @@ fn read_to_end_in_background(
 
 #[cfg(windows)]
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "release builds cannot keep the desktop off the Native Messaging registration")]
 fn a_desktop_the_host_starts_does_not_hold_the_browsers_pipes_open() {
     // The browser talks to the host over the host's stdin and stdout, and learns the host is
     // gone when stdout reaches end of file. A test runner such as Playwright also gives the
@@ -946,30 +1062,20 @@ fn a_desktop_the_host_starts_does_not_hold_the_browsers_pipes_open() {
     // desktop a host cold-starts outlives the host on purpose. If it inherited the host's
     // handles, neither pipe would end until the desktop quit.
     let tmp = paired_dir("cold-start-pipes");
-    // Dropped in reverse: the desktop is killed before the registration is put back.
-    let _turn = ONE_DESKTOP_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let _registration = SavedRegistration::save();
-    let mut host = Command::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
-        .arg(ORIGIN)
-        .env("RESUMEPRO_DATA_DIR", &tmp)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the host must start");
-    let (stdout_ended, _) = read_to_end_in_background(host.stdout.take().unwrap());
-    let (stderr_ended, stderr_so_far) = read_to_end_in_background(host.stderr.take().unwrap());
+    let mut cold_start = ColdStart::host(&tmp);
+    let (stdout_ended, _) = read_to_end_in_background(cold_start.host.stdout.take().unwrap());
+    let (stderr_ended, stderr_so_far) = read_to_end_in_background(cold_start.host.stderr.take().unwrap());
     let stderr_text = || String::from_utf8_lossy(&stderr_so_far.lock().unwrap()).into_owned();
     // One message, then the port closes: the host forwards it, which needs the desktop, and
     // exits once it has answered.
-    let mut stdin = host.stdin.take().unwrap();
+    let mut stdin = cold_start.host.stdin.take().unwrap();
     stdin.write_all(&framed(HANDSHAKE)).unwrap();
     drop(stdin);
-    let desktop = StartedDesktop::started_by(&mut host, &stderr_text);
+    let desktop = cold_start.desktop(&stderr_text);
 
     let started = std::time::Instant::now();
     let status = loop {
-        if let Some(status) = host.try_wait().expect("the host can be polled") {
+        if let Some(status) = cold_start.host.try_wait().expect("the host can be polled") {
             break status;
         }
         assert!(
@@ -1000,7 +1106,6 @@ fn a_desktop_the_host_starts_does_not_hold_the_browsers_pipes_open() {
     assert!(stdout.len() > 4, "the host did not answer\n{}", stderr_text());
     let declared = u32::from_ne_bytes(stdout[..4].try_into().unwrap()) as usize;
     assert_eq!(stdout.len(), 4 + declared, "stdout must be exactly one frame");
-
-    drop(desktop);
-    remove_desktop_data_dir(&tmp);
+    // Stops the desktop and WebView2, and fails the test if the desktop re-pointed the browser.
+    drop(cold_start);
 }

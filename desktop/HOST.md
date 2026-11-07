@@ -21,6 +21,8 @@ Rust crate：`desktop/crates/data-service`
 
 测试/开发可用环境变量 `RESUMEPRO_DATA_DIR`、`RESUMEPRO_CACHE_DIR`（必须是绝对路径）。这不是生产静默回退。
 
+带 `RESUMEPRO_DATA_DIR` 启动的桌面端照样会把 Chrome/Edge 的 Native Messaging 注册改指向这个数据目录（dev 验收靠它把浏览器接过来），测完要自己改回。`RESUMEPRO_SKIP_NM_REGISTRATION=1` 让桌面端不写清单和注册表，只有开发构建认；`tests/nm_host.rs` 启动的每个进程都带着它。
+
 程序目录与用户数据目录分离：设置页同时展示二者。不要把 SQLite 放到安装目录。
 
 ## D06 应使用的接口
