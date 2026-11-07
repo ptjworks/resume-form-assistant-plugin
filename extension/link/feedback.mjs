@@ -1,4 +1,5 @@
 import '../feedback-core.js';
+import { KEYS } from './store.mjs';
 
 export const ENDPOINT = 'https://app-feedback-relay.nebula-lab.workers.dev/feedback';
 export const STORAGE_KEY = 'feedbackStateV1';
@@ -66,8 +67,11 @@ export function createFeedback({ storage, fetchImpl = fetch, now = Date.now, uui
     const details = core.diagnostics(input.diagnostics, { manual: kind === 'manual' });
     const description = kind === 'manual' ? core.redact(input.description, 1400) : kind === 'exception' ? `${errorType}: ${input.source === 'unhandledrejection' ? '未处理的 Promise 拒绝' : '未处理的代码异常'}` : '';
     // Diagnostics block v1. Only the worker writes [来源]; core.diagnostics() drops it from page input.
+    // The desktop version goes only into manual feedback, which the user previews: the notice for
+    // automatic reports does not mention it.
+    const desktop = kind === 'manual' && /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(input.desktopVersion || '') ? [`desktop_version: ${input.desktopVersion}`] : [];
     const source = ['[来源]', `app_version: ${version}`, `os: ${os}`, ...(installType ? [`install: ${installType}`] : []),
-      ...(host ? [`host: ${host}`] : [])].join('\n');
+      ...desktop, ...(host ? [`host: ${host}`] : [])].join('\n');
     return { app: 'resume-form-assistant-plugin', app_version: version, os, error_type: errorType,
       error_stack: stack, user_description: `${description}${description ? '\n' : ''}--- 诊断信息 v1 ---\n${source}${details ? `\n\n${details}` : ''}`.slice(0, 5000),
       anonymous_id: id, timestamp: new Date(now()).toISOString() };
@@ -169,6 +173,8 @@ export function installFeedback(api) {
   const origin = api.runtime.getURL('');
   // Without the API (or when it fails) the [来源] section simply has no install line.
   const install = async () => (await api.management?.getSelf?.())?.installType;
+  // The version the desktop reported at the last handshake.
+  const desktopVersion = async () => (await api.storage.local.get(KEYS.pairing).catch(() => null))?.[KEYS.pairing]?.appVersion || '';
   const service = createFeedback({ storage: api.storage.local, version: api.runtime.getManifest().version, os: core.os(navigator.userAgent), install });
   const trustedPages = new Set(['sidepanel.html', 'popup.html'].map(p => api.runtime.getURL(p)));
   // Each preview is held only in worker memory, bound to the requesting document. Sending
@@ -190,7 +196,8 @@ export function installFeedback(api) {
       if (message.type === 'FEEDBACK_STATUS') return service.status();
       if (message.type === 'FEEDBACK_CONSENT') return service.setConsent(message.enabled === true);
       if (message.type === 'FEEDBACK_PREVIEW') {
-        const input = { description: core.redact(message.description, 1400), diagnostics: core.diagnostics(message.diagnostics, { manual: true }) };
+        const input = { description: core.redact(message.description, 1400), diagnostics: core.diagnostics(message.diagnostics, { manual: true }),
+          desktopVersion: await desktopVersion() };
         let host = '';
         if (Number.isInteger(message.tabId)) {
           const tab = await api.tabs.get(message.tabId).catch(() => null); host = core.hostname(tab?.url);

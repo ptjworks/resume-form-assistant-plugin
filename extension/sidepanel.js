@@ -5,6 +5,9 @@
     desktopConnection: document.getElementById("desktop-connection"),
     desktopConnectionText: document.getElementById("desktop-connection-text"),
     desktopConnectionAction: document.getElementById("desktop-connection-action"),
+    updateReminder: document.getElementById("update-reminder"),
+    updateReminderText: document.getElementById("update-reminder-text"),
+    updateReminderAction: document.getElementById("update-reminder-action"),
     jobAssist: document.getElementById("job-assist"),
     jobAssistText: document.getElementById("job-assist-text"),
     jobAssistCancel: document.getElementById("job-assist-cancel"),
@@ -182,6 +185,11 @@
   let currentTabId = null;
   let currentStore = null;
   let desktopMode = "unavailable";
+  // 更新提醒用的三样：这次连上时桌面报的版本、插件怎么装的、商店已经下载好的新版本（后台记在 storage.session）。
+  let desktopVersion = "";
+  let installType = "";
+  let readyVersion = "";
+  const UPDATE_READY_KEY = "extensionUpdateReady";
   let selectedView = "fill";
   let storeSnapshot = "";
   let storeLoaded = false;
@@ -2465,6 +2473,8 @@
     currentStore = nextStore;
     storeSnapshot = nextSnapshot;
     storeLoaded = true;
+    desktopVersion = result?.status === "ok" && typeof result.desktopVersion === "string" ? result.desktopVersion : "";
+    renderUpdateReminder();
     if (changed) renderFromStore();
     if (nextStore) templateEditor?.observe(nextStore).catch(() => {});
   }
@@ -2905,6 +2915,16 @@
     else await loadStore();
   }
   elements.desktopConnectionAction.addEventListener("click", () => desktopAction(elements.desktopConnectionAction.dataset.kind).catch(() => toast("当前操作不可用。")));
+  elements.updateReminderAction.addEventListener("click", async () => {
+    const kind = elements.updateReminderAction.dataset.kind;
+    try {
+      if (kind === "reload") chrome.runtime.reload();
+      else if (kind === "store") await chrome.tabs.create({ url: self.ResumeProUpdateReminder.STORE_URL });
+      else if (kind === "download") await chrome.tabs.create({ url: self.ResumeProResumeData.DOWNLOAD_URL });
+    } catch {
+      toast("当前操作不可用。");
+    }
+  });
   document.getElementById("open-manager").addEventListener("click", () => {
     if (selectedView === "mail" && desktopMode === "ready") {
       return desktopAction("home").catch(() => toast("当前操作不可用。"));
@@ -2943,6 +2963,25 @@
   const version = chrome.runtime.getManifest?.()?.version || "";
   elements.pluginVersion.textContent = version ? `插件 v${version}` : "";
   elements.pluginVersion.hidden = !version;
+  // 插件新版本已下载、解压安装、桌面太旧时，侧栏顶部一直提示，不能关。桌面版本只认这次连上时报的。
+  function renderUpdateReminder() {
+    const notice = self.ResumeProUpdateReminder?.reminder({
+      extensionVersion: version,
+      installType,
+      desktopVersion: desktopMode === "ready" ? desktopVersion : "",
+      readyVersion
+    }) || null;
+    elements.updateReminder.hidden = !notice;
+    elements.updateReminderText.textContent = notice?.message || "";
+    elements.updateReminderAction.textContent = notice?.action || "";
+    elements.updateReminderAction.dataset.kind = notice?.kind || "";
+  }
+  Promise.resolve(chrome.management?.getSelf?.())
+    .then((info) => { installType = String(info?.installType || ""); renderUpdateReminder(); })
+    .catch(() => {});
+  Promise.resolve(chrome.storage.session?.get?.(UPDATE_READY_KEY))
+    .then((stored) => { readyVersion = String(stored?.[UPDATE_READY_KEY]?.version || ""); renderUpdateReminder(); })
+    .catch(() => {});
   document.getElementById("legacy-hint-open").addEventListener("click", async () => {
     const result = await chrome.runtime.sendMessage({ type: "DESKTOP_OPEN_VIEW", view: "resume" }).catch(() => null);
     if (result?.status !== "ok") toast("桌面程序暂时无法打开，请检查连接。");
@@ -2952,6 +2991,10 @@
   // panel never reads those keys itself.
   const QUEUE_KEYS = ["desktopSaveIntents", "desktopOutbox", "desktopFillRecords"];
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "session" && changes[UPDATE_READY_KEY]) {
+      readyVersion = String(changes[UPDATE_READY_KEY].newValue?.version || "");
+      renderUpdateReminder();
+    }
     if (area === "local" && changes.legacyImport) renderLegacyHint().catch(() => {});
     if (area === "local" && QUEUE_KEYS.some((key) => changes[key])) refreshQueue().catch(() => {});
   });

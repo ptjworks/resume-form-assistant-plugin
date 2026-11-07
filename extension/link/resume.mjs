@@ -22,7 +22,11 @@ export function createResume({ session, store, sendNative, sleep, uuid, now, sen
       // returns secret_forbidden, which saveProfile maps to the sidebar status.
       await validateRequest(envelope);
       const result = await send(envelope, { sendNative, sleep, retry: messageType !== 'ui.open' });
-      if (result.status === 'ok') return { status: 'ok', data: result.response.payload };
+      if (result.status === 'ok') {
+        // 侧栏拿它判断桌面是不是太旧，要不要提示更新。
+        const desktopVersion = messageType === 'resume.read' && typeof probe.appVersion === 'string' ? { desktopVersion: probe.appVersion } : {};
+        return { status: 'ok', data: result.response.payload, ...desktopVersion };
+      }
       if (result.status === 'fatal') return { status: result.code === 'payload_too_large' ? 'input_too_large'
         : result.code === 'protocol_incompatible' ? 'incompatible' : result.code ?? 'unavailable' };
       if (result.status === 'not_installed' || result.status === 'not_paired') return { status: result.status };
