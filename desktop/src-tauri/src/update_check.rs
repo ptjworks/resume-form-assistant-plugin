@@ -27,6 +27,8 @@ const FILE_NAME: &str = "update-check.json";
 ///
 /// 上次查到的版本也记在这里：一天只查一次，同一天重启以后主界面还要能接着提示，
 /// 「去下载页」也还要能打开。
+///
+/// 主界面的提示收起只管这一次运行，不记在这里：下次打开还会提示，直到装上新版。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePreference {
@@ -36,9 +38,6 @@ pub struct UpdatePreference {
     /// 上次查成时比当前版本新的那一版。没有更新就是空。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub available: Option<UpdateInfo>,
-    /// 用户在主界面关掉提示时的那个版本。只挡这一版，出了更新的再提示。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dismissed_version: Option<String>,
 }
 
 impl Default for UpdatePreference {
@@ -49,7 +48,6 @@ impl Default for UpdatePreference {
             enabled: true,
             last_checked_at: None,
             available: None,
-            dismissed_version: None,
         }
     }
 }
@@ -84,15 +82,6 @@ pub fn record_check<E>(
     if let Ok(offer) = outcome {
         pref.available = offer.clone();
     }
-}
-
-/// 用户关掉了某一版的提示。版本号认不出来就不记：记了也比不出「更新的版本」。
-pub fn dismiss(pref: &mut UpdatePreference, version: &str) -> Result<(), String> {
-    if parse_version(version).is_none() {
-        return Err(format!("认不出版本号：{version}"));
-    }
-    pref.dismissed_version = Some(version.to_string());
-    Ok(())
 }
 
 /// 一次能下载的版本。
@@ -571,7 +560,6 @@ mod tests {
                 version: "0.5.0".into(),
                 url: desktop_release_tag_url("0.5.0"),
             }),
-            dismissed_version: Some("0.4.9".into()),
         };
         save(dir.path(), &pref).unwrap();
         assert_eq!(load(dir.path()), pref);
@@ -592,7 +580,24 @@ mod tests {
         let pref = load(dir.path());
         assert!(!pref.enabled);
         assert_eq!(pref.available, None);
-        assert_eq!(pref.dismissed_version, None);
+    }
+
+    #[test]
+    fn a_file_that_remembered_a_dismissed_version_still_loads() {
+        // 有一段开发版把「关掉的版本」写进了文件。现在不认这一项：读得出来，
+        // 开关和查到的版本都还在，下次写盘时这一项自然消失。
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            path_for(dir.path()),
+            r#"{"enabled":true,"available":{"version":"0.5.0","url":"https://github.com/ptjworks/resume-form-assistant-plugin/releases/tag/desktop-v0.5.0"},"dismissedVersion":"0.5.0"}"#,
+        )
+        .unwrap();
+        let pref = load(dir.path());
+        assert!(pref.enabled);
+        assert_eq!(pref.available.map(|info| info.version).as_deref(), Some("0.5.0"));
+        save(dir.path(), &load(dir.path())).unwrap();
+        let text = std::fs::read_to_string(path_for(dir.path())).unwrap();
+        assert!(!text.contains("dismissedVersion"), "{text}");
     }
 
     fn offer(version: &str) -> UpdateInfo {
@@ -624,30 +629,5 @@ mod tests {
         pref.available = Some(offer("0.5.0"));
         record_check(&mut pref, "t2".into(), &Err("offline"));
         assert_eq!(pref.available, Some(offer("0.5.0")), "上次查到的那条还作数");
-    }
-
-    #[test]
-    fn dismissing_remembers_only_that_version() {
-        let mut pref = UpdatePreference::default();
-        record_check::<()>(&mut pref, "t1".into(), &Ok(Some(offer("0.5.0"))));
-        dismiss(&mut pref, "0.5.0").unwrap();
-        assert_eq!(pref.dismissed_version.as_deref(), Some("0.5.0"));
-
-        // 出了更新的版本：关掉的记录不动，查到的那条换成新的，界面比一下就知道该再提示。
-        record_check::<()>(&mut pref, "t2".into(), &Ok(Some(offer("0.6.0"))));
-        assert_eq!(pref.available, Some(offer("0.6.0")));
-        assert_eq!(pref.dismissed_version.as_deref(), Some("0.5.0"));
-
-        let dir = tempfile::tempdir().unwrap();
-        save(dir.path(), &pref).unwrap();
-        assert_eq!(load(dir.path()), pref, "重启以后还认得关掉过哪一版");
-    }
-
-    #[test]
-    fn a_version_we_cannot_compare_is_not_recorded_as_dismissed() {
-        let mut pref = UpdatePreference::default();
-        assert!(dismiss(&mut pref, "下一版").is_err());
-        assert!(dismiss(&mut pref, "0.5.0-beta.1").is_err());
-        assert_eq!(pref.dismissed_version, None);
     }
 }
