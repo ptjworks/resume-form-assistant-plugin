@@ -611,9 +611,12 @@ impl Drop for HiddenApplication {
     fn drop(&mut self) {
         // Killing only the desktop leaves WebView2 running for a while with its profile under
         // the data directory open, so the directory could not be removed after the test.
-        self.processes.terminate();
-        let _ = self.child.wait();
         let mut problems = Vec::new();
+        if !self.processes.terminate() {
+            problems.push(format!("cannot terminate the desktop's job object: {}", std::io::Error::last_os_error()));
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
         if let Err(problem) = self.processes.wait_until_empty(std::time::Duration::from_secs(10)) {
             problems.push(problem);
         }
@@ -681,11 +684,11 @@ impl ProcessTree {
         }
     }
 
-    fn terminate(&self) {
+    /// False when the job could not be terminated; the caller then kills what it holds itself,
+    /// or waiting for it would never end.
+    fn terminate(&self) -> bool {
         // SAFETY: the handle is owned by `self` and still open.
-        unsafe {
-            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
-        }
+        unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1) != 0 }
     }
 
     fn active_processes(&self) -> Result<u32, String> {
