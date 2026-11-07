@@ -48,7 +48,8 @@ serde_json = "1"
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
-tauri-plugin-single-instance = "2"
+# 钉死：src/single_instance_guard.rs 按 2.4.4 的互斥量名和窗口名判断。升级插件时删掉那个模块。
+tauri-plugin-single-instance = "=2.4.4"
 time = { version = "0.3", features = ["formatting", "parsing", "macros", "local-offset"] }
 sha2 = "0.10.9"
 url = "2.5.8"
@@ -59,16 +60,19 @@ tempfile = "3"
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 winreg = "0.56.0"
 
+# single_instance_guard 的测试要自己建互斥量和消息窗口。
 # tests/nm_host.rs 把它启动的桌面端放进 Job Object，测完连 WebView2 子进程一起收掉；
 # 还要在进程快照里找到 host 冷启动的那个桌面端。
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
     "Win32_System_Threading",
 ] }
