@@ -263,14 +263,14 @@
       if (!checked) return [];
     }
     if (selector) {
-      const values = Array.from(root.querySelectorAll(selector), node => trim(node.textContent)).filter(Boolean);
+      const values = Array.from(root.querySelectorAll(selector)).filter(shown).map(node => trim(node.textContent)).filter(Boolean);
       // antd 6（@rc-component/select 1.x，2026-11-02 在 antd 6.6.8 上看到）的单选和级联不再套 selection-item：
       // 已选文字直接写在根下面的 .ant-select-content 里（选项带样式时套一层 .ant-select-content-value），旁边是输入框，
       // 搜索时打的字在输入框里；没选时是 .ant-select-placeholder。
       const content = library === 'antd' && !info.multiple && !values.length ? root.querySelector(antd(root, ':scope > .ant-select-content')) : null;
-      const shown = content ? trim(Array.from(content.childNodes).filter(node => node.nodeType === 3
+      const contentText = content && shown(content) ? trim(Array.from(content.childNodes).filter(node => node.nodeType === 3
         || (node.nodeType === 1 && !node.matches(antd(node, 'input, .ant-select-placeholder')))).map(node => node.textContent).join('')) : '';
-      if (shown) values.push(shown);
+      if (contentText) values.push(contentText);
       if (values.length) return cascade ? values.join(' / ').split(/\s*(?:\/|>|→)\s*/).filter(Boolean) : values;
       // Element UI (Vue 2) stores the committed label directly in its input. Its readonly flag
       // flips while the dropdown opens (#269 智联), so only Element Plus (wrapper markup) stops here.
@@ -1218,7 +1218,7 @@
     }
     let typedFirst = false, typedAt = 0;
     const typeInto = info.library === 'generic' || info.freeText ? info.el
-      : info.library === 'antd' && !info.cascade && !info.root.matches(antd(info.root, '.ant-select-auto-complete, .ant-select-combobox'))
+      : ['antd', 'element'].includes(info.library) && !info.cascade && !info.root.matches(antd(info.root, '.ant-select-auto-complete, .ant-select-combobox'))
         ? Array.from(info.root.querySelectorAll('input')).find(input => safeSearch(input) && h.visible(input)) : null;
     if (typeInto && !dateWanted && opened.reason === 'verification_timeout' && safeSearch(typeInto) && h.visible(typeInto)) {
       const reason = h.stop(ctx, true); if (reason) return { reason };
