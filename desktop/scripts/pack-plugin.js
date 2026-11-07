@@ -55,6 +55,7 @@ export const PLUGIN_ARCHIVE_OPERANDS = [
   "resume-utils.js",
   "profile-fields.js",
   "resume-data.js",
+  "update-reminder.js",
   "template-fields.js",
   "popup.html",
   "popup.css",

@@ -570,19 +570,18 @@
     return set;
   }
 
-  function elementText(el, ctx, control) {
+  function elementText(el, ctx, control, explicit = false) {
     const skip = new Set([control.root, ...optionLabelElements(control)]);
     // 包着控件的 label：去掉控件本身再取字。
     skip.delete(el);
-    const placeholders = placeholdersOf(control);
+    const placeholders = explicit ? [] : placeholdersOf(control);
     return cleanLabel(joinSegments(usefulSegments(textSegments(el, ctx, skip), placeholders)), placeholders);
   }
 
   function explicitLabel(control, ctx) {
-    const placeholders = placeholdersOf(control);
     const primary = control.element;
     const check = (text, source, labelEl = null) => {
-      const value = cleanLabel(text, placeholders);
+      const value = cleanLabel(text);
       return value ? { text: value, source, labelEl } : null;
     };
 
@@ -600,7 +599,7 @@
       const fieldset = control.root.closest("fieldset");
       const legend = fieldset && !hasForeignControl(fieldset, control.root, ctx) ? fieldset.querySelector("legend") : null;
       if (legend) {
-        const text = elementText(legend, ctx, control);
+        const text = elementText(legend, ctx, control, true);
         if (text) return { text, source: "explicit", labelEl: legend };
       }
       return null;
@@ -614,7 +613,7 @@
     for (const el of control.elements) {
       for (const label of Array.from(el.labels || [])) {
         if (ownFrame(label, el)) continue;
-        const text = elementText(label, ctx, control);
+        const text = elementText(label, ctx, control, true);
         if (text) return { text, source: "explicit", labelEl: label };
       }
     }
@@ -631,7 +630,7 @@
 
     const wrapping = primary.closest("label");
     if (wrapping && !ownFrame(wrapping, primary)) {
-      const text = elementText(wrapping, ctx, control);
+      const text = elementText(wrapping, ctx, control, true);
       if (text) return { text, source: "explicit", labelEl: wrapping };
     }
     return null;
@@ -641,8 +640,8 @@
     const ids = attr(el, "aria-labelledby").split(/\s+/).filter(Boolean);
     if (!ids.length) return null;
     const parts = ids.map((id) => ctx.doc.getElementById(id)).filter(Boolean)
-      .map((target) => elementText(target, ctx, control)).filter(Boolean);
-    const text = cleanLabel(parts.join(" "), placeholdersOf(control));
+      .map((target) => elementText(target, ctx, control, true)).filter(Boolean);
+    const text = cleanLabel(parts.join(" "));
     return text ? { text, source: "explicit", labelEl: ctx.doc.getElementById(ids[0]) } : null;
   }
 
@@ -1120,8 +1119,9 @@
     });
 
     skipped.ambiguous = ambiguousSkipped;
+    const idCounts = new Map();
     return {
-      controls: kept.map(publicControl),
+      controls: kept.map((control) => publicControl(control, idCounts)),
       skipped,
       sources,
       fault,
@@ -1129,7 +1129,26 @@
     };
   }
 
-  function publicControl(control) {
+  // 重画后找回字段用的 id 锚点（#479）：只认扫描时在所在文档里只出现一次的 id。
+  // 页面本来就有重复 id，或控件在 shadow root 里时不记锚点，重绑仍按同名题目的序号和总数找。
+  function anchorIdOf(element, idCounts) {
+    const id = attr(element, "id");
+    const doc = element?.ownerDocument;
+    if (!id || !doc || element.getRootNode?.() !== doc) return "";
+    let counts = idCounts.get(doc);
+    if (!counts) {
+      counts = new Map();
+      try {
+        for (const node of doc.querySelectorAll("[id]")) counts.set(node.id, (counts.get(node.id) || 0) + 1);
+      } catch {
+        // 数不了就当没有唯一 id。
+      }
+      idCounts.set(doc, counts);
+    }
+    return counts.get(id) === 1 ? id : "";
+  }
+
+  function publicControl(control, idCounts = new Map()) {
     return {
       kind: control.kind,
       controlKind: control.controlKind,
@@ -1150,7 +1169,9 @@
       pickerType: control.pickerType || "",
       rangePart: control.rangePart || "",
       mixed: Boolean(control.mixed),
-      placeholder: attr(control.element, "placeholder")
+      placeholder: attr(control.element, "placeholder"),
+      // Local-only anchors: field descriptors and reports do not include these.
+      anchorId: anchorIdOf(control.element, idCounts), anchorName: attr(control.element, "name")
     };
   }
 

@@ -64,5 +64,15 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 winreg = "0.56.0"
 
 # single_instance_guard 的测试要自己建互斥量和消息窗口。
+# tests/nm_host.rs 把它启动的桌面端放进 Job Object，测完连 WebView2 子进程一起收掉；
+# 还要在进程快照里找到 host 冷启动的那个桌面端。
 [target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Graphics_Gdi", "Win32_Security", "Win32_System_LibraryLoader"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+] }

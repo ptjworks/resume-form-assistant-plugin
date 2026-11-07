@@ -5,6 +5,7 @@ import {
   describeCheckFailure,
   describeUpdate,
   formatCheckedAt,
+  outstandingUpdate,
   parseCheckedAt,
   shouldCheck,
   updateNotice,
@@ -75,10 +76,26 @@ test("主界面提示：查到新版本就提示", () => {
   assert.deepEqual(updateNotice({ enabled: true, available }, "0.4.2"), available);
 });
 
-test("主界面提示：关掉的那一版不再提示，出了更新的再提示", () => {
-  const pref = { enabled: true, dismissedVersion: "0.5.0" };
-  assert.equal(updateNotice({ ...pref, available: { version: "0.5.0", url: "u" } }, "0.4.2"), null);
-  assert.equal(updateNotice({ ...pref, available: { version: "0.6.0", url: "u" } }, "0.4.2")?.version, "0.6.0");
+test("主界面提示：收起只管这一次运行，查到更新的版本再提示", () => {
+  const pref = { enabled: true, available: { version: "0.5.0", url: "u" } };
+  assert.equal(updateNotice(pref, "0.4.2", "0.5.0"), null);
+  assert.equal(updateNotice(pref, "0.4.2")?.version, "0.5.0", "下次打开（没有收起记录）还提示");
+  assert.equal(updateNotice({ ...pref, available: { version: "0.6.0", url: "u" } }, "0.4.2", "0.5.0")?.version, "0.6.0");
+  // 收起 0.6.0 以后那一版撤回了，查到的变回 0.5.0：收起的不是这一版，照样提示。
+  assert.equal(updateNotice(pref, "0.4.2", "0.6.0")?.version, "0.5.0");
+});
+
+test("主界面提示：文件里留着旧的「关掉的版本」也照样提示", () => {
+  // 有一段开发版把关掉的版本写进了 update-check.json，现在不认这一项。
+  const pref = { enabled: true, available: { version: "0.5.0", url: "u" }, dismissedVersion: "0.5.0" };
+  assert.equal(updateNotice(pref, "0.4.2")?.version, "0.5.0");
+});
+
+test("有没有该装的新版本：收起提示不算装上", () => {
+  const available = { version: "0.5.0", url: "u" };
+  assert.deepEqual(outstandingUpdate({ enabled: true, available }, "0.4.2"), available);
+  assert.equal(outstandingUpdate({ enabled: true, available }, "0.5.0"), null);
+  assert.equal(outstandingUpdate({ enabled: false, available }, "0.4.2"), null);
 });
 
 test("主界面提示：自动检查关着、没查到、已经装上了，都不提示", () => {

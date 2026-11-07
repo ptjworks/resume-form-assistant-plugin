@@ -199,11 +199,27 @@ fn native_messaging_registry() -> Box<dyn nm_register::Registry> {
     }
 }
 
+/// 设成 `1` 时这个进程不写 Native Messaging 清单和注册表。只有开发构建认它。
+///
+/// 给 `tests/nm_host.rs` 用：那里以临时数据目录启动真桌面端，测完目录就删了。
+/// Windows 的注册表键是全机一份，被改指向临时目录后，本机装好的网申快填就连不上浏览器。
+/// 不能拿「设了 `RESUMEPRO_DATA_DIR`」当条件：带它的 dev 验收正是靠这次改写把浏览器
+/// 接到 dev 桌面端上的。
+const SKIP_NM_REGISTRATION_ENV: &str = "RESUMEPRO_SKIP_NM_REGISTRATION";
+
+fn native_messaging_registration_skipped() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var_os(SKIP_NM_REGISTRATION_ENV).is_some_and(|value| value == "1")
+}
+
 /// 核对一次注册，需要就写，并把结果存进状态。
 ///
 /// 启动时跑一次，用户手动重试时再跑一次。写失败不影响应用别的部分：连不上浏览器
 /// 是一件要说清楚的事，不是一件要拦住启动的事。
 fn refresh_native_messaging(state: &AppState) -> Vec<nm_register::Outcome> {
+    if native_messaging_registration_skipped() {
+        return Vec::new();
+    }
     let data_root = match state.paths.lock() {
         Ok(guard) => guard.as_ref().map(|p| p.data_root.clone()),
         Err(_) => None,
@@ -1655,25 +1671,6 @@ fn set_update_preference_cmd(
     Ok(pref)
 }
 
-/// 主界面上关掉某一版的提示。只记这一版，出了更新的版本还会再提示。
-#[tauri::command]
-fn dismiss_update_cmd(
-    state: State<AppState>,
-    version: String,
-) -> Result<update_check::UpdatePreference, CommandError> {
-    let root = ai_data_root(&state)?;
-    let mut pref = update_check::load(&root);
-    update_check::dismiss(&mut pref, &version).map_err(|message| CommandError {
-        code: "UPDATE_PREF_FAILED".into(),
-        message,
-    })?;
-    update_check::save(&root, &pref).map_err(|message| CommandError {
-        code: "UPDATE_PREF_FAILED".into(),
-        message,
-    })?;
-    Ok(pref)
-}
-
 /// 扩展的商店页。URL 只有这一份，前端不另抄：改成别的商店或换 ID 时只改这里。
 #[tauri::command]
 fn open_extension_store_cmd(app: AppHandle) -> Result<(), CommandError> {
@@ -2239,7 +2236,6 @@ pub fn run() {
             open_update_page_cmd,
             get_update_preference_cmd,
             set_update_preference_cmd,
-            dismiss_update_cmd,
             hide_main_window_cmd,
             take_requested_view_cmd,
             quit_app,

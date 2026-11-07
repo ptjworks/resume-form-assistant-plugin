@@ -25,6 +25,33 @@ function labels(result) {
 
 const BEISEN = fs.readFileSync(path.join(__dirname, "fixtures", "field-scan", "beisen-application.html"), "utf8");
 
+test("#477 an explicit question is retained when its wording equals the input placeholder", (t) => {
+  const doc = load(`<form>
+    <div><label for="a">姓名</label><input id="a" placeholder="姓名"></div>
+    <div><input aria-label="学校" placeholder="学校"></div>
+    <div><span id="q">专业</span><input aria-labelledby="q" placeholder="专业"></div>
+    <div><input placeholder="请输入"></div>
+    <div><label for="generic">请输入</label><input id="generic" placeholder="请输入"></div>
+    <div><input aria-label="请选择" placeholder="请选择"></div>
+    <div><span id="prompt">Please select</span><input aria-labelledby="prompt" placeholder="Please select"></div>
+    </form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(labels(result), ["姓名", "学校", "专业"]);
+  assert.ok(result.controls.every(control => scanner.isBindingCurrent(control, doc, { isVisible })));
+});
+
+test("#479 only an id that is unique in its document becomes a redraw anchor", (t) => {
+  const doc = load(`<form>
+    <div><label for="name">姓名</label><input id="name" name="name"></div>
+    <div><label for="school">学校</label><input id="school"></div>
+    <div><label for="school">学校</label><input id="school"></div>
+    </form>`);
+  t.after(() => doc.defaultView.close());
+  const anchors = Object.fromEntries(scan(doc).controls.map((control) => [`${control.label}${control.repeatIndex || ""}`, control.anchorId]));
+  assert.deepEqual(anchors, { 姓名: "name", 学校1: "", 学校2: "" });
+});
+
 test("Beisen form: header search is not taken for 面试站点, and each dropdown is one field with its own title", () => {
   const doc = new JSDOM(BEISEN).window.document;
   const result = scan(doc);

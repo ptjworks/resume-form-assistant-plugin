@@ -512,8 +512,8 @@ test("chip addition writes the combined value and restores the caret", async () 
   assert.equal(input.value, "ACB");
   assert.equal(input.selectionStart, 2);
   assert.equal(input.selectionEnd, 2);
-  // input、change，以及这个测试桩没有 blur() 时补上的 blur 事件。
-  assert.equal(input.dispatchedEvents.length, 3);
+  // input、change，以及测试桩没有 blur() 时补齐的 blur / focusout。
+  assert.equal(input.dispatchedEvents.length, 4);
 });
 
 test("a nonempty input waits for add or replace, while a selected chip is removed directly", async () => {
