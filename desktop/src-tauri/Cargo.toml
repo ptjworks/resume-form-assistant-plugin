@@ -61,3 +61,12 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt", "
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
 winreg = "0.56.0"
+
+# tests/nm_host.rs 把它启动的桌面端放进 Job Object，测完连 WebView2 子进程一起收掉。
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
