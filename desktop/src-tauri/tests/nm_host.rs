@@ -1,8 +1,17 @@
 //! Drives the real binary over stdio, the way a browser would. No registration, no
 //! browser, no system state.
+//!
+//! Every process started here gets its own data directory and
+//! `RESUMEPRO_SKIP_NM_REGISTRATION=1`. A desktop on a fresh data directory otherwise points
+//! the per-user Native Messaging registration at that directory, and once the test deletes
+//! it the installed app can no longer be reached from the browser.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+
+/// Keeps the desktop off the machine's Native Messaging registration. Development builds
+/// only, which is why the tests that start a real desktop are skipped in release builds.
+const SKIP_NM_REGISTRATION: (&str, &str) = ("RESUMEPRO_SKIP_NM_REGISTRATION", "1");
 
 const HEALTH: &str = r#"{"protocolVersion":1,"messageId":"33333333-3333-4333-8333-333333333333","clientInstanceId":"11111111-1111-4111-8111-111111111111","messageType":"health","occurredAt":"2026-09-06T12:00:00.000Z","payload":{}}"#;
 const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
@@ -107,7 +116,6 @@ fn the_caller_origin_is_recorded_on_stderr() {
         stderr.contains(ORIGIN),
         "the caller must be recorded: {stderr}"
     );
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[test]
@@ -157,9 +165,11 @@ fn run_host_with_data_dir(
     data_dir: &std::path::Path,
     input: Vec<u8>,
 ) -> (i32, Vec<u8>, String) {
+    // A desktop the host cold-starts inherits this environment, the switch included.
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
         .args(args)
         .env("RESUMEPRO_DATA_DIR", data_dir)
+        .env(SKIP_NM_REGISTRATION.0, SKIP_NM_REGISTRATION.1)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -181,11 +191,48 @@ fn run_host_with_data_dir(
 
 /// A data directory of this test's own, so the developer's real ResumePro directory is
 /// never read or created by the suite.
-fn isolated_data_dir(label: &str) -> std::path::PathBuf {
+fn isolated_data_dir(label: &str) -> DataDir {
     let dir = std::env::temp_dir().join(format!("rp-nm-{label}-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    DataDir(dir)
+}
+
+/// Removed on drop, also when the test fails. Declare it before anything that runs in it,
+/// so that it is dropped after them.
+struct DataDir(std::path::PathBuf);
+
+impl std::ops::Deref for DataDir {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for DataDir {
+    fn drop(&mut self) {
+        // Windows will not delete a file that is still open, and a virus scanner can hold a
+        // freshly written one for a moment. A directory still there after that is a leak,
+        // and fails the test rather than piling up in the temp directory.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let err = match std::fs::remove_dir_all(&self.0) {
+                Ok(()) => return,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+                Err(err) => err,
+            };
+            if std::time::Instant::now() >= deadline {
+                let message = format!("the test data directory {} was left behind: {err}", self.0.display());
+                if std::thread::panicking() {
+                    eprintln!("{message}");
+                    return;
+                }
+                panic!("{message}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
 }
 
 fn error_code_of(stdout: &[u8]) -> String {
@@ -222,8 +269,6 @@ fn an_unpaired_caller_is_refused_per_message_and_the_port_stays_open() {
     let first = u32::from_ne_bytes(stdout[..4].try_into().unwrap()) as usize;
     assert_eq!(error_code_of(&stdout[..4 + first]), "identity_not_allowed");
     assert_eq!(error_code_of(&stdout[4 + first..]), "identity_not_allowed");
-
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[test]
@@ -243,8 +288,6 @@ fn a_paired_caller_is_served() {
         "the caller must be recorded as authorised: {stderr}"
     );
     assert_single_health_frame(&stdout);
-
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[test]
@@ -308,7 +351,7 @@ fn error_of(stdout: &[u8]) -> (String, bool) {
     )
 }
 
-fn paired_dir(label: &str) -> std::path::PathBuf {
+fn paired_dir(label: &str) -> DataDir {
     let dir = isolated_data_dir(label);
     std::fs::write(
         dir.join("settings.json"),
@@ -360,7 +403,6 @@ fn health_is_answered_without_starting_the_application() {
         started.elapsed() < std::time::Duration::from_secs(5),
         "health must not wait on a cold start"
     );
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[cfg(unix)]
@@ -415,7 +457,6 @@ fn relay_v2_through_real_host(kind: &str, payload: serde_json::Value, response_p
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["correlationId"], request["messageId"]);
     resume_pro_protocol::validate_response_value(&reply, resume_pro_protocol::MessageType::parse(kind).unwrap()).unwrap();
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[cfg(unix)]
@@ -477,6 +518,8 @@ static ONE_DESKTOP_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(windows)]
 struct HiddenApplication {
     child: std::process::Child,
+    /// The desktop and everything it starts, WebView2's processes included.
+    processes: ProcessTree,
     data_dir: std::path::PathBuf,
     _turn: std::sync::MutexGuard<'static, ()>,
 }
@@ -486,18 +529,30 @@ impl HiddenApplication {
     /// Start the real desktop with `--hidden` on `data_dir`. Its stderr goes to a file in
     /// that directory, so a failed start can say what the desktop reported.
     fn start(data_dir: &std::path::Path) -> Self {
-        // A test that failed while holding the turn has already killed its desktop.
+        // A test that failed while holding the turn has already stopped its desktop.
         let turn = ONE_DESKTOP_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let stderr = std::fs::File::create(data_dir.join("desktop-stderr.log")).unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
             .arg("--hidden")
             .env("RESUMEPRO_DATA_DIR", data_dir)
+            .env(SKIP_NM_REGISTRATION.0, SKIP_NM_REGISTRATION.1)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)
             .spawn()
             .expect("isolated hidden desktop must start");
-        HiddenApplication { child, data_dir: data_dir.to_path_buf(), _turn: turn }
+        // WebView2 starts after the archive is open, long after this.
+        let processes = match ProcessTree::adopt(&child) {
+            Ok(processes) => processes,
+            Err(problem) => {
+                // Outside a job nothing else would stop it.
+                let mut child = child;
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{problem}");
+            }
+        };
+        HiddenApplication { child, processes, data_dir: data_dir.to_path_buf(), _turn: turn }
     }
 
     /// Wait for the desktop to open an archive and return the pointer it wrote.
@@ -554,13 +609,169 @@ impl HiddenApplication {
 #[cfg(windows)]
 impl Drop for HiddenApplication {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        // Killing only the desktop leaves WebView2 running for a while with its profile under
+        // the data directory open, so the directory could not be removed after the test.
+        let mut problems = Vec::new();
+        if !self.processes.terminate() {
+            problems.push(format!("cannot terminate the desktop's job object: {}", std::io::Error::last_os_error()));
+            let _ = self.child.kill();
+        }
         let _ = self.child.wait();
+        if let Err(problem) = self.processes.wait_until_empty(std::time::Duration::from_secs(10)) {
+            problems.push(problem);
+        }
+        // Checked once every process has exited, so nothing the desktop does later can be missed.
+        match registrations_into(&self.data_dir) {
+            Ok(found) if found.is_empty() => {}
+            Ok(found) => problems.push(format!(
+                "the desktop under test re-pointed the browser at its temporary data directory: {}",
+                found.join("; ")
+            )),
+            Err(problem) => problems.push(problem),
+        }
+        if problems.is_empty() {
+            return;
+        }
+        // A second panic while unwinding would abort the run and hide the first failure.
+        let message = problems.join("\n");
+        if std::thread::panicking() {
+            eprintln!("{message}");
+        } else {
+            panic!("{message}");
+        }
+    }
+}
+
+/// A Job Object holding the desktop under test. Processes the desktop starts join it, and it
+/// is set to kill them all when its last handle closes, so even a test run that is
+/// interrupted does not leave a hidden desktop behind.
+#[cfg(windows)]
+struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl ProcessTree {
+    fn adopt(child: &std::process::Child) -> Result<Self, String> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+        let failed = |step: &str| format!("cannot {step}: {}", std::io::Error::last_os_error());
+        // SAFETY: plain Win32 calls on a handle this function owns and on the child's process
+        // handle, which outlives the call; the limit structure is zeroed and then filled in.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(failed("create a job object"));
+            }
+            let tree = ProcessTree(job);
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let set = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            );
+            if set == 0 {
+                return Err(failed("limit the job object"));
+            }
+            if AssignProcessToJobObject(job, child.as_raw_handle()) == 0 {
+                return Err(failed("put the desktop in a job object"));
+            }
+            Ok(tree)
+        }
+    }
+
+    /// False when the job could not be terminated; the caller then kills what it holds itself,
+    /// or waiting for it would never end.
+    fn terminate(&self) -> bool {
+        // SAFETY: the handle is owned by `self` and still open.
+        unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1) != 0 }
+    }
+
+    fn active_processes(&self) -> Result<u32, String> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicAccountingInformation, QueryInformationJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        };
+        // SAFETY: the handle is owned by `self`; the buffer is a zeroed structure of the size passed.
+        unsafe {
+            let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+            let read = QueryInformationJobObject(
+                self.0,
+                JobObjectBasicAccountingInformation,
+                std::ptr::from_mut(&mut info).cast(),
+                std::mem::size_of_val(&info) as u32,
+                std::ptr::null_mut(),
+            );
+            if read == 0 {
+                return Err(format!("cannot read the job object: {}", std::io::Error::last_os_error()));
+            }
+            Ok(info.ActiveProcesses)
+        }
+    }
+
+    fn wait_until_empty(&self, budget: std::time::Duration) -> Result<(), String> {
+        let started = std::time::Instant::now();
+        loop {
+            let active = self.active_processes()?;
+            if active == 0 {
+                return Ok(());
+            }
+            if started.elapsed() >= budget {
+                return Err(format!("{active} of the desktop's processes were still running {budget:?} after being terminated"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 }
 
 #[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        // SAFETY: the handle is owned by `self` and closed only here.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+/// The browsers' Native Messaging registrations that point into `data_dir`. A desktop under
+/// test must leave them alone: they are one per user, so re-pointing them at a directory the
+/// test is about to delete cuts the installed app off from the browser.
+#[cfg(windows)]
+fn registrations_into(data_dir: &std::path::Path) -> Result<Vec<String>, String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    // The directory name is unique to this run; matching on it is indifferent to how the
+    // desktop spelled the path.
+    let name = data_dir.file_name().unwrap().to_string_lossy().to_lowercase();
+    let mut found = Vec::new();
+    for key in [
+        r"Software\Google\Chrome\NativeMessagingHosts\com.resumepro.desktop",
+        r"Software\Microsoft\Edge\NativeMessagingHosts\com.resumepro.desktop",
+    ] {
+        let value = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(key)
+            .and_then(|handle| handle.get_value::<String, _>(""));
+        let value = match value {
+            Ok(value) => value,
+            // No key, or a key without a value: nothing is registered there.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(format!(r"cannot read HKCU\{key}: {err}")),
+        };
+        if value.to_lowercase().contains(&name) {
+            found.push(format!(r"HKCU\{key} = {value}"));
+        }
+    }
+    Ok(found)
+}
+
+#[cfg(windows)]
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "release builds cannot keep the desktop off the Native Messaging registration")]
 fn a_hidden_start_opens_the_archive_before_webview2_starts() {
     // A hidden start is for the browser, which needs the archive and the endpoint, not the
     // window. WebView2 can take many seconds to start, longer than the host waits, so the
@@ -577,12 +788,13 @@ fn a_hidden_start_opens_the_archive_before_webview2_starts() {
         "the archive was opened {:?} after WebView2 started",
         archive.duration_since(webview).unwrap_or_default()
     );
+    // Also fails the test if the desktop re-pointed the browser's registration.
     drop(application);
-    std::fs::remove_dir_all(&tmp).ok();
 }
 
 #[cfg(windows)]
 #[test]
+#[cfg_attr(not(debug_assertions), ignore = "release builds cannot keep the desktop off the Native Messaging registration")]
 fn v2_resume_read_round_trips_through_the_real_host_and_application() {
     let tmp = paired_dir("v2-real-app");
     let mut application = HiddenApplication::start(&tmp);
@@ -643,5 +855,4 @@ fn v2_resume_read_round_trips_through_the_real_host_and_application() {
     let validated = resume_pro_protocol::validate_request_bytes(&serde_json::to_vec(&manifest).unwrap()).unwrap();
     resume_pro_protocol::validate_response_for_request(&staged, &validated).unwrap();
     drop(application);
-    std::fs::remove_dir_all(&tmp).ok();
 }
