@@ -17,8 +17,6 @@ export interface UpdatePreference {
   lastCheckedAt?: string | null;
   /** 上次查成时比当前版本新的那一版。同一天重启不再查，靠它接着提示。 */
   available?: UpdateInfo | null;
-  /** 用户在主界面关掉提示时的那个版本。 */
-  dismissedVersion?: string | null;
 }
 
 /**
@@ -49,16 +47,26 @@ export function shouldCheck(pref: UpdatePreference, nowIso: string): boolean {
 }
 
 /**
- * 主界面上要不要提示、提示哪一版。自动检查关了就不提示；
- * 关掉过的那一版不再提示，比它新的再提示一次。
+ * 有没有该装的新版本。自动检查关了就不算；记下的那一版已经装上了也不算。
+ * 「设置」上的小圆点照它显示。
  */
-export function updateNotice(pref: UpdatePreference, current: string): UpdateInfo | null {
+export function outstandingUpdate(pref: UpdatePreference, current: string): UpdateInfo | null {
   const latest = pref.available;
   if (!pref.enabled || !latest) return null;
   // 记下的那一版可能已经装上了。
   if (compareVersions(latest.version, current) <= 0) return null;
-  const dismissed = pref.dismissedVersion;
-  if (dismissed && compareVersions(latest.version, dismissed) <= 0) return null;
+  return latest;
+}
+
+/**
+ * 主界面上要不要提示、提示哪一版。用户收起的只管这一次运行：下次打开还会提示，
+ * 直到装上新版。旧版本一直在用，反馈里就一直是早修好的问题。
+ * 收起的只是那一版：这次运行里查到的版本变了（更新的，或者那一版撤回了），照样提示。
+ */
+export function updateNotice(pref: UpdatePreference, current: string, closedThisRun?: string | null): UpdateInfo | null {
+  const latest = outstandingUpdate(pref, current);
+  if (!latest) return null;
+  if (closedThisRun && compareVersions(latest.version, closedThisRun) === 0) return null;
   return latest;
 }
 

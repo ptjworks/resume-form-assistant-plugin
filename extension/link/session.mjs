@@ -44,7 +44,8 @@ export function createSession({ store, sendNative, sleep, uuid, now, getManifest
         appVersion: payload.appVersion,
         at: now().toISOString()
       });
-      const probe = { mode: 'ready', identity, capabilities: payload.capabilities, maxProtocolVersion: payload.maxProtocolVersion };
+      const probe = { mode: 'ready', identity, capabilities: payload.capabilities, maxProtocolVersion: payload.maxProtocolVersion,
+        appVersion: payload.appVersion };
       onProbe(probe);
       return probe;
     }

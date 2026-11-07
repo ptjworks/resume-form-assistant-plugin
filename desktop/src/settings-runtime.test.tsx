@@ -167,10 +167,6 @@ function updateHost(initial: UpdatePreference, check: () => UpdateInfo | null | 
       pref.available = found;
       return found;
     }
-    if (command === "dismiss_update_cmd") {
-      pref.dismissedVersion = String(args?.version);
-      return { ...pref };
-    }
     if (command === "set_update_preference_cmd") {
       pref.enabled = Boolean(args?.enabled);
       return { ...pref };
@@ -197,28 +193,30 @@ test("a newer version found at startup shows the strip on the main screen and ma
   expect(host.calls).toContain("open_update_page_cmd");
 });
 
-test("closing the strip remembers that version and hides the marks", async () => {
+test("closing the strip hides it for this run only, writes nothing, and keeps the marks", async () => {
   const host = updateHost({ enabled: true }, () => release("0.5.0"));
   await start(host.handler);
+  const before = { ...host.pref() };
+  const commandsBefore = host.calls.length;
   fireEvent.click(document.getElementById("update-notice-close")!);
   expect(notice().hidden).toBe(true);
   await settle();
-  expect(host.pref().dismissedVersion).toBe("0.5.0");
-  expect(dots().every((dot) => dot.hidden)).toBe(true);
+  expect(host.calls.slice(commandsBefore)).toEqual([]);
+  expect(host.pref()).toEqual(before);
+  // 还没装上新版：「设置」上的小圆点留着。
+  expect(dots().every((dot) => !dot.hidden)).toBe(true);
 });
 
-test.each([
-  ["the dismissed version stays hidden", "0.5.0", true],
-  ["a newer version shows again", "0.6.0", false],
-])("after a restart on the same day, without checking again: %s", async (_name, version, hidden) => {
+test("after a restart on the same day the strip is back without checking again", async () => {
+  // 文件里留着一段开发版写的「关掉的版本」：不认，照样提示。
   const host = updateHost(
-    { enabled: true, lastCheckedAt: "2026-10-09T06:20:00Z", available: release(version), dismissedVersion: "0.5.0" },
+    { enabled: true, lastCheckedAt: "2026-10-09T06:20:00Z", available: release("0.5.0"), dismissedVersion: "0.5.0" } as UpdatePreference,
     () => { throw new Error("should not check twice a day"); },
   );
   await start(host.handler);
   expect(host.calls).not.toContain("check_update_cmd");
-  expect(notice().hidden).toBe(hidden);
-  expect(dots().every((dot) => dot.hidden === hidden)).toBe(true);
+  expect(notice().hidden).toBe(false);
+  expect(dots().every((dot) => !dot.hidden)).toBe(true);
 });
 
 test("with automatic checks off, nothing is shown even if an update was recorded", async () => {
@@ -256,22 +254,28 @@ test("when the preference file cannot be written, this run still shows what was 
   // 宿主照常返回结果，但 update-check.json 一直写不进去：读回来的永远是旧文件。
   const stale: UpdatePreference = { enabled: true };
   const calls: string[] = [];
+  let found = release("0.5.0");
   await start(async (command) => {
     calls.push(command);
     if (command === "get_runtime_status") return status("0.4.2");
     if (command === "get_update_preference_cmd") return { ...stale };
-    if (command === "check_update_cmd") return release("0.5.0");
-    if (command === "dismiss_update_cmd") throw { code: "UPDATE_PREF_FAILED", message: "disk full" };
+    if (command === "check_update_cmd") return found;
     return null;
   });
   expect(notice().hidden).toBe(false);
   fireEvent.click(document.getElementById("update-notice-close")!);
   await settle();
   expect(notice().hidden).toBe(true);
-  // 再手动查一次，查到的还是同一版：这次运行里已经关掉了，不再冒出来。
+  // 再手动查一次，查到的还是同一版：这次运行里已经收起了，不再冒出来。
   fireEvent.click(document.getElementById("update-check")!);
   await settle();
   expect(calls.filter((call) => call === "check_update_cmd")).toHaveLength(2);
   expect(notice().hidden).toBe(true);
-  expect(dots().every((dot) => dot.hidden)).toBe(true);
+  expect(dots().every((dot) => !dot.hidden)).toBe(true);
+  // 同一次运行里又出了更新的版本：再提示一次。
+  found = release("0.6.0");
+  fireEvent.click(document.getElementById("update-check")!);
+  await settle();
+  expect(notice().hidden).toBe(false);
+  expect(document.getElementById("update-notice-text")!.textContent).toContain("0.6.0");
 });
