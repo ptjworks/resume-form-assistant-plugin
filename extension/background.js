@@ -12,6 +12,18 @@ installFeedback(chrome);
 // keep working whether or not a desktop is installed.
 installDesktopLink(chrome);
 
+// 商店把新版本下载好以后，浏览器要等插件闲下来才换上；侧栏一直开着就一直是旧版。
+// 没有侧栏、弹窗、插件页面和 AI 请求进程开着时直接重新加载；否则记在 storage.session
+// （重新加载或更新后自动清空），侧栏顶部给一个「重新加载」按钮，不在用户用着的时候把侧栏关掉。
+chrome.runtime.onUpdateAvailable?.addListener((details) => {
+  const ready = { extensionUpdateReady: { version: String(details?.version || "") } };
+  Promise.resolve()
+    .then(() => chrome.runtime.getContexts({}))
+    .then((contexts) => contexts.some((context) => context.contextType !== "BACKGROUND"), () => true)
+    .then((busy) => (busy ? chrome.storage.session?.set(ready) : chrome.runtime.reload()))
+    .catch(() => {});
+});
+
 // Browsers without the side panel API open the status page from the toolbar instead.
 async function openManagerTab() {
   const baseUrl = chrome.runtime.getURL("popup.html");
