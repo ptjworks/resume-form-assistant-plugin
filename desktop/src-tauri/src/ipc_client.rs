@@ -84,6 +84,8 @@ fn log_launch(root: &Path, code: &str, reason: &str) {
 }
 
 fn start_hidden(program: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    keep_own_stdio_from_children();
     let mut child = std::process::Command::new(program)
         .arg("--hidden")
         .stdin(std::process::Stdio::null())
@@ -98,6 +100,32 @@ fn start_hidden(program: &Path) -> std::io::Result<()> {
         let _ = child.wait();
     });
     Ok(())
+}
+
+/// Stop this process's stdin, stdout and stderr from being passed on to processes it starts.
+///
+/// On Windows std starts every child with handle inheritance on, so the child receives every
+/// handle of ours that is marked inheritable, whatever its own stdio is set to. Our standard
+/// handles are marked so, because that is how the browser passed them to us: its pipes to
+/// this host, plus whatever stderr the browser itself was given. The application started here
+/// outlives the host on purpose. If it held those pipes, the browser would not see this host's
+/// stdout end, and anything reading the browser's stderr, such as a test runner, would wait for
+/// as long as the application ran.
+#[cfg(windows)]
+fn keep_own_stdio_from_children() {
+    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        let handle = unsafe { GetStdHandle(which) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            continue;
+        }
+        // If this fails the handle stays inheritable, as before. That is no reason to leave
+        // the application unstarted.
+        unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
+    }
 }
 
 /// Retry until the endpoint answers or the deadline passes.

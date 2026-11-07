@@ -1,11 +1,13 @@
-//! Drives the real binary over stdio, the way a browser would. No registration, no
-//! browser, no system state.
+//! Drives the real binary over stdio, the way a browser would, with no browser involved.
+//! The Windows tests that start a real desktop let it register itself with the browsers,
+//! then put that registration back as it was.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 const HEALTH: &str = r#"{"protocolVersion":1,"messageId":"33333333-3333-4333-8333-333333333333","clientInstanceId":"11111111-1111-4111-8111-111111111111","messageType":"health","occurredAt":"2026-09-06T12:00:00.000Z","payload":{}}"#;
 const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
+const HANDSHAKE: &str = r#"{"protocolVersion":2,"messageId":"33333333-3333-4333-8333-333333333333","clientInstanceId":"11111111-1111-4111-8111-111111111111","messageType":"handshake","occurredAt":"2026-09-06T12:00:00.000Z","payload":{"pluginVersion":"0.4.1","minProtocolVersion":2,"maxProtocolVersion":2}}"#;
 
 #[test]
 fn an_explicit_quit_survives_new_native_hosts_and_delayed_hidden_launches() {
@@ -13,12 +15,11 @@ fn an_explicit_quit_survives_new_native_hosts_and_delayed_hidden_launches() {
     let policy = data_service::launch_policy::LaunchGuard::acquire(tmp.path(), std::time::Duration::ZERO).unwrap();
     policy.record_quit().unwrap();
     drop(policy);
-    let handshake = r#"{"protocolVersion":2,"messageId":"33333333-3333-4333-8333-333333333333","clientInstanceId":"11111111-1111-4111-8111-111111111111","messageType":"handshake","occurredAt":"2026-09-06T12:00:00.000Z","payload":{"pluginVersion":"0.4.1","minProtocolVersion":2,"maxProtocolVersion":2}}"#;
     for _ in 0..3 {
         // The released store extension is allowed even with a fresh pairing file.
         // Use the same caller as the Windows installed-package diagnostic.
         let (code, stdout, stderr) = run_host_with_data_dir(
-            &["chrome-extension://diagjmploldedipjdenmecmjokckelkl/"], tmp.path(), framed(handshake));
+            &["chrome-extension://diagjmploldedipjdenmecmjokckelkl/"], tmp.path(), framed(HANDSHAKE));
         assert_eq!(code, 0, "{stderr}");
         let reply: serde_json::Value = serde_json::from_slice(&stdout[4..]).unwrap();
         assert_eq!(reply["error"]["code"], "unavailable");
@@ -474,10 +475,67 @@ const HIDDEN_DESKTOP_STARTUP_BUDGET: std::time::Duration = std::time::Duration::
 #[cfg(windows)]
 static ONE_DESKTOP_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The two HKCU keys that tell Chrome and Edge where the `com.resumepro.desktop` manifest is.
+#[cfg(windows)]
+const REGISTRATION_KEYS: [&str; 2] = [
+    r"Software\Google\Chrome\NativeMessagingHosts\com.resumepro.desktop",
+    r"Software\Microsoft\Edge\NativeMessagingHosts\com.resumepro.desktop",
+];
+
+/// The browsers' registration as it was before a test started a real desktop.
+///
+/// A desktop registers itself on every start, pointing both keys at `nm` under its own data
+/// directory. Here that is a temporary directory the test deletes, which would leave the
+/// desktop installed on this machine unreachable from either browser. Dropping this puts the
+/// keys back; it must be dropped after the desktop has exited, or the desktop can rewrite them.
+///
+/// Each entry is the value to write back, or `None` for a key that did not exist. A key that
+/// exists but cannot be read is left out, so restoring never deletes anything of the user's.
+#[cfg(windows)]
+struct SavedRegistration(Vec<(&'static str, Option<String>)>);
+
+#[cfg(windows)]
+impl SavedRegistration {
+    fn save() -> Self {
+        let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+        SavedRegistration(
+            REGISTRATION_KEYS
+                .iter()
+                .filter_map(|key| match hkcu.open_subkey(key) {
+                    Ok(handle) => handle.get_value::<String, _>("").ok().map(|value| (*key, Some(value))),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some((*key, None)),
+                    Err(_) => None,
+                })
+                .collect(),
+        )
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SavedRegistration {
+    fn drop(&mut self) {
+        let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+        for (key, value) in &self.0 {
+            match value {
+                Some(value) => {
+                    if let Ok((handle, _)) = hkcu.create_subkey(key) {
+                        let _ = handle.set_value("", value);
+                    }
+                }
+                None => {
+                    let _ = hkcu.delete_subkey_all(key);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(windows)]
 struct HiddenApplication {
     child: std::process::Child,
     data_dir: std::path::PathBuf,
+    // Fields drop in this order, after Drop has killed the desktop.
+    _registration: SavedRegistration,
     _turn: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -488,6 +546,7 @@ impl HiddenApplication {
     fn start(data_dir: &std::path::Path) -> Self {
         // A test that failed while holding the turn has already killed its desktop.
         let turn = ONE_DESKTOP_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let registration = SavedRegistration::save();
         let stderr = std::fs::File::create(data_dir.join("desktop-stderr.log")).unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
             .arg("--hidden")
@@ -497,7 +556,12 @@ impl HiddenApplication {
             .stderr(stderr)
             .spawn()
             .expect("isolated hidden desktop must start");
-        HiddenApplication { child, data_dir: data_dir.to_path_buf(), _turn: turn }
+        HiddenApplication {
+            child,
+            data_dir: data_dir.to_path_buf(),
+            _registration: registration,
+            _turn: turn,
+        }
     }
 
     /// Wait for the desktop to open an archive and return the pointer it wrote.
@@ -554,8 +618,25 @@ impl HiddenApplication {
 #[cfg(windows)]
 impl Drop for HiddenApplication {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        match OpenedProcess::open(self.child.id()) {
+            Some(desktop) => end_process_tree(&desktop),
+            None => {
+                let _ = self.child.kill();
+            }
+        }
         let _ = self.child.wait();
+    }
+}
+
+/// Delete a data directory a real desktop ran on, once the desktop and its WebView2
+/// processes have gone. Files they had open can take a moment to be released.
+#[cfg(windows)]
+fn remove_desktop_data_dir(dir: &std::path::Path) {
+    let started = std::time::Instant::now();
+    while dir.exists() && started.elapsed() < std::time::Duration::from_secs(10) {
+        if std::fs::remove_dir_all(dir).is_err() {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
     }
 }
 
@@ -578,7 +659,7 @@ fn a_hidden_start_opens_the_archive_before_webview2_starts() {
         archive.duration_since(webview).unwrap_or_default()
     );
     drop(application);
-    std::fs::remove_dir_all(&tmp).ok();
+    remove_desktop_data_dir(&tmp);
 }
 
 #[cfg(windows)]
@@ -643,5 +724,283 @@ fn v2_resume_read_round_trips_through_the_real_host_and_application() {
     let validated = resume_pro_protocol::validate_request_bytes(&serde_json::to_vec(&manifest).unwrap()).unwrap();
     resume_pro_protocol::validate_response_for_request(&staged, &validated).unwrap();
     drop(application);
-    std::fs::remove_dir_all(&tmp).ok();
+    remove_desktop_data_dir(&tmp);
+}
+
+/// A desktop that a host process started, which this test does not own a `Child` for.
+/// Dropping it ends the desktop and every process under it.
+#[cfg(windows)]
+struct StartedDesktop(OpenedProcess);
+
+#[cfg(windows)]
+impl StartedDesktop {
+    /// Wait for `host` to start the desktop and take hold of it. The desktop is the host's
+    /// child running this same executable; a console the host had to create would also show
+    /// up as its child, as conhost.exe.
+    fn started_by(host: &mut std::process::Child, stderr_so_far: impl Fn() -> String) -> Self {
+        let program = std::path::Path::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_lowercase();
+        let started = std::time::Instant::now();
+        loop {
+            // Checked before looking, so a host that exits right after starting the desktop
+            // is still caught with it. The `Child` keeps the host's id from being reused.
+            let exited = host.try_wait().expect("the host can be polled");
+            let desktop = process_snapshot()
+                .into_iter()
+                .filter(|p| p.parent == host.id() && p.name == program)
+                .find_map(|p| OpenedProcess::open(p.pid));
+            if let Some(desktop) = desktop {
+                return StartedDesktop(desktop);
+            }
+            if let Some(status) = exited {
+                panic!("the host exited ({status}) without starting the desktop\n{}", stderr_so_far());
+            }
+            if started.elapsed() >= HIDDEN_DESKTOP_STARTUP_BUDGET {
+                panic!("the host had not started the desktop after {HIDDEN_DESKTOP_STARTUP_BUDGET:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.0.is_running()
+    }
+
+    fn exit_code(&self) -> Option<u32> {
+        use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+        let mut code = 0;
+        (unsafe { GetExitCodeProcess(self.0.handle, &mut code) } != 0).then_some(code)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for StartedDesktop {
+    fn drop(&mut self) {
+        end_process_tree(&self.0);
+    }
+}
+
+/// End `root`, then every process started under it.
+///
+/// Ending a desktop alone is not enough: killed while it was still starting WebView2, its
+/// WebView2 browser process has been seen to keep running on its own, and to keep writing
+/// into the data directory after the test deleted it. The processes under `root` are looked
+/// for only once it has gone, so a child it was starting at that moment is found too; the
+/// open handle keeps `root`'s id from passing to another process meanwhile.
+#[cfg(windows)]
+fn end_process_tree(root: &OpenedProcess) {
+    root.end();
+    for process in processes_under(root) {
+        process.end();
+    }
+}
+
+/// A process opened so it can be timed, waited for and ended. Holding it open also keeps its
+/// id from passing to another process.
+#[cfg(windows)]
+struct OpenedProcess {
+    pid: u32,
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(windows)]
+impl OpenedProcess {
+    fn open(pid: u32) -> Option<Self> {
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        };
+        let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE;
+        let handle = unsafe { OpenProcess(access, 0, pid) };
+        (!handle.is_null()).then_some(OpenedProcess { pid, handle })
+    }
+
+    /// When the process started, in 100 ns units since 1601.
+    fn started_at(&self) -> Option<u64> {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::GetProcessTimes;
+        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+        let ok = unsafe { GetProcessTimes(self.handle, &mut created, &mut exited, &mut kernel, &mut user) };
+        (ok != 0).then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+    }
+
+    fn is_running(&self) -> bool {
+        use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+        unsafe { WaitForSingleObject(self.handle, 0) == WAIT_TIMEOUT }
+    }
+
+    fn end(&self) {
+        use windows_sys::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
+        unsafe {
+            TerminateProcess(self.handle, 1);
+            WaitForSingleObject(self.handle, 10_000);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OpenedProcess {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.handle) };
+    }
+}
+
+/// Every process started under `root`, opened. A parent id alone can name a process that
+/// took over the id of a parent that had already exited, so each one must also have
+/// started after the parent it names.
+#[cfg(windows)]
+fn processes_under(root: &OpenedProcess) -> Vec<OpenedProcess> {
+    let snapshot = process_snapshot();
+    let mut found: Vec<OpenedProcess> = Vec::new();
+    let Some(root_started) = root.started_at() else {
+        return found;
+    };
+    let mut parents = vec![(root.pid, root_started)];
+    while let Some((parent, parent_started)) = parents.pop() {
+        for entry in snapshot.iter().filter(|p| p.parent == parent && p.pid != root.pid) {
+            if found.iter().any(|p| p.pid == entry.pid) {
+                continue;
+            }
+            let Some(child) = OpenedProcess::open(entry.pid) else { continue };
+            match child.started_at() {
+                Some(started) if started >= parent_started => {
+                    parents.push((entry.pid, started));
+                    found.push(child);
+                }
+                _ => {}
+            }
+        }
+    }
+    found
+}
+
+#[cfg(windows)]
+struct ProcessEntry {
+    pid: u32,
+    parent: u32,
+    /// The executable's file name, in lower case.
+    name: String,
+}
+
+/// The processes running right now.
+#[cfg(windows)]
+fn process_snapshot() -> Vec<ProcessEntry> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    };
+    let mut found = Vec::new();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return found;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        while more {
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            found.push(ProcessEntry {
+                pid: entry.th32ProcessID,
+                parent: entry.th32ParentProcessID,
+                name: String::from_utf16_lossy(&entry.szExeFile[..len]).to_lowercase(),
+            });
+            more = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+    }
+    found
+}
+
+/// Read `pipe` to end of file on a thread of its own, and hand over what it held once it ends.
+#[cfg(windows)]
+fn read_to_end_in_background(
+    mut pipe: impl std::io::Read + Send + 'static,
+) -> (std::sync::mpsc::Receiver<Vec<u8>>, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+    let (done, ended) = std::sync::mpsc::channel();
+    let so_far = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = so_far.clone();
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => sink.lock().unwrap().extend_from_slice(&chunk[..n]),
+            }
+        }
+        let _ = done.send(sink.lock().unwrap().clone());
+    });
+    (ended, so_far)
+}
+
+#[cfg(windows)]
+#[test]
+fn a_desktop_the_host_starts_does_not_hold_the_browsers_pipes_open() {
+    // The browser talks to the host over the host's stdin and stdout, and learns the host is
+    // gone when stdout reaches end of file. A test runner such as Playwright also gives the
+    // browser a stderr pipe, which the host inherits, and waits for that pipe to end. The
+    // desktop a host cold-starts outlives the host on purpose. If it inherited the host's
+    // handles, neither pipe would end until the desktop quit.
+    let tmp = paired_dir("cold-start-pipes");
+    // Dropped in reverse: the desktop is killed before the registration is put back.
+    let _turn = ONE_DESKTOP_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _registration = SavedRegistration::save();
+    let mut host = Command::new(env!("CARGO_BIN_EXE_resume-pro-desktop"))
+        .arg(ORIGIN)
+        .env("RESUMEPRO_DATA_DIR", &tmp)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the host must start");
+    let (stdout_ended, _) = read_to_end_in_background(host.stdout.take().unwrap());
+    let (stderr_ended, stderr_so_far) = read_to_end_in_background(host.stderr.take().unwrap());
+    let stderr_text = || String::from_utf8_lossy(&stderr_so_far.lock().unwrap()).into_owned();
+    // One message, then the port closes: the host forwards it, which needs the desktop, and
+    // exits once it has answered.
+    let mut stdin = host.stdin.take().unwrap();
+    stdin.write_all(&framed(HANDSHAKE)).unwrap();
+    drop(stdin);
+    let desktop = StartedDesktop::started_by(&mut host, &stderr_text);
+
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = host.try_wait().expect("the host can be polled") {
+            break status;
+        }
+        assert!(
+            started.elapsed() < HIDDEN_DESKTOP_STARTUP_BUDGET,
+            "the host did not exit after its port closed\n{}",
+            stderr_text()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(status.success(), "the host failed ({status})\n{}", stderr_text());
+
+    let grace = std::time::Duration::from_secs(5);
+    let stdout = stdout_ended.recv_timeout(grace);
+    let stderr = stderr_ended.recv_timeout(grace);
+    // Without a running desktop there is nothing left that could hold the pipes, and the
+    // checks below would pass whatever the host passed on. A desktop that exits 0 this early
+    // has usually handed its launch to another running instance of the same application.
+    assert!(
+        desktop.is_running(),
+        "the desktop must still be running for this to mean anything; it exited with {:?}, current.json written: {}\n{}",
+        desktop.exit_code(),
+        tmp.join("current.json").exists(),
+        stderr_text()
+    );
+    let stdout = stdout.expect("the host's stdout did not end after the host exited: the desktop it started still holds it");
+    stderr.expect("the host's stderr did not end after the host exited: the desktop it started still holds it");
+    // The handshake reached the desktop, or at least the host's wait for it, and was answered.
+    assert!(stdout.len() > 4, "the host did not answer\n{}", stderr_text());
+    let declared = u32::from_ne_bytes(stdout[..4].try_into().unwrap()) as usize;
+    assert_eq!(stdout.len(), 4 + declared, "stdout must be exactly one frame");
+
+    drop(desktop);
+    remove_desktop_data_dir(&tmp);
 }
