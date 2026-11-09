@@ -3,8 +3,8 @@ import { attachmentType, createNotesEditor, insertCodeExample, insertOutline } f
 import type { Invoke } from "../api.ts";
 import { describeDialogError, openSettingsDialog } from "../settings-dialog.ts";
 import {
-  dataUrl, fileMarker, fontSizes, imageTypes, importNoteFiles, loadImages, safeBody, serializeBody, textFragment,
-  MAX_FILES, MAX_BATCH_BYTES,
+  dataUrl, fileMarker, fileMimeFromHeader, fontSizes, imageTypes, importNoteFiles, loadImages, safeBody, serializeBody, textFragment,
+  MAX_FILES, MAX_BATCH_BYTES, MAX_FILE_BYTES,
 } from "./content.ts";
 import type { FileContents, PendingFile, StoredFile } from "./content.ts";
 
@@ -45,6 +45,26 @@ interface Edit {
   loading: Promise<void>;
   error: string;
   insertions: Set<{ from: number; to: number }>;
+  pasteNotice: HTMLElement;
+}
+
+interface PasteInsertion {
+  fragment: DocumentFragment;
+  oversize: number;
+  capacity: number;
+  unreadable: number;
+}
+
+const MAX_NOTE_NAME = 200;
+
+function suggestedFolderName(application: NotesApplication) {
+  const company = Array.from(application.company.trim());
+  const title = Array.from(application.title.trim());
+  if (!company.length || !title.length) return [...company, ...title].slice(0, MAX_NOTE_NAME).join("");
+  const separator = " · ";
+  const budget = MAX_NOTE_NAME - separator.length;
+  const companyLimit = Math.min(company.length, Math.max(Math.ceil(budget / 2), budget - title.length));
+  return company.slice(0, companyLimit).join("") + separator + title.slice(0, budget - companyLimit).join("");
 }
 
 const interviewOutline = ["问到的问题", "我的回答和感受", "下次想改进的地方"];
@@ -981,32 +1001,74 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     const clipboard = event.clipboardData;
     if (!clipboard) return false;
     const files = Array.from(clipboard.files).filter(file => file.type.startsWith("image/"));
-    if (files.length) {
-      queueFiles(session, () => loadImages(files));
-      return true;
-    }
     const html = clipboard.getData("text/html");
-    if (!html) return false;
+    if (!html && !files.length) {
+      session.pasteNotice.textContent = "";
+      return false;
+    }
+
+    const paste: PasteInsertion = { fragment: document.createDocumentFragment(), oversize: 0, capacity: 0, unreadable: 0 };
     const uploads: PendingFile[] = [];
-    const clean = safeBody(html, new Set(), image => {
+    let embedded = false;
+    let bytes = 0;
+    paste.fragment = safeBody(html, new Set(), image => {
       const src = image.getAttribute("src") ?? "";
-      const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=]+)$/.exec(src);
-      if (!match || match[2].length > 14_000_000 || uploads.length >= MAX_FILES) {
-        return document.createTextNode(image.alt || "[图片需单独粘贴]");
+      const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(src);
+      if (!match || match[2].length % 4) {
+        paste.unreadable++;
+        return document.createDocumentFragment();
       }
-      const file: PendingFile = { id: crypto.randomUUID(), name: image.alt || "粘贴的图片",
-        mime: match[1], base64: match[2], size: Math.floor(match[2].replace(/=+$/, "").length * 3 / 4) };
+      const [, mime, base64] = match;
+      embedded = true;
+      const size = Math.floor(base64.replace(/=+$/, "").length * 3 / 4);
+      if (size > MAX_FILE_BYTES) {
+        paste.oversize++;
+        return document.createDocumentFragment();
+      }
+      if (uploads.length >= MAX_FILES || bytes + size > MAX_BATCH_BYTES) {
+        paste.capacity++;
+        return document.createDocumentFragment();
+      }
+      // Check the file signature and the last Base64 quantum without decoding
+      // the full clipboard image just to validate it.
+      const tail = base64.slice(-4);
+      if (fileMimeFromHeader(atob(base64.slice(0, 16))) !== mime || btoa(atob(tail)) !== tail) {
+        paste.unreadable++;
+        return document.createDocumentFragment();
+      }
+      const file: PendingFile = { id: crypto.randomUUID(), name: image.alt || "粘贴的图片", mime, base64, size };
       uploads.push(file);
+      bytes += size;
       return fileMarker(file.id);
     });
-    if (uploads.length) queueFiles(session, async () => uploads, undefined, clean);
-    else if (clean.textContent?.trim() || clean.childElementCount) {
-      const buffer = element("div");
-      buffer.append(clean);
-      session.editor.chain().focus().insertContent(buffer.innerHTML).run();
+
+    if (files.length && !embedded) {
+      // Some pasteboards provide HTML for the text and a separate file list for
+      // the images. Keep the text and use those files instead of HTML URLs.
+      paste.unreadable = 0;
+      queueFiles(session, async () => {
+        const images: PendingFile[] = [];
+        let total = 0;
+        for (const file of files) {
+          if (file.size > MAX_FILE_BYTES) { paste.oversize++; continue; }
+          if (images.length >= MAX_FILES || total + file.size > MAX_BATCH_BYTES) { paste.capacity++; continue; }
+          try {
+            const [image] = await loadImages([file]);
+            images.push(image);
+            total += image.size;
+            paste.fragment.append(fileMarker(image.id));
+          } catch {
+            paste.unreadable++;
+          }
+        }
+        return images;
+      }, undefined, paste);
     } else {
-      const plain = clipboard.getData("text/plain");
-      if (plain) session.editor.commands.insertContent(textFragmentHtml(plain));
+      if (!paste.fragment.childElementCount && !paste.fragment.textContent?.trim()) {
+        const plain = clipboard.getData("text/plain");
+        if (plain) paste.fragment.append(textFragment(plain));
+      }
+      queueFiles(session, async () => uploads, undefined, paste);
     }
     return true;
   }
@@ -1158,8 +1220,10 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     readerQuery = "";
     syncImageMatches = undefined;
     const host = element("div", undefined, "notes-editor-host");
-    const title = textInput("text", item?.title ?? suggested);
-    title.maxLength = 200;
+    const pasteNotice = element("span", undefined, "notes-paste-notice");
+    pasteNotice.setAttribute("role", "status");
+    const title = textInput("text", item?.title ?? Array.from(suggested).slice(0, MAX_NOTE_NAME).join(""));
+    title.maxLength = MAX_NOTE_NAME;
     title.placeholder = "可选，留空时显示正文摘要";
     const date = textInput("date", item?.recordDate ?? today());
     const files = new Map((item?.files ?? []).map(file => [file.id, file]));
@@ -1186,7 +1250,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     const session: Edit = {
       epoch: index.epoch, id: item?.id ?? crypto.randomUUID(), folder: parent, editor, host, title, date, revision: 0, saved: 0,
       committed: new Set(item?.files.map(file => file.id)), files, pending: new Map(initial.map(file => [file.id, file])),
-      loading: Promise.resolve(), error: "", insertions: new Set(),
+      loading: Promise.resolve(), error: "", insertions: new Set(), pasteNotice,
     };
     edit = session;
     void invoke("set_note_editing_cmd", { editing: true }).catch(() => {});
@@ -1235,6 +1299,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     heading.append(context, actions);
     header.append(heading, editorToolbar(session));
     const footer = element("p", "正文自动保存 · 可粘贴或把截图拖入正文", "notes-document-footer");
+    footer.append(pasteNotice);
     detail.replaceChildren(header, notesDocument(host), footer);
     editor.mount(host);
     title.addEventListener("input", () => changed(session));
@@ -1265,7 +1330,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     session: Edit,
     load: () => Promise<PendingFile[]>,
     at?: number,
-    fragment?: DocumentFragment,
+    paste?: PasteInsertion,
   ) {
     clearTimeout(saveTimer);
     const selection = session.editor.state.selection;
@@ -1275,27 +1340,42 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       const files = await load();
       if (edit !== session) return;
       const present = serializeBody(session.editor.getHTML(), new Set(session.files.keys())).fileIds;
-      const existingBytes = present.reduce((total, id) => total + (session.committed.has(id) ? 0 : session.pending.get(id)?.size ?? 0), 0);
-      if (present.length + files.length > MAX_FILES || existingBytes + files.reduce((total, file) => total + file.size, 0) > MAX_BATCH_BYTES) {
-        throw new Error("每篇最多 30 个附件，每次保存最多 30 MB 新附件。");
-      }
+      let availableBytes = MAX_BATCH_BYTES - present.reduce((total, id) =>
+        total + (session.committed.has(id) ? 0 : session.pending.get(id)?.size ?? 0), 0);
+      let availableSlots = MAX_FILES - present.length;
+      const accepted: PendingFile[] = [];
       for (const file of files) {
+        if (availableSlots <= 0 || file.size > availableBytes) {
+          if (!paste) throw new Error("每篇最多 30 个附件，每次保存最多 30 MB 新附件。");
+          paste.capacity++;
+          paste.fragment.querySelector(`[data-note-file="${file.id}"]`)?.remove();
+          continue;
+        }
+        availableSlots--;
+        availableBytes -= file.size;
+        accepted.push(file);
+      }
+      for (const file of accepted) {
         session.pending.set(file.id, file);
         session.files.set(file.id, { id: file.id, name: file.name, mime: file.mime, ocrText: null });
       }
       session.insertions.delete(insertion);
       const chain = session.editor.chain().focus();
-      if (fragment) {
+      if (paste) {
         const buffer = element("div");
-        buffer.append(fragment);
-        chain.insertContentAt(insertion, buffer.innerHTML);
+        buffer.append(paste.fragment);
+        if (buffer.childElementCount || buffer.textContent?.trim()) chain.insertContentAt(insertion, buffer.innerHTML).run();
+        session.pasteNotice.textContent = [
+          paste.oversize ? `${paste.oversize} 张图片超过 10 MB，未插入。` : "",
+          paste.capacity ? `${paste.capacity} 张图片因附件数量或总大小超限，未插入。` : "",
+          paste.unreadable ? `${paste.unreadable} 张图片无法直接粘贴，请单独插入。` : "",
+        ].filter(Boolean).join(" ");
       } else {
         chain.insertContentAt(insertion, [
-          ...files.map(file => ({ type: attachmentType, attrs: { fileId: file.id } })),
+          ...accepted.map(file => ({ type: attachmentType, attrs: { fileId: file.id } })),
           { type: "paragraph" },
-        ]);
+        ]).run();
       }
-      chain.run();
     }).catch(error => {
       if (edit === session) {
         fail(error);
@@ -1436,8 +1516,8 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
 
   async function showFolderForm(existing?: Folder, application?: NotesApplication, suggested?: string) {
     const form = element("div", undefined, "notes-folder-form");
-    const name = textInput("text", existing?.name ?? (application ? `${application.company} · ${application.title}` : ""));
-    name.maxLength = 200;
+    const name = textInput("text", existing?.name ?? (application ? suggestedFolderName(application) : ""));
+    name.maxLength = MAX_NOTE_NAME;
     const appSearch = textInput("search");
     appSearch.placeholder = "按公司或岗位搜索";
     const apps = element("select");
@@ -1682,26 +1762,21 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     showDropIndicator(edit, position);
   }
 
-  function nativeDrop(paths: string[], position?: DropPosition) {
+  function nativeDrop(token?: string, position?: DropPosition, error?: string) {
     clearDropIndicator();
-    if (root.classList.contains("hidden") || !paths.length) return;
+    if (root.classList.contains("hidden")) return;
     const session = edit;
     if (!session) { notify("请先进入编辑，再把图片拖入正文。", true); return; }
+    if (error) { notify(error, true); return; }
+    if (!token) return;
     const at = position ? dropPoint(session, position) : undefined;
     if (position && at === undefined) { notify("请将图片拖到心得正文区域。", true); return; }
-    queueFiles(session, async () => {
-      if (paths.length > MAX_FILES) throw new Error("一次最多拖入 30 张图片。");
-      const files: PendingFile[] = [];
-      let size = 0;
-      for (const path of paths) {
-        const file = await invoke<FileContents>("read_note_drop_cmd", { path });
-        const bytes = Math.floor(file.base64.replace(/=+$/, "").length * 3 / 4);
-        size += bytes;
-        if (size > MAX_BATCH_BYTES) throw new Error("拖入的图片合计超过 30 MB。");
-        files.push({ ...file, id: crypto.randomUUID(), size: bytes });
-      }
-      return files;
-    }, at);
+    // Claim immediately, before waiting for earlier insertions in the editor queue.
+    const dropped = invoke<FileContents[]>("read_note_drop_cmd", { token });
+    void dropped.catch(() => {});
+    queueFiles(session, async () => (await dropped).map(file => ({
+      ...file, id: crypto.randomUUID(), size: Math.floor(file.base64.replace(/=+$/, "").length * 3 / 4),
+    })), at);
   }
 
   function archiveReplaced() {

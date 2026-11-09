@@ -92,17 +92,20 @@ export function textFragment(text: string): DocumentFragment {
   return fragment;
 }
 
+export function fileMimeFromHeader(header: string) {
+  if (header.startsWith("\x89PNG\r\n\x1a\n")) return "image/png";
+  if (header.startsWith("\xff\xd8\xff")) return "image/jpeg";
+  if (header.startsWith("GIF87a") || header.startsWith("GIF89a")) return "image/gif";
+  if (header.startsWith("RIFF") && header.slice(8) === "WEBP") return "image/webp";
+  if (header.startsWith("%PDF-")) return "application/pdf";
+  return null;
+}
+
 export async function loadFile(file: File): Promise<PendingFile> {
   if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} 超过 10 MB。`);
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const header = String.fromCharCode(...bytes.subarray(0, 12));
-  let mime: string;
-  if (header.startsWith("\x89PNG\r\n\x1a\n")) mime = "image/png";
-  else if (header.startsWith("\xff\xd8\xff")) mime = "image/jpeg";
-  else if (header.startsWith("GIF87a") || header.startsWith("GIF89a")) mime = "image/gif";
-  else if (header.startsWith("RIFF") && header.slice(8) === "WEBP") mime = "image/webp";
-  else if (header.startsWith("%PDF-")) mime = "application/pdf";
-  else throw new Error(`${file.name} 不是支持的图片或 PDF。`);
+  const mime = fileMimeFromHeader(String.fromCharCode(...bytes.subarray(0, 12)));
+  if (!mime) throw new Error(`${file.name} 不是支持的图片或 PDF。`);
   // Avoid spreading a whole screenshot onto the JS stack.
   let binary = "";
   for (let at = 0; at < bytes.length; at += 8192) {

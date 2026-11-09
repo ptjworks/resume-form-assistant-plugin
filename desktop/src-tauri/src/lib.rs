@@ -1992,6 +1992,7 @@ pub fn run() {
             }
         }))
         .manage(note_commands::NoteEditing::default())
+        .manage(note_commands::NoteDrops::default())
         .manage(AppState {
             quit_guard: Mutex::new(None),
             host: Mutex::new(None),
@@ -2361,6 +2362,11 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
+            }
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position, .. }) =
+                event
+            {
+                note_commands::grant_native_drop(window, paths, position);
             }
             if matches!(event, tauri::WindowEvent::Focused(true)) {
                 telemetry::focused(window);

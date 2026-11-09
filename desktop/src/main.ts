@@ -541,6 +541,10 @@ if (events?.listen) {
     });
   }
   void events.listen("tauri://drag-leave", () => notes.nativeDrag());
+  void events.listen("note-image-drop", ({ payload }) => {
+    if (views.notes.classList.contains("hidden") || !payload || typeof payload !== "object") return;
+    notes.nativeDrop(payload.token, dropClientPoint(payload.position), payload.error);
+  });
 }
 
 const inbox = mountInbox(command, {
@@ -563,9 +567,7 @@ const inbox = mountInbox(command, {
           if (typeof payload !== "object" || payload === null) return;
           const paths = payload.paths ?? [];
           if (views.notes.classList.contains("hidden")) handle(paths);
-          else {
-            notes.nativeDrop(paths, dropClientPoint(payload.position));
-          }
+          else if (paths.length) notes.nativeDrop();
         });
       }
     : null,

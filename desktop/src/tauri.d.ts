@@ -21,7 +21,7 @@ declare global {
       event?: {
         listen?: (
           event: string,
-          handler: (event: { payload?: { paths?: string[]; position?: { x: number; y: number } } | string }) => void,
+          handler: (event: { payload?: { paths?: string[]; token?: string; error?: string; position?: { x: number; y: number } } | string }) => void,
         ) => Promise<() => void>;
       };
     };
