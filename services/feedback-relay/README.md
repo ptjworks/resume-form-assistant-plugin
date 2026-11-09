@@ -86,7 +86,7 @@ GET /releases?per_page=<1～100>&page=<1～10>
 - 参数只认 `per_page` 和 `page`，不给时和 GitHub 一样是 30 和 1。超范围、不是整数、重复或者带了别的参数，一律返回 400，不去问 GitHub。
 - 返回和 GitHub 同样的 JSON 数组，分页结果也一样，但每条只留 `tag_name`、`draft`、`prerelease`、`html_url`。
 - 草稿只留 `"draft": true`，版本号和地址是 `null`：带口令去问时 GitHub 会把草稿也列出来，不能从这里外泄。条目不删，每页条数和 GitHub 一致。
-- 不管请求的 `per_page` 是多少，中转都按每页 100 条去问 GitHub，再切出请求的那一段。上游最多只有 10 种请求，换着参数刷也刷不光额度。
+- 不管请求的 `per_page` 是多少，中转都按每页 100 条去问 GitHub，再切出请求的那一段。上游最多只有 10 种请求，查到的结果有缓存，换着参数刷也不会多问 GitHub（GitHub 出错时见「已知的限制」）。
 - 每个上游页在 Cloudflare 的边缘缓存（Cache API）里存 10 分钟，每个机房各存一份，不占 KV。响应头 `X-Relay-Cache` 是 `hit`（全部来自缓存）或 `miss`。
 - 去问 GitHub 时带 `GITHUB_TOKEN`：匿名额度按 Cloudflare 的出口 IP 算，和别人的 Worker 共用，常常不够。口令被拒（401）时改用匿名再问一次；没配口令就直接匿名问。
 - GitHub 出错时不缓存，原样告诉桌面：连不上或超时（8 秒）返回 502 `github_unreachable`；403、429 返回 503 `github_rate_limited`；其他非 2xx 返回 502 `github_error`（带 `status`）；返回的不是列表返回 502 `github_bad_response`。桌面只把 200 的列表当作查到了。
@@ -175,3 +175,4 @@ op-dev read "op://Dev/app-feedback-relay POLL_SECRET/credential" | npx wrangler 
 - 旧索引超过 200 个 id 时只看前 200 个，也不会删。11-09 部署前看过，生产里的旧索引是空的（`[]`）。
 - 部署后可以用 `/export` 里 `status` 为 `pending` 的条数和 `/pending` 对一下，确认没有漏掉的报告。
 - `/releases` 的缓存按机房各存一份，GitHub 发了新版本后，各地最多晚 10 分钟看到。缓存没有全局清空的入口，等它过期就行。
+- `/releases` 没有按 IP 限流，GitHub 出错时也不缓存（#497 要求出错不留缓存），所以 GitHub 出错期间每个请求都会去问一次 GitHub，占用 `GITHUB_TOKEN` 的额度（每小时 5000 次，和 `/create-issue` 共用）。GitHub 正常时同一机房 10 分钟内最多问 10 次。按 IP 限流要每次写 KV，反而会让人借 `/releases` 刷掉 `/feedback` 用的 KV 写入额度，所以没加；真被刷了，再考虑 Cloudflare 的 Rate Limiting 绑定。

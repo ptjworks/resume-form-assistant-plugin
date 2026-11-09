@@ -251,10 +251,10 @@ enum PageError {
 }
 
 impl PageError {
-    /// GitHub 这样失败时，同一页改问中转。只有 GitHub 明确答复了的（403、429 以外的
-    /// 4xx）不再问：中转代查的是同一个地址，答复也一样。
+    /// GitHub 这样失败时，同一页改问中转。只有 GitHub 明确答复了的 4xx（403、429 已归入
+    /// 限流，408 是超时）不再问：中转代查的是同一个地址，答复也一样。
     fn worth_asking_relay(&self) -> bool {
-        !matches!(self, PageError::Status(code) if (400..500).contains(code))
+        !matches!(self, PageError::Status(code) if (400..500).contains(code) && *code != 408)
     }
 
     fn into_command_error(self) -> CommandError {
@@ -307,8 +307,10 @@ async fn fetch_latest_from(github: &str, relay: &str) -> Result<Option<UpdateInf
 ///
 /// 先问 GitHub。GitHub 这一页没要到（见 [`PageError::worth_asking_relay`]），就改问中转，
 /// 后面的页也都问中转：GitHub 这时多半一直连不上，每页再等它超时一次只是白等。
-/// 前后两段来自不同来源时，交界处可能重复几条（中转看得到草稿，草稿只剩
-/// `draft: true` 占位）；只挑最高的版本，重复不碍事。
+/// 前后两段来自不同来源时，交界处可能重复或漏掉几条：中转带口令去问，列表里多出
+/// 草稿的占位；中转的页最多缓存 10 分钟，这期间新发的版本会让后面的页错开。列表从新
+/// 到旧排，交界在第 100 条前后，影响不到最新的桌面版本（现在一共几十条，只有一页）。
+/// 中转只代查前 10 页。
 ///
 /// 两边都没要到时报 GitHub 的错，那是用户这边真实的情况。
 async fn collect_releases<F, Fut>(mut fetch: F) -> Result<Vec<Value>, CommandError>
@@ -758,10 +760,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_page_github_cannot_give_is_asked_again_from_the_relay() {
-        // 连不上、超时、5xx、限流，以及 GitHub 给的东西读不懂，都改问中转。
+        // 连不上、超时（包括 408）、5xx、限流，以及 GitHub 给的东西读不懂，都改问中转。
         for problem in [
             PageError::Unreachable,
             PageError::RateLimited,
+            PageError::Status(408),
             PageError::Status(500),
             PageError::Status(503),
             PageError::NotJson,
