@@ -707,6 +707,16 @@ test('/releases passes GitHub failures on and does not ask GitHub again for a mi
     const unreachable = await local()(RELEASES);
     assert.equal(unreachable.status, 502);
     assert.deepEqual(unreachable.data, { ok: false, error: 'github_unreachable' });
+    // 响应头到了、正文读到一半断开，也算连不上，不算返回的东西不对。
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('[{"tag_name":'));
+        controller.error(new TypeError('connection reset'));
+      },
+    }), { status: 200 });
+    const cut = await local()(RELEASES);
+    assert.equal(cut.status, 502);
+    assert.deepEqual(cut.data, { ok: false, error: 'github_unreachable' });
   } finally {
     globalThis.fetch = realFetch;
   }

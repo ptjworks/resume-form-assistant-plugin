@@ -8,8 +8,9 @@
 //   新鲜结果  10 分钟，期间不再问 GitHub；
 //   上次成功  24 小时，GitHub 出错时拿它顶上；
 //   失败标记  60 秒，期间不再问 GitHub，有上次成功的结果就返回它，没有就返回这次的错误。
-// 这样每个机房每页最多 10 分钟问一次 GitHub，GitHub 出错期间最多每分钟一次，有人刷这个接口
-// 也耗不光 GITHUB_TOKEN 的额度（Muse 的 /create-issue 也靠它）。
+// 这样每个机房每页最多 10 分钟问一次 GitHub，GitHub 出错期间最多每分钟一次。在一处反复刷这个
+// 接口，不会多问 GitHub；要耗掉 GITHUB_TOKEN 的额度（Muse 的 /create-issue 也靠它），得把请求分散到
+// 很多机房（全局上限是机房数 × 10 页 × 每小时 6 次）。
 //
 // 带 GITHUB_TOKEN 去问：匿名额度按 Cloudflare 的出口 IP 算，和别人的 Worker 共用，常常不够。
 // 口令失效（401）时改用匿名再问一次。带口令时 GitHub 会把草稿也列出来：草稿只留 draft: true，
@@ -88,9 +89,16 @@ async function upstreamPage(page, env, signal) {
     await response.body?.cancel();
     throw new UpstreamError(502, 'github_error', response.status);
   }
+  // 正文读到一半超时或断开算连不上，读完了解析不了才算返回的东西不对。
+  let text;
+  try {
+    text = await response.text();
+  } catch {
+    throw new UpstreamError(502, 'github_unreachable');
+  }
   let body;
   try {
-    body = await response.json();
+    body = JSON.parse(text);
   } catch {
     throw new UpstreamError(502, 'github_bad_response');
   }

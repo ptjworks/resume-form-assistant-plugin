@@ -97,7 +97,7 @@ GET /releases?per_page=100&page=<1～10>
 | 上次成功的结果 | 24 小时 | GitHub 出错时拿它顶上，照样返回 200 |
 | 失败标记 | 60 秒 | 期间不问 GitHub：有上次成功的结果就返回它，没有就返回这次的错误 |
 
-所以每个机房每页最多 10 分钟问一次 GitHub，GitHub 出错期间最多每分钟一次。有人刷这个接口也耗不光 `GITHUB_TOKEN` 的额度（Muse 的 `/create-issue` 也靠它），不用按 IP 限流。响应头 `X-Relay-Cache`：`hit` 是这次没问 GitHub，`miss` 是刚问过，`stale` 是 GitHub 出错、返回的是上次成功的结果。
+所以每个机房每页最多 10 分钟问一次 GitHub，GitHub 出错期间最多每分钟一次。在一处反复刷这个接口不会多问 GitHub，所以没按 IP 限流。响应头 `X-Relay-Cache`：`hit` 是这次没问 GitHub，`miss` 是刚问过，`stale` 是 GitHub 出错、返回的是上次成功的结果。
 
 ## KV 里的键
 
@@ -183,3 +183,4 @@ op-dev read "op://Dev/app-feedback-relay POLL_SECRET/credential" | npx wrangler 
 - 旧索引超过 200 个 id 时只看前 200 个，也不会删。11-09 部署前看过，生产里的旧索引是空的（`[]`）。
 - 部署后可以用 `/export` 里 `status` 为 `pending` 的条数和 `/pending` 对一下，确认没有漏掉的报告。
 - `/releases` 的缓存按机房各存一份，GitHub 发了新版本后，各地最多晚 10 分钟看到；GitHub 一直出错时，最多拿 24 小时前的结果顶上。缓存没有全局清空的入口，等它过期就行。
+- 缓存按机房各存一份，所以 `/releases` 问 GitHub 的次数没有全局上限：最多是机房数 × 10 页 × 每小时 6 次。有人把请求分散到很多机房，还是可能耗掉 `GITHUB_TOKEN` 每小时 5000 次的额度，连带 Muse 的 `/create-issue`。真遇到了，给 `/releases` 换一个只读、单独的口令，或者加全局计数。
