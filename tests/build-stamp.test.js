@@ -51,10 +51,12 @@ test("the release zip's build.mjs carries the first 8 hex digits of the commit i
   try {
     const zip = packPlugin(repo, path.join(dir, "plugin.zip"));
     const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
-    const text = readZipEntry(zip, BUILD_FILE);
+    // git archive follows core.autocrlf (CRLF on a Windows runner); git show does not. Compare the text, not the line ends.
+    const lf = text => String(text).replace(/\r\n/g, "\n");
+    const text = lf(readZipEntry(zip, BUILD_FILE));
     assert.match(text, new RegExp(`^export const BUILD = "${head.slice(0, 8)}";$`, "m"));
     // Every other file is the commit's own.
-    assert.equal(readZipEntry(zip, "manifest.json"), execFileSync("git", ["show", "HEAD:extension/manifest.json"], { cwd: repo, encoding: "utf8" }));
+    assert.equal(lf(readZipEntry(zip, "manifest.json")), lf(execFileSync("git", ["show", "HEAD:extension/manifest.json"], { cwd: repo, encoding: "utf8" })));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
