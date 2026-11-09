@@ -4,7 +4,7 @@
 //! （#28）。所以先写一个临时文件、`sync_all`、再 rename 到目标名。中途任何一步
 //! 失败都只留下（并删掉）那个临时文件，用户上一次成功的备份原封不动。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -113,6 +113,12 @@ fn build(
     let digest = add_file(&mut zip, options, DATABASE_PATH, source.database_snapshot)?;
     entries.push(digest);
 
+    // Keep note files only when the same snapshot references them. An interrupted save may
+    // leave a complete file on disk before its SQLite transaction commits.
+    let note_files: BTreeSet<&str> = source.referenced_files.iter()
+        .filter_map(|file| file.path.starts_with("attachments/notes/").then_some(file.path.as_str()))
+        .collect();
+
     // 2. 档案目录里清单允许的部分。
     let mut walk: Vec<PathBuf> = vec![source.archive_dir.to_path_buf()];
     while let Some(dir) = walk.pop() {
@@ -134,6 +140,10 @@ fn build(
                     continue;
                 }
                 Disposition::Include => {}
+            }
+            if rel.starts_with("attachments/notes/") && !note_files.contains(rel.as_str()) {
+                skipped.push((rel, "心得正文未引用此文件".into()));
+                continue;
             }
             // 目录项自己的类型，不跟着链接走（Windows 的目录连接也算链接）。
             let kind = child.file_type()?;

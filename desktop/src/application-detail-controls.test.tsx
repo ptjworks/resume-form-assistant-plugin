@@ -298,7 +298,7 @@ test("an empty archive gives the whole page to the empty state", async () => {
 
 test("the top bar keeps every route and the install entry, without a fixed version or avatar", () => {
   const routes = Array.from(document.querySelectorAll<HTMLElement>(".topbar [data-route]"), (node) => node.textContent);
-  expect(routes).toEqual(["申请", "简历", "招聘通知", "待办", "设置"]);
+  expect(routes).toEqual(["申请", "简历", "招聘通知", "待办", "心得", "设置"]);
   expect(document.getElementById("nav-install-extension")).toBeTruthy();
   const version = document.getElementById("app-version")!;
   expect(version.hidden).toBe(true);

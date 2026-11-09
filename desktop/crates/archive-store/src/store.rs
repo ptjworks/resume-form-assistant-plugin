@@ -210,7 +210,7 @@ impl ArchiveStore {
             }
         };
 
-        Ok(ArchiveStore {
+        let store = ArchiveStore {
             conn: Mutex::new(conn),
             cfg,
             identity: Mutex::new(identity),
@@ -219,7 +219,11 @@ impl ArchiveStore {
             resume_file_writes: Mutex::new(()),
             _pointer_lock: pointer_lock,
             _archive_lock: archive_lock,
-        })
+        };
+        if schema_version >= 10 {
+            let _ = store.clean_interrupted_note_writes();
+        }
+        Ok(store)
     }
 
     /// 把数据库导出成一个一致性快照文件（D12 备份用）。
@@ -318,6 +322,23 @@ impl ArchiveStore {
             }
             reference.sha256.make_ascii_lowercase();
             referenced_files.push(reference);
+        }
+        let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if version >= 10 {
+            let mut files = conn.prepare("SELECT id,size_bytes,sha256 FROM note_files")?;
+            for row in files.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+            })? {
+                let (id, size_bytes, sha256) = row?;
+                if size_bytes < 0 || sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(StoreError::Validation("invalid note file metadata".into()));
+                }
+                referenced_files.push(crate::BackupFileReference {
+                    path: crate::notes::file_path(&id)?,
+                    size_bytes,
+                    sha256,
+                });
+            }
         }
         referenced_files.sort_by(|left, right| left.path.cmp(&right.path));
         Ok(BackupSnapshotInventory {

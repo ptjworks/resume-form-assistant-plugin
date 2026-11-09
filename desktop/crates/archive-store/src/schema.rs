@@ -10,7 +10,7 @@
 //! - message_receipts 持久化提交回执(含 sourceRestoreEpoch 与 payloadSha256)与永久删除墓碑。
 //! - schema_migrations 记录迁移历史;PRAGMA user_version 为权威版本。
 
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 #[derive(Clone, Copy)]
 pub struct Migration {
@@ -358,6 +358,40 @@ CREATE TABLE resume_files (
 CREATE UNIQUE INDEX idx_resume_files_default ON resume_files(kind) WHERE is_default = 1;
 "#;
 
+const V10_INTERVIEW_NOTES: &str = r#"
+CREATE TABLE note_folders (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  application_id TEXT REFERENCES applications(id) ON DELETE SET NULL,
+  recycled INTEGER NOT NULL DEFAULT 0 CHECK (recycled IN (0,1))
+);
+CREATE UNIQUE INDEX idx_note_folders_application ON note_folders(application_id) WHERE recycled=0;
+
+CREATE TABLE interview_notes (
+  id TEXT PRIMARY KEY,
+  folder_id TEXT NOT NULL REFERENCES note_folders(id),
+  title TEXT NOT NULL,
+  record_date TEXT NOT NULL,
+  body TEXT NOT NULL,
+  plain_text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0,1)),
+  recycled INTEGER NOT NULL DEFAULT 0 CHECK (recycled IN (0,1))
+);
+CREATE INDEX idx_interview_notes_folder ON interview_notes(folder_id, record_date, created_at);
+
+CREATE TABLE note_files (
+  id TEXT PRIMARY KEY,
+  note_id TEXT NOT NULL REFERENCES interview_notes(id),
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  ocr_text TEXT
+);
+CREATE INDEX idx_note_files_note ON note_files(note_id);
+"#;
+
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         to_version: 1,
@@ -403,5 +437,10 @@ pub const MIGRATIONS: &[Migration] = &[
         to_version: 9,
         description: "resume files uploaded to job sites: resume, photo, transcript and other material",
         sql: V9_RESUME_FILES,
+    },
+    Migration {
+        to_version: 10,
+        description: "interview note folders, notes and private attachments (#490)",
+        sql: V10_INTERVIEW_NOTES,
     },
 ];

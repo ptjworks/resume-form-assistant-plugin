@@ -89,7 +89,7 @@ type Listen = (
 
 export function mountApplications(
   invoke: Invoke,
-  options: { listen?: Listen; searchDebounceMs?: number; coalesceMs?: number } = {},
+  options: { listen?: Listen; searchDebounceMs?: number; coalesceMs?: number; openNotes?: (application: ApplicationSummary) => void } = {},
 ) {
   const ctl = createApplicationsController();
   const msg = must("apps-msg");
@@ -468,7 +468,12 @@ export function mountApplications(
           <button type="button" role="tab" id="detail-tab-timeline" data-detail-tab="timeline" aria-controls="detail-panel-timeline">时间线 <span class="tab-count">${events.length}</span></button>
           <button type="button" role="tab" id="detail-tab-evidence" data-detail-tab="evidence" aria-controls="detail-panel-evidence">招聘通知 <span class="tab-count">${evidence.length}</span></button>
           <button type="button" role="tab" id="detail-tab-snapshots" data-detail-tab="snapshots" aria-controls="detail-panel-snapshots">简历快照 <span class="tab-count">${snapshots.length}</span></button>
+          ${options.openNotes ? `<button type="button" role="tab" id="detail-tab-notes" data-detail-tab="notes" aria-controls="detail-panel-notes">心得</button>` : ""}
         </div>
+        ${options.openNotes ? `<section id="detail-panel-notes" class="detail-panel" role="tabpanel" aria-labelledby="detail-tab-notes" tabindex="0" data-detail-panel="notes" hidden>
+          <p class="panel-note">回看或补充这条申请的笔试、面试心得。</p>
+          <button type="button" data-act="open-notes">打开心得文件夹</button>
+        </section>` : ""}
         <section id="detail-panel-evidence" class="detail-panel" role="tabpanel" aria-labelledby="detail-tab-evidence" tabindex="0" data-detail-panel="evidence" hidden>
         <h3 class="sr-only">招聘通知（${evidence.length}）</h3>
         ${evidenceNote(app.reply_evidence_state)
@@ -549,6 +554,7 @@ export function mountApplications(
       detail.querySelectorAll<HTMLElement>("button[data-act]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const act = btn.dataset.act ?? "";
+          if (act === "open-notes") return options.openNotes?.(app);
           const evidenceId = btn.dataset.evidence;
           const snapshotId = btn.dataset.snapshot;
           if (act === "snapshot" && snapshotId) return void openSnapshot(snapshotId);
@@ -954,5 +960,14 @@ export function mountApplications(
     }
   });
 
-  return { refreshList, refreshView, reloadArchive, ctl };
+  async function openFromNotes(id: string, recycled: boolean) {
+    input("app-search").value = "";
+    selectEl("app-stage").value = "all";
+    selectEl("app-recycle").value = recycled ? "recycled" : "active";
+    ctl.setOffset(0);
+    await refreshList();
+    await loadDetail(id);
+  }
+
+  return { refreshList, refreshView, reloadArchive, openFromNotes, ctl };
 }

@@ -85,7 +85,7 @@ label.button-like.disabled { cursor: default; opacity: .45; }
 .update-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: #d9a53c; vertical-align: 2px; }
 #nav-install-extension { flex: none; font-size: 13px; border-radius: 999px; padding-inline: 14px; border-color: #3b4656; }
 main { min-width: 0; min-height: 0; overflow: auto; }
-.view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos) { padding: 28px 32px 40px; max-width: 1160px; margin: auto; }
+.view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos):not(#view-notes) { padding: 28px 32px 40px; max-width: 1160px; margin: auto; }
 h1 { margin: 0; font-size: 24px; line-height: 30px; font-weight: 650; letter-spacing: -.025em; }
 h2 { margin: 28px 0 8px; font-size: 18px; }
 h3 { font-size: 14px; font-weight: 600; }

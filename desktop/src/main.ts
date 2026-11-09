@@ -1,5 +1,7 @@
 import "./attachments.css";
 import "./mailbox.css";
+import "./notes/notes.css";
+import { mountNotes, type NotesApplication } from "./notes/view.ts";
 import { installFrontendErrors } from "./feedback.ts";
 import { mountFeedbackSettings } from "./react/feedback-mount.tsx";
 import { mountUsageSettings } from "./react/usage-mount.tsx";
@@ -68,6 +70,7 @@ const views: Record<string, HTMLElement> = {
   resume: must("view-resume"),
   inbox: must("view-inbox"),
   todos: must("view-todos"),
+  notes: must("view-notes"),
   settings: must("view-settings"),
 };
 
@@ -88,12 +91,15 @@ function showRoute(name: string | undefined) {
  * 已经在「简历」页时再切过去不刷新，免得把正在填的「我的信息」冲掉。返回是否真的切了。
  */
 let routeChange: Promise<boolean> | null = null;
-async function navigate(route: string | undefined): Promise<boolean> {
+async function navigate(route: string | undefined, refreshApplications = true): Promise<boolean> {
   // 上一次切页还在等用户回答离开确认：这次不叠加第二个确认。
   if (routeChange) return false;
   const onResume = !views.resume.classList.contains("hidden");
-  if (onResume && route !== "resume") {
-    routeChange = resumeView.confirmLeave();
+  const onNotes = !views.notes.classList.contains("hidden");
+  const gate = onResume && route !== "resume" ? resumeView.confirmLeave
+    : onNotes && route !== "notes" ? notes.confirmLeave : null;
+  if (gate) {
+    routeChange = gate();
     try {
       if (!(await routeChange)) return false;
     } finally {
@@ -105,7 +111,7 @@ async function navigate(route: string | undefined): Promise<boolean> {
   showRoute(route);
   if (route !== "settings") leaveBackup();
   if (enteringResume) resumeView.refresh();
-  if (enteringApplications) void applications.refreshView();
+  if (enteringApplications && refreshApplications) void applications.refreshView();
   return true;
 }
 
@@ -117,7 +123,9 @@ must("cloud-auto-open").addEventListener("click", async () => {
 
 document.querySelectorAll<HTMLElement>(".nav button[data-route]").forEach((btn) => {
   btn.addEventListener("click", async () => {
+    const enteringNotes = btn.dataset.route === "notes" && views.notes.classList.contains("hidden");
     if (!(await navigate(btn.dataset.route))) return;
+    if (enteringNotes) void notes.activate();
     // 待办的逾期汇总要在进入视图时算一次，不能在启动时就把它消费掉。
     if (btn.dataset.route === "todos") void showTodos().catch(() => {});
     if (btn.dataset.route === "settings" && !must("settings-data").hidden) void showBackup().catch(() => {});
@@ -456,7 +464,27 @@ const command: Invoke = invoke ?? notConnected;
 // 自己刚拖进来的路径，只在这一次导入里用；档案里的存储路径永远不下发到界面。
 const dialog = window.__TAURI__?.dialog;
 const events = window.__TAURI__?.event;
+async function openNotes(application: NotesApplication, suggested?: string) {
+  if (await navigate("notes")) await notes.activate(application, suggested);
+}
+const notes = mountNotes(views.notes, command, (id, recycled) => {
+  void navigate("applications", false).then(moved => {
+    if (moved) return applications.openFromNotes(id, recycled);
+  });
+});
+if (events?.listen) void events.listen("note-quit-requested", async () => {
+  if (routeChange) return;
+  routeChange = notes.confirmLeave();
+  try {
+    if (await routeChange) await command("quit_app");
+  } catch (error) {
+    notes.fail(error);
+  } finally {
+    routeChange = null;
+  }
+});
 const applications = mountApplications(command, {
+  openNotes: application => void openNotes(application),
   listen: events?.listen
     ? (name, handler) => events.listen?.(name, (event) => handler({ payload: event?.payload }))
     : undefined,
@@ -513,7 +541,13 @@ const inbox = mountInbox(command, {
     ? (handle: (paths: string[]) => void) => {
         void events.listen?.("tauri://drag-drop", (event) => {
           const payload = event?.payload;
-          handle(typeof payload === "object" && payload !== null ? payload.paths ?? [] : []);
+          if (typeof payload !== "object" || payload === null) return;
+          const paths = payload.paths ?? [];
+          if (views.notes.classList.contains("hidden")) handle(paths);
+          else {
+            const position = payload.position;
+            notes.nativeDrop(paths, position && { x: position.x / window.devicePixelRatio, y: position.y / window.devicePixelRatio });
+          }
         });
       }
     : null,
@@ -548,6 +582,7 @@ document.addEventListener("keydown", event => {
 
 // 待办只能挂在申请下面：一条申请都没有时，「去新增申请」切到申请页并打开新增表单。
 const showTodos = mountTodos(command, undefined, {
+  writeNote: (application, suggested) => void openNotes(application, suggested),
   createApplication: () => {
     void navigate("applications").then((moved) => {
       if (moved) must("btn-new-app").click();
@@ -576,6 +611,7 @@ const backupPickers = {
 // 「简历」页手里的模板列表和「我的信息」版本号也过时了，三处一起刷新。「待办」进页面时自己会重读。
 async function refreshAfterArchiveReplaced() {
   resumeView.refresh();
+  notes.archiveReplaced();
   await Promise.all([
     applications.reloadArchive().catch((err: unknown) => {
       must("apps-msg").textContent = String(err);
