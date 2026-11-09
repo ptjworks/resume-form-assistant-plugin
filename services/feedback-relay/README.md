@@ -76,7 +76,7 @@ op-sensitive read "op://Dev-Sensitive/app-feedback-relay PRIVATE_READ_SECRET/cre
 
 ## KV 里的键
 
-都在 `FEEDBACK_KV`（id `e4a6992ede1a4ddbbcb16b692da9aa0a`）里，除了限流计数都保留 90 天。
+都在 `FEEDBACK_KV`（id `e4a6992ede1a4ddbbcb16b692da9aa0a`）里，除了限流计数都保留 90 天。`/ack` 改写报告时沿用收到后 90 天的到期时间，不续期（隐私政策写的是最长保留 90 天）。
 
 | 键 | 内容 |
 | --- | --- |
@@ -85,6 +85,7 @@ op-sensitive read "op://Dev-Sensitive/app-feedback-relay PRIVATE_READ_SECRET/cre
 | `priv:<id>` | 私有层 |
 | `privdk:<dedupe_key>:<倒序时间>:<id>` | 按去重键查私有层的索引。倒序时间是 9999999999999 减去收到时的毫秒数，KV 按键名升序列出时就是从新到旧 |
 | `fb:index:pending` | 旧的待处理索引，见下文 |
+| `meta:legacy-index-first-seen` | 第一次看到旧索引的时间，删旧索引时一起删 |
 | `throttle:<ip>` | 限流计数，10 分钟过期 |
 
 ### 待处理标记和旧索引
@@ -93,7 +94,7 @@ op-sensitive read "op://Dev-Sensitive/app-feedback-relay PRIVATE_READ_SECRET/cre
 
 现在每条报告单独写一个 `pending:` 标记键，`/pending` 按前缀列出来，`/ack` 删掉对应的键，谁也不会盖掉谁。收报告时先写标记再写报告：报告写失败时客户端收到 500，只留下一个读不到报告的标记（见下文会被清掉），不会有存进去却进不了 `/pending` 的报告。
 
-部署新代码时旧索引里可能还有没处理的报告：`/pending` 每次先看旧索引在不在，在的话把其中还没处理的补成标记键（一次最多 200 个），然后删掉旧索引，这一次的返回里就带上它们。`/ack` 也会把 id 从旧索引里去掉。部署过程中旧实例还可能往旧索引写，下一次 `/pending` 会再迁一次。
+部署新代码时旧索引里可能还有没处理的报告：`/pending` 每次先看旧索引在不在，在的话把其中还没处理、也还没有标记的补成标记键（一次最多看 200 个），这一次的返回里就带上它们。旧索引只读不改：部署切换的几秒里旧实例还可能往里加 id，新代码改写它就会把刚加的盖掉。第一次看到旧索引一小时后（旧实例早已不在），`/pending` 照样补完标记，再删掉旧索引。`/ack` 不碰旧索引，报告记成已处理后就不会再被补标记。
 
 `/ack` 先把报告记成已处理，再删标记。中途失败留下的标记，下一次 `/pending` 看到报告已处理就删掉。报告暂时读不到（刚写入、别的地区还没同步）的标记会留着，下次再看；收到超过一小时还读不到，说明报告已经过期（从旧索引迁来的标记比报告晚过期），也删掉。
 
@@ -154,4 +155,5 @@ op-dev read "op://Dev/app-feedback-relay POLL_SECRET/credential" | npx wrangler 
 
 - `/export` 每条报告读一次 KV，报告多了会碰到单次请求的 KV 操作上限。现在 90 天内几百条，够用。
 - 限流计数是读出来加一再写回，同一 IP 同时来很多条时可能少算几条，只影响限流的松紧。计数坏了（不是 JSON）就从头算。
-- 部署切换的几秒里，旧实例还可能往旧索引写。如果旧实例写回旧索引时，正好有一次 `/pending` 已经读过旧索引、还没删掉它，旧实例刚加的那条会漏迁。部署后用 `/export` 里 `status` 为 `pending` 的条数和 `/pending` 对一下就能发现。
+- 旧索引超过 200 个 id 时只看前 200 个，也不会删。11-09 部署前看过，生产里的旧索引是空的（`[]`）。
+- 部署后可以用 `/export` 里 `status` 为 `pending` 的条数和 `/pending` 对一下，确认没有漏掉的报告。

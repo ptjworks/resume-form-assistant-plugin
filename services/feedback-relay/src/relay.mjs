@@ -9,7 +9,8 @@
 //   pending:<server_ts>:<id>                 待处理标记，/ack 时删除，90 天
 //   priv:<id>                                私有层，90 天
 //   privdk:<dedupe_key>:<倒序时间>:<id>      按去重键查私有层的索引，90 天
-//   fb:index:pending                         旧的待处理索引，只读出来迁移，不再写入新报告
+//   fb:index:pending                         旧的待处理索引，只读出来补标记，不再写入
+//   meta:legacy-index-first-seen             第一次看到旧索引的时间，一小时后删旧索引
 //   throttle:<ip>                            每个 IP 10 分钟 30 条，10 分钟过期
 
 export const KV_TTL = 90 * 24 * 3600;
@@ -20,6 +21,9 @@ export const PRIVATE_INDEX_PREFIX = 'privdk:';
 export const PRIVATE_MAX_BYTES = 16384;
 export const PENDING_PAGE = 200;
 const LEGACY_MIGRATE_BATCH = 200;
+const LEGACY_SEEN_KEY = 'meta:legacy-index-first-seen';
+// 部署后旧实例最多再活几分钟；第一次看到旧索引一小时后，就不会再有人往里写了。
+const LEGACY_RETIRE_AFTER_MS = 60 * 60 * 1000;
 const ACK_BATCH = 200;
 const PRIVATE_DEFAULT_LIMIT = 5;
 const PRIVATE_MAX_LIMIT = 20;
@@ -191,10 +195,11 @@ function idOfKey(name) {
   return name.slice(name.lastIndexOf(':') + 1);
 }
 
-// 旧版本只把待处理的 id 记在 fb:index:pending 一个键里。这里把其中还没处理的报告
-// 补成标记键，处理完就删掉旧索引；返回补上的报告，让这一次 /pending 就能带上它们。
-// 部署过程中旧实例可能还会往旧索引里写，下一次 /pending 会再迁一次。
-async function migrateLegacyIndex(kv) {
+// 旧版本只把待处理的 id 记在 fb:index:pending 一个键里。这里把其中还没处理的报告补成标记键，
+// 返回补上的报告，让这一次 /pending 就能带上它们。
+// 旧索引只读不改：部署切换时旧实例可能同时往里加 id，改写会把它刚加的盖掉。等第一次看到旧索引
+// 一小时以后（旧实例早已不在），每次照样补完标记，再删掉旧索引。
+async function migrateLegacyIndex(kv, nowMs) {
   const raw = await kv.get(LEGACY_PENDING_INDEX);
   if (raw === null) return [];
   let ids;
@@ -204,42 +209,30 @@ async function migrateLegacyIndex(kv) {
     ids = [];
   }
   if (!Array.isArray(ids)) ids = [];
-  const batch = ids.slice(0, LEGACY_MIGRATE_BATCH);
   const migrated = [];
-  for (const id of batch) {
+  for (const id of ids.slice(0, LEGACY_MIGRATE_BATCH)) {
     if (typeof id !== 'string') continue;
     const item = await readJson(kv, 'fb:' + id);
     if (item?.status !== 'pending') continue;
     const report = item.id === id ? item : { ...item, id };
-    await kv.put(pendingKey(report), '', { expirationTtl: KV_TTL });
+    const marker = pendingKey(report);
+    if (await kv.get(marker) === null) await kv.put(marker, '', { expirationTtl: KV_TTL });
     migrated.push(report);
   }
-  const rest = ids.slice(LEGACY_MIGRATE_BATCH);
-  if (rest.length) await kv.put(LEGACY_PENDING_INDEX, JSON.stringify(rest));
-  else await kv.delete(LEGACY_PENDING_INDEX);
-  return migrated;
-}
-
-async function removeFromLegacyIndex(kv, ids) {
-  const raw = await kv.get(LEGACY_PENDING_INDEX);
-  if (raw === null) return;
-  let index;
-  try {
-    index = JSON.parse(raw);
-  } catch {
-    return;
+  const firstSeen = Number(await kv.get(LEGACY_SEEN_KEY));
+  if (!firstSeen) {
+    await kv.put(LEGACY_SEEN_KEY, String(nowMs), { expirationTtl: KV_TTL });
+  } else if (nowMs - firstSeen >= LEGACY_RETIRE_AFTER_MS && ids.length <= LEGACY_MIGRATE_BATCH) {
+    // 超过 200 个 id 的旧索引一次补不完，留着不删（实际只有零星几个）。
+    await kv.delete(LEGACY_PENDING_INDEX);
+    await kv.delete(LEGACY_SEEN_KEY);
   }
-  if (!Array.isArray(index)) return;
-  const done = new Set(ids);
-  const rest = index.filter(id => !done.has(id));
-  if (rest.length === index.length) return;
-  if (rest.length) await kv.put(LEGACY_PENDING_INDEX, JSON.stringify(rest));
-  else await kv.delete(LEGACY_PENDING_INDEX);
+  return migrated;
 }
 
 // 按 server_ts 从旧到新，最多返回 200 条：积压时先处理最早的，不会有报告一直排不到。
 async function listPending(kv, nowMs) {
-  const migrated = await migrateLegacyIndex(kv);
+  const migrated = await migrateLegacyIndex(kv, nowMs);
   const page = await kv.list({ prefix: PENDING_PREFIX, limit: PENDING_PAGE });
   const items = new Map(migrated.map(item => [item.id, item]));
   for (const key of page.keys) {
@@ -287,10 +280,12 @@ async function storePrivate(kv, item, text) {
     server_ts: item.server_ts,
     private_diagnostics: text,
   };
-  await kv.put(PRIVATE_PREFIX + item.id, JSON.stringify(record), { expirationTtl: KV_TTL });
+  // 先写按去重键查的索引，再写私有层本身：中途失败时只会留下一个查不到内容的索引（读的时候跳过），
+  // 不会有存进去却按去重键查不到的私有层。
   if (item.dedupe_key) {
     await kv.put(privateIndexKey(item.dedupe_key, item.server_ts, item.id), '', { expirationTtl: KV_TTL });
   }
+  await kv.put(PRIVATE_PREFIX + item.id, JSON.stringify(record), { expirationTtl: KV_TTL });
 }
 
 function privateItem(record) {
@@ -403,7 +398,15 @@ async function exportAll(kv) {
   return items;
 }
 
-async function ack(request, kv) {
+// 已处理的报告照收到后 90 天删除，不因为 ack 续期：隐私政策写的是最长保留 90 天。
+// KV 要求到期时间至少在 60 秒以后。
+function expiryOf(item, nowMs) {
+  const received = Date.parse(item.server_ts);
+  const target = Math.floor((Number.isFinite(received) ? received : nowMs) / 1000) + KV_TTL;
+  return { expiration: Math.max(target, Math.floor(nowMs / 1000) + 60) };
+}
+
+async function ack(request, kv, nowMs) {
   let body;
   try {
     body = await readBody(request);
@@ -416,11 +419,11 @@ async function ack(request, kv) {
     const item = await readJson(kv, 'fb:' + id);
     if (!item) continue;
     item.status = 'processed';
-    await kv.put('fb:' + id, JSON.stringify(item), { expirationTtl: KV_TTL });
-    // 先记成已处理再删标记：中途失败时留下的标记，下次 /pending 会清掉。
+    await kv.put('fb:' + id, JSON.stringify(item), expiryOf(item, nowMs));
+    // 先记成已处理再删标记：中途失败时留下的标记，下次 /pending 会清掉。旧索引不用动：
+    // 里面的报告已处理，/pending 就不会再补它的标记。
     await kv.delete(pendingKey({ ...item, id }));
   }
-  await removeFromLegacyIndex(kv, ids);
   return json({ ok: true, acked: ids.length });
 }
 
@@ -508,7 +511,7 @@ export function createWorker({ now = () => new Date() } = {}) {
         return json({ ok: true, count: items.length, items });
       }
       if (url.pathname === '/ack' && request.method === 'POST') {
-        return ack(request, kv);
+        return ack(request, kv, now().getTime());
       }
       if (url.pathname === '/create-issue' && request.method === 'POST') {
         return createIssue(request, env);

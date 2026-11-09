@@ -198,7 +198,7 @@ test('/pending returns at most 200, oldest first', async () => {
   assert.equal(pending.data.items[199].id, uuid(199));
 });
 
-test('reports still listed in the old fb:index:pending are carried over', async () => {
+test('reports still listed in the old fb:index:pending are carried over, and the old index is retired an hour later', async () => {
   const a = await seedItem(uuid(1), '2026-11-08T01:00:00.000Z');
   await seedItem(uuid(2), '2026-11-08T02:00:00.000Z', 'processed');
   const c = await seedItem(uuid(3), '2026-11-08T03:00:00.000Z');
@@ -207,26 +207,48 @@ test('reports still listed in the old fb:index:pending are carried over', async 
 
   const pending = await send('/pending', { secret: POLL });
   assert.deepEqual(pending.data.items.map(item => item.id), [a.id, c.id, fresh]);
-  assert.equal(await kv.get(LEGACY_PENDING_INDEX), null);
   const markers = await keys('pending:');
   assert.equal(markers.length, 3);
   assert.ok(markers.includes(`pending:${a.server_ts}:${a.id}`) && markers.includes(`pending:${c.server_ts}:${c.id}`));
+  // 旧索引只读不改，先留着。
+  assert.deepEqual(JSON.parse(await kv.get(LEGACY_PENDING_INDEX)), [a.id, uuid(2), c.id, uuid(4)]);
+  assert.ok(Number(await kv.get('meta:legacy-index-first-seen')) > 0);
 
+  // ack 不碰旧索引；已处理的报告不会被再补标记。
   await send('/ack', { method: 'POST', secret: POLL, body: { ids: [a.id] } });
+  assert.deepEqual(JSON.parse(await kv.get(LEGACY_PENDING_INDEX)), [a.id, uuid(2), c.id, uuid(4)]);
+  assert.deepEqual((await send('/pending', { secret: POLL })).data.items.map(item => item.id), [c.id, fresh]);
+  assert.equal((await keys('pending:')).length, 2);
+
+  // 一小时后：补完标记再删旧索引，没处理的报告照样在。
+  const later = local({}, Date.now() + 2 * 60 * 60 * 1000);
+  assert.deepEqual((await later('/pending', { secret: POLL })).data.items.map(item => item.id), [c.id, fresh]);
+  assert.equal(await kv.get(LEGACY_PENDING_INDEX), null);
+  assert.equal(await kv.get('meta:legacy-index-first-seen'), null);
   assert.deepEqual((await send('/pending', { secret: POLL })).data.items.map(item => item.id), [c.id, fresh]);
 });
 
-test('acking a report that is only in the old index takes it out of the old index', async () => {
+test('an id an old instance adds to the old index during the switch-over is not lost', async () => {
+  const a = await seedItem(uuid(1), '2026-11-08T01:00:00.000Z');
+  await kv.put(LEGACY_PENDING_INDEX, JSON.stringify([a.id]));
+  assert.deepEqual((await send('/pending', { secret: POLL })).data.items.map(item => item.id), [a.id]);
+  // 旧实例在新代码读过旧索引之后写回：加上自己刚收的报告。
+  const late = await seedItem(uuid(2), '2026-11-09T00:00:00.000Z');
+  await kv.put(LEGACY_PENDING_INDEX, JSON.stringify([a.id, late.id]));
+  assert.deepEqual((await send('/pending', { secret: POLL })).data.items.map(item => item.id), [a.id, late.id]);
+  assert.ok((await keys('pending:')).includes(`pending:${late.server_ts}:${late.id}`));
+});
+
+test('acking a report that is only in the old index stops it from coming back', async () => {
   const a = await seedItem(uuid(1), '2026-11-08T01:00:00.000Z');
   const c = await seedItem(uuid(3), '2026-11-08T03:00:00.000Z');
   await kv.put(LEGACY_PENDING_INDEX, JSON.stringify([a.id, c.id]));
   await send('/ack', { method: 'POST', secret: POLL, body: { ids: [a.id] } });
-  assert.deepEqual(JSON.parse(await kv.get(LEGACY_PENDING_INDEX)), [c.id]);
   assert.equal(JSON.parse(await kv.get('fb:' + a.id)).status, 'processed');
   assert.deepEqual((await send('/pending', { secret: POLL })).data.items.map(item => item.id), [c.id]);
   await send('/ack', { method: 'POST', secret: POLL, body: { ids: [c.id] } });
   assert.equal((await send('/pending', { secret: POLL })).data.count, 0);
-  assert.equal(await kv.get(LEGACY_PENDING_INDEX), null);
+  assert.deepEqual(await keys('pending:'), []);
 });
 
 test('markers of processed or long-gone reports are cleaned up; a marker whose report is not readable yet stays', async () => {
@@ -494,4 +516,29 @@ test('an old-index report without server_ts is still carried over and can be ack
   await send('/ack', { method: 'POST', secret: POLL, body: { ids: [item.id] } });
   assert.deepEqual(await keys('pending:'), []);
   assert.equal((await send('/pending', { secret: POLL })).data.count, 0);
+  assert.deepEqual(await keys('pending:'), []);
+});
+
+test('the private record is written after its dedupe-key index entry', async () => {
+  const call = local({ FEEDBACK_KV: failingKv('priv:') });
+  const warn = console.warn;
+  console.warn = () => {};
+  let posted;
+  try {
+    posted = await call('/feedback', { method: 'POST', body: report({ private_diagnostics: 'x' }) });
+  } finally { console.warn = warn; }
+  assert.equal(posted.status, 200);
+  const key = JSON.parse(await kv.get('fb:' + posted.data.id)).dedupe_key;
+  // 索引在、内容没写进去：按去重键查时跳过，不报错。
+  assert.equal((await keys(`privdk:${key}:`)).length, 1);
+  assert.deepEqual((await send(`/private?dedupe_key=${key}`, { privateSecret: PRIVATE })).data, { ok: true, items: [] });
+});
+
+test('/ack keeps the original 90-day expiry of a report instead of renewing it', async () => {
+  const received = Date.now();
+  const id = (await local({}, received)('/feedback', { method: 'POST', body: report() })).data.id;
+  await local({}, received + 10 * 24 * 3600 * 1000)('/ack', { method: 'POST', secret: POLL, body: { ids: [id] } });
+  assert.equal(JSON.parse(await kv.get('fb:' + id)).status, 'processed');
+  const [entry] = (await kv.list({ prefix: 'fb:' + id })).keys;
+  assert.equal(entry.expiration, Math.floor(received / 1000) + KV_TTL);
 });
