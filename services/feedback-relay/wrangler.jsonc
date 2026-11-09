@@ -1,0 +1,35 @@
+// 生产配置：和 11-09 线上的 app-feedback-relay 一致（wrangler init --from-dash 拉下来核对过）。
+// 在本目录跑 wrangler deploy 就是部署生产，先看 README 的「部署」一节。
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "app-feedback-relay",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-29",
+  // 老版本的插件和桌面端还在发往 app-feedback-relay.nebula-lab.workers.dev，不能关。
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "feedback.19991107.xyz", "zone_name": "19991107.xyz", "custom_domain": true }
+  ],
+  "kv_namespaces": [
+    { "binding": "FEEDBACK_KV", "id": "e4a6992ede1a4ddbbcb16b692da9aa0a" }
+  ],
+  // 不动面板上配的变量；密钥（POLL_SECRET、GITHUB_TOKEN、PRIVATE_READ_SECRET）部署时本来就保留。
+  "keep_vars": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "redact_query_string": false,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

@@ -61,6 +61,31 @@ jobs:
             services/usage-metrics/output/checkout-commit.txt
           if-no-files-found: error
           retention-days: 14
+  feedback-relay-worker:
+    name: feedback-relay-worker
+    runs-on: ubuntu-latest
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    defaults:
+      run:
+        working-directory: services/feedback-relay
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/feedback-relay/package-lock.json
+      - name: Install worker tooling
+        run: npm ci
+      - name: Test relay Worker in local Workerd and KV
+        run: npm test
+      - name: Verify production config bundles without uploading
+        run: npm run check:deploy
   test:
     runs-on: ubuntu-latest
     steps:

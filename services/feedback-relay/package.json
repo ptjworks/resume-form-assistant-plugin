@@ -1,0 +1,15 @@
+{
+  "name": "app-feedback-relay-worker",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "dev": "wrangler dev --local",
+    "check:deploy": "wrangler deploy --dry-run --outdir output/dry-run"
+  },
+  "devDependencies": {
+    "miniflare": "5.20261006.1-alpha",
+    "wrangler": "4.149.0"
+  }
+}
