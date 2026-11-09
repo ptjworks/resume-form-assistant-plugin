@@ -1,6 +1,6 @@
 # 反馈中转 Worker（app-feedback-relay）
 
-插件和桌面端的错误报告、手动反馈先发到这里存进 Cloudflare KV，Muse 定时拉取、建 GitHub issue。统计用 `/export` 导出全部报告。
+插件和桌面端的错误报告、手动反馈先发到这里存进 Cloudflare KV，Muse 定时拉取、建 GitHub issue。统计用 `/export` 导出全部报告。桌面检查更新时 GitHub 连不上，改从 `/releases` 拿发布列表。
 
 这个 Worker 以前只在 Cloudflare 上有一份，没有源码仓库。11-09 用 `wrangler init --from-dash` 拉下线上代码，整理成现在的 `src/`，以后以仓库里的代码为准（#497）。
 
@@ -23,6 +23,7 @@
 | `POST /create-issue` | `x-poll-secret` | 代 Muse 建 GitHub issue。标签不存在时去掉标签重试一次 |
 | `GET /export` | `x-poll-secret` | 全部报告（含已处理），按收到的时间从旧到新 |
 | `GET /private` | `x-private-secret` | 读私有层，见下文 |
+| `GET /releases` | 无 | 代查 GitHub 的发布列表，桌面检查更新的备用来源，见下文 |
 | 其余地址 | 无 | 健康检查，返回 `{"ok":true,"service":"app-feedback-relay"}` |
 
 `/pending`、`/ack`、`/create-issue`、`/export` 的请求和返回格式 Muse 在用，改之前先改 Muse。口令只认请求头，放在网址参数里不算数。
@@ -73,6 +74,22 @@ op-sensitive read "op://Dev-Sensitive/app-feedback-relay PRIVATE_READ_SECRET/cre
   | { IFS= read -r secret; printf 'header = "x-private-secret: %s"\n' "$secret"; } \
   | curl -sS -K - "https://feedback.19991107.xyz/private?dedupe_key=v3:0123456789abcdef&limit=5"
 ```
+
+### 发布列表（/releases）
+
+桌面检查更新先直接问 GitHub（`https://api.github.com/repositories/1217054301/releases`），连不上、超时、5xx 或限流时，同一页改问这里（#497）。
+
+```
+GET /releases?per_page=<1～100>&page=<1～10>
+```
+
+- 参数只认 `per_page` 和 `page`，不给时和 GitHub 一样是 30 和 1。超范围、不是整数、重复或者带了别的参数，一律返回 400，不去问 GitHub。
+- 返回和 GitHub 同样的 JSON 数组，分页结果也一样，但每条只留 `tag_name`、`draft`、`prerelease`、`html_url`。
+- 草稿只留 `"draft": true`，版本号和地址是 `null`：带口令去问时 GitHub 会把草稿也列出来，不能从这里外泄。条目不删，每页条数和 GitHub 一致。
+- 不管请求的 `per_page` 是多少，中转都按每页 100 条去问 GitHub，再切出请求的那一段。上游最多只有 10 种请求，换着参数刷也刷不光额度。
+- 每个上游页在 Cloudflare 的边缘缓存（Cache API）里存 10 分钟，每个机房各存一份，不占 KV。响应头 `X-Relay-Cache` 是 `hit`（全部来自缓存）或 `miss`。
+- 去问 GitHub 时带 `GITHUB_TOKEN`：匿名额度按 Cloudflare 的出口 IP 算，和别人的 Worker 共用，常常不够。口令被拒（401）时改用匿名再问一次；没配口令就直接匿名问。
+- GitHub 出错时不缓存，原样告诉桌面：连不上或超时（8 秒）返回 502 `github_unreachable`；403、429 返回 503 `github_rate_limited`；其他非 2xx 返回 502 `github_error`（带 `status`）；返回的不是列表返回 502 `github_bad_response`。桌面只把 200 的列表当作查到了。
 
 ## KV 里的键
 
@@ -146,7 +163,7 @@ op-dev read "op://Dev/app-feedback-relay POLL_SECRET/credential" | npx wrangler 
 | Worker 密钥 | 用途 | 1Password |
 | --- | --- | --- |
 | `POLL_SECRET` | Muse 调 `/pending`、`/ack`、`/create-issue`，统计调 `/export` | Dev「app-feedback-relay POLL_SECRET」的 `credential` |
-| `GITHUB_TOKEN` | `/create-issue` 建 issue | Dev「GitHub Personal Access Token-MUSE」的 `token` |
+| `GITHUB_TOKEN` | `/create-issue` 建 issue；`/releases` 代查发布列表（只读公开数据） | Dev「GitHub Personal Access Token-MUSE」的 `token` |
 | `PRIVATE_READ_SECRET` | 读私有层 `/private`。只给我们自己用，不给 Muse | Dev-Sensitive「app-feedback-relay PRIVATE_READ_SECRET」的 `credential` |
 
 `PRIVATE_READ_SECRET` 和 `POLL_SECRET` 必须不同。以后要让 Muse 的自动分析也读私有层，先确认它不会把题目、页面片段写进公开评论，再把口令给它。
@@ -157,3 +174,4 @@ op-dev read "op://Dev/app-feedback-relay POLL_SECRET/credential" | npx wrangler 
 - 限流计数是读出来加一再写回，同一 IP 同时来很多条时可能少算几条，只影响限流的松紧。计数坏了（不是 JSON）就从头算。
 - 旧索引超过 200 个 id 时只看前 200 个，也不会删。11-09 部署前看过，生产里的旧索引是空的（`[]`）。
 - 部署后可以用 `/export` 里 `status` 为 `pending` 的条数和 `/pending` 对一下，确认没有漏掉的报告。
+- `/releases` 的缓存按机房各存一份，GitHub 发了新版本后，各地最多晚 10 分钟看到。缓存没有全局清空的入口，等它过期就行。

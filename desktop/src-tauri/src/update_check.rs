@@ -5,8 +5,11 @@
 //! 从用户手里拿走了。
 //!
 //! 查的是 GitHub 的 releases 列表，只认 `desktop-v*` 的 tag：插件用的是
-//! `v*.*.*`，两边混在同一个仓库里。
+//! `v*.*.*`，两边混在同一个仓库里。GitHub 在国内时好时坏，连不上、超时、
+//! 5xx 或限流时，同一页改问我们在 Cloudflare 上的中转（`services/feedback-relay`
+//! 的 `/releases`，代查同一个 GitHub 地址），挑版本和校验地址的规则都不变。
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -18,6 +21,8 @@ use crate::commands::CommandError;
 
 const RELEASES_URL: &str =
     "https://api.github.com/repositories/1217054301/releases";
+/// GitHub 查不到时的备用来源。返回和 GitHub 同样形状的列表，每条只留挑版本用到的四个字段。
+const RELAY_RELEASES_URL: &str = "https://feedback.19991107.xyz/releases";
 const RELEASES_PER_PAGE: usize = 100;
 const TAG_PREFIX: &str = "desktop-v";
 const TIMEOUT_SECONDS: u64 = 10;
@@ -224,8 +229,60 @@ fn parse_version(value: &str) -> Option<Vec<u32>> {
     parts.iter().map(|part| part.parse::<u32>().ok()).collect()
 }
 
+/// 发布列表从哪儿要。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Source {
+    GitHub,
+    /// 我们在 Cloudflare 上的中转，代查同一个 GitHub 地址。
+    Relay,
+}
+
+/// 一页没要到的原因。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PageError {
+    /// 连不上、超时、正文读到一半断了。
+    Unreachable,
+    /// 403、429。
+    RateLimited,
+    /// 其他不成功的状态码。
+    Status(u16),
+    NotJson,
+    NotList,
+}
+
+impl PageError {
+    /// GitHub 这样失败时，同一页改问中转。只有 GitHub 明确答复了的（403、429 以外的
+    /// 4xx）不再问：中转代查的是同一个地址，答复也一样。
+    fn worth_asking_relay(&self) -> bool {
+        !matches!(self, PageError::Status(code) if (400..500).contains(code))
+    }
+
+    fn into_command_error(self) -> CommandError {
+        let (code, message) = match self {
+            PageError::Unreachable => ("UPDATE_OFFLINE", "连不上更新服务器。".to_string()),
+            PageError::RateLimited => ("UPDATE_RATE_LIMITED", "更新服务器暂时限流了。".to_string()),
+            PageError::Status(status) => {
+                ("UPDATE_FAILED", format!("更新服务器返回 HTTP {status}。"))
+            }
+            PageError::NotJson => ("UPDATE_FAILED", "更新服务器返回的不是 JSON。".to_string()),
+            PageError::NotList => (
+                "UPDATE_FAILED",
+                "更新服务器返回的不是发布列表。".to_string(),
+            ),
+        };
+        CommandError {
+            code: code.into(),
+            message,
+        }
+    }
+}
+
 /// 去问一次。失败一律是「没查成」，不是「已经最新」——这两件事不能混。
 pub async fn fetch_latest() -> Result<Option<UpdateInfo>, CommandError> {
+    fetch_latest_from(RELEASES_URL, RELAY_RELEASES_URL).await
+}
+
+async fn fetch_latest_from(github: &str, relay: &str) -> Result<Option<UpdateInfo>, CommandError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(TIMEOUT_SECONDS))
         .build()
@@ -233,55 +290,85 @@ pub async fn fetch_latest() -> Result<Option<UpdateInfo>, CommandError> {
             code: "UPDATE_OFFLINE".into(),
             message: "查更新的客户端没建起来。".into(),
         })?;
+    let client = &client;
+    let releases = collect_releases(move |source, page| {
+        let base = match source {
+            Source::GitHub => github,
+            Source::Relay => relay,
+        };
+        fetch_page(client, base, page)
+    })
+    .await?;
+    // 中转给的列表和 GitHub 的走同一套挑选和地址校验。
+    offer_from(&Value::Array(releases))
+}
+
+/// 一页一页地要发布列表，直到某一页不满。
+///
+/// 先问 GitHub。GitHub 这一页没要到（见 [`PageError::worth_asking_relay`]），就改问中转，
+/// 后面的页也都问中转：GitHub 这时多半一直连不上，每页再等它超时一次只是白等。
+/// 前后两段来自不同来源时，交界处可能重复几条（中转看得到草稿，草稿只剩
+/// `draft: true` 占位）；只挑最高的版本，重复不碍事。
+///
+/// 两边都没要到时报 GitHub 的错，那是用户这边真实的情况。
+async fn collect_releases<F, Fut>(mut fetch: F) -> Result<Vec<Value>, CommandError>
+where
+    F: FnMut(Source, u32) -> Fut,
+    Fut: Future<Output = Result<Vec<Value>, PageError>>,
+{
+    let mut source = Source::GitHub;
     let mut page = 1_u32;
     let mut releases = Vec::new();
     loop {
-        let url = format!("{RELEASES_URL}?per_page={RELEASES_PER_PAGE}&page={page}");
-        let response = client
-            .get(url)
-            // GitHub 要求带 User-Agent，不带会直接 403。
-            .header("user-agent", "resume-pro-desktop")
-            .header("accept", "application/vnd.github+json")
-            .send()
-            .await
-            .map_err(|_| CommandError {
-                code: "UPDATE_OFFLINE".into(),
-                message: "连不上更新服务器。".into(),
-            })?;
-        let status = response.status();
-        if status.as_u16() == 403 || status.as_u16() == 429 {
-            return Err(CommandError {
-                code: "UPDATE_RATE_LIMITED".into(),
-                message: "更新服务器暂时限流了。".into(),
-            });
-        }
-        if !status.is_success() {
-            return Err(CommandError {
-                code: "UPDATE_FAILED".into(),
-                message: format!("更新服务器返回 HTTP {}。", status.as_u16()),
-            });
-        }
-        let body: Value = response.json().await.map_err(|_| CommandError {
-            code: "UPDATE_FAILED".into(),
-            message: "更新服务器返回的不是 JSON。".into(),
-        })?;
-        let Some(items) = body.as_array() else {
-            return Err(CommandError {
-                code: "UPDATE_FAILED".into(),
-                message: "更新服务器返回的不是发布列表。".into(),
-            });
+        let items = match fetch(source, page).await {
+            Ok(items) => items,
+            Err(problem) if source == Source::GitHub && problem.worth_asking_relay() => {
+                source = Source::Relay;
+                fetch(Source::Relay, page)
+                    .await
+                    .map_err(|_| problem.into_command_error())?
+            }
+            Err(problem) => return Err(problem.into_command_error()),
         };
         let item_count = items.len();
-        releases.extend(items.iter().cloned());
+        releases.extend(items);
         if item_count < RELEASES_PER_PAGE {
-            break;
+            return Ok(releases);
         }
         page = page.checked_add(1).ok_or_else(|| CommandError {
             code: "UPDATE_FAILED".into(),
             message: "更新记录页数异常。".into(),
         })?;
     }
-    offer_from(&Value::Array(releases))
+}
+
+async fn fetch_page(
+    client: &reqwest::Client,
+    base: &str,
+    page: u32,
+) -> Result<Vec<Value>, PageError> {
+    let response = client
+        .get(format!("{base}?per_page={RELEASES_PER_PAGE}&page={page}"))
+        // GitHub 要求带 User-Agent，不带会直接 403。
+        .header("user-agent", "resume-pro-desktop")
+        .header("accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|_| PageError::Unreachable)?;
+    let status = response.status();
+    if status.as_u16() == 403 || status.as_u16() == 429 {
+        return Err(PageError::RateLimited);
+    }
+    if !status.is_success() {
+        return Err(PageError::Status(status.as_u16()));
+    }
+    // 正文读到一半超时或断开，和连不上是一回事。
+    let bytes = response.bytes().await.map_err(|_| PageError::Unreachable)?;
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Array(items)) => Ok(items),
+        Ok(_) => Err(PageError::NotList),
+        Err(_) => Err(PageError::NotJson),
+    }
 }
 
 /// 挑选结果 → 命令层的返回。单独一个函数是为了这层映射也能被测到：
@@ -629,5 +716,286 @@ mod tests {
         pref.available = Some(offer("0.5.0"));
         record_check(&mut pref, "t2".into(), &Err("offline"));
         assert_eq!(pref.available, Some(offer("0.5.0")), "上次查到的那条还作数");
+    }
+
+    // ---- GitHub 查不到时改问中转 ----
+
+    /// 一页 `count` 条插件版本，最后放一条桌面版本（`count` 为 0 时就是空页）。
+    fn page_of(count: usize, desktop: &str) -> Vec<Value> {
+        let mut items: Vec<Value> = (1..count)
+            .map(|index| release(&format!("v0.0.{index}"), false, false))
+            .collect();
+        if count > 0 {
+            items.push(release(&format!("desktop-v{desktop}"), false, false));
+        }
+        items
+    }
+
+    /// 按 `answer` 应答，记下每次问的是谁、第几页。
+    async fn run(
+        answer: impl Fn(Source, u32) -> Result<Vec<Value>, PageError>,
+    ) -> (Result<Vec<Value>, CommandError>, Vec<(Source, u32)>) {
+        let mut asked = Vec::new();
+        let result = collect_releases(|source, page| {
+            asked.push((source, page));
+            std::future::ready(answer(source, page))
+        })
+        .await;
+        (result, asked)
+    }
+
+    #[tokio::test]
+    async fn the_relay_is_not_asked_while_github_answers() {
+        let (result, asked) = run(|source, page| match (source, page) {
+            (Source::GitHub, 1) => Ok(page_of(RELEASES_PER_PAGE, "0.1.0")),
+            (Source::GitHub, 2) => Ok(page_of(3, "0.2.0")),
+            other => panic!("不该问 {other:?}"),
+        })
+        .await;
+        assert_eq!(result.unwrap().len(), RELEASES_PER_PAGE + 3);
+        assert_eq!(asked, [(Source::GitHub, 1), (Source::GitHub, 2)]);
+    }
+
+    #[tokio::test]
+    async fn a_page_github_cannot_give_is_asked_again_from_the_relay() {
+        // 连不上、超时、5xx、限流，以及 GitHub 给的东西读不懂，都改问中转。
+        for problem in [
+            PageError::Unreachable,
+            PageError::RateLimited,
+            PageError::Status(500),
+            PageError::Status(503),
+            PageError::NotJson,
+            PageError::NotList,
+        ] {
+            let (result, asked) = run(|source, _| match source {
+                Source::GitHub => Err(problem.clone()),
+                Source::Relay => Ok(page_of(2, "0.3.0")),
+            })
+            .await;
+            let releases = result.unwrap_or_else(|err| panic!("{problem:?}：{}", err.message));
+            assert_eq!(found(&Value::Array(releases)).version, "0.3.0");
+            assert_eq!(
+                asked,
+                [(Source::GitHub, 1), (Source::Relay, 1)],
+                "{problem:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn once_github_fails_the_remaining_pages_come_from_the_relay() {
+        let (result, asked) = run(|source, page| match (source, page) {
+            (Source::GitHub, 1) => Ok(page_of(RELEASES_PER_PAGE, "0.1.0")),
+            (Source::GitHub, 2) => Err(PageError::Unreachable),
+            (Source::Relay, 2) => Ok(page_of(RELEASES_PER_PAGE, "0.2.0")),
+            (Source::Relay, 3) => Ok(page_of(1, "0.3.0")),
+            other => panic!("不该问 {other:?}"),
+        })
+        .await;
+        assert_eq!(result.unwrap().len(), 2 * RELEASES_PER_PAGE + 1);
+        assert_eq!(
+            asked,
+            [
+                (Source::GitHub, 1),
+                (Source::GitHub, 2),
+                (Source::Relay, 2),
+                (Source::Relay, 3)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_definite_answer_from_github_is_not_asked_again() {
+        // 404 这类答复，中转代查同一个地址也只会是同样的结果。
+        for status in [400, 401, 404, 410, 422] {
+            let (result, asked) = run(|source, _| match source {
+                Source::GitHub => Err(PageError::Status(status)),
+                Source::Relay => panic!("不该问中转"),
+            })
+            .await;
+            let err = result.unwrap_err();
+            assert_eq!(err.code, "UPDATE_FAILED");
+            assert!(err.message.contains(&status.to_string()), "{}", err.message);
+            assert_eq!(asked, [(Source::GitHub, 1)]);
+        }
+    }
+
+    #[tokio::test]
+    async fn when_both_fail_the_github_failure_is_what_the_user_sees() {
+        for (github, relay, code) in [
+            (
+                PageError::RateLimited,
+                PageError::Unreachable,
+                "UPDATE_RATE_LIMITED",
+            ),
+            (
+                PageError::Unreachable,
+                PageError::Status(502),
+                "UPDATE_OFFLINE",
+            ),
+            (PageError::Status(500), PageError::NotList, "UPDATE_FAILED"),
+        ] {
+            let (result, asked) = run(|source, _| match source {
+                Source::GitHub => Err(github.clone()),
+                Source::Relay => Err(relay.clone()),
+            })
+            .await;
+            assert_eq!(result.unwrap_err().code, code, "{github:?} / {relay:?}");
+            assert_eq!(asked, [(Source::GitHub, 1), (Source::Relay, 1)]);
+        }
+        // 已经改问中转之后，中转这一页再出错，就报中转的错。
+        let (result, _) = run(|source, page| match (source, page) {
+            (Source::GitHub, 1) => Err(PageError::Unreachable),
+            (Source::Relay, 1) => Ok(page_of(RELEASES_PER_PAGE, "0.1.0")),
+            (Source::Relay, 2) => Err(PageError::Status(503)),
+            other => panic!("不该问 {other:?}"),
+        })
+        .await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "UPDATE_FAILED");
+        assert!(err.message.contains("503"), "{}", err.message);
+    }
+
+    /// 只应答一次的本地 HTTP 服务。返回地址（`http://127.0.0.1:端口`）和收到的请求头。
+    fn serve_once(status: u16, body: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut raw = Vec::new();
+            let mut chunk = [0; 4096];
+            while !String::from_utf8_lossy(&raw).contains("\r\n\r\n") {
+                let n = socket.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&chunk[..n]);
+            }
+            tx.send(String::from_utf8_lossy(&raw).to_string()).ok();
+            let response = format!(
+                "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes());
+        });
+        (address, rx)
+    }
+
+    /// 一个没人监听的地址：连上去会被拒绝。
+    fn closed_address() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    }
+
+    const RELAY_LIST: &str = r#"[{"tag_name":null,"draft":true,"prerelease":false,"html_url":null},{"tag_name":"v0.6.0","draft":false,"prerelease":false,"html_url":"https://github.com/ptjworks/resume-form-assistant-plugin/releases/tag/v0.6.0"},{"tag_name":"desktop-v0.5.1","draft":false,"prerelease":false,"html_url":"https://github.com/ptjworks/resume-form-assistant-plugin/releases/tag/desktop-v0.5.1"}]"#;
+
+    #[tokio::test]
+    async fn github_errors_over_http_fall_back_to_the_relay() {
+        assert_eq!(RELAY_RELEASES_URL, "https://feedback.19991107.xyz/releases");
+        for (status, body) in [
+            (503, "busy"),
+            (502, ""),
+            (403, r#"{"message":"API rate limit exceeded"}"#),
+            (429, ""),
+            (200, "<html>不是 JSON</html>"),
+        ] {
+            let (github, github_seen) = serve_once(status, body);
+            let (relay, relay_seen) = serve_once(200, RELAY_LIST);
+            let offer = fetch_latest_from(
+                &format!("{github}/repositories/1217054301/releases"),
+                &format!("{relay}/releases"),
+            )
+            .await
+            .unwrap_or_else(|err| panic!("HTTP {status}：{}", err.message))
+            .unwrap();
+            assert_eq!(offer.version, "0.5.1");
+            assert_eq!(
+                offer.url,
+                "https://github.com/ptjworks/resume-form-assistant-plugin/releases/tag/desktop-v0.5.1"
+            );
+            let github_request = github_seen.recv().unwrap();
+            assert!(
+                github_request.starts_with(
+                    "GET /repositories/1217054301/releases?per_page=100&page=1 HTTP/1.1"
+                ),
+                "{github_request}"
+            );
+            let relay_request = relay_seen.recv().unwrap();
+            assert!(
+                relay_request.starts_with("GET /releases?per_page=100&page=1 HTTP/1.1"),
+                "{relay_request}"
+            );
+            assert!(relay_request
+                .to_lowercase()
+                .contains("user-agent: resume-pro-desktop"));
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_github_falls_back_to_the_relay() {
+        let (relay, relay_seen) = serve_once(200, RELAY_LIST);
+        let offer = fetch_latest_from(&closed_address(), &format!("{relay}/releases"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(offer.version, "0.5.1");
+        assert!(relay_seen
+            .recv()
+            .unwrap()
+            .starts_with("GET /releases?per_page=100&page=1 "));
+    }
+
+    #[tokio::test]
+    async fn what_the_relay_returns_goes_through_the_same_checks() {
+        // 中转给的地址不是本仓库的 Release 页：照样是「没查成」，不是「有新版本」。
+        let (github, _) = serve_once(503, "");
+        let (relay, _) = serve_once(
+            200,
+            r#"[{"tag_name":"desktop-v9.0.0","draft":false,"prerelease":false,"html_url":"https://example.test/setup.exe"}]"#,
+        );
+        let err = fetch_latest_from(&github, &relay).await.unwrap_err();
+        assert_eq!(err.code, "UPDATE_FAILED");
+
+        // 中转的草稿占位和预发布照样跳过；什么都没有就是「没有更新」。
+        let (github, _) = serve_once(500, "");
+        let (relay, _) = serve_once(
+            200,
+            r#"[{"tag_name":null,"draft":true,"prerelease":false,"html_url":null},{"tag_name":"desktop-v9.0.0","draft":false,"prerelease":true,"html_url":"https://github.com/ptjworks/resume-form-assistant-plugin/releases/tag/desktop-v9.0.0"}]"#,
+        );
+        assert_eq!(fetch_latest_from(&github, &relay).await.unwrap(), None);
+
+        // 两边都不行时报 GitHub 的错。
+        let (github, _) = serve_once(429, "");
+        let (relay, _) = serve_once(502, r#"{"ok":false,"error":"github_unreachable"}"#);
+        assert_eq!(
+            fetch_latest_from(&github, &relay).await.unwrap_err().code,
+            "UPDATE_RATE_LIMITED"
+        );
+        let err = fetch_latest_from(&closed_address(), &closed_address())
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "UPDATE_OFFLINE");
+    }
+
+    #[tokio::test]
+    async fn a_github_answer_over_http_is_used_as_is() {
+        let (github, _) = serve_once(200, RELAY_LIST);
+        let offer = fetch_latest_from(&github, &closed_address())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(offer.version, "0.5.1");
+        // GitHub 说找不到：不改问中转。
+        let (github, _) = serve_once(404, r#"{"message":"Not Found"}"#);
+        let (relay, relay_seen) = serve_once(200, RELAY_LIST);
+        let err = fetch_latest_from(&github, &relay).await.unwrap_err();
+        assert_eq!(err.code, "UPDATE_FAILED");
+        assert!(err.message.contains("404"), "{}", err.message);
+        assert!(relay_seen.try_recv().is_err(), "不该问中转");
     }
 }
