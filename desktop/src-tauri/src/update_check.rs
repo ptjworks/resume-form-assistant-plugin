@@ -23,6 +23,7 @@ const RELEASES_URL: &str =
     "https://api.github.com/repositories/1217054301/releases";
 /// GitHub 查不到时的备用来源。返回和 GitHub 同样形状的列表，每条只留挑版本用到的四个字段。
 const RELAY_RELEASES_URL: &str = "https://feedback.19991107.xyz/releases";
+/// 中转只认 `per_page=100` 和第 1～10 页，改这里要一起改 `services/feedback-relay/src/releases.mjs`。
 const RELEASES_PER_PAGE: usize = 100;
 const TAG_PREFIX: &str = "desktop-v";
 const TIMEOUT_SECONDS: u64 = 10;
