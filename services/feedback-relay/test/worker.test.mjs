@@ -229,14 +229,21 @@ test('acking a report that is only in the old index takes it out of the old inde
   assert.equal(await kv.get(LEGACY_PENDING_INDEX), null);
 });
 
-test('a marker left by an interrupted ack is cleaned up; a marker whose report is not readable yet stays', async () => {
+test('markers of processed or long-gone reports are cleaned up; a marker whose report is not readable yet stays', async () => {
   const done = await seedItem(uuid(1), '2026-11-08T01:00:00.000Z', 'processed');
   await kv.put(`pending:${done.server_ts}:${done.id}`, '', { expirationTtl: KV_TTL });
-  const early = `pending:2026-11-08T02:00:00.000Z:${uuid(2)}`;
-  await kv.put(early, '', { expirationTtl: KV_TTL });
+  const expired = `pending:2026-08-01T00:00:00.000Z:${uuid(2)}`;
+  const fresh = `pending:${new Date(Date.now() - 60_000).toISOString()}:${uuid(3)}`;
+  await kv.put(expired, '', { expirationTtl: KV_TTL });
+  await kv.put(fresh, '', { expirationTtl: KV_TTL });
   const pending = await send('/pending', { secret: POLL });
   assert.equal(pending.data.count, 0);
-  assert.deepEqual(await keys('pending:'), [early]);
+  assert.deepEqual(await keys('pending:'), [fresh]);
+
+  // 同一个标记，在本地按「一小时后」再看一次就会删掉。
+  const later = local({}, Date.now() + 2 * 60 * 60 * 1000);
+  assert.equal((await later('/pending', { secret: POLL })).data.count, 0);
+  assert.deepEqual(await keys('pending:'), []);
 });
 
 test('dedupe keys of 0.5.0 and older reports match the code that ran before the repo', async () => {
@@ -430,4 +437,61 @@ test('/create-issue keeps its request and response format', async () => {
   const noToken = await local({ GITHUB_TOKEN: undefined })('/create-issue', { method: 'POST', secret: POLL, body: { repo: 'owner/repo', title: 'T' } });
   assert.equal(noToken.status, 500);
   assert.deepEqual(noToken.data, { ok: false, error: 'github_not_configured' });
+});
+
+// 包一层 Miniflare 的 KV，让指定前缀的写入失败。
+function failingKv(prefix) {
+  return {
+    get: (...args) => kv.get(...args),
+    list: (...args) => kv.list(...args),
+    delete: (...args) => kv.delete(...args),
+    put: (key, ...rest) => key.startsWith(prefix) ? Promise.reject(new Error('KV write failed')) : kv.put(key, ...rest),
+  };
+}
+
+test('a failed private-layer write still lets the report through to /pending', async () => {
+  const call = local({ FEEDBACK_KV: failingKv('priv') });
+  const warn = console.warn;
+  const warnings = [];
+  console.warn = message => warnings.push(message);
+  let posted;
+  try {
+    posted = await call('/feedback', { method: 'POST', body: report({ private_diagnostics: 'PRIVATE-MARKER' }) });
+  } finally { console.warn = warn; }
+  assert.equal(posted.status, 200);
+  assert.deepEqual(warnings, [`private_diagnostics not stored for ${posted.data.id}`]);
+  const pending = await send('/pending', { secret: POLL });
+  assert.deepEqual(pending.data.items.map(item => item.id), [posted.data.id]);
+  assert.equal(await kv.get('priv:' + posted.data.id), null);
+});
+
+test('a failed report write leaves no report Muse cannot see, and its marker is cleaned up later', async () => {
+  const call = local({ FEEDBACK_KV: failingKv('fb:') });
+  await assert.rejects(call('/feedback', { method: 'POST', body: report() }), /KV write failed/);
+  assert.deepEqual(await keys('fb:'), []);
+  assert.equal((await keys('pending:')).length, 1);
+  const later = local({}, Date.now() + 2 * 60 * 60 * 1000);
+  assert.equal((await later('/pending', { secret: POLL })).data.count, 0);
+  assert.deepEqual(await keys('pending:'), []);
+});
+
+test('a broken throttle counter starts over instead of failing the report', async () => {
+  const ip = '192.0.2.99';
+  for (const value of ['not json', 'null', '{"count":"x"}']) {
+    await kv.put('throttle:' + ip, value, { expirationTtl: 600 });
+    assert.equal((await send('/feedback', { method: 'POST', body: report(), ip })).status, 200, value);
+    assert.deepEqual(JSON.parse(await kv.get('throttle:' + ip)).count, 1);
+  }
+});
+
+test('an old-index report without server_ts is still carried over and can be acked', async () => {
+  const item = await seedItem(uuid(5), undefined);
+  delete item.server_ts;
+  await kv.put('fb:' + item.id, JSON.stringify(item), { expirationTtl: KV_TTL });
+  await kv.put(LEGACY_PENDING_INDEX, JSON.stringify([item.id, 7, null]));
+  assert.deepEqual((await send('/pending', { secret: POLL })).data.items.map(entry => entry.id), [item.id]);
+  assert.deepEqual(await keys('pending:'), [`pending:0000-00-00T00:00:00.000Z:${item.id}`]);
+  await send('/ack', { method: 'POST', secret: POLL, body: { ids: [item.id] } });
+  assert.deepEqual(await keys('pending:'), []);
+  assert.equal((await send('/pending', { secret: POLL })).data.count, 0);
 });

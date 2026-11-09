@@ -26,6 +26,8 @@ const PRIVATE_MAX_LIMIT = 20;
 const MIN_PRIVATE_SECRET_LENGTH = 32;
 // 13 位毫秒数的最大值。私有层索引用它减去 server_ts，KV 按键名升序列出时就是从新到旧。
 const MAX_EPOCH_MS = 9999999999999;
+const NO_SERVER_TS = '0000-00-00T00:00:00.000Z';
+const MISSING_REPORT_GRACE_MS = 60 * 60 * 1000;
 const THROTTLE_WINDOW_MS = 10 * 60 * 1000;
 const THROTTLE_LIMIT = 30;
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -163,8 +165,15 @@ function privateSecretOf(env) {
 async function throttle(kv, ip, nowMs) {
   const key = 'throttle:' + ip;
   const raw = await kv.get(key);
-  let record = raw ? JSON.parse(raw) : { count: 0, start: nowMs };
-  if (nowMs - record.start > THROTTLE_WINDOW_MS) record = { count: 0, start: nowMs };
+  let record = null;
+  try {
+    record = raw ? JSON.parse(raw) : null;
+  } catch {
+    // 计数坏了就从头算，不让一条坏数据把这个 IP 的报告都挡成 500。
+  }
+  if (typeof record?.count !== 'number' || typeof record.start !== 'number' || nowMs - record.start > THROTTLE_WINDOW_MS) {
+    record = { count: 0, start: nowMs };
+  }
   record.count += 1;
   await kv.put(key, JSON.stringify(record), { expirationTtl: 600 });
   return record.count <= THROTTLE_LIMIT;
@@ -173,8 +182,9 @@ async function throttle(kv, ip, nowMs) {
 // ---- 待处理标记 ----
 
 // 每条报告一个标记键，写入和删除都只碰自己的键，同时来多少条都不会互相覆盖。
+// 没有 server_ts 的报告（正常不会有）排在最前面，照样能列出来、能 ack。
 export function pendingKey(item) {
-  return `${PENDING_PREFIX}${item.server_ts}:${item.id}`;
+  return `${PENDING_PREFIX}${item.server_ts || NO_SERVER_TS}:${item.id}`;
 }
 
 function idOfKey(name) {
@@ -197,11 +207,12 @@ async function migrateLegacyIndex(kv) {
   const batch = ids.slice(0, LEGACY_MIGRATE_BATCH);
   const migrated = [];
   for (const id of batch) {
+    if (typeof id !== 'string') continue;
     const item = await readJson(kv, 'fb:' + id);
-    if (item?.status === 'pending' && item.id && item.server_ts) {
-      await kv.put(pendingKey(item), '', { expirationTtl: KV_TTL });
-      migrated.push(item);
-    }
+    if (item?.status !== 'pending') continue;
+    const report = item.id === id ? item : { ...item, id };
+    await kv.put(pendingKey(report), '', { expirationTtl: KV_TTL });
+    migrated.push(report);
   }
   const rest = ids.slice(LEGACY_MIGRATE_BATCH);
   if (rest.length) await kv.put(LEGACY_PENDING_INDEX, JSON.stringify(rest));
@@ -227,7 +238,7 @@ async function removeFromLegacyIndex(kv, ids) {
 }
 
 // 按 server_ts 从旧到新，最多返回 200 条：积压时先处理最早的，不会有报告一直排不到。
-async function listPending(kv) {
+async function listPending(kv, nowMs) {
   const migrated = await migrateLegacyIndex(kv);
   const page = await kv.list({ prefix: PENDING_PREFIX, limit: PENDING_PAGE });
   const items = new Map(migrated.map(item => [item.id, item]));
@@ -235,8 +246,13 @@ async function listPending(kv) {
     const id = idOfKey(key.name);
     if (items.has(id)) continue;
     const item = await readJson(kv, 'fb:' + id);
-    // 报告还没读到（刚写入、其他地区还没同步）就跳过，标记留着下次再看。
-    if (!item) continue;
+    if (!item) {
+      // 刚写入、其他地区还没同步时会暂时读不到，标记留着下次再看。过了一小时还读不到，
+      // 就是报告已经过期（从旧索引迁来的标记比报告晚过期），删掉，免得占着前面的位置。
+      const receivedMs = Date.parse(key.name.slice(PENDING_PREFIX.length, key.name.lastIndexOf(':')));
+      if (!(nowMs - receivedMs < MISSING_REPORT_GRACE_MS)) await kv.delete(key.name);
+      continue;
+    }
     if (item.status === 'pending') items.set(id, item);
     // 已处理的报告留下的标记（/ack 中途失败）顺手删掉。
     else await kv.delete(key.name);
@@ -353,10 +369,18 @@ async function receiveFeedback(request, kv, now) {
     // 算不出去重键也照样收下，Muse 会按没有键处理。
   }
   const privateText = privateDiagnosticsOf(body.private_diagnostics);
-  await kv.put('fb:' + item.id, JSON.stringify(item), { expirationTtl: KV_TTL });
-  // 私有层先于待处理标记写入：Muse 看到报告时，私有层已经能读到。
-  if (privateText) await storePrivate(kv, item, privateText);
+  // 先写待处理标记再写报告：报告写失败时只剩一个读不到报告的标记，一小时后 /pending 会删掉。
+  // 反过来的话，标记写失败的报告会留在 KV 里，Muse 却永远看不到。
   await kv.put(pendingKey(item), '', { expirationTtl: KV_TTL });
+  await kv.put('fb:' + item.id, JSON.stringify(item), { expirationTtl: KV_TTL });
+  // 私有层尽力写：写失败不影响公开层，报告照样收下。日志里只记 id，不记内容。
+  if (privateText) {
+    try {
+      await storePrivate(kv, item, privateText);
+    } catch {
+      console.warn(`private_diagnostics not stored for ${item.id}`);
+    }
+  }
   return json({ ok: true, id: item.id });
 }
 
@@ -394,7 +418,7 @@ async function ack(request, kv) {
     item.status = 'processed';
     await kv.put('fb:' + id, JSON.stringify(item), { expirationTtl: KV_TTL });
     // 先记成已处理再删标记：中途失败时留下的标记，下次 /pending 会清掉。
-    if (item.server_ts) await kv.delete(pendingKey(item));
+    await kv.delete(pendingKey({ ...item, id }));
   }
   await removeFromLegacyIndex(kv, ids);
   return json({ ok: true, acked: ids.length });
@@ -476,7 +500,7 @@ export function createWorker({ now = () => new Date() } = {}) {
         return json({ ok: false, error: 'unauthorized' }, 401);
       }
       if (url.pathname === '/pending' && request.method === 'GET') {
-        const items = await listPending(kv);
+        const items = await listPending(kv, now().getTime());
         return json({ ok: true, count: items.length, items });
       }
       if (url.pathname === '/export' && request.method === 'GET') {
