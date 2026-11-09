@@ -18,11 +18,12 @@
   const BUG = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="8" width="10" height="12" rx="5"/><path d="M9.5 8a2.5 2.5 0 0 1 5 0M12 12v5M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 19l3-2M20 19l-3-2"/></svg>';
   const explanation = `
       <p class="feedback-note" id="feedback-renewed" hidden>报告内容有更新，需要重新选择。</p>
-      <p>我们在用户群和社交平台上收到过不少反馈，但很多只有一句「填不上」「用不了」，看不出是哪个网站、卡在哪一步，很难找到原因。开启自动错误报告后，插件出错、一键填写有字段没填上或 AI 请求失败时，会把当时的技术情况发给我们，帮我们更快找到问题、把它修好。</p>
-      <p class="feedback-note">报告里只有技术信息：错误类型、出错的代码位置、插件版本、安装方式（如商店安装、手动加载）、系统、发送时间和一个随机生成的安装编号。网页上出的问题还会带上网站域名和这次填写的统计，比如页面路径（其中的编号会去掉）、从哪里开始填写、网页当时是否在前台、字段和控件的数量与类型、没填上的下拉框有没有弹出、里面有没有选项、没写上的输入框后来是空的还是被改了、写入后有没有冒出建议框或别的弹层、没填上的字段各是什么原因、填上了多少、用时、AI 用的模型档位和多久开始回复、卡在哪一步。不包含你的简历、填写的内容、页面上的文字、完整网址、Cookie 或密钥。</p>
-      <p class="feedback-note">发送前会先去掉可能的个人信息。报告最多保存 90 天；其中的网站域名和填写统计可能会公开在网申快填的 GitHub 项目里，方便复现问题，公开的内容会长期保留；安装编号不会公开。</p>
+      <p>我们在用户群和社交平台上收到过不少反馈，但很多只有一句「填不上」「用不了」，看不出是哪个网站、卡在哪一步，很难找到原因。开启自动错误报告后，插件出错、一键填写有字段没填上、AI 请求失败，或者你的资料里有、AI 却没匹配上的字段有 3 项以上时，会把当时的技术情况发给我们，帮我们更快找到问题、把它修好。</p>
+      <p class="feedback-note">报告分两部分。第一部分只有技术信息：错误类型、出错的代码位置（代码异常只带出错时读的是哪个属性，不带原文）、插件版本和构建标识、安装方式（如商店安装、手动加载）、系统、发送时间和一个随机生成的安装编号。网页上出的问题还会带上网站域名和这次填写的统计，比如页面路径（其中的编号会去掉）、从哪里开始填写、网页当时是否在前台、字段和控件的数量与类型、没填上的字段属于哪一类（如学校、出生日期）、是哪种控件（下拉、级联、日期、联想输入等，能不能搜索、选项是不是从后台加载、单选还是多选、组件库的大版本）、没填上的下拉框有没有弹出、里面有没有选项、点开后多久弹出、一共等了多久、最后是否还在加载、没写上的输入框后来是空的还是被改了、写入后有没有冒出建议框或别的弹层、没填上的字段各是什么原因、AI 没匹配上的字段各是哪一类和你的资料里有没有这一类、填上了多少、用时、AI 用的模型档位和多久开始回复、卡在哪一步。这一部分不包含你的简历、填写的内容、页面上的文字、完整网址、Cookie 或密钥。</p>
+      <p class="feedback-note">第二部分只用于我们排查问题，不公开：没填上和 AI 没匹配上的字段的题目原文、所在分组的标题、页面上的选项列表（级联选择只看第一列，插件输入过搜索词之后的列表不收），出错字段附近的页面结构，以及代码异常的原文。发送前会把手机号、邮箱、证件号、网址、凭据和你资料里有的文字换掉，密码、验证码一类的输入框整个跳过。不包含你填写的内容，也不标出插件想选的是哪一项。</p>
+      <p class="feedback-note">报告发到我们在 Cloudflare 上的数据中转服务，存放在境外，最多保存 90 天，到期自动删除。第一部分里的网站域名和填写统计可能会公开在网申快填的 GitHub 项目里，方便复现问题，公开的内容会长期保留；第二部分和安装编号不会公开。</p>
       <p class="feedback-note">你同意后才开始发送，同意前出的错不会补发。可以随时关闭，关闭后停止发送并删除安装编号，不影响填写。插件和桌面程序分开设置。</p>
-      <p class="feedback-note">遇到问题也可以在${compact ? '' : '侧栏的'}「手动反馈问题」里自己写，预览确认后才会发送。附上的诊断还可能有最近一次保存岗位的过程：公司和岗位从哪里读到、有没有用 AI 识别、最后是否保存，不含公司和岗位名。</p>`;
+      <p class="feedback-note">遇到问题也可以在${compact ? '' : '侧栏的'}「手动反馈问题」里自己写，预览确认后才会发送。开启了自动错误报告时，附上的诊断和自动报告一样有两部分，预览里都能看到。附上的诊断还可能有最近一次保存岗位的过程：公司和岗位从哪里读到、有没有用 AI 识别、最后是否保存，不含公司和岗位名。</p>`;
   if (compact && noticeRoot) noticeRoot.innerHTML = `
     <section class="feedback-card feedback-notice" id="feedback-consent" hidden aria-labelledby="feedback-notice-title">
       <h2 id="feedback-notice-title">帮我们改进网申快填</h2>${explanation}
@@ -73,7 +74,7 @@
         <label for="feedback-description">问题描述（请勿填写姓名、简历、账号或密钥）</label>
         <textarea id="feedback-description" maxlength="1400" rows="4"></textarea>
         <label><input type="checkbox" id="feedback-attach" checked>附上最近一次的填写和保存岗位诊断</label>
-        <p class="feedback-note">只有点「确认发送」才会发送。报告最多保存 90 天；可能会公开在网申快填的 GitHub 项目里，公开的内容会长期保留。发送前请核对下方全部内容。</p>
+        <p class="feedback-note">只有点「确认发送」才会发送。报告发到我们在 Cloudflare 上的数据中转服务，存放在境外，最多保存 90 天；除了预览里写明不公开的部分，可能会公开在网申快填的 GitHub 项目里，公开的内容会长期保留。发送前请核对下方全部内容。</p>
         <button type="button" id="feedback-preview-button">预览将发送的内容</button>${previewRoot ? '' : `
         <pre id="feedback-preview" tabindex="0" hidden></pre>
         <button type="submit" id="feedback-send" class="feedback-primary" disabled>确认发送</button>`}
@@ -230,7 +231,7 @@
       if (busy || preparing) return;
       preparing = true; $('preview-button').disabled = true;
       invalidate(); const current = revision;
-      let diagnostics = ''; let tabId;
+      let diagnostics = ''; let hidden = ''; let tabId;
       try {
         if ($('attach').checked) {
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -242,13 +243,18 @@
             // The v1 block (#215), not the sidebar's human-readable text; the worker filters it again.
             // Manual feedback may also carry the job flow's [岗位] (#301): the user sees it in the preview.
             diagnostics = core.diagnostics(page?.diagnosticsReport || '', { manual: true });
+            // #497 同一次填写的私有诊断。后台只在同意过第 3 版说明时带上，带上的会显示在预览里。
+            hidden = typeof page?.privateReport === 'string' ? page.privateReport : '';
           }
         }
-        const result = await send({ type: 'FEEDBACK_PREVIEW', description: $('description').value, diagnostics, tabId });
+        const result = await send({ type: 'FEEDBACK_PREVIEW', description: $('description').value, diagnostics, private: hidden, tabId });
         if (current !== revision) return;
         if (!result.ok) { status('无法准备反馈，请重试。'); return; }
         token = result.token;
-        $('preview').textContent = JSON.stringify(result.payload, null, 2);
+        // 私有诊断（#497）单独列在后面，原样显示，不放进 JSON 里转义。
+        const { private_diagnostics: kept, ...shown } = result.payload || {};
+        $('preview').textContent = JSON.stringify(shown, null, 2)
+          + (typeof kept === 'string' && kept ? `\n\n以下内容只存在我们的中转里，不公开：\n${kept}` : '');
         $('preview').hidden = false;
         showPanel(true);
         $('send').disabled = Date.now() < coolUntil;

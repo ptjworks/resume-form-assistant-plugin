@@ -242,7 +242,10 @@ test("desktop data that cannot be read is reported as an error; a read with no a
   assert.equal(report.kind, "exception");
   assert.equal(report.name, "TypeError");
   assert.match(report.stack, /^resume-data\.js:\d+:\d+/);
-  assert.doesNotMatch(JSON.stringify(report), /测试|null/);
+  // #497 The message travels apart, for the private layer only: nothing that may be published has it.
+  const { message, ...shown } = report;
+  assert.doesNotMatch(JSON.stringify(shown), /测试|null/);
+  assert.doesNotMatch(message, /测试/);
 
   const away = await openPage({ reply: async (message) => {
     if (message.type === "DESKTOP_RESUME_READ") throw new Error("Could not establish connection.");
@@ -263,7 +266,10 @@ test("a missing helper leaves the page not ready and is reported once, without i
   assert.equal(report.kind, "exception");
   assert.equal(report.name, "TypeError");
   assert.match(report.stack, /^content\.js:\d+:\d+/);
-  assert.doesNotMatch(JSON.stringify(report), /ResumePro|not loaded/);
+  // #497 The message travels apart, for the private layer only.
+  const { message, ...shown } = report;
+  assert.doesNotMatch(JSON.stringify(shown), /ResumePro|not loaded/);
+  assert.match(message, /not loaded/);
 });
 
 test("startup checks for every helper, not only the one #275 lost", async () => {

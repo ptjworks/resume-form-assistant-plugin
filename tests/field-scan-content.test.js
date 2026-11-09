@@ -196,7 +196,7 @@ test("the report row of a field whose binding went stale carries its reason code
 
   const report = sent.find((message) => message.type === "FEEDBACK_AUTO")?.report;
   assert.ok(report, "the partial fill is reported");
-  assert.match(report.diagnostics, /^- （字段名已隐藏）: input\[text\] reason=element_disconnected$/m);
+  assert.match(report.diagnostics, /^- unknown: input\[text\] reason=element_disconnected$/m);
 });
 
 test("saving to 我的信息 re-checks the binding: a control that moved since the scan is reported, kept as a candidate, and never written", async () => {

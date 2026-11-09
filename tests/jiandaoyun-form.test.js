@@ -150,7 +150,7 @@ test("label sources fold the new kinds into the reported vocabulary, and picker=
   assert.deepEqual(core.labelSources({ sources: { item: 1, "item-part": 2, "table-header": 3 } }), [["item", 3], ["table", 3]]);
   const report = core.fillReport({ fieldCount: 1, unfilledControls: [{ label: "出生年月", reasonCode: "no_option_match", observed: { opened: "calendar" },
     control: { tag: "input", type: "text", picker: "jiandaoyun" } }] });
-  assert.match(report, /^- 出生年月: input\[text\] picker=jiandaoyun opened=calendar reason=no_option_match$/m);
+  assert.match(report, /^- 出生日期: input\[text\] picker=jiandaoyun opened=calendar reason=no_option_match$/m);
 });
 
 // 简道云日期框（jdy-design 的 x-datetime，外面是表单的 .fx-form-datetime）的替身，按真页面上观察到的行为写：

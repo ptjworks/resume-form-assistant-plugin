@@ -1181,6 +1181,7 @@
     const trigger = info.cascade ? info.el : info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector, .ant-select-content')) || info.root
       : info.library === 'element' ? info.root.querySelector('.el-select__wrapper, .el-input') || info.root
       : info.library === 'arco' ? info.root.querySelector('.arco-select-view') || info.root : info.combo;
+    state.clickedAt = Date.now();
     if (!alreadyOpen) { const reason = h.click(info.library === 'generic' ? coverOf(trigger, info) || trigger : trigger, ctx); if (reason) return { reason }; }
     const findOpened = () => {
       if (info.library === 'generic') {
@@ -1232,6 +1233,8 @@
     if (opened.value.reason) return opened.value;
     let popup = opened.value.popup; ctx.popup = opened.value.layer || popup;
     info.popup = popup;
+    // #497 诊断：点开（或先输入）到认出弹层用了多久。
+    state.openMs = alreadyOpen ? 0 : Date.now() - state.clickedAt;
     const role = popup.getAttribute('role');
     // hasOptions（#301 诊断）在下面读第一层列表时才写，见那里的说明；没读到列表就不写。
     ctx.observed = { library: info.library, popupRole: ['listbox', 'tree', 'menu'].includes(role) ? role : 'component' };
@@ -1260,6 +1263,7 @@
       || searchInput.getAttribute('role') === 'searchbox' || searchInput.type === 'search'
       || info.root.matches(antd(info.root, '.ant-select-show-search')) || Boolean(info.root.querySelector('.el-select__wrapper.is-filterable')));
     let searchDone = typedFirst;
+    state.searchable = Boolean(searchable || typedFirst);
     // 点选之前在弹层里见过的所有选项（搜索前后都算），两级选择的判断要用。
     const optionKey = option => option.full ?? option.text;
     const seenOptions = new Set();
@@ -1280,6 +1284,11 @@
       }
       const list = options(popup, info, level, h);
       if (!info.cascade) list.forEach(option => seenOptions.add(optionKey(option)));
+      // #497 诊断：第一层一开始是空的、后来才有选项，算后台加载的。
+      if (level === 0 && !searchDone) {
+        if (state.firstEmpty === undefined) state.firstEmpty = list.length === 0;
+        else if (state.firstEmpty && list.length) state.lateOptions = true;
+      }
       return list;
     };
     // 通用路径：弹层里还显示着加载图标时，列表还没好。靠 opacity: 0 淡出、没有卸载的不算。
@@ -1292,7 +1301,12 @@
     const spinnerShown = () => info.library === 'generic' && Boolean(ctx.popup?.isConnected)
       && Array.from(ctx.popup.querySelectorAll('[class]')).some(node => !trim(node.textContent)
         && String(node.getAttribute('class')).split(/\s+/).some(token => LOADING_TOKEN.test(token)) && h.visible(node) && !faded(node));
-    const loading = () => info.combo.getAttribute('aria-busy') === 'true' || popup.getAttribute('aria-busy') === 'true' || spinnerShown();
+    const loading = () => {
+      const now = info.combo.getAttribute('aria-busy') === 'true' || popup.getAttribute('aria-busy') === 'true' || spinnerShown();
+      // #497 诊断：等选项时见过加载的样子，也算后台加载。
+      if (now) state.sawLoading = true;
+      return now;
+    };
     // 弹层里显示着「暂无数据」一类的空状态；「加载中」还在等，不算。
     const emptyShown = () => [popup, ctx.popup].some(layer => layer?.isConnected && Array.from(layer.querySelectorAll('*')).some(node => {
       const text = trim(node.textContent);
@@ -1554,7 +1568,7 @@
         const rest = (h.timeoutMs ?? 2000) * GENERIC_LOADING_WAITS - (Date.now() - waitedFrom);
         ready = await h.waitUntil(ctx, doc.documentElement, watchOptions, listReady, Math.max(0, rest));
         if (ready.reason === 'verification_timeout' && loading() && !readOptions(level).length) {
-          if (level === 0 && !searchDone) ctx.observed.hasOptions = false;
+          if (level === 0 && !searchDone) { ctx.observed.hasOptions = false; state.firstList = []; state.firstTotal = 0; }
           return { reason: info.cascade ? 'cascade_timeout' : 'options_timeout' };
         }
       }
@@ -1564,7 +1578,11 @@
       // 诊断（#301）只记列表里有没有选项，不记项数：省、市分成两个下拉时，市的第一层就是网页按简历里的省加载的
       // （江苏 13 个市、宁夏 5 个）；下面没有市的省（港澳台）列表是空的，这一位照报。
       // 也只看第一层：插件输入过要找的值（含点开前先输入的）、或级联点了上一列之后，列表由简历的值决定。
-      if (level === 0 && !searchDone) ctx.observed.hasOptions = list.length > 0;
+      if (level === 0 && !searchDone) {
+        ctx.observed.hasOptions = list.length > 0;
+        // #497 私有诊断的选项列表：同样只取第一层、插件输入过之前的，不标出要选哪一项。
+        state.firstList = list.slice(0, 40).map(option => trim(option.text)); state.firstTotal = list.length;
+      }
       if (generic && region) {
         const drilled = await drillGeneric(list);
         if (drilled.reason) return drilled;
@@ -2000,10 +2018,52 @@
     const left = await h.waitUntil(ctx, doc.documentElement, gone, Boolean, ESC_LEAVE_MS);
     if (left.reason === 'verification_timeout' && !gone() && !h.stop(ctx)) press(doc.body);
   }
+  // #497 组件库的大版本，只看类名：antd 3 是 .ant-select-selection，4 起是 .ant-select-selector，5 起根上带 cssinjs 的
+  // css-xxxx 类，6 换成 .ant-select-content；Element Plus 有 .el-select__wrapper 或 .el-input__wrapper，Element UI 2 没有。
+  const CSSINJS_TOKEN = /^css-(?:dev-only-do-not-override-|var-)?[a-z0-9]{3,}$/i;
+  function libraryVersion(info) {
+    const root = info?.root;
+    if (!root?.matches) return '';
+    const has = selector => { try { return root.matches(selector) || Boolean(root.querySelector(selector)); } catch { return false; } };
+    if (info.library === 'antd') {
+      if (has(antd(root, '.ant-select-content'))) return 'antd6';
+      if (has(antd(root, '.ant-select-selector'))) {
+        const tokens = [root, ...root.querySelectorAll('[class]')].slice(0, 20).flatMap(node => String(node.getAttribute('class') || '').split(/\s+/));
+        return tokens.some(token => CSSINJS_TOKEN.test(token)) ? 'antd5' : 'antd4';
+      }
+      return has(antd(root, '.ant-select-selection, .ant-cascader-picker-label')) || root.matches(antd(root, '.ant-cascader-picker')) ? 'antd3' : '';
+    }
+    if (info.library === 'element') return has('.el-select__wrapper, .el-input__wrapper') ? 'element-plus' : 'element-ui';
+    return '';
+  }
+  // #497 结束时弹层里还显示着加载图标、加载中的字或 aria-busy：只看弹层自己和组件，不读选项。
+  const SPINNER_TOKEN = /(?:^|[-_])(?:loading|spin|spinner|spinning)$/i;
+  function spinnerShowing(state, ctx, h) {
+    const info = state.info;
+    if (info?.combo?.getAttribute?.('aria-busy') === 'true') return true;
+    return [info?.popup, ctx.popup].some(layer => layer?.isConnected && h.visible(layer) && (layer.getAttribute('aria-busy') === 'true'
+      || Array.from(layer.querySelectorAll('[class], [aria-busy]')).slice(0, 500).some(node => h.visible(node)
+        && (node.getAttribute('aria-busy') === 'true' || String(node.getAttribute('class') || '').split(/\s+/).some(token => SPINNER_TOKEN.test(token))
+          || (node.children.length === 0 && GENERIC_LOADING.test(trim(node.textContent)))))));
+  }
   async function run(ctx, raw, h) {
-    const state = {}; let outcome;
+    const state = { startedAt: Date.now() }; let outcome;
     // 页面异常也按失败收尾（收起弹层、恢复搜索词）；只把固定的原因码交出去。
     try { outcome = await perform(ctx, raw, h, state); } catch { outcome = { reason: 'operation_failed' }; }
+    // #497 诊断：控件的样子和等了多久。都是固定的是否和毫秒数；第一层的选项文字只在插件没输入过时记下，
+    // 只给私有诊断用（content.js 再按规则筛），不进公开报告。收起弹层之前看加载图标。
+    try {
+      const info = state.info;
+      if (info) {
+        ctx.observed = { ...(ctx.observed || {}), shape: {
+          search: Boolean(state.searchable), remote: Boolean(state.sawLoading || state.lateOptions), multi: Boolean(info.multiple),
+          freeText: Boolean(info.freeText), version: libraryVersion(info), waitMs: Date.now() - state.startedAt,
+          ...(Number.isInteger(state.openMs) ? { openMs: state.openMs } : {}),
+          spinner: outcome?.reason ? spinnerShowing(state, ctx, h) : false,
+          ...(Array.isArray(state.firstList) ? { options: state.firstList, optionTotal: state.firstTotal } : {})
+        } };
+      }
+    } catch { /* diagnostics never change the outcome */ }
     try { return outcome; }
     finally {
       state.watch?.disconnect();
@@ -2064,6 +2124,6 @@
     return [node, ...node.querySelectorAll('[aria-checked], [class]')].some(el => el.getAttribute('aria-checked') === 'true'
       || String(el.getAttribute('class') || '').split(/\s+/).some(token => CHECKED_TOKEN.test(token)));
   }
-  scope.ResumeProCustomControls = { describe, acceptsFreeText, snapshot, hasExistingValue, readSelection, visiblePopups, optionTarget, isChecked, run, suggest,
+  scope.ResumeProCustomControls = { describe, acceptsFreeText, snapshot, hasExistingValue, readSelection, visiblePopups, optionTarget, isChecked, run, suggest, libraryVersion,
     openLayers, dismissOpened, pickRange, leaveRange };
 })(typeof self !== 'undefined' ? self : globalThis);

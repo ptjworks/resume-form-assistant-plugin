@@ -111,6 +111,9 @@
   let unreadableReported = false;
   // 最近一次填写的 v1 诊断块（#215）：手动反馈附上的是它，不是侧栏那段给人看的文字。
   let lastFillReport = "";
+  // #497 最近一次填写的私有诊断：题目原文、分组、选项列表和出错字段附近的页面大纲（都已脱敏），
+  // 只发到我们的中转，不进公开报告。手动反馈预览时一起显示。
+  let lastPrivateReport = "";
   // 侧栏的「一键填写」正在点页面里的填写按钮（#301 诊断记录填写从哪里开始）：只在 click() 同步派发期间为真。
   let panelFillStarting = false;
   // 最近一次「保存岗位到桌面端」的过程（#301），只给手动反馈的 [岗位]：只有固定的词，不记公司、岗位、网页文字或网址。
@@ -247,6 +250,8 @@
         // 手动反馈附上的诊断（#215 v1）：只含结构和计数，后台还会再按白名单过滤一遍。
         // 这个标签页做过「保存岗位到桌面端」时再附上 [岗位]（#301），只有固定的词；自动报告不带它。
         diagnosticsReport: [diagnosticsPanel && !diagnosticsPanel.hidden ? lastFillReport : "", jobTraceReport()].filter(Boolean).join("\n\n"),
+        // #497 同一次填写的私有诊断：后台只在用户同意过第 3 版说明时带上，预览里显示。
+        privateReport: diagnosticsPanel && !diagnosticsPanel.hidden ? lastPrivateReport : "",
         // Job recognition runs in the page's controls; the side panel shows it and can cancel it.
         jobAssist: jobAssist && !jobAssist.hidden
           ? { fragments: jobAssist.querySelectorAll("#resume-pro-job-assist-fragments li").length } : null,
@@ -3272,6 +3277,7 @@
     const text = shadowRoot?.querySelector("#resume-pro-diagnostics-text");
     if (!panel || !text) return;
     lastFillReport = "";
+    lastPrivateReport = "";
     text.value = [`网申快填 v${chrome.runtime.getManifest().version}`, "上传后没有进入填写", formatUploadDiagnostics(report)].join("\n");
     panel.hidden = false;
     panel.open = true;
@@ -3597,6 +3603,12 @@
     let recheckVerifiedControls = () => {};
     const unfilledLabels = [];
     const unfilledControls = [];
+    // #497 私有诊断：没写上的字段和 AI 看过却没匹配上的字段（题目原文、分组、选项），只在内存里，结束时脱敏后拼进私有层。
+    const privateUnfilled = [];
+    const aiMisses = [];
+    // 资料里有值的字段类别，和脱敏要藏起来的资料值（扫描出错时还没算出来，结束时再补）。
+    let resumeKindSet = new Set();
+    let privateValues = null;
     // #301 选完后新出现的字段（#269）和首轮字段一样计入结果、诊断和留档；进诊断的只有计数。
     // pendingNew 是排队等 AI 补填的新字段，没轮到补填就结束的算没送 AI。
     const grown = { found: 0, local: 0, matched: 0, aiFields: 0, aiMatches: 0, aiCalled: false, errorCode: "", drops: {} };
@@ -3728,6 +3740,8 @@
       }
       // 诊断里要藏起来的简历内容（一个字的值太容易撞上普通字段名，不参与比较）。
       const resumeValues = resumeFields.map(field => normalizeForOverlap(field?.value)).filter(value => value.length >= 2);
+      privateValues = resumeValues;
+      try { resumeKindSet = self.ResumeProFeedback?.resumeKinds?.(resumeFields) || new Set(); } catch { resumeKindSet = new Set(); }
       phase = "roundTripMs";
       stage = "match";
       phaseStart = performance.now();
@@ -3782,11 +3796,31 @@
           ...(leftover && leftover.session === session ? { after: leftover.after } : {}),
           ...(overlay ? { overlay } : {})
         };
-        unfilledControls.push({ label: overlaps || showsResume ? '（字段名已隐藏）' : label, reason: why,
+        // #497 公开报告只报字段类别和控件的样子；题目原文、分组和选项只进私有诊断。
+        const shape = controlShapes.get(control);
+        const current = shape && shape.session === session ? shape : null;
+        const kind = fieldKindOf(label);
+        unfilledControls.push({ label: overlaps || showsResume ? '（字段名已隐藏）' : label, reason: why, kind,
+          form: controlForm(element, current, observed.opened),
           reasonCode: reason, control: withFillProbe(api => api.describeControl(element), null),
           ...(Object.keys(observed).length ? { observed } : {}),
           // 深度填写：插件实际按哪种控件去操作的（说明书给的类型经 DOM 校正后），分清是类型判错还是组件打不开。
           ...(element.deepRef ? { operated: element.controlKind } : {}) });
+        privateUnfilled.push({ label, section: fieldSection(element, fieldMeta), kind, reasonCode: reason, nodes: fieldNodes(element),
+          ...privateOptions(element, fieldMeta, label, kind, current) });
+      };
+      // #497 AI 看过、没给值的字段（ai-worker 的 unansweredIds）：类别、资料里有没有这一类，私有诊断再带题目和选项。
+      const noteAiMisses = ids => {
+        if (!Array.isArray(ids)) return;
+        for (const id of ids) {
+          const meta = fieldMetaMap.get(id);
+          const entry = fieldMap.get(id);
+          if (!meta || !entry || aiMisses.some(item => item.fieldId === id)) continue;
+          const label = meta.label || meta.placeholder || meta.name || '';
+          const kind = fieldKindOf(label);
+          aiMisses.push({ fieldId: id, label, section: fieldSection(entry, meta), kind, inResume: kind !== 'unknown' && resumeKindSet.has(kind),
+            nodes: fieldNodes(entry), ...privateOptions(entry, meta, label, kind, null) });
+        }
       };
       let controlsRechecked = false;
       recheckVerifiedControls = () => {
@@ -3931,6 +3965,7 @@
         answered.forEach(id => grownMatchedIds.add(id));
         grown.matched += answered.size;
         const d = reply?.diagnostics || {};
+        try { noteAiMisses(d.unansweredIds); } catch { /* diagnostics never break the fill */ }
         const counted = value => Number.isInteger(value) && value > 0 ? value : 0;
         grown.local += counted(d.ruleMatches);
         grown.aiFields += counted(d.aiFields);
@@ -4101,6 +4136,7 @@
         if (waitHint) waitHint.hidden = true;
         diagnostics = response?.diagnostics || {};
         responded = Boolean(response);
+        try { noteAiMisses(diagnostics.unansweredIds); } catch { /* diagnostics never break the fill */ }
         aiDown = Boolean(self.ResumeProFeedback?.requestFailed?.(diagnostics.errorCode));
         // Cancellation may race a successful AI reply. Only the worker's explicitly
         // cancelled response may retain its documented local matches.
@@ -4600,13 +4636,17 @@
       const totalFields = fieldCount + grown.found;
       const totalMatched = matched === null ? null : matched + grown.matched;
       // 补填的 AI 请求失败（#301）：首轮没有错误码时，类别和阶段按它算，和诊断里的 error_code 一致。
+      // #497 资料里有这一类、AI 却没匹配上的字段数：够 AI_MISSED_MIN 项就单独上报（error_category ai_missed）。
+      const aiMissedWithData = aiMisses.filter(item => item.inResume).length;
       const verdict = fillVerdict({ scanned: scanDone, fieldCount: totalFields, pageType: pageType?.type ?? null, frames: probe?.frames ?? null,
         failedStage, responded, errorCode: diagnostics.errorCode, catchUpCode: grown.errorCode, matched: totalMatched, filledCount,
-        unfilledCount: unfilledLabels.length, unconfirmedCount });
+        unfilledCount: unfilledLabels.length, unconfirmedCount, aiMissedWithData });
       const summaryInput = { ...timing, totalMs,
         fieldCount: totalFields, filledCount, unfilledCount: unfilledLabels.length, outcome, diagnostics, probe, unfilledControls,
         path: scanPath, pageType, readyAtScan, stats, matched: totalMatched, requested, unconfirmedCount, ...verdict, grown,
         entry, pageFocused, genericCustom, genericLocked, scanFault, earlyFilled, keptCount: kept.length,
+        // #497 公开报告只用类别和「资料里有没有」，题目留在私有诊断。
+        aiMissed: aiMisses.map(item => ({ kind: item.kind, inResume: item.inResume })),
         // 「深度分析本页」入口判断用（#224）；只有计数和标记。
         scannedCustom, cancelled: cancelRequested, overwriteDeclined, assisted: Boolean(assisted),
         // #226 本站配方：命中 / 过期 / 未使用及计数（深度分析保存的结果稍后补上）。
@@ -4627,6 +4667,16 @@
       if (entry === "panel" && upload.reportForFill && upload.report) reportInput.upload = upload.report;
       upload.reportForFill = false;
       writeFillDiagnostics(reportInput);
+      // #497 私有诊断：有没写上的、AI 没匹配上的字段，或扫描出错时才做；出错不影响填写。
+      lastPrivateReport = "";
+      if (privateUnfilled.length || aiMisses.length || scanFault?.message) {
+        try {
+          lastPrivateReport = buildPrivateReport({ unfilled: privateUnfilled, missed: aiMisses, fault: scanFault,
+            values: privateValues || redactionValues(activeTemplate, profileFields) });
+        } catch {
+          lastPrivateReport = "";
+        }
+      }
       // Feedback cannot delay filling, archiving or releasing the busy state.
       try {
         // 不是网申填写页（page_not_supported）不上报：没有可修的东西。AI 请求失败（首轮或补填，#301）即使都填上了也上报；
@@ -4636,7 +4686,7 @@
           overwriteDeclined, fieldCount, filledCount, unfilledCount: unfilledLabels.length, unconfirmedCount,
           editHint: hinted && probe?.editButtons > 0, category: verdict.category, errorCode: diagnostics.errorCode, catchUpCode: grown.errorCode });
         if (kind) Promise.resolve(chrome.runtime.sendMessage({ type: "FEEDBACK_AUTO", report: {
-          kind, diagnostics: self.ResumeProFeedback.fillReport(reportInput)
+          kind, diagnostics: self.ResumeProFeedback.fillReport(reportInput), ...(lastPrivateReport ? { private: lastPrivateReport } : {})
         } })).catch(() => {});
       } catch { /* feedback is optional; never break the fill lifecycle */ }
       state.aiBusy = false;
@@ -4675,6 +4725,106 @@
       if (verdict) return verdict;
     } catch { /* fall through */ }
     return { category: "unknown", stage: input.failedStage || "none" };
+  }
+
+  // #497 报告用的字段类别（feedback-core 的表，和本地匹配的那张分开）。认不出或它缺席都是 unknown。
+  function fieldKindOf(label) {
+    try {
+      return self.ResumeProFeedback?.fieldKind?.(label) || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
+  // #497 控件是哪一种，加上自定义下拉操作时看到的样子（custom-controls.js 的 shape）。只有固定的词、是否和毫秒数。
+  // opened：这次填写看到的弹层（popupObserved），点开的是日历就按日期控件算。
+  function controlForm(entry, shape, opened = "") {
+    const kind = entry?.controlKind;
+    const el = entry?.kind === "radio" ? entry.elements?.[0] : entry?.element;
+    const type = isInputElement(el) ? String(el.type || "").toLowerCase() : "";
+    const mode = String(el?.getAttribute?.("inputmode") || "").toLowerCase();
+    const form = entry?.kind === "radio" || kind === "radio" ? "radio"
+      : kind === "native-select" || isSelectElement(el) ? "select"
+        : kind === "cascader" ? "cascader"
+          : opened === "calendar" || kind === "date" || entry?.pickerType || ["date", "month", "datetime-local", "week", "time"].includes(type) ? "date"
+            : kind === "custom-select" ? (shape?.freeText ? "autocomplete" : "dropdown")
+              : kind === "textarea" || el?.tagName === "TEXTAREA" ? "textarea"
+                : kind === "checkbox" || type === "checkbox" ? "checkbox"
+                  : type === "number" || ["numeric", "decimal"].includes(mode) ? "number"
+                    : el ? "text" : "other";
+    if (!shape) return { form };
+    const wait = { openMs: shape.openMs, waitMs: shape.waitMs, spinner: shape.spinner };
+    // 日历谈不上搜索、后台加载和多选，只带等待过程。
+    return form === "date" ? { form, ...wait }
+      : { form, search: shape.search, remote: shape.remote, multi: shape.multi, version: shape.version, ...wait };
+  }
+
+  // 字段所在分组的标题（扫描时找到的区块），私有诊断用。
+  function fieldSection(entry, meta) {
+    return String(entry?.binding?.section || meta?.group || "");
+  }
+
+  // 字段的元素，给私有诊断在页面大纲里找出错字段的位置。
+  function fieldNodes(entry) {
+    const nodes = entry?.kind === "radio" ? Array.from(entry.elements || []) : [entry?.element, ...(entry?.elements || [])];
+    return [...new Set(nodes.filter(Boolean))];
+  }
+
+  // #497 私有诊断里的选项列表，规则和公开报告的「有没有选项」一样：级联只看第一列（自定义下拉的列表在
+  // custom-controls.js 里就只记第一层、插件输入之前的），选完才冒出来的字段（#269）不收。省、市分成两个下拉时，
+  // 市的列表是按资料里的省加载的，会透露省份：地区类字段题目带市、区、县的不收。原生下拉用扫描时（填写之前）的选项。
+  const REGION_KINDS = new Set(["籍贯户口", "现居住地", "地址", "国家地区"]);
+  const LOWER_REGION = /市|区|县|镇|乡|街道|city|district|county|town/i;
+  function privateOptions(entry, meta, label, kind, shape) {
+    if ((meta?.cascadeLevel ?? 0) > 0 || String(meta?.fieldId || "").includes("field-new-")) return {};
+    if (REGION_KINDS.has(kind) && LOWER_REGION.test(String(label ?? "")) && entry?.controlKind !== "cascader") return {};
+    let list = null;
+    let total = 0;
+    if (entry?.kind === "radio" || entry?.controlKind === "native-select") {
+      list = Array.isArray(meta?.options) ? meta.options : [];
+      total = list.length;
+    } else if (Array.isArray(shape?.options)) {
+      list = shape.options;
+      total = Number.isInteger(shape.optionTotal) ? shape.optionTotal : list.length;
+    }
+    if (!list?.length) return {};
+    return { options: list.slice(0, 40).map(text => String(text ?? "")), optionTotal: total };
+  }
+
+  // 脱敏要藏起来的资料值（扫描出错时填写还没读资料，按当前模板和「我的信息」算）。
+  function redactionValues(template, profile) {
+    try {
+      const fields = [...(template ? flattenTemplateFields(template) : []), ...(Array.isArray(profile) ? profile : [])];
+      return fields.map(field => normalizeForOverlap(field?.value)).filter(value => value.length >= 2);
+    } catch {
+      return [];
+    }
+  }
+
+  // #497 私有诊断：题目原文、分组标题、选项列表、出错字段附近的页面大纲、扫描出错的原文。都过深度分析发送前的那套脱敏
+  // （page-outline.js：手机号、邮箱、证件号、网址、凭据和资料里有的文字换成「〔内容〕」，密码、验证码类的控件跳过）。
+  // 选项不按资料值藏：藏起来的那一项就是要选的那一项，只挡手机号、证件号、网址这类。不收字段值，也不标出想选的是哪一项。
+  function buildPrivateReport({ unfilled, missed, fault, values }) {
+    const feedback = self.ResumeProFeedback;
+    const outline = self.ResumeProPageOutline;
+    if (!feedback?.privateReport || !outline?.createRedactor) return "";
+    const redact = outline.createRedactor(values || []);
+    const plain = outline.createRedactor([]);
+    const field = item => ({ label: redact(item.label, 80), section: redact(item.section, 40), kind: item.kind, reasonCode: item.reasonCode,
+      ...(typeof item.inResume === "boolean" ? { inResume: item.inResume } : {}),
+      ...(item.options ? { options: item.options.map(text => plain(text, 20)).filter(Boolean), optionTotal: item.optionTotal } : {}) });
+    const nodes = [...unfilled, ...missed].flatMap(item => item.nodes || []);
+    let page = "";
+    if (nodes.length && outline.excerpt) {
+      try {
+        page = outline.excerpt(document, nodes, { resumeValues: values || [], isVisible: isVisibleInOwnDocument,
+          exclude: element => Boolean(element.closest?.(`#${SIDEBAR_ID}`)), fieldScan: self.ResumeProFieldScan });
+      } catch {
+        page = "";
+      }
+    }
+    const exception = fault?.message ? { name: fault.name, message: redact(fault.message, 500) } : null;
+    return feedback.privateReport({ unfilled: unfilled.map(field), missed: missed.map(field), outline: page, exception });
   }
 
   // fill-probe.js 只读页面结构，给诊断和空页面提示用；它缺席或出错都不能影响填写。
@@ -4846,6 +4996,7 @@
   function writeDeepDiagnostics(report) {
     if (!report) return;
     lastFillReport = "";
+    lastPrivateReport = "";
     const panel = shadowRoot?.querySelector("#resume-pro-diagnostics");
     const text = shadowRoot?.querySelector("#resume-pro-diagnostics-text");
     if (!panel || !text) return;
@@ -6456,6 +6607,9 @@
   // #301 下拉、级联和日历最近一次操作时弹层的样子：没弹出，或弹出的是哪类、里面有没有选项（只有固定类别和是否）。
   // 记下是哪一次填写会话操作的，没填上的字段只带本次填写里的记录。
   const controlPopups = new WeakMap();
+  // #497 自定义下拉最近一次操作的样子：能不能搜索、是不是后台加载、单选多选、组件库大版本、等了多久、结束时还在不在加载；
+  // 第一层的选项文字（插件输入之前的）只给私有诊断用。
+  const controlShapes = new WeakMap();
   // 没弹出（opened=none）只在插件点开过、弹层却没出来时才记（没有发现选项、级联等待超时）；
   // 被禁用、不支持这类还没去点开就停下的，不说弹层的事。
   function popupObserved(observed, reason) {
@@ -6597,6 +6751,9 @@
       const popup = popupObserved(result.observed, result.reason);
       if (popup) controlPopups.set(control, { ...popup, session: fillSession });
       else controlPopups.delete(control);
+      // #497 控件的样子和等待过程（custom-controls.js 的 shape），只给没写上的字段的诊断用。
+      if (result.observed?.shape) controlShapes.set(control, { ...result.observed.shape, session: fillSession });
+      else controlShapes.delete(control);
     }
     return result.ok;
   }
