@@ -59,13 +59,22 @@ label.button-like.disabled { cursor: default; opacity: .45; }
 .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 24px; background: #1c2330; border-bottom: 1px solid #303b4c; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-mark { width: 32px; height: 32px; border-radius: 8px; flex: none; }
+.brand-lockup { display: grid; gap: 2px; min-width: 0; }
+.brand-product { display: flex; align-items: center; gap: 7px; line-height: 1.2; }
 .brand-name { font-size: 17px; font-weight: 650; letter-spacing: -.02em; white-space: nowrap; color: #e9edf5; }
 .brand-version { padding: 1px 7px; border-radius: 6px; background: #2b3547; color: #9ba8bd; font: 12px/1.6 Menlo, Consolas, monospace; }
+.brand-publisher { display: flex; align-items: center; gap: 5px; color: #aebacd; font-size: 11px; line-height: 1; }
+.brand-publisher img { display: block; border-radius: 3px; }
 .nav { display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: #232b3a; border: 1px solid #303b4c; }
 .nav button { min-height: 34px; padding: 6px 16px; border: 0; border-radius: 9px; background: transparent; color: #9ba8bd; white-space: nowrap; }
 .nav button:hover:not(:disabled) { background: #303b4c; color: #e9edf5; border-color: transparent; }
 .nav button.active, .nav button.active:hover:not(:disabled) { background: #28453f; color: #fff; font-weight: 600; }
 .topbar-status { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+#nav-support { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-color: transparent; border-radius: 8px; color: #d2dbe9; background: transparent; font-size: 12px; white-space: nowrap; }
+#nav-support .icon { width: 15px; height: 15px; }
+#nav-support:hover { background: #303b4c; border-color: #303b4c; color: #fff; }
+#nav-support.active { color: #e8f6f2; background: #28453f; border-color: #3b5e55; }
+#nav-support:focus-visible { outline-color: #95cfc1; }
 .status-pill { display: inline-flex; align-items: center; gap: 7px; min-width: 0; margin: 0; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none; background: #b7c1cd; }
 .status-pill[data-tone="ok"] { border-color: #c4e0d6; background: #eef7f3; color: var(--ok); }
@@ -103,6 +112,32 @@ label:has(> input[type="checkbox"]) { flex-direction: row; align-items: flex-sta
 .break { overflow-wrap: anywhere; white-space: pre-wrap; }
 code { font: 12px Consolas, "Sarasa Mono SC", monospace; }
 .banner { background: #fceeee; border: 1px solid #edc5c5; color: var(--danger); padding: 12px 16px; border-radius: 8px; margin: 16px; overflow-wrap: anywhere; }
+
+/* 独立的支持开发页面 */
+.support-view { width: min(calc(100% - 56px), 760px); margin: 0 auto; padding: 34px 0 40px; }
+.support-heading { margin: 0 0 20px; }
+.support-heading h1 { line-height: 1.4; }
+.support-heading p { margin: 5px 0 0; color: var(--muted); }
+.support-card { padding: 24px 28px 20px; border: 1px solid var(--card-line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); }
+.support-card-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+.support-card-head p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+.support-methods { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.support-method { margin: 0; padding: 14px 12px 12px; display: grid; justify-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; }
+.support-method figcaption { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; }
+.payment-dot { width: 7px; height: 7px; border-radius: 50%; }
+.payment-dot.wechat { background: #07a75d; }
+.payment-dot.alipay { background: #1677ff; }
+.support-method img { display: block; padding: 8px; border-radius: 8px; background: white; }
+.support-method-hint { color: var(--muted); font-size: 12px; }
+.support-note { margin-top: 17px; padding-top: 13px; border-top: 1px solid var(--line); }
+.support-note p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.support-note p + p { margin-top: 2px; }
+.support-note strong { color: #485360; font-weight: 650; }
+@media (max-height: 600px) {
+  .support-view { padding-top: 24px; }
+  .support-heading { margin-bottom: 14px; }
+  .support-card { padding-top: 18px; }
+}
 
 #view-applications { height: 100%; min-height: 0; padding: 20px 24px; background: var(--surface); }
 .apps-shell { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(400px, 45%); gap: 20px; }
@@ -260,6 +295,9 @@ dialog .row:last-child { justify-content: flex-end; margin-top: 8px; }
   .nav button { padding-inline: 12px; }
   #view-applications { padding: 16px; }
   .apps-shell { gap: 16px; }
+}
+@media (min-width: 1070px) and (max-width: 1180px) {
+  .topbar { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
 }
 /* Tauri 最小窗口宽度是 860px：桌面窗口始终保留列表与详情双栏。 */
 @media (max-width: 820px) {
