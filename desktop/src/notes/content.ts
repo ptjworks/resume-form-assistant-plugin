@@ -2,7 +2,9 @@ export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_BATCH_BYTES = 30 * 1024 * 1024;
 export const MAX_FILES = 30;
 export const imageTypes = "image/png,image/jpeg,image/gif,image/webp";
-const tags = new Set(["P", "DIV", "BR", "B", "STRONG", "I", "EM", "UL", "OL", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "PRE", "CODE", "HR", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH"]);
+export const fontSizes = ["12px", "14px", "16px", "18px", "20px", "24px", "28px", "32px"];
+
+const tags = new Set(["SPAN", "U", "S", "P", "DIV", "BR", "B", "STRONG", "I", "EM", "UL", "OL", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "PRE", "CODE", "HR", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH"]);
 const hidden = new Set(["SCRIPT", "STYLE", "TEMPLATE", "IFRAME", "OBJECT", "SVG", "MATH"]);
 const newlines = new Set(["P", "DIV", "BR", "LI", "PRE", "BLOCKQUOTE", "TR", "H1", "H2", "H3", "H4", "H5", "H6"]);
 
@@ -21,10 +23,10 @@ export interface FileContents {
 
 export interface PendingFile extends FileContents { id: string; size: number }
 
-export function fileMarker(id: string): HTMLSpanElement {
-  const span = document.createElement("span");
-  span.dataset.noteFile = id;
-  return span;
+export function fileMarker(id: string): HTMLDivElement {
+  const marker = document.createElement("div");
+  marker.dataset.noteFile = id;
+  return marker;
 }
 
 /** Build a fresh DOM using only elements the editor supports. A template is inert,
@@ -54,6 +56,10 @@ function copyBody(nodes: NodeListOf<ChildNode>, fileIds: ReadonlySet<string>, im
     }
     const tag = source.tagName.toUpperCase();
     const destination = tags.has(tag) ? document.createElement(tag.toLowerCase()) : parent;
+    if (tag === "SPAN" && source instanceof HTMLElement && destination instanceof HTMLElement) {
+      const size = source.style.fontSize;
+      if (fontSizes.includes(size)) destination.style.fontSize = size;
+    }
     for (const child of source.childNodes) copy(child, destination);
     if (destination !== parent) parent.appendChild(destination);
   }
@@ -61,9 +67,9 @@ function copyBody(nodes: NodeListOf<ChildNode>, fileIds: ReadonlySet<string>, im
   return output;
 }
 
-export function serializeBody(editor: HTMLElement, ids: ReadonlySet<string>) {
+export function serializeBody(html: string, ids: ReadonlySet<string>) {
   const clean = document.createElement("div");
-  clean.append(copyBody(editor.childNodes, ids));
+  clean.append(safeBody(html, ids));
   const plain = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
     const text = [...node.childNodes].map(plain).join("");

@@ -16,6 +16,9 @@ export default defineConfig({
         { src: "node_modules/@tesseract.js-data/chi_sim/4.0.0_best_int/chi_sim.traineddata.gz", dest: "ocr/lang", rename: { stripBase: true } },
         { src: "node_modules/tesseract.js-core/LICENSE", dest: "ocr", rename: { stripBase: true } },
         { src: "node_modules/tesseract.js/LICENSE.md", dest: "ocr", rename: { stripBase: true } },
+        // Preserve the license notices for the editor and its bundled dependencies.
+        { src: "node_modules/@tiptap/*/LICENSE*", dest: "licenses" },
+        { src: "node_modules/{prosemirror-*,orderedmap,rope-sequence,w3c-keyname,linkifyjs}/LICENSE*", dest: "licenses" },
       ],
     }),
   ],

@@ -75,6 +75,7 @@ const views: Record<string, HTMLElement> = {
 };
 
 function showRoute(name: string | undefined) {
+  views.notes.parentElement?.classList.toggle("notes-workspace-active", name === "notes");
   Object.entries(views).forEach(([key, el]) => {
     el.classList.toggle("hidden", key !== name);
   });
@@ -524,6 +525,24 @@ const resumeView = mountResume(
   events?.listen ? (name, handler) => events.listen?.(name, (event) => handler(event)) : undefined,
 );
 
+// Wry reports Cocoa points on macOS and physical client pixels on Windows.
+function dropClientPoint(position?: { x: number; y: number }) {
+  if (!position) return undefined;
+  const scale = navigator.platform.startsWith("Win") ? window.devicePixelRatio || 1 : 1;
+  return { x: position.x / scale, y: position.y / scale };
+}
+
+if (events?.listen) {
+  for (const eventName of ["tauri://drag-enter", "tauri://drag-over"]) {
+    void events.listen(eventName, event => {
+      if (views.notes.classList.contains("hidden")) return;
+      const payload = event.payload;
+      if (payload && typeof payload === "object") notes.nativeDrag(dropClientPoint(payload.position));
+    });
+  }
+  void events.listen("tauri://drag-leave", () => notes.nativeDrag());
+}
+
 const inbox = mountInbox(command, {
   mountAi: (container, evidenceId, onConfirmed) =>
     mountAiReview(container, invoke ?? null, evidenceId, onConfirmed),
@@ -545,8 +564,7 @@ const inbox = mountInbox(command, {
           const paths = payload.paths ?? [];
           if (views.notes.classList.contains("hidden")) handle(paths);
           else {
-            const position = payload.position;
-            notes.nativeDrop(paths, position && { x: position.x / window.devicePixelRatio, y: position.y / window.devicePixelRatio });
+            notes.nativeDrop(paths, dropClientPoint(payload.position));
           }
         });
       }
