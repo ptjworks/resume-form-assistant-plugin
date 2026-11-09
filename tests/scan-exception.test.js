@@ -199,7 +199,7 @@ function page(t, { body = `<main>${FORM}</main>`, answers, setup }) {
         if (["ENSURE_AI_HOST", "AI_HOST_READY"].includes(message.type)) return { ready: true };
         return message.type === "AI_FILL" ? fill(message) : {};
       } },
-    storage: { local: { get: async () => ({}), set: async () => {} }, session: { get: async () => ({}), set: async () => {} },
+    storage: { local: { get: async (key) => (key === "feedbackStateV1" ? { feedbackStateV1: { consent: true, consentVersion: 3 } } : {}), set: async () => {} }, session: { get: async () => ({}), set: async () => {} },
       onChanged: { addListener() {} } }
   };
   const context = dom.getInternalVMContext();

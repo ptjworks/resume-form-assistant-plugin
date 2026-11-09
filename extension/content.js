@@ -112,8 +112,20 @@
   // 最近一次填写的 v1 诊断块（#215）：手动反馈附上的是它，不是侧栏那段给人看的文字。
   let lastFillReport = "";
   // #497 最近一次填写的私有诊断：题目原文、分组、选项列表和出错字段附近的页面大纲（都已脱敏），
-  // 只发到我们的中转，不进公开报告。手动反馈预览时一起显示。
-  let lastPrivateReport = "";
+  // 只发到我们的中转，不进公开报告。手动反馈预览时一起显示。{ input, text }：text 用到时才拼（privateText）。
+  let lastPrivate = null;
+  // #497 有没有同意自动错误报告（后台存的 feedbackStateV1，只读）：没同意时后台不发，填完也就不做私有诊断。
+  // 页面打开时读一次，每次一键填写开始时再读一次（填完之前早就读到了）。读不到当没同意。
+  let feedbackAgreed = false;
+  function readFeedbackAgreed() {
+    try {
+      Promise.resolve(chrome.storage?.local?.get?.("feedbackStateV1"))
+        .then(found => { feedbackAgreed = found?.feedbackStateV1?.consent === true; }, () => {});
+    } catch {
+      feedbackAgreed = false;
+    }
+  }
+  readFeedbackAgreed();
   // 侧栏的「一键填写」正在点页面里的填写按钮（#301 诊断记录填写从哪里开始）：只在 click() 同步派发期间为真。
   let panelFillStarting = false;
   // 最近一次「保存岗位到桌面端」的过程（#301），只给手动反馈的 [岗位]：只有固定的词，不记公司、岗位、网页文字或网址。
@@ -251,7 +263,7 @@
         // 这个标签页做过「保存岗位到桌面端」时再附上 [岗位]（#301），只有固定的词；自动报告不带它。
         diagnosticsReport: [diagnosticsPanel && !diagnosticsPanel.hidden ? lastFillReport : "", jobTraceReport()].filter(Boolean).join("\n\n"),
         // #497 同一次填写的私有诊断：后台只在用户同意过第 3 版说明时带上，预览里显示。
-        privateReport: diagnosticsPanel && !diagnosticsPanel.hidden ? lastPrivateReport : "",
+        privateReport: diagnosticsPanel && !diagnosticsPanel.hidden ? privateText(lastPrivate) : "",
         // Job recognition runs in the page's controls; the side panel shows it and can cancel it.
         jobAssist: jobAssist && !jobAssist.hidden
           ? { fragments: jobAssist.querySelectorAll("#resume-pro-job-assist-fragments li").length } : null,
@@ -3277,7 +3289,7 @@
     const text = shadowRoot?.querySelector("#resume-pro-diagnostics-text");
     if (!panel || !text) return;
     lastFillReport = "";
-    lastPrivateReport = "";
+    lastPrivate = null;
     text.value = [`网申快填 v${chrome.runtime.getManifest().version}`, "上传后没有进入填写", formatUploadDiagnostics(report)].join("\n");
     panel.hidden = false;
     panel.open = true;
@@ -3566,6 +3578,8 @@
     const activeTemplateFingerprint = JSON.stringify(activeTemplate);
 
     const profileFields = profileResumeFields();
+    // #497 填完时要不要做私有诊断，看的是这时读到的同意状态。
+    readFeedbackAgreed();
 
     if (!activeTemplate && !profileFields.length) {
       state.aiBusy = false;
@@ -4667,17 +4681,14 @@
       if (entry === "panel" && upload.reportForFill && upload.report) reportInput.upload = upload.report;
       upload.reportForFill = false;
       writeFillDiagnostics(reportInput);
-      // #497 私有诊断：有没写上的、AI 没匹配上的字段，或扫描出错时才做；出错不影响填写。
-      lastPrivateReport = "";
-      if (privateUnfilled.length || aiMisses.length || scanFault?.message) {
-        try {
-          lastPrivateReport = buildPrivateReport({ unfilled: privateUnfilled, missed: aiMisses, fault: scanFault,
-            values: privateValues || redactionValues(activeTemplate, profileFields) });
-        } catch {
-          lastPrivateReport = "";
-        }
-      }
+      // #497 私有诊断的材料：有没写上的、AI 没匹配上的字段，或扫描出错时才留。拼成文字（要遍历整页做大纲）留到用得上时：
+      // 同意了自动报告、这次要发的时候（放开忙碌状态之后），或手动反馈预览的时候。
+      lastPrivate = privateUnfilled.length || aiMisses.length || scanFault?.message
+        ? { input: { unfilled: privateUnfilled, missed: aiMisses, fault: scanFault, values: privateValues || redactionValues(activeTemplate, profileFields) },
+          text: null } : null;
+      const privateHolder = lastPrivate;
       // Feedback cannot delay filling, archiving or releasing the busy state.
+      let autoReport = null;
       try {
         // 不是网申填写页（page_not_supported）不上报：没有可修的东西。AI 请求失败（首轮或补填，#301）即使都填上了也上报；
         // 没装桌面端、没配对、没配置模型不算请求失败。
@@ -4685,14 +4696,20 @@
         const kind = self.ResumeProFeedback?.fillFailure({ assisted: Boolean(assisted || deep), cancelled: cancelRequested,
           overwriteDeclined, fieldCount, filledCount, unfilledCount: unfilledLabels.length, unconfirmedCount,
           editHint: hinted && probe?.editButtons > 0, category: verdict.category, errorCode: diagnostics.errorCode, catchUpCode: grown.errorCode });
-        if (kind) Promise.resolve(chrome.runtime.sendMessage({ type: "FEEDBACK_AUTO", report: {
-          kind, diagnostics: self.ResumeProFeedback.fillReport(reportInput), ...(lastPrivateReport ? { private: lastPrivateReport } : {})
-        } })).catch(() => {});
+        if (kind) autoReport = { kind, diagnostics: self.ResumeProFeedback.fillReport(reportInput) };
       } catch { /* feedback is optional; never break the fill lifecycle */ }
       state.aiBusy = false;
       button.disabled = state.desktopMode !== "ready" || !hasResumeData();
       if (repeatButton) repeatButton.disabled = state.desktopMode !== "ready" || !getActiveTemplate(state.currentStore);
       button.textContent = "一键 AI 填写";
+      // 没同意自动报告时后台什么都不发，私有诊断也就不做。
+      if (autoReport) {
+        try {
+          const hidden = feedbackAgreed ? privateText(privateHolder) : "";
+          Promise.resolve(chrome.runtime.sendMessage({ type: "FEEDBACK_AUTO", report: { ...autoReport, ...(hidden ? { private: hidden } : {}) } }))
+            .catch(() => {});
+        } catch { /* feedback is optional; never break the fill lifecycle */ }
+      }
       // A page with nothing to fill produced nothing worth archiving.
       if (fieldCount > 0 && (!overwriteDeclined || filledCount > 0)) {
         offerFillRecord({
@@ -4772,23 +4789,38 @@
 
   // #497 私有诊断里的选项列表，规则和公开报告的「有没有选项」一样：级联只看第一列（自定义下拉的列表在
   // custom-controls.js 里就只记第一层、插件输入之前的），选完才冒出来的字段（#269）不收。省、市分成两个下拉时，
-  // 市的列表是按资料里的省加载的，会透露省份：地区类字段题目带市、区、县的不收。原生下拉用扫描时（填写之前）的选项。
+  // 市的列表是按资料里的省加载的，会透露省份，题目上又不一定看得出是哪一级（就叫「现居住地」）：地区类的题只收级联的
+  // 第一列，别的地区下拉都不收。自定义下拉在这次填写里插件已经选过别的下拉或单选之后才点开的（shape.afterChoice）
+  // 也不收：列表可能是按前面选的值加载的。原生下拉用扫描时（填写之前）的选项。
   const REGION_KINDS = new Set(["籍贯户口", "现居住地", "地址", "国家地区"]);
-  const LOWER_REGION = /市|区|县|镇|乡|街道|city|district|county|town/i;
   function privateOptions(entry, meta, label, kind, shape) {
     if ((meta?.cascadeLevel ?? 0) > 0 || String(meta?.fieldId || "").includes("field-new-")) return {};
-    if (REGION_KINDS.has(kind) && LOWER_REGION.test(String(label ?? "")) && entry?.controlKind !== "cascader") return {};
+    if (REGION_KINDS.has(kind) && entry?.controlKind !== "cascader") return {};
     let list = null;
     let total = 0;
     if (entry?.kind === "radio" || entry?.controlKind === "native-select") {
       list = Array.isArray(meta?.options) ? meta.options : [];
       total = list.length;
-    } else if (Array.isArray(shape?.options)) {
+    } else if (Array.isArray(shape?.options) && !shape.afterChoice) {
       list = shape.options;
       total = Number.isInteger(shape.optionTotal) ? shape.optionTotal : list.length;
     }
     if (!list?.length) return {};
     return { options: list.slice(0, 40).map(text => String(text ?? "")), optionTotal: total };
+  }
+
+  // #497 拼一次私有诊断就留着，页面上的元素随即放掉。出错就是没有。
+  function privateText(holder) {
+    if (!holder) return "";
+    if (holder.text === null) {
+      try {
+        holder.text = buildPrivateReport(holder.input);
+      } catch {
+        holder.text = "";
+      }
+      holder.input = null;
+    }
+    return holder.text;
   }
 
   // 脱敏要藏起来的资料值（扫描出错时填写还没读资料，按当前模板和「我的信息」算）。
@@ -4996,7 +5028,7 @@
   function writeDeepDiagnostics(report) {
     if (!report) return;
     lastFillReport = "";
-    lastPrivateReport = "";
+    lastPrivate = null;
     const panel = shadowRoot?.querySelector("#resume-pro-diagnostics");
     const text = shadowRoot?.querySelector("#resume-pro-diagnostics-text");
     if (!panel || !text) return;
@@ -6610,6 +6642,8 @@
   // #497 自定义下拉最近一次操作的样子：能不能搜索、是不是后台加载、单选多选、组件库大版本、等了多久、结束时还在不在加载；
   // 第一层的选项文字（插件输入之前的）只给私有诊断用。
   const controlShapes = new WeakMap();
+  // 这次填写会话里选上的下拉、级联和单选有几个（见 setElementValue）。
+  let choiceWrites = { session: null, count: 0 };
   // 没弹出（opened=none）只在插件点开过、弹层却没出来时才记（没有发现选项、级联等待超时）；
   // 被禁用、不支持这类还没去点开就停下的，不说弹层的事。
   function popupObserved(observed, reason) {
@@ -6751,9 +6785,12 @@
       const popup = popupObserved(result.observed, result.reason);
       if (popup) controlPopups.set(control, { ...popup, session: fillSession });
       else controlPopups.delete(control);
-      // #497 控件的样子和等待过程（custom-controls.js 的 shape），只给没写上的字段的诊断用。
-      if (result.observed?.shape) controlShapes.set(control, { ...result.observed.shape, session: fillSession });
+      // #497 控件的样子和等待过程（custom-controls.js 的 shape），只给没写上的字段的诊断用。这次填写里插件已经选过
+      // 别的下拉或单选（afterChoice）：点开的列表可能是按那个值加载的（学院 → 专业），私有诊断不收它的选项。
+      if (choiceWrites.session !== fillSession) choiceWrites = { session: fillSession, count: 0 };
+      if (result.observed?.shape) controlShapes.set(control, { ...result.observed.shape, afterChoice: choiceWrites.count > 0, session: fillSession });
       else controlShapes.delete(control);
+      if (result.ok && (target?.kind === "radio" || ["custom-select", "cascader", "native-select", "radio"].includes(target?.controlKind))) choiceWrites.count += 1;
     }
     return result.ok;
   }

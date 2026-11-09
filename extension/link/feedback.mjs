@@ -85,13 +85,18 @@ export function createFeedback({ storage, fetchImpl = fetch, now = Date.now, uui
     const source = ['[来源]', `app_version: ${version}`, `os: ${os}`, ...(installType ? [`install: ${installType}`] : []),
       ...(legacy ? [] : [`build: ${BUILD_ID}`]), ...desktop, ...(host ? [`host: ${host}`] : [])].join('\n');
     // #497 The private layer: only in the relay, never in an issue. Not for a manual report from someone who has not
-    // agreed to notice 3. An exception's is its message, redacted (feedback-core exception()).
-    const raw = kind === 'exception'
-      ? (typeof input.message === 'string' && input.message ? core.privateReport({ exception: { name: errorType, message: input.message } }) : '')
-      : input.private;
+    // agreed to notice 3. An exception's is its message, kept to the code's own English wording (codeMessage), here
+    // again whatever the page did.
+    const message = kind === 'exception' && typeof input.message === 'string' ? core.codeMessage(input.message) : '';
+    const raw = kind === 'exception' ? (message ? core.privateReport({ exception: { name: errorType, message } }) : '') : input.private;
     const hidden = legacy ? '' : core.privateLayer(raw);
+    // The relay keeps 5000 characters. A long description leaves less room: the block is cut at a line, from the end,
+    // where the listed unfilled fields are (fillReport puts them last).
+    const head = `${description}${description ? '\n' : ''}--- 诊断信息 v1 ---\n${source}`;
+    const room = 5000 - head.length - 2;
+    const block = details.length <= room ? details : details.slice(0, Math.max(0, details.lastIndexOf('\n', room)));
     return { app: 'resume-form-assistant-plugin', app_version: version, os, error_type: errorType,
-      error_stack: stack, user_description: `${description}${description ? '\n' : ''}--- 诊断信息 v1 ---\n${source}${details ? `\n\n${details}` : ''}`.slice(0, 5000),
+      error_stack: stack, user_description: `${head}${block ? `\n\n${block}` : ''}`.slice(0, 5000),
       anonymous_id: id, timestamp: new Date(now()).toISOString(), ...(hidden ? { private_diagnostics: hidden } : {}) };
   }
   async function transmit(payload, automatic) {

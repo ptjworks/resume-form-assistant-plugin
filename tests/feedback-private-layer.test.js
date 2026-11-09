@@ -23,7 +23,7 @@ function layout(w) {
 }
 
 // resume：模板里的 { 字段名: 值 }。ai(message, ids)：AI 替身的回复，ids 是题目 → fieldId。
-function page(t, { body, resume, ai, setup }) {
+function page(t, { body, resume, ai, setup, agreed = true }) {
   const dom = new JSDOM(`<!doctype html><html><head><title>投递简历</title></head><body>${body}</body></html>`,
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://demo.jobs.example.test/campus/apply" });
   const w = dom.window;
@@ -50,7 +50,7 @@ function page(t, { body, resume, ai, setup }) {
         const ids = Object.fromEntries(message.formFields.map((field) => [field.label, field.fieldId]));
         return ai(message, ids);
       } },
-    storage: { local: { get: async () => ({}), set: async () => {} }, session: { get: async () => ({}), set: async () => {} },
+    storage: { local: { get: async (key) => (key === "feedbackStateV1" && agreed ? { feedbackStateV1: { consent: true, consentVersion: 3 } } : {}), set: async () => {} }, session: { get: async () => ({}), set: async () => {} },
       onChanged: { addListener() {} } }
   };
   const context = dom.getInternalVMContext();
@@ -251,4 +251,110 @@ test("组件库的大版本只看类名：antd 3/4/5/6，Element UI 和 Element 
   assert.equal(version('<div class="arco-select"><input></div>'), "");
   assert.equal(w.ResumeProCustomControls.libraryVersion(null), "");
   w.close();
+});
+
+// Two ARIA dropdowns: the first one's list is fine, the second answers with a list that has no matching option.
+function twoSelects(order) {
+  const select = (id, label) => `<label id="${id}-q">${label}</label><button type="button" id="${id}" role="combobox" aria-labelledby="${id}-q" aria-controls="${id}-list" aria-expanded="false">请选择</button><div id="${id}-list" role="listbox" hidden></div>`;
+  return { body: `<form><h3>教育信息</h3>${order.map(([id, label]) => select(id, label)).join("")}</form>`,
+    setup: (w) => {
+      for (const [id, , choices] of order) {
+        const combo = w.document.getElementById(id);
+        combo.onclick = () => {
+          const list = w.document.getElementById(`${id}-list`);
+          list.hidden = false; list.innerHTML = "";
+          for (const text of choices) {
+            const option = w.document.createElement("div"); option.setAttribute("role", "option"); option.textContent = text;
+            option.onclick = () => { combo.textContent = text; combo.setAttribute("aria-expanded", "false"); option.setAttribute("aria-selected", "true"); list.hidden = true; };
+            list.append(option);
+          }
+          combo.setAttribute("aria-expanded", "true");
+        };
+      }
+    } };
+}
+const both = { 学历层次: "硕士", 所学专业: "历史学" };
+const answer = (message, ids) => ({ success: true, matches: Object.entries(both).filter(([label]) => ids[label]).map(([label, value]) => ({ fieldId: ids[label], value })),
+  diagnostics: { ruleMatches: 0, aiFields: message.formFields.length, aiMatches: 2, promptBytes: 500, apiMs: 800, errorCode: "none" } });
+
+test("一个下拉的列表是在插件这次已经选过别的下拉之后才点开的：私有部分不收它的选项（可能按前面选的值加载）", async (t) => {
+  const after = twoSelects([["degree", "学历层次", ["本科", "硕士"]], ["major", "所学专业", ["计算机科学", "数学"]]]);
+  const p = page(t, { ...after, resume: { 学历: "硕士", 专业: "历史学" }, ai: answer });
+  const result = await p.run();
+  assert.equal(result.filledCount, 1, p.ui.diag.value);
+  const report = p.reports.find((entry) => entry.kind === "fill_partial");
+  assert.ok(report?.private, JSON.stringify(p.reports.map((entry) => entry.kind)));
+  assert.match(report.private, /^\[未填字段 1\]\nlabel: 所学专业\nsection: 教育信息\nkind: 专业\nreason: no_option_match$/m);
+  assert.doesNotMatch(report.private, /计算机科学/);
+
+  // The same list opened first, before any choice: it is listed, in page order, nothing marked.
+  const first = twoSelects([["major", "所学专业", ["计算机科学", "数学"]], ["degree", "学历层次", ["本科", "硕士"]]]);
+  const q = page(t, { ...first, resume: { 学历: "硕士", 专业: "历史学" }, ai: answer });
+  await q.run();
+  const own = q.reports.find((entry) => entry.kind === "fill_partial");
+  assert.match(own?.private || "", /^kind: 专业\nreason: no_option_match\noptions: 计算机科学 \| 数学$/m);
+});
+
+test("没同意自动报告：填完不做私有诊断，自动报告也不带它", async (t) => {
+  const after = twoSelects([["major", "所学专业", ["计算机科学", "数学"]]]);
+  const p = page(t, { ...after, agreed: false, resume: { 专业: "历史学" }, ai: answer });
+  await p.run();
+  const report = p.reports.find((entry) => entry.kind === "fill_failed" || entry.kind === "fill_partial");
+  assert.ok(report, JSON.stringify(p.reports));
+  assert.equal(report.private, undefined);
+});
+
+test("代码异常的原文只留代码本身的英文报错：引号里不是标识符的、中文和长数字都换掉，后台再做一遍结果不变", async () => {
+  const cases = [
+    ["Cannot read properties of undefined (reading 'style')", "Cannot read properties of undefined (reading 'style')"],
+    ["Unexpected token '张' in JSON at position 3", "Unexpected token '〔内容〕' in JSON at position 3"],
+    ["学校 示例大学 not found", "〔内容〕 〔内容〕 not found"],
+    ["Failed to fetch https://x.example/a for 13800138000", "Failed to fetch [网址] for [数字]"],
+    ['bad value "Zhang San, 2001" here', 'bad value "〔内容〕" here']
+  ];
+  for (const [raw, kept] of cases) {
+    assert.equal(core.codeMessage(raw), kept, raw);
+    assert.equal(core.codeMessage(kept), kept, `again: ${raw}`);
+  }
+  // The worker applies it to whatever message a page hands it.
+  const sent = await send({ kind: "exception", name: "TypeError", source: "error", stack: "content.js:1:1", message: "学校 示例大学 not found" });
+  assert.match(sent.private_diagnostics, /^message: 〔内容〕 〔内容〕 not found$/m);
+  assert.doesNotMatch(sent.private_diagnostics, /示例大学/);
+});
+
+test("手动反馈的描述很长时，诊断从末尾按整行截掉，[来源] 和前面的段都在，总长不超过 5000", async () => {
+  const { createFeedback } = await import("../extension/link/feedback.mjs");
+  const data = {};
+  const worker = createFeedback({ storage: { get: async () => structuredClone(data), set: async value => Object.assign(data, structuredClone(value)) },
+    version: "0.5.0", os: "Windows / Chrome 140", fetchImpl: async () => new Response("{}") });
+  const unfilled = Array.from({ length: 10 }, (_, at) => ({ label: `学校${at}`, kind: "学校", reasonCode: "no_option_match", observed: { opened: "listbox", hasOptions: true },
+    form: { form: "dropdown", search: true, remote: true, multi: false, version: "antd5", openMs: 123456, waitMs: 654321, spinner: true },
+    control: { tag: "input", type: "text", role: "combobox", readOnly: true, picker: "antd", library: "antd", popup: "listbox" } }));
+  const block = core.fillReport({ fieldCount: 10, category: "fill_rejected", stage: "fill", unfilledControls: unfilled,
+    aiMissed: core.KIND_NAMES.map(kind => ({ kind, inResume: kind !== "unknown" })) });
+  const text = worker.preview({ description: "很长的描述".repeat(300), diagnostics: core.diagnostics(block, { manual: true }) }).user_description;
+  assert.ok(text.length <= 5000, String(text.length));
+  assert.match(text, /^\[来源\]\napp_version: 0\.5\.0\nos: Windows \/ Chrome 140\nbuild: dev$/m);
+  assert.match(text, /^\[错误\]\nerror_category: fill_rejected$/m);
+  const last = text.split("\n").at(-1);
+  assert.ok(block.split("\n").includes(last), `cut inside a line: ${last}`);
+});
+
+test("地区类的下拉（就叫「现居住地」、看不出是哪一级）不收选项；出错字段在后面的区块里也有大纲", async (t) => {
+  const body = `<form><h3>基本信息</h3>${item("姓名", '<input id="name">')}
+    <h3>联系方式</h3>${item("邮箱", '<input id="email">')}
+    <h3>户籍信息</h3>${item("现居住地", '<select id="city"><option value="">请选择</option><option>广州</option><option>深圳</option></select>')}
+    ${item("党派", '<select id="pol"><option value="">请选择</option><option>党员</option><option>群众</option></select>')}
+    ${item("民族信息", '<input id="ethnic">')}</form>`;
+  const p = page(t, { body, resume: { 姓名: "测试用户", 现住址: "深圳", 政治面貌: "群众", 民族: "汉族" }, ai: (message, ids) => ({ success: true, matches: [],
+    diagnostics: { ruleMatches: 0, aiFields: message.formFields.length, aiMatches: 0, promptBytes: 500, apiMs: 800, errorCode: "none",
+      unansweredIds: [ids["现居住地"], ids["党派"], ids["民族信息"]].filter(Boolean) } }) });
+  await p.run();
+  const hidden = p.reports.find((entry) => entry.private)?.private || "";
+  assert.match(hidden, /^label: 现居住地\nsection: 户籍信息\nkind: 现居住地\nin_resume: yes$/m, hidden);
+  assert.doesNotMatch(hidden, /广州|深圳/);
+  // Not a region field: its list is kept, in page order, nothing marked.
+  assert.match(hidden, /^label: 党派\nsection: 户籍信息\nkind: 政治面貌\nin_resume: yes\noptions: 请选择 \| 党员 \| 群众$/m);
+  assert.match(hidden, /^\[页面大纲\]\n\[区块\] 户籍信息\n/m, "the block of a field after the first ones");
+  assert.match(hidden, /^> {1}e\d+ select ← 现居住地$/m);
 });

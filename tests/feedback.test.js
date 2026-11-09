@@ -217,7 +217,10 @@ test('router rejects foreign senders and binds exact previews to one privileged 
     await message({ type: 'FEEDBACK_AUTO', report: { ...crash, stack: '' } }, content); assert.equal(calls.length, 0);
     await message({ type: 'FEEDBACK_AUTO', report: crash }, content); assert.equal(calls.length, 1);
     assert.match(calls[0].user_description, /^host: c\.liepin\.com$/m);
-    assert.ok(!JSON.stringify(calls[0]).includes('private=value'));
+    // #497 Nothing of the tab's address anywhere: not in what may be published, not in the private layer.
+    const { private_diagnostics: hidden, ...shown } = calls[0];
+    assert.ok(!JSON.stringify(shown).includes('private'));
+    assert.ok(!hidden.includes('private') && !hidden.includes('liepin'), hidden);
     const stolen = await message({ type: 'FEEDBACK_PREVIEW', description: '按钮不可用', tabId: 1 });
     assert.equal((await message({ type: 'FEEDBACK_SEND', token: stolen.token }, { ...page, documentId: 'doc-b' })).ok, false);
     const draft = await message({ type: 'FEEDBACK_PREVIEW', description: '按钮不可用', tabId: 1 });

@@ -130,10 +130,22 @@
     if (header && raw.startsWith(header)) raw = raw.slice(header.length);
     const stack = frames(raw || (filename ? `at ${filename}:${Number(line) || 0}:${Number(column) || 0}` : ""), origin);
     const property = failedProperty(name, error?.message);
-    // The message itself goes only into the private layer (#497), with the same redaction as the description.
-    const message = typeof error?.message === "string" && error.message ? redact(error.message, 500) : "";
+    // The message itself goes only into the private layer (#497), as codeMessage() leaves it.
+    const message = typeof error?.message === "string" && error.message ? codeMessage(error.message) : "";
     return { kind: "exception", name, source: source === "unhandledrejection" ? source : "error", stack,
       ...(property ? { property } : {}), ...(message ? { message } : {}) };
+  }
+  // #497 An exception's message for the private layer. Most exceptions happen where nothing knows the resume, so it
+  // cannot be redacted against it: only the English wording the code produced is kept. Anything quoted that is not an
+  // identifier, every run of non-ASCII text, and the numbers, addresses and credentials redact() catches are replaced.
+  // A scan error inside a fill is redacted against the resume as well (content.js buildPrivateReport).
+  const CONTENT = "〔内容〕";
+  function codeMessage(text) {
+    // Markers redact() or an earlier pass put in stay as they are, so the worker can run it again on what a page sent.
+    const kept = String(text ?? "").slice(0, 2000).normalize("NFKC")
+      .replace(/(['"`])([^\n]{0,200}?)\1/g, (match, quote, inner) => (PROPERTY.test(inner) ? match : `${quote}${CONTENT}${quote}`))
+      .replace(/\[(?:用户目录|凭据|敏感请求头|敏感信息|网址|邮箱|数字)\]|〔内容〕|[^\x00-\x7f]+/g, part => (part.startsWith("[") || part === CONTENT ? part : CONTENT));
+    return redact(kept, 500);
   }
   // --- fill_failed diagnostics v1 ----------------------------------------------------------
   // The content script builds the block with fillReport(); the worker re-parses it with
@@ -200,7 +212,8 @@
   // Every unfilled field counts under its reason code (#301), not only the ten listed; a code outside FILL_REASONS is `other`.
   const UNFILLED_REASONS = [...FILL_REASONS, "other"];
   const MAX_UNFILLED = 10;
-  // The whole block; with [来源] and the description it stays within the relay's 5000 characters.
+  // The whole block. With [来源] an automatic report stays within the relay's 5000 characters; a manual report's description
+  // can take room, and the worker then cuts the block at a line (link/feedback.mjs build()).
   const DIAGNOSTICS_CAP = 4300;
   const INT = /^(?:\d{1,9}|-)$/;
   const tally = names => new RegExp(`^(?:-|(?:${names.join("|")})=\\d{1,6}(?:,(?:${names.join("|")})=\\d{1,6})*)$`);
@@ -701,7 +714,7 @@
     });
   }
   const api = { redact, hostname, os, frames, exception, pathTemplate, fillCategory, requestFailed, shownCode, fillDrops, labelSources, aiCalled,
-    fillReport, diagnostics, fillFailure, jobReport, install, fieldKind, resumeKinds, privateReport, privateLayer, utf8Cut, utf8Length,
+    fillReport, diagnostics, fillFailure, jobReport, install, fieldKind, resumeKinds, privateReport, privateLayer, utf8Cut, utf8Length, codeMessage,
     AI_MISSED_MIN, PRIVATE_HEADER, PRIVATE_BYTES,
     // Names only, for the privacy-policy check; the allowlists themselves stay private.
     SECTION_NAMES: Object.freeze([...SECTIONS]), VALUE_KEYS: Object.freeze(Object.keys(VALUES)), KIND_NAMES: Object.freeze([...KIND_NAMES]) };
