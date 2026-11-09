@@ -12,12 +12,12 @@
 
 | 信息 | 示例/用途 | 何时需要 |
 | --- | --- | --- |
-| 测试 HTTPS 基础地址 | `https://resume-usage-metrics-test.<账号子域>.workers.dev` | 云端联调 |
+| 测试 HTTPS 基础地址 | 现为 `https://metrics-test.19991107.xyz`；`workers.dev` 地址仍可用，但国内被 DNS 污染，客户端不用 | 云端联调 |
 | POST/DELETE 路径与实现状态 | 均为 `/v1/activity`，请求/返回符合下文 | 云端联调 |
 | 部署版本 | 仓库 commit SHA 和 schema_version=1 | 对齐代码 |
 | 配置确认 | 测试 D1 绑定成功、Secret 已设置、限流/日志/清理已配置 | 云端联调 |
 | 测试证据 | 虚构编号去重、删除、清理、非法输入拒绝；不含真实编号 | 云端验收 |
-| 生产 HTTPS 基础地址与启用状态 | 独立生产环境，启用前完成发布核对 | 正式发布 |
+| 生产 HTTPS 基础地址与启用状态 | 现为 `https://metrics.19991107.xyz`，旧的 `workers.dev` 地址留给已发布的版本；启用前完成发布核对 | 正式发布 |
 | 管理查询入口和访问方式 | 初期可用维护者受控脚本；网页须身份认证 | 报表阶段 |
 
 客户端不需要 Cloudflare 账号 Token、HMAC Secret 或 D1 访问密钥。Worker 名称和 D1 ID 仅作为部署标识按需要写到服务配置，客户端只使用确认过的 HTTPS 地址；Secret 留在部署方的 Secret 管理中。

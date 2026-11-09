@@ -5,6 +5,7 @@
   "main": "src/index.mjs",
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
+  "routes": [{ "pattern": "metrics.19991107.xyz", "custom_domain": true }],
   "preview_urls": false,
   "observability": { "enabled": false },
   "vars": {

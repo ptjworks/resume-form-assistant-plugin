@@ -338,7 +338,9 @@ test("发版工作流自己也要跑这个检查，并且把该说的话说清�
   assert.match(flow, /RESUME_USAGE_METRICS_READY: \$\{\{ steps\.release-metadata\.outputs\.metrics_ready \}\}/);
   assert.match(flow, /RESUME_USAGE_METRICS_RELEASE_BUILD: \$\{\{ steps\.release-metadata\.outputs\.metrics_ready \}\}/);
   assert.match(flow, /RESUME_USAGE_METRICS_ENDPOINT: \$\{\{ steps\.release-metadata\.outputs\.metrics_endpoint \}\}/);
-  assert.match(flow, /https:\/\/resume-usage-metrics\.nebula-lab\.workers\.dev\/v1\/activity/);
+  // workers.dev 在国内被 DNS 污染，正式包发到绑在同一个 Worker 上的自定义域名。
+  assert.match(flow, /metrics_endpoint=https:\/\/metrics\.19991107\.xyz\/v1\/activity$/m);
+  assert.doesNotMatch(flow, /workers\.dev/);
   // 拿着 contents: write 的那一步不引第三方 action。
   assert.doesNotMatch(flow, /softprops\/action-gh-release/);
 });

@@ -2,7 +2,7 @@
 
 目标：隔离测试 Worker `resume-usage-metrics-test` 和其 `DB`。用户明确授权使用共享管理 Token 从本机配置及部署。初始源代码版本 `e9f524b`，随后补充本文所述重定向修复及 Workerd 原生网络回归测试；main 未改动，PR #268 保持独立。
 
-测试入口：[health](https://resume-usage-metrics-test.nebula-lab.workers.dev/health)。配置 ID 和 Secret 只留在受限临时文件/已忽略本机配置中，不写入仓库或公开记录。HMAC 使用新生成的随机 32 字节密钥，与管理 Token 独立。
+测试入口：[health](https://metrics-test.19991107.xyz/health)。2026-11-09 起测试 Worker 加绑了自定义域名 `metrics-test.19991107.xyz`，统计验收包发往这个地址；本文下面的验收是在原来的 `resume-usage-metrics-test.nebula-lab.workers.dev` 上做的，这个地址仍然可用。配置 ID 和 Secret 只留在受限临时文件/已忽略本机配置中，不写入仓库或公开记录。HMAC 使用新生成的随机 32 字节密钥，与管理 Token 独立。
 
 ## 已验证
 
