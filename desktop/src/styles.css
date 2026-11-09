@@ -56,7 +56,8 @@ label.button-like.disabled { cursor: default; opacity: .45; }
 #app { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100dvh; overflow: hidden; }
 #app > main { grid-row: 3; }
 .icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 24px; background: #1c2330; border-bottom: 1px solid #303b4c; }
+/* 浏览器部分注册失败时，右侧保留完整状态提示所需的宽度。 */
+.topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr); align-items: center; gap: 16px; padding: 12px 24px; background: #1c2330; border-bottom: 1px solid #303b4c; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-mark { width: 32px; height: 32px; border-radius: 8px; flex: none; }
 .brand-lockup { display: grid; gap: 2px; min-width: 0; }
@@ -290,14 +291,14 @@ dialog::backdrop { background: #1c233047; }
 dialog h2, dialog h3 { margin-top: 0; }
 dialog .row:last-child { justify-content: flex-end; margin-top: 8px; }
 @media (max-width: 1180px) {
-  .topbar { grid-template-columns: auto minmax(0, 1fr) auto; padding: 10px 16px; gap: 12px; }
+  .topbar { padding: 10px 16px; gap: 12px; }
   .nav { justify-self: center; }
   .nav button { padding-inline: 12px; }
   #view-applications { padding: 16px; }
   .apps-shell { gap: 16px; }
 }
-@media (min-width: 1070px) and (max-width: 1180px) {
-  .topbar { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+@media (max-width: 1069px) {
+  .topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
 }
 /* Tauri 最小窗口宽度是 860px：桌面窗口始终保留列表与详情双栏。 */
 @media (max-width: 820px) {
