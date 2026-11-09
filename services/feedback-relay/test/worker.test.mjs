@@ -750,7 +750,7 @@ test('/releases falls back to the last good list while GitHub is failing', async
   assert.deepEqual(await (await edgeCache.match(cacheKey('stale'))).json(), after.map(trimmed));
 });
 
-test('/releases retries without the token when GitHub rejects it, and asks anonymously when no token is set', async () => {
+test('/releases prefers its own token, retries without it when GitHub rejects it, and asks anonymously when none is set', async () => {
   const all = [githubRelease(3), githubRelease(4)];
   const auths = [];
   outbound = request => {
@@ -774,8 +774,14 @@ test('/releases retries without the token when GitHub rejects it, and asks anony
     const anonymous = await local({ GITHUB_TOKEN: undefined })(RELEASES);
     assert.equal(anonymous.status, 200);
     assert.deepEqual(anonymous.data, all.map(trimmed));
+    // 配了 /releases 专用的口令就用它，不用 Muse 的 GITHUB_TOKEN。
+    const dedicated = await local({ GITHUB_TOKEN: GITHUB, RELEASES_GITHUB_TOKEN: 'releases-token-for-tests-only' })(RELEASES);
+    assert.equal(dedicated.status, 200);
   } finally {
     globalThis.fetch = realFetch;
   }
-  assert.deepEqual(seen, [{ url: `${RELEASES_UPSTREAM}?per_page=100&page=1`, auth: null }]);
+  assert.deepEqual(seen, [
+    { url: `${RELEASES_UPSTREAM}?per_page=100&page=1`, auth: null },
+    { url: `${RELEASES_UPSTREAM}?per_page=100&page=1`, auth: 'Bearer releases-token-for-tests-only' },
+  ]);
 });

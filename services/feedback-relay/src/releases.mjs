@@ -9,11 +9,12 @@
 //   上次成功  24 小时，GitHub 出错时拿它顶上；
 //   失败标记  60 秒，期间不再问 GitHub，有上次成功的结果就返回它，没有就返回这次的错误。
 // 这样每个机房每页最多 10 分钟问一次 GitHub，GitHub 出错期间最多每分钟一次。在一处反复刷这个
-// 接口，不会多问 GitHub；要耗掉 GITHUB_TOKEN 的额度（Muse 的 /create-issue 也靠它），得把请求分散到
-// 很多机房（全局上限是机房数 × 10 页 × 每小时 6 次）。
+// 接口，不会多问 GitHub；把请求分散到很多机房，全局最多是机房数 × 10 页 × 每小时 6 次（GitHub
+// 出错期间 60 次）。
 //
-// 带 GITHUB_TOKEN 去问：匿名额度按 Cloudflare 的出口 IP 算，和别人的 Worker 共用，常常不够。
-// 口令失效（401）时改用匿名再问一次。带口令时 GitHub 会把草稿也列出来：草稿只留 draft: true，
+// 带口令去问：匿名额度按 Cloudflare 的出口 IP 算，和别人的 Worker 共用，常常不够。配了只读的
+// RELEASES_GITHUB_TOKEN 就用它，和 Muse 的 /create-issue 用的 GITHUB_TOKEN 分开算额度；没配才用
+// GITHUB_TOKEN。口令失效（401）时改用匿名再问一次。带口令时 GitHub 会把草稿也列出来：草稿只留 draft: true，
 // 版本号和地址清空，不外泄没发布的版本；条目本身不删，每页的条数和 GitHub 一致，桌面按
 // 「这一页不满就到头了」翻页的逻辑不受影响。
 
@@ -73,8 +74,9 @@ async function upstreamPage(page, env, signal) {
   };
   let response;
   try {
-    response = await ask(env.GITHUB_TOKEN);
-    if (response.status === 401 && env.GITHUB_TOKEN) {
+    const token = env.RELEASES_GITHUB_TOKEN || env.GITHUB_TOKEN;
+    response = await ask(token);
+    if (response.status === 401 && token) {
       await response.body?.cancel();
       response = await ask('');
     }

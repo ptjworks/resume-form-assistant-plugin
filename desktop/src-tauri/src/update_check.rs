@@ -307,14 +307,13 @@ async fn fetch_latest_from(github: &str, relay: &str) -> Result<Option<UpdateInf
 
 /// 一页一页地要发布列表，直到某一页不满。
 ///
-/// 先问 GitHub。GitHub 这一页没要到（见 [`PageError::worth_asking_relay`]），就改问中转，
-/// 后面的页也都问中转：GitHub 这时多半一直连不上，每页再等它超时一次只是白等。
-/// 前后两段来自不同来源时，交界处可能重复或漏掉几条：中转带口令去问，列表里多出
-/// 草稿的占位；中转的页最多缓存 10 分钟，这期间新发的版本会让后面的页错开。列表从新
-/// 到旧排，交界在第 100 条前后，影响不到最新的桌面版本（现在一共几十条，只有一页）。
+/// 先问 GitHub。GitHub 哪一页没要到（见 [`PageError::worth_asking_relay`]），就丢掉已经
+/// 拿到的页，从第 1 页起改问中转，后面的页也都问中转：GitHub 这时多半一直连不上，每页
+/// 再等它超时一次只是白等；两边的列表也不完全一样（中转带口令去问，多出草稿的占位），
+/// 拼在一起交界处会重复或漏掉几条。
 ///
-/// 中转只代查前 10 页。用上中转以后，要完第 10 页就停：最新的 1000 条已经到手，
-/// 最新的桌面版本早在里面了。
+/// 中转只代查前 10 页，要完第 10 页就停：列表从新到旧排，最新的 1000 条里早有最新的
+/// 桌面版本了。
 ///
 /// 两边都没要到时报 GitHub 的错，那是用户这边真实的情况。
 async fn collect_releases<F, Fut>(mut fetch: F) -> Result<Vec<Value>, CommandError>
@@ -329,10 +328,9 @@ where
         let items = match fetch(source, page).await {
             Ok(items) => items,
             Err(problem) if source == Source::GitHub && problem.worth_asking_relay() => {
-                if page > RELAY_MAX_PAGE {
-                    return Ok(releases);
-                }
                 source = Source::Relay;
+                releases.clear();
+                page = 1;
                 fetch(Source::Relay, page)
                     .await
                     .map_err(|_| problem.into_command_error())?
@@ -793,21 +791,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn once_github_fails_the_remaining_pages_come_from_the_relay() {
+    async fn once_github_fails_the_whole_list_comes_from_the_relay() {
+        // GitHub 第 2 页没要到：丢掉 GitHub 的第 1 页，从第 1 页起全问中转，不把两边拼在一起。
         let (result, asked) = run(|source, page| match (source, page) {
             (Source::GitHub, 1) => Ok(page_of(RELEASES_PER_PAGE, "0.1.0")),
             (Source::GitHub, 2) => Err(PageError::Unreachable),
+            (Source::Relay, 1) => Ok(page_of(RELEASES_PER_PAGE, "0.4.0")),
             (Source::Relay, 2) => Ok(page_of(RELEASES_PER_PAGE, "0.2.0")),
             (Source::Relay, 3) => Ok(page_of(1, "0.3.0")),
             other => panic!("不该问 {other:?}"),
         })
         .await;
-        assert_eq!(result.unwrap().len(), 2 * RELEASES_PER_PAGE + 1);
+        let releases = result.unwrap();
+        assert_eq!(releases.len(), 2 * RELEASES_PER_PAGE + 1);
+        assert_eq!(found(&Value::Array(releases.clone())).version, "0.4.0");
+        // GitHub 第 1 页里的桌面版本没有留下来。
+        assert!(!releases
+            .iter()
+            .any(|item| item["tag_name"] == "desktop-v0.1.0"));
         assert_eq!(
             asked,
             [
                 (Source::GitHub, 1),
                 (Source::GitHub, 2),
+                (Source::Relay, 1),
                 (Source::Relay, 2),
                 (Source::Relay, 3)
             ]
@@ -831,15 +838,45 @@ mod tests {
         assert_eq!(asked.len(), 1 + RELAY_MAX_PAGE as usize);
         assert_eq!(asked.last(), Some(&(Source::Relay, RELAY_MAX_PAGE)));
 
-        // GitHub 在第 10 页之后才出错：前 1000 条已经到手，不再问中转。
+        // GitHub 在第 10 页之后才出错：同样从第 1 页起问中转，问到第 10 页停。
         let (result, asked) = run(|source, page| match (source, page) {
             (Source::GitHub, 11) => Err(PageError::Status(502)),
             (Source::GitHub, _) => Ok(page_of(RELEASES_PER_PAGE, "0.1.0")),
+            (Source::Relay, page) if page <= RELAY_MAX_PAGE => {
+                Ok(page_of(RELEASES_PER_PAGE, "0.2.0"))
+            }
             other => panic!("不该问 {other:?}"),
         })
         .await;
         assert_eq!(result.unwrap().len(), 10 * RELEASES_PER_PAGE);
-        assert_eq!(asked.last(), Some(&(Source::GitHub, 11)));
+        assert_eq!(asked.len(), 11 + RELAY_MAX_PAGE as usize);
+        assert_eq!(asked.last(), Some(&(Source::Relay, RELAY_MAX_PAGE)));
+    }
+
+    #[test]
+    fn the_page_rules_match_what_the_relay_accepts() {
+        // 中转只认 per_page=100、第 1～10 页，两边的常量改一处就要改另一处。
+        // 从 Cargo.toml 所在目录算起：这份文件被复制到别处编译（发布版回放）时路径也对。
+        let relay = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../services/feedback-relay/src/releases.mjs"
+        ));
+        assert!(
+            relay.contains(&format!(
+                "export const RELEASES_PER_PAGE = {RELEASES_PER_PAGE};"
+            )),
+            "中转的每页条数和桌面不一致"
+        );
+        assert!(
+            relay.contains(&format!(
+                "export const RELEASES_MAX_PAGE = {RELAY_MAX_PAGE};"
+            )),
+            "中转的最大页数和桌面不一致"
+        );
+        assert!(
+            relay.contains(&format!("'{RELEASES_URL}'")),
+            "中转代查的不是同一个地址"
+        );
     }
 
     #[tokio::test]

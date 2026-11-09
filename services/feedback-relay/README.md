@@ -86,7 +86,7 @@ GET /releases?per_page=100&page=<1～10>
 - 参数只认桌面实际会发的值：`per_page` 只能是 100，`page` 是 1～10，两个都要给。别的值、重复、缺参数或者带了别的参数，一律返回 400，不去问 GitHub。这样每个机房最多只有 10 个缓存页。
 - 返回和 GitHub 同样的 JSON 数组，但每条只留 `tag_name`、`draft`、`prerelease`、`html_url`。
 - 草稿只留 `"draft": true`，版本号和地址是 `null`：带口令去问时 GitHub 会把草稿也列出来，不能从这里外泄。条目不删，每页条数和 GitHub 一致。这样别人看得出有几条草稿，看不出版本号和内容，可以接受。
-- 去问 GitHub 时带 `GITHUB_TOKEN`：匿名额度按 Cloudflare 的出口 IP 算，和别人的 Worker 共用，常常不够。口令被拒（401）时改用匿名再问一次；没配口令就直接匿名问。
+- 去问 GitHub 时带口令：匿名额度按 Cloudflare 的出口 IP 算，和别人的 Worker 共用，常常不够。配了 `RELEASES_GITHUB_TOKEN` 就用它，没配用 `GITHUB_TOKEN`。口令被拒（401）时改用匿名再问一次；两个都没配就直接匿名问。
 - GitHub 出错时：连不上或超时（6 秒，桌面每页只等 10 秒）返回 502 `github_unreachable`；403、429 返回 503 `github_rate_limited`；其他非 2xx 返回 502 `github_error`（带 `status`）；返回的不是列表返回 502 `github_bad_response`。桌面只把 200 的列表当作查到了。
 
 缓存都在 Cloudflare 的边缘缓存（Cache API）里，每个机房各存一份，不占 KV 的写入额度。每页存三份：
@@ -171,7 +171,8 @@ op-dev read "op://Dev/app-feedback-relay POLL_SECRET/credential" | npx wrangler 
 | Worker 密钥 | 用途 | 1Password |
 | --- | --- | --- |
 | `POLL_SECRET` | Muse 调 `/pending`、`/ack`、`/create-issue`，统计调 `/export` | Dev「app-feedback-relay POLL_SECRET」的 `credential` |
-| `GITHUB_TOKEN` | `/create-issue` 建 issue；`/releases` 代查发布列表（只读公开数据） | Dev「GitHub Personal Access Token-MUSE」的 `token` |
+| `GITHUB_TOKEN` | `/create-issue` 建 issue；没配 `RELEASES_GITHUB_TOKEN` 时 `/releases` 也用它 | Dev「GitHub Personal Access Token-MUSE」的 `token` |
+| `RELEASES_GITHUB_TOKEN`（可选） | `/releases` 代查发布列表专用，和 Muse 的额度分开。用不带任何权限、只能读公开仓库的 fine-grained 口令 | 还没建；建了放 Dev，名字写在这里 |
 | `PRIVATE_READ_SECRET` | 读私有层 `/private`。只给我们自己用，不给 Muse | Dev-Sensitive「app-feedback-relay PRIVATE_READ_SECRET」的 `credential` |
 
 `PRIVATE_READ_SECRET` 和 `POLL_SECRET` 必须不同。以后要让 Muse 的自动分析也读私有层，先确认它不会把题目、页面片段写进公开评论，再把口令给它。
@@ -183,4 +184,4 @@ op-dev read "op://Dev/app-feedback-relay POLL_SECRET/credential" | npx wrangler 
 - 旧索引超过 200 个 id 时只看前 200 个，也不会删。11-09 部署前看过，生产里的旧索引是空的（`[]`）。
 - 部署后可以用 `/export` 里 `status` 为 `pending` 的条数和 `/pending` 对一下，确认没有漏掉的报告。
 - `/releases` 的缓存按机房各存一份，GitHub 发了新版本后，各地最多晚 10 分钟看到；GitHub 一直出错时，最多拿 24 小时前的结果顶上。缓存没有全局清空的入口，等它过期就行。
-- 缓存按机房各存一份，所以 `/releases` 问 GitHub 的次数没有全局上限：最多是机房数 × 10 页 × 每小时 6 次。有人把请求分散到很多机房，还是可能耗掉 `GITHUB_TOKEN` 每小时 5000 次的额度，连带 Muse 的 `/create-issue`。真遇到了，给 `/releases` 换一个只读、单独的口令，或者加全局计数。
+- 缓存按机房各存一份，所以 `/releases` 问 GitHub 的次数没有全局上限：最多是机房数 × 10 页 × 每小时 6 次，GitHub 出错期间每小时 60 次。没配 `RELEASES_GITHUB_TOKEN` 时用的是 `GITHUB_TOKEN`，有人把请求分散到很多机房，还是可能耗掉它每小时 5000 次的额度，连带 Muse 的 `/create-issue`。配上单独的只读口令就和 Muse 分开了；还不够再加全局计数。
