@@ -85,9 +85,9 @@ GET /releases?per_page=100&page=<1～10>
 
 - 参数只认桌面实际会发的值：`per_page` 只能是 100，`page` 是 1～10，两个都要给。别的值、重复、缺参数或者带了别的参数，一律返回 400，不去问 GitHub。这样每个机房最多只有 10 个缓存页。
 - 返回和 GitHub 同样的 JSON 数组，但每条只留 `tag_name`、`draft`、`prerelease`、`html_url`。
-- 草稿只留 `"draft": true`，版本号和地址是 `null`：带口令去问时 GitHub 会把草稿也列出来，不能从这里外泄。条目不删，每页条数和 GitHub 一致。
+- 草稿只留 `"draft": true`，版本号和地址是 `null`：带口令去问时 GitHub 会把草稿也列出来，不能从这里外泄。条目不删，每页条数和 GitHub 一致。这样别人看得出有几条草稿，看不出版本号和内容，可以接受。
 - 去问 GitHub 时带 `GITHUB_TOKEN`：匿名额度按 Cloudflare 的出口 IP 算，和别人的 Worker 共用，常常不够。口令被拒（401）时改用匿名再问一次；没配口令就直接匿名问。
-- GitHub 出错时：连不上或超时（8 秒）返回 502 `github_unreachable`；403、429 返回 503 `github_rate_limited`；其他非 2xx 返回 502 `github_error`（带 `status`）；返回的不是列表返回 502 `github_bad_response`。桌面只把 200 的列表当作查到了。
+- GitHub 出错时：连不上或超时（6 秒，桌面每页只等 10 秒）返回 502 `github_unreachable`；403、429 返回 503 `github_rate_limited`；其他非 2xx 返回 502 `github_error`（带 `status`）；返回的不是列表返回 502 `github_bad_response`。桌面只把 200 的列表当作查到了。
 
 缓存都在 Cloudflare 的边缘缓存（Cache API）里，每个机房各存一份，不占 KV 的写入额度。每页存三份：
 

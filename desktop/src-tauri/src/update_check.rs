@@ -23,8 +23,9 @@ const RELEASES_URL: &str =
     "https://api.github.com/repositories/1217054301/releases";
 /// GitHub 查不到时的备用来源。返回和 GitHub 同样形状的列表，每条只留挑版本用到的四个字段。
 const RELAY_RELEASES_URL: &str = "https://feedback.19991107.xyz/releases";
-/// 中转只认 `per_page=100` 和第 1～10 页，改这里要一起改 `services/feedback-relay/src/releases.mjs`。
+/// 中转只认 `per_page=100` 和第 1～10 页，改这两个要一起改 `services/feedback-relay/src/releases.mjs`。
 const RELEASES_PER_PAGE: usize = 100;
+const RELAY_MAX_PAGE: u32 = 10;
 const TAG_PREFIX: &str = "desktop-v";
 const TIMEOUT_SECONDS: u64 = 10;
 const FILE_NAME: &str = "update-check.json";
@@ -311,7 +312,9 @@ async fn fetch_latest_from(github: &str, relay: &str) -> Result<Option<UpdateInf
 /// 前后两段来自不同来源时，交界处可能重复或漏掉几条：中转带口令去问，列表里多出
 /// 草稿的占位；中转的页最多缓存 10 分钟，这期间新发的版本会让后面的页错开。列表从新
 /// 到旧排，交界在第 100 条前后，影响不到最新的桌面版本（现在一共几十条，只有一页）。
-/// 中转只代查前 10 页。
+///
+/// 中转只代查前 10 页。用上中转以后，要完第 10 页就停：最新的 1000 条已经到手，
+/// 最新的桌面版本早在里面了。
 ///
 /// 两边都没要到时报 GitHub 的错，那是用户这边真实的情况。
 async fn collect_releases<F, Fut>(mut fetch: F) -> Result<Vec<Value>, CommandError>
@@ -326,6 +329,9 @@ where
         let items = match fetch(source, page).await {
             Ok(items) => items,
             Err(problem) if source == Source::GitHub && problem.worth_asking_relay() => {
+                if page > RELAY_MAX_PAGE {
+                    return Ok(releases);
+                }
                 source = Source::Relay;
                 fetch(Source::Relay, page)
                     .await
@@ -335,7 +341,7 @@ where
         };
         let item_count = items.len();
         releases.extend(items);
-        if item_count < RELEASES_PER_PAGE {
+        if item_count < RELEASES_PER_PAGE || (source == Source::Relay && page >= RELAY_MAX_PAGE) {
             return Ok(releases);
         }
         page = page.checked_add(1).ok_or_else(|| CommandError {
@@ -806,6 +812,34 @@ mod tests {
                 (Source::Relay, 3)
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn the_relay_is_not_asked_past_its_last_page() {
+        // 中转只代查前 10 页，第 11 页会被它拒掉；到第 10 页就停，用已经拿到的 1000 条。
+        let (result, asked) = run(|source, page| match source {
+            Source::GitHub if page == 1 => Err(PageError::Unreachable),
+            Source::Relay if page <= RELAY_MAX_PAGE => {
+                Ok(page_of(RELEASES_PER_PAGE, &format!("0.{page}.0")))
+            }
+            other => panic!("不该问 {other:?} 第 {page} 页"),
+        })
+        .await;
+        let releases = result.unwrap();
+        assert_eq!(releases.len(), RELAY_MAX_PAGE as usize * RELEASES_PER_PAGE);
+        assert_eq!(found(&Value::Array(releases)).version, "0.10.0");
+        assert_eq!(asked.len(), 1 + RELAY_MAX_PAGE as usize);
+        assert_eq!(asked.last(), Some(&(Source::Relay, RELAY_MAX_PAGE)));
+
+        // GitHub 在第 10 页之后才出错：前 1000 条已经到手，不再问中转。
+        let (result, asked) = run(|source, page| match (source, page) {
+            (Source::GitHub, 11) => Err(PageError::Status(502)),
+            (Source::GitHub, _) => Ok(page_of(RELEASES_PER_PAGE, "0.1.0")),
+            other => panic!("不该问 {other:?}"),
+        })
+        .await;
+        assert_eq!(result.unwrap().len(), 10 * RELEASES_PER_PAGE);
+        assert_eq!(asked.last(), Some(&(Source::GitHub, 11)));
     }
 
     #[tokio::test]

@@ -22,8 +22,8 @@ export const RELEASES_MAX_PAGE = 10;
 export const RELEASES_FRESH_SECONDS = 600;
 export const RELEASES_STALE_SECONDS = 24 * 3600;
 export const RELEASES_FAILURE_SECONDS = 60;
-// 桌面每次请求等 10 秒，这里要在那之前给出答复。
-const UPSTREAM_TIMEOUT_MS = 8000;
+// 桌面每次请求等 10 秒，这里要留出国内到 Cloudflare 的往返时间，在那之前给出答复。
+const UPSTREAM_TIMEOUT_MS = 6000;
 const PAGE_NUMBER = /^[1-9]\d?$/;
 
 class UpstreamError extends Error {
