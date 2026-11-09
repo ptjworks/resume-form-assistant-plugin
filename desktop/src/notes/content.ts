@@ -138,8 +138,14 @@ export async function importNoteFiles(files: File[]) {
   const title = Array.from(doc.name.replace(/\.[^.]+$/, "")).slice(0, 200).join("");
   const uploads: PendingFile[] = [];
   const missing = new Set<string>();
+  const skipped: string[] = [];
   const body = document.createDocumentFragment();
-  if (/\.pdf$/i.test(doc.name)) {
+  const isPdf = /\.pdf$/i.test(doc.name);
+  const isText = /\.txt$/i.test(doc.name);
+  if (isPdf || isText) {
+    for (const file of attachments) skipped.push(`${file.name}（只有 Markdown 可以同时导入图片）`);
+  }
+  if (isPdf) {
     const file = await loadFile(doc);
     if (file.mime !== "application/pdf") throw new Error("所选文件不是 PDF。");
     uploads.push(file);
@@ -147,24 +153,39 @@ export async function importNoteFiles(files: File[]) {
   } else {
     if (doc.size > 1024 * 1024) throw new Error("导入的正文最多 1 MB。");
     const text = await doc.text();
-    if (/\.txt$/i.test(doc.name)) {
+    if (isText) {
       body.append(textFragment(text));
     } else {
-      const localFiles = new Map<string, PendingFile | null>();
+      const localFiles = new Map<string, PendingFile[]>();
       for (const attachment of attachments) {
-        const file = await loadFile(attachment);
-        if (!file.mime.startsWith("image/")) continue;
-        localFiles.set(attachment.name, localFiles.has(attachment.name) ? null : file);
+        if (attachment.size > MAX_FILE_BYTES) {
+          skipped.push(`${attachment.name}（超过 10 MB）`);
+          continue;
+        }
+        let file: PendingFile;
+        try { file = await loadFile(attachment); }
+        catch {
+          skipped.push(`${attachment.name}（不是支持的图片或无法读取）`);
+          continue;
+        }
+        if (!file.mime.startsWith("image/")) {
+          skipped.push(`${attachment.name}（只支持图片附件）`);
+          continue;
+        }
+        const sameName = localFiles.get(file.name);
+        if (sameName) sameName.push(file);
+        else localFiles.set(file.name, [file]);
       }
       const { marked } = await import("marked");
       body.append(safeBody(await marked.parse(text, { async: false }), new Set(), image => {
         const href = image.getAttribute("src") ?? "";
-        let file: PendingFile | null | undefined;
+        let candidates: PendingFile[] | undefined;
         if (!/^(?:[a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(href)) {
-          try { file = localFiles.get(decodeURIComponent(href.split(/[?#]/)[0]).split("/").at(-1)!); }
+          try { candidates = localFiles.get(decodeURIComponent(href.split(/[?#]/)[0]).split("/").at(-1)!); }
           catch { /* An invalid URL is shown as a missing image. */ }
         }
-        if (file) {
+        if (candidates?.length === 1) {
+          const [file] = candidates;
           if (!uploads.includes(file)) uploads.push(file);
           return fileMarker(file.id);
         }
@@ -172,7 +193,14 @@ export async function importNoteFiles(files: File[]) {
         missing.add(label);
         return document.createTextNode(`[缺少图片：${label}]`);
       }));
+      for (const candidates of localFiles.values()) {
+        for (const file of candidates) {
+          if (uploads.includes(file)) continue;
+          const reason = candidates.length > 1 ? "有同名图片，无法匹配" : "正文未引用";
+          skipped.push(`${file.name}（${reason}）`);
+        }
+      }
     }
   }
-  return { title, uploads, body, missing: [...missing] };
+  return { title, uploads, body, missing: [...missing], skipped };
 }

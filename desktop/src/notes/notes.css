@@ -243,6 +243,7 @@ input.notes-title-input { width: 100%; min-width: 130px; min-height: 30px; font-
   user-select: text;
 }
 .notes-ocr-content .notes-ocr-state { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+.notes-ocr-candidate { display: grid; gap: 7px; margin-top: 12px; }
 .notes-ocr-state[data-tone="error"] { color: #9d321e; }
 .notes-ocr-content textarea { width: 100%; min-height: 105px; margin-top: 9px; border-color: #9fcabe; font-size: 14px; line-height: 1.65; }
 .notes-ocr-edit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; margin-top: 5px; }

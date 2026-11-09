@@ -55,6 +55,9 @@ interface PasteInsertion {
   unreadable: number;
 }
 
+interface OcrJob { epoch: string; previous: string | null }
+interface OcrCandidate { previous: string; text: string; saving: boolean }
+
 const MAX_NOTE_NAME = 200;
 
 function suggestedFolderName(application: NotesApplication) {
@@ -232,9 +235,10 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
   const expanded = new Set<string>();
   const fileCache = new Map<string, Promise<FileContents>>();
   const ocrFailures = new Map<string, string>();
-  const ocrQueue = new Map<string, string>();
+  const ocrQueue = new Map<string, OcrJob>();
+  const ocrCandidates = new Map<string, OcrCandidate>();
   let ocrRunning = false;
-  let activeOcr: string | undefined;
+  let activeOcr: { id: string; epoch: string } | undefined;
   let index: Index = { epoch: "", folders: [], notes: [] };
   let selectedFolder: string | undefined;
   let selectedNote: string | undefined;
@@ -243,6 +247,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let saving: Promise<boolean> | undefined;
   let transitioning = false;
+  let replacingArchive = false;
   let detailRequest = 0;
   let indexRequest = 0;
   let appliedIndex = 0;
@@ -314,6 +319,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       fileCache.clear();
       ocrFailures.clear();
       ocrQueue.clear();
+      ocrCandidates.clear();
     }
     renderList();
   }
@@ -512,12 +518,13 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     if (drag?.pointer !== event.pointerId) return;
     const item = note(drag.id);
     const target = drag.preview ? folder(drag.target) : undefined;
+    const epoch = index.epoch;
     cancelDrag();
     setTimeout(() => { suppressNoteClick = false; }, 0);
     if (dropped && item && target) {
       withTransition(async () => {
         if (!(await finishEdit())) return;
-        try { await moveNote(item, target); }
+        try { await moveNote(item.id, target.id, epoch); }
         catch (error) {
           if (selectedNote) await readNote(selectedNote);
           throw error;
@@ -596,8 +603,9 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       const body = await invoke<string>("note_body_cmd", { epoch: index.epoch, id });
       if (request !== detailRequest) return;
       currentBody = body;
-      renderRead(item, body, find);
-      queueOcr(item);
+      const current = note(id) ?? item;
+      renderRead(current, body, find);
+      queueOcr(current);
     } catch (error) {
       if (request !== detailRequest) return;
       detail.replaceChildren(element("p", "心得正文读取失败。"), button("重新读取", () => {
@@ -840,12 +848,15 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     original.append(notesIcon("expand"));
     caption.append(element("span", file.name, "notes-file-caption"), label, original);
 
-    const busy = activeOcr === file.id || ocrQueue.has(file.id);
+    const epoch = index.epoch;
+    const busy = isRecognizing(file.id);
     const failure = ocrFailures.get(file.id);
+    const candidate = ocrCandidates.get(file.id);
     const result = element("p", file.ocrText ?? "", "notes-ocr-result");
     result.hidden = !file.ocrText;
     if (readerQuery) highlight(result, readerQuery);
-    const state = busy ? (file.ocrText ? "正在重新识别…" : "正在识别…")
+    const state = candidate?.saving ? "正在替换…"
+      : busy ? (file.ocrText ? "正在重新识别…" : "正在识别…")
       : failure ?? (file.ocrText === "" ? "未识别到文字。" : file.ocrText === null ? "等待识别。" : "");
     const stateLine = element("p", state, "notes-ocr-state");
     stateLine.hidden = !state;
@@ -861,12 +872,6 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     read.append(head, stateLine, result);
     content.append(read);
 
-    const retry = button("重新识别", () => {
-      ocrFailures.delete(file.id);
-      ocrQueue.set(file.id, index.epoch);
-      void runOcr();
-    });
-    retry.disabled = busy;
     if (file.ocrText) {
       const copy = button("复制文字", () => {
         void navigator.clipboard.writeText(file.ocrText!).then(() => {
@@ -879,6 +884,60 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       actions.append(copy);
     }
 
+    if (candidate) {
+      const review = element("div", undefined, "notes-ocr-candidate");
+      const keep = button("保留当前文字", () => {
+        ocrCandidates.delete(file.id);
+        ocrFailures.delete(file.id);
+        refreshOcrPanels();
+        marker.querySelector<HTMLElement>(".notes-ocr-toggle")?.focus();
+      });
+      const replace = button("替换为新结果", () => {
+        if (candidate.saving || ocrCandidates.get(file.id) !== candidate || epoch !== index.epoch) return;
+        const latest = note(selectedNote)?.files.find(entry => entry.id === file.id);
+        if (!latest || latest.ocrText !== candidate.previous) {
+          ocrCandidates.delete(file.id);
+          ocrFailures.set(file.id, "当前文字已更新，请重新识别。");
+          refreshOcrPanels();
+          return;
+        }
+        candidate.saving = true;
+        ocrFailures.delete(file.id);
+        refreshOcrPanels();
+        void (async () => {
+          try {
+            await change({ kind: "ocr", id: file.id, text: candidate.text }, epoch);
+            if (ocrCandidates.get(file.id) === candidate) {
+              ocrCandidates.delete(file.id);
+              await refreshIndex();
+            }
+          } catch (error) {
+            if (epoch === index.epoch) ocrFailures.set(file.id, describeDialogError(error));
+          } finally {
+            candidate.saving = false;
+            refreshOcrPanels();
+          }
+        })();
+      }, "primary");
+      keep.disabled = replace.disabled = candidate.saving;
+      const controls = element("div", undefined, "notes-ocr-edit-actions");
+      controls.append(keep, replace);
+      review.append(
+        element("h4", "本次识别结果", "notes-ocr-title"),
+        element("p", candidate.text || "本次未识别到文字，替换会清空当前结果。", "notes-ocr-result"),
+        controls,
+      );
+      read.append(review);
+      marker.append(caption, content);
+      return;
+    }
+
+    const retry = button("重新识别", () => {
+      ocrFailures.delete(file.id);
+      ocrQueue.set(file.id, { epoch, previous: file.ocrText });
+      void runOcr();
+    });
+    retry.disabled = busy;
     if (file.ocrText !== null && !busy) {
       const correct = button("校正", () => {
         const epoch = index.epoch;
@@ -965,27 +1024,34 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
 
   function queueOcr(item: Note) {
     for (const file of item.files) {
-      if (file.mime.startsWith("image/") && file.ocrText === null && !ocrFailures.has(file.id) && file.id !== activeOcr) {
-        ocrQueue.set(file.id, index.epoch);
+      if (file.mime.startsWith("image/") && file.ocrText === null && !ocrFailures.has(file.id) && !isRecognizing(file.id)) {
+        ocrQueue.set(file.id, { epoch: index.epoch, previous: null });
       }
     }
     void runOcr();
+  }
+
+  function isRecognizing(id: string) {
+    return (activeOcr?.id === id && activeOcr.epoch === index.epoch) || ocrQueue.has(id);
   }
 
   async function runOcr() {
     if (ocrRunning) return;
     ocrRunning = true;
     try {
-      for (const [id, epoch] of ocrQueue) {
+      for (const [id, { epoch, previous }] of ocrQueue) {
         ocrQueue.delete(id);
-        activeOcr = id;
+        activeOcr = { id, epoch };
         refreshOcrPanels();
         try {
           const [file, { recognizeImage }] = await Promise.all([openStoredFile(id, epoch), import("./ocr.ts")]);
           const text = await recognizeImage(dataUrl(file));
-          if (epoch === index.epoch) {
+          if (epoch !== index.epoch) continue;
+          if (previous === null) {
             await change({ kind: "ocr", id, text }, epoch);
             await refreshIndex();
+          } else {
+            ocrCandidates.set(id, { previous, text, saving: false });
           }
         } catch (error) {
           if (epoch === index.epoch) ocrFailures.set(id, `识别失败：${describeDialogError(error)}`);
@@ -1217,6 +1283,10 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
   }
 
   function showEditor(parent: Folder, item?: Note, body = "", suggested = "", initial: PendingFile[] = []) {
+    if (replacingArchive) {
+      notify("正在替换档案，请完成后再编辑心得。", true);
+      return;
+    }
     readerQuery = "";
     syncImageMatches = undefined;
     const host = element("div", undefined, "notes-editor-host");
@@ -1486,10 +1556,16 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       const description = element("div");
       description.append(element("p", `《${imported.title}》将导入「${parent.name}」。`));
       if (imported.missing.length) {
-        description.append(element("p", "以下图片没有找到。可以取消，重新同时选中正文和图片。"));
+        description.append(element("p", "正文里的这些图片未能匹配。可以取消，检查文件名后重新选择。"));
         const missing = element("ul");
         imported.missing.forEach(name => missing.append(element("li", name)));
         description.append(missing);
+      }
+      if (imported.skipped.length) {
+        description.append(element("p", "以下已选文件不会导入："));
+        const skipped = element("ul");
+        imported.skipped.forEach(file => skipped.append(element("li", file)));
+        description.append(skipped);
       }
       const confirmed = await openSettingsDialog({
         title: "导入备忘录文件", confirmLabel: "导入为心得", body: description,
@@ -1630,27 +1706,34 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     });
   }
 
-  async function moveNote(item: Note, target: Folder, undo = false) {
-    await change({ kind: "move", id: item.id, folderId: target.id });
+  async function moveNote(id: string, targetId: string, epoch: string, undo = false) {
+    if (epoch !== index.epoch) throw new Error("当前档案已切换，请重新选择心得。");
+    const item = note(id);
+    if (!item || item.recycled || folder(item.folderId)?.recycled) throw new Error("这篇心得已不可用，请重新选择。");
+    const target = folder(targetId);
+    if (!target || target.recycled) throw new Error("目标文件夹已不可用，请重新选择。");
+    await change({ kind: "move", id: item.id, folderId: target.id }, epoch);
+    if (epoch !== index.epoch) return;
     expanded.add(target.id);
     rememberWorkspace();
     await refreshIndex();
+    if (epoch !== index.epoch) return;
     if (selectedNote) await readNote(selectedNote);
     notify(`已移到「${target.name}」`);
     const from = folder(item.folderId);
     if (!undo && from && !from.recycled) {
-      const epoch = index.epoch;
       status.append(" ", button("撤销", () => withTransition(async () => {
         if (!(await finishEdit())) return;
         const moved = note(item.id);
         if (index.epoch !== epoch || moved?.folderId !== target.id) return;
-        await moveNote(moved, from, true);
+        await moveNote(moved.id, from.id, epoch, true);
       })));
     }
   }
 
   function openMove(item: Note) {
     withTransition(async () => {
+      const epoch = index.epoch;
       const destinations = index.folders.filter(parent => !parent.recycled && parent.id !== item.folderId);
       if (!destinations.length) { notify("先新建一个目标文件夹。"); return; }
       const choices = element("select");
@@ -1661,7 +1744,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       }
       await openSettingsDialog({
         title: "移动心得", body: field("目标文件夹", choices), confirmLabel: "移动",
-        action: async () => { await moveNote(item, folder(choices.value)!); },
+        action: () => moveNote(item.id, choices.value, epoch),
       });
     });
   }
@@ -1779,19 +1862,36 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     })), at);
   }
 
+  async function runArchiveReplacement<T>(replace: () => Promise<T>): Promise<T> {
+    if (edit || transitioning) {
+      throw Object.assign(new Error("请先结束心得编辑或操作，再替换档案。"), { code: "NOTE_ARCHIVE_EDITING" });
+    }
+    if (replacingArchive) {
+      throw Object.assign(new Error("正在替换档案，请等待完成。"), { code: "NOTE_ARCHIVE_REPLACING" });
+    }
+    replacingArchive = true;
+    try {
+      return await replace();
+    } finally {
+      replacingArchive = false;
+    }
+  }
+
   function archiveReplaced() {
     ++detailRequest;
     appliedIndex = ++indexRequest;
     fileCache.clear();
     ocrFailures.clear();
     ocrQueue.clear();
+    ocrCandidates.clear();
     index = { epoch: "", notes: [], folders: [] };
     selectedFolder = selectedNote = undefined;
     expanded.clear();
     renderList();
-    renderEmpty();
+    if (edit) notify("档案已切换。请先复制编辑器中的内容，再结束编辑。", true);
+    else renderEmpty();
   }
 
   renderEmpty();
-  return { activate, confirmLeave, archiveReplaced, nativeDrop, nativeDrag, fail };
+  return { activate, confirmLeave, runArchiveReplacement, archiveReplaced, nativeDrop, nativeDrag, fail };
 }

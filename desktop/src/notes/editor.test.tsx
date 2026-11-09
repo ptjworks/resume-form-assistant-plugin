@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeBody, serializeBody } from "./content.ts";
+import { importNoteFiles, safeBody, serializeBody } from "./content.ts";
 import { createNotesEditor, insertCodeExample } from "./editor.ts";
 
 describe("Tiptap notes", () => {
@@ -68,4 +68,25 @@ describe("Tiptap notes", () => {
     expect(saved.body).toBe('<p><span style="font-size: 24px;">大字</span><span>正文</span></p>');
     expect(saved.plainText).toBe("大字正文");
   });
+});
+
+it("separates missing Markdown references from selected files that won't be imported", async () => {
+  const doc = Object.assign(new File([], "面试.md"), {
+    text: async () => "![匹配](used.png)\n![未选择的图片](missing.png)",
+  });
+  const png = (name: string) => Object.assign(new File([], name), {
+    arrayBuffer: async () => new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]).buffer,
+  });
+  const renamedPdf = Object.assign(new File([], "附件.png"), {
+    arrayBuffer: async () => new TextEncoder().encode("%PDF-").buffer,
+  });
+  const markdown = await importNoteFiles([doc, png("used.png"), png("extra.png"), renamedPdf]);
+  expect(markdown.uploads.map(file => file.name)).toEqual(["used.png"]);
+  expect(markdown.missing).toEqual(["未选择的图片"]);
+  expect(markdown.skipped).toEqual(["附件.png（只支持图片附件）", "extra.png（正文未引用）"]);
+
+  const txt = Object.assign(new File([], "面试.txt"), { text: async () => "面试记录" });
+  const plain = await importNoteFiles([txt, png("extra.png")]);
+  expect(plain.body.textContent).toBe("面试记录");
+  expect(plain.skipped).toEqual(["extra.png（只有 Markdown 可以同时导入图片）"]);
 });

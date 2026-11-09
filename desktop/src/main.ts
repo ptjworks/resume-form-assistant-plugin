@@ -640,11 +640,17 @@ async function refreshAfterArchiveReplaced() {
     mailboxes.refresh().catch(() => {}),
   ]);
 }
-const refreshLocalBackup = mountBackup(command, backupPickers, undefined, () => {
+const backupCommand: Invoke = (name, args) => {
+  if (name === "restore_archive_cmd" || name === "rollback_to_cmd" || name === "cloud_backup_restore") {
+    return notes.runArchiveReplacement(() => command(name, args));
+  }
+  return command(name, args);
+};
+const refreshLocalBackup = mountBackup(backupCommand, backupPickers, undefined, () => {
   void refreshAfterArchiveReplaced();
   void refreshCloudBackup(true).catch(() => {});
 });
-const refreshCloudBackup = mountCloudBackup(command, async () => {
+const refreshCloudBackup = mountCloudBackup(backupCommand, async () => {
   await refreshAfterArchiveReplaced();
   await refreshLocalBackup();
 });

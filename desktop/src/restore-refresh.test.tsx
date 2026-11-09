@@ -12,6 +12,8 @@ const views = vi.hoisted(() => ({
   resumeRefresh: vi.fn(),
   localBackup: vi.fn(async () => {}),
   invoke: vi.fn<Invoke>(),
+  localBackupInvoke: null as Invoke | null,
+  cloudBackupInvoke: null as Invoke | null,
   cloudBackup: vi.fn(async () => {}),
   onLocalRestored: null as null | (() => void),
   onCloudRestored: null as null | (() => void | Promise<void>),
@@ -32,13 +34,15 @@ vi.mock("./resume/mount.tsx", () => ({
   mountResume: () => ({ refresh: views.resumeRefresh, confirmLeave: async () => true }),
 }));
 vi.mock("./backup-ui.ts", () => ({
-  mountBackup: (_invoke: unknown, _pickers: unknown, _now: unknown, onRestored: () => void) => {
+  mountBackup: (invoke: Invoke, _pickers: unknown, _now: unknown, onRestored: () => void) => {
+    views.localBackupInvoke = invoke;
     views.onLocalRestored = onRestored;
     return views.localBackup;
   },
 }));
 vi.mock("./cloud-backup-ui.ts", () => ({
-  mountCloudBackup: (_invoke: unknown, onRestored: () => void | Promise<void>) => {
+  mountCloudBackup: (invoke: Invoke, onRestored: () => void | Promise<void>) => {
+    views.cloudBackupInvoke = invoke;
     views.onCloudRestored = onRestored;
     return views.cloudBackup;
   },
@@ -151,5 +155,16 @@ test("an unsaved note keeps the draft in the editor when the user tries to open 
   expect(notes.classList.contains("hidden")).toBe(false);
   expect(title.value).toBe("尚未保存的复盘");
   expect(views.invoke).toHaveBeenCalledWith("save_note_cmd", expect.anything());
-  expect(views.invoke).not.toHaveBeenCalledWith("restore_archive_cmd", expect.anything());
+
+  const replacements = [
+    [views.localBackupInvoke!, "restore_archive_cmd", { package: "backup.zip" }],
+    [views.localBackupInvoke!, "rollback_to_cmd", { id: "rollback" }],
+    [views.cloudBackupInvoke!, "cloud_backup_restore", { token: "preview" }],
+  ] as const;
+  for (const [invoke, name, args] of replacements) {
+    await expect(invoke(name, args)).rejects.toThrow("请先结束心得编辑或操作");
+    expect(views.invoke).not.toHaveBeenCalledWith(name, args);
+  }
+  expect(notes.contains(title)).toBe(true);
+  expect(title.value).toBe("尚未保存的复盘");
 });
