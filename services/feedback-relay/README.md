@@ -17,7 +17,7 @@
 
 | 接口 | 口令 | 说明 |
 | --- | --- | --- |
-| `POST /feedback` | 无 | 收报告。每个 IP 10 分钟最多 30 条，超出返回 429。没有 `app` 字段返回 400 |
+| `POST /feedback` | 无 | 收报告。每个 IP 10 分钟最多 30 条，超出返回 429。没有 `app` 字段返回 400。0.5.0 以下的自动报告只存不进待处理，见下文 |
 | `GET /pending` | `x-poll-secret` | 待处理的报告，按收到的时间从旧到新，最多 200 条 |
 | `POST /ack` | `x-poll-secret` | `{ "ids": [...] }`，把报告记成已处理，一次最多 200 个 |
 | `POST /create-issue` | `x-poll-secret` | 代 Muse 建 GitHub issue。标签不存在时去掉标签重试一次 |
@@ -32,6 +32,8 @@
 
 `POST /feedback` 的 JSON 字段：`app`、`app_version`、`os`、`error_type`、`error_stack`、`user_description`、`anonymous_id`、`timestamp`，都是字符串，超长截断。中转另加 `id`、`client_ts`（就是 `timestamp`）、`server_ts`、`reporter_ip`、`status`、`dedupe_key`。`/pending` 和 `/export` 返回的就是这些字段。
 
+`status` 有三种：`pending` 待处理，`processed` 已经 `/ack`，`skipped` 是收到时就不进待处理的旧版本报告。
+
 可选字段 `private_diagnostics`（私有层）：字符串，UTF-8 超过 16384 字节时截断（截在完整字符处）。不是字符串或为空就不存。
 
 ### 去重键
@@ -45,6 +47,15 @@ Muse 按 `dedupe_key` 把同一个问题的报告折进同一个 issue。
 - 0.5.0 及以下、读不出版本号的照旧用 `v2:` 键（`["v2", ...字段]`），继续折进已有的 issue。`test/fixtures/legacy-dedupe.json` 里是用迁移前的线上代码算出来的键，测试保证它们不变。
 
 版本号只看开头的「主.次.补丁」：`0.5.1-beta.1` 算大于 0.5.0，`0.5.0-beta.1` 不算。
+
+### 旧版本的自动报告
+
+`app_version` 低于 0.5.0 的自动报告（`error_type` 不是 `manual`）照样存 90 天、照样算去重键、`/export` 里看得到，但收到时状态就是 `skipped`，不写待处理标记，所以不进 `/pending`，Muse 不会为它们开 issue，也不会写进日报（#301）。
+
+- 这些多是解压安装的旧插件，不会自动更新，旧桌面也查不到新版本。报的问题新版本里修过或另有记录，报告里也缺定位要用的信息。
+- 手动反馈是用户自己写的，不分版本，照常进待处理。
+- 读不出版本号的（`dev`、空的）照常进待处理。版本号的读法和去重键一样，`0.5.0-beta.1` 不算低于 0.5.0。
+- 门槛写在 `src/relay.mjs` 的 `ISSUE_FLOOR`，要调高就改它再部署。改之前已经收下的报告不受影响。
 
 ### 私有层
 
@@ -156,7 +167,7 @@ npm run check:deploy     # 用生产配置打包，不上传
 
    输出里应该同时有 `app-feedback-relay.nebula-lab.workers.dev` 和 `feedback.19991107.xyz (custom domain)`。`keep_vars: true`，面板上配的变量不会被清掉；密钥部署时本来就保留。
 
-4. 验证：两个地址的根路径都返回 `{"ok":true,"service":"app-feedback-relay"}`；`POST /feedback` 发 `{}` 返回 400。要发测试报告的话，`app` 写成 `relay-domain-test`，确认后马上 `/ack`，免得 Muse 拉到。
+4. 验证：两个地址的根路径都返回 `{"ok":true,"service":"app-feedback-relay"}`；`POST /feedback` 发 `{}` 返回 400。要发测试报告的话，`app` 写成 `relay-domain-test`，确认后马上 `/ack`，免得 Muse 拉到；不需要它进待处理时，`app_version` 写成 `0.0.1` 这类低于 0.5.0 的版本、`error_type` 不写 `manual`，它就不会进 `/pending`。
 
 回退：`npx wrangler deployments list` 找上一个版本，`npx wrangler rollback <版本 id>`。迁进仓库前线上最后一个版本是 `f9670a27-54f3-4459-b13f-5dbc0f26c9be`（10-29）。注意回退到这个版本后，新报告又只记在旧索引里；回退期间只有 `pending:` 标记的报告 Muse 看不到，重新部署新代码后会再出现。
 

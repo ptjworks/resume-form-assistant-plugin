@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import {
-  createWorker, dedupeKey, parseVersion, usesVersionedKey, privateDiagnosticsOf,
+  createWorker, dedupeKey, parseVersion, usesVersionedKey, skipsIssue, privateDiagnosticsOf,
   PRIVATE_MAX_BYTES, LEGACY_PENDING_INDEX, KV_TTL,
 } from '../src/relay.mjs';
 import {
@@ -55,12 +55,14 @@ after(async () => { await mf?.dispose(); });
 
 const nextIp = () => `2001:db8::${(++ipCounter).toString(16)}`;
 
+// 默认是 0.5.0 的报告：0.5.0 以下的自动报告不进待处理，另有测试。
+// 填写类的 v2 键不含版本号，所以去重键和 LEGACY[0] 的一样。
 function report(overrides = {}) {
   const { item } = LEGACY[0];
   return {
-    app: item.app, app_version: item.app_version, os: 'Windows 10', error_type: item.error_type,
-    error_stack: item.error_stack, user_description: item.user_description, anonymous_id: item.anonymous_id,
-    timestamp: item.client_ts, ...overrides,
+    app: item.app, app_version: '0.5.0', os: 'Windows 10', error_type: item.error_type,
+    error_stack: item.error_stack, user_description: item.user_description.replace('app_version: 0.4.4', 'app_version: 0.5.0'),
+    anonymous_id: item.anonymous_id, timestamp: item.client_ts, ...overrides,
   };
 }
 
@@ -313,6 +315,59 @@ test('versions above 0.5.0 get a v3 key that adds the full version', async () =>
   assert.equal(parseVersion('x1.2.3'), null);
 });
 
+test('automatic reports below 0.5.0 are stored as skipped and never reach /pending', async () => {
+  const old = [
+    report({ app_version: '0.4.4', anonymous_id: 'old-fill' }),
+    report({ app_version: '0.4.10', error_type: 'fill_partial', anonymous_id: 'old-partial' }),
+    report({ app_version: '0.4.2', error_type: 'TypeError', anonymous_id: 'old-exception' }),
+    report({ app: 'resume-form-assistant-desktop', app_version: '0.4.3', error_type: 'panic', anonymous_id: 'old-desktop' }),
+    report({ app_version: 'v0.3.9-beta.2', anonymous_id: 'old-prefixed' }),
+  ];
+  const kept = [
+    report({ app_version: '0.4.4', error_type: 'manual', anonymous_id: 'old-manual' }),
+    report({ app: 'resume-form-assistant-desktop', app_version: '0.4.3', error_type: 'manual', anonymous_id: 'old-desktop-manual' }),
+    report({ app_version: '0.5.0', anonymous_id: 'floor' }),
+    report({ app_version: '0.5.0-beta.1', anonymous_id: 'floor-beta' }),
+    report({ app_version: '0.5.1', anonymous_id: 'newer' }),
+    report({ app_version: 'dev', anonymous_id: 'dev' }),
+    report({ app_version: '', anonymous_id: 'no-version' }),
+  ];
+  const received = Date.now();
+  const call = local({}, received);
+  const oldIds = [];
+  for (const body of old) oldIds.push((await call('/feedback', { method: 'POST', body })).data.id);
+  const keptIds = [];
+  for (const body of kept) keptIds.push((await call('/feedback', { method: 'POST', body })).data.id);
+
+  const pending = await send('/pending', { secret: POLL });
+  assert.deepEqual(pending.data.items.map(item => item.id), keptIds);
+  assert.equal((await keys('pending:')).length, kept.length);
+
+  const exported = await send('/export', { secret: POLL });
+  assert.equal(exported.data.count, old.length + kept.length);
+  const byId = new Map(exported.data.items.map(item => [item.id, item]));
+  for (const id of oldIds) {
+    const item = byId.get(id);
+    assert.equal(item.status, 'skipped', item.anonymous_id);
+    assert.deepEqual(Object.keys(item), OLD_ITEM_FIELDS);
+    assert.match(item.dedupe_key, /^v2:[0-9a-f]{16}$/);
+  }
+  for (const id of keptIds) assert.equal(byId.get(id).status, 'pending');
+  // 和别的报告一样，收到后 90 天到期。
+  const [entry] = (await kv.list({ prefix: 'fb:' + oldIds[0] })).keys;
+  assert.ok(Math.abs(entry.expiration - (Math.floor(received / 1000) + KV_TTL)) <= 60, String(entry.expiration));
+});
+
+test('skipsIssue: only automatic reports with a readable version below 0.5.0', () => {
+  for (const [version, type, skipped] of [
+    ['0.4.4', 'fill_partial', true], ['0.4.10', 'fill_failed', true], ['0.1.0', 'TypeError', true],
+    ['v0.4.4', 'panic', true], ['0.4.99-rc.1', 'fill_partial', true], ['0.4.4', '', true],
+    ['0.4.4', 'manual', false], ['0.5.0', 'fill_partial', false], ['0.5.0-beta.1', 'fill_partial', false],
+    ['0.5.0+build', 'fill_partial', false], ['0.6.0', 'fill_failed', false], ['1.0.0', 'TypeError', false],
+    ['dev', 'fill_failed', false], ['', 'fill_failed', false], ['0.4', 'fill_failed', false], [undefined, 'fill_failed', false],
+  ]) assert.equal(skipsIssue({ app_version: version, error_type: type }), skipped, `${version} ${type}`);
+});
+
 test('private diagnostics are kept apart and never appear in /pending, /export or the report', async () => {
   const marker = '--- 私有诊断 v1 ---\n[字段]\nlabel: 政治面貌 PRIVATE-MARKER';
   const posted = await send('/feedback', { method: 'POST', body: report({ private_diagnostics: marker }) });
@@ -333,7 +388,7 @@ test('private diagnostics are kept apart and never appear in /pending, /export o
   assert.deepEqual(Object.keys(read.data.items[0]), PRIVATE_ITEM_FIELDS);
   const stored = JSON.parse(await kv.get('fb:' + id));
   assert.deepEqual(read.data.items[0], {
-    id, dedupe_key: stored.dedupe_key, app_version: '0.4.4', server_ts: stored.server_ts, private_diagnostics: marker,
+    id, dedupe_key: stored.dedupe_key, app_version: '0.5.0', server_ts: stored.server_ts, private_diagnostics: marker,
   });
   assert.equal((await keys(`privdk:${stored.dedupe_key}:`)).length, 1);
 });
