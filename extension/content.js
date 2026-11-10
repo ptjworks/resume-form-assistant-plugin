@@ -3811,17 +3811,22 @@
           ...(overlay ? { overlay } : {})
         };
         // #497 公开报告只报字段类别和控件的样子；题目原文、分组和选项只进私有诊断。
+        // 读页面出错（网页改过的 getter）只少几项诊断，不打断填写。
         const shape = controlShapes.get(control);
         const current = shape && shape.session === session ? shape : null;
         const kind = fieldKindOf(label);
+        let form = null;
+        try { form = controlForm(element, current, observed.opened); } catch { form = null; }
         unfilledControls.push({ label: overlaps || showsResume ? '（字段名已隐藏）' : label, reason: why, kind,
-          form: controlForm(element, current, observed.opened),
+          ...(form ? { form } : {}),
           reasonCode: reason, control: withFillProbe(api => api.describeControl(element), null),
           ...(Object.keys(observed).length ? { observed } : {}),
           // 深度填写：插件实际按哪种控件去操作的（说明书给的类型经 DOM 校正后），分清是类型判错还是组件打不开。
           ...(element.deepRef ? { operated: element.controlKind } : {}) });
-        privateUnfilled.push({ label, section: fieldSection(element, fieldMeta), kind, reasonCode: reason, nodes: fieldNodes(element),
-          ...privateOptions(element, fieldMeta, label, kind, current) });
+        try {
+          privateUnfilled.push({ label, section: fieldSection(element, fieldMeta), kind, reasonCode: reason, nodes: fieldNodes(element),
+            ...privateOptions(element, fieldMeta, label, kind, current) });
+        } catch { /* diagnostics never break the fill */ }
       };
       // #497 AI 看过、没给值的字段（ai-worker 的 unansweredIds）：类别、资料里有没有这一类，私有诊断再带题目和选项。
       const noteAiMisses = ids => {
@@ -4792,10 +4797,12 @@
   // 市的列表是按资料里的省加载的，会透露省份，题目上又不一定看得出是哪一级（就叫「现居住地」）：地区类的题只收级联的
   // 第一列，别的地区下拉都不收。自定义下拉在这次填写里插件已经选过别的下拉或单选之后才点开的（shape.afterChoice）
   // 也不收：列表可能是按前面选的值加载的。原生下拉用扫描时（填写之前）的选项。
+  // 地区类的题不只看类别：「城市」「省份」「区县」这类题目类别表认不出（unknown），题目里有地区的字也算。
   const REGION_KINDS = new Set(["籍贯户口", "现居住地", "地址", "国家地区"]);
+  const REGION_WORDS = /省|市|区|县|镇|乡|街道|城市|地点|province|city|district|county|town/i;
   function privateOptions(entry, meta, label, kind, shape) {
     if ((meta?.cascadeLevel ?? 0) > 0 || String(meta?.fieldId || "").includes("field-new-")) return {};
-    if (REGION_KINDS.has(kind) && entry?.controlKind !== "cascader") return {};
+    if ((REGION_KINDS.has(kind) || REGION_WORDS.test(String(label ?? ""))) && entry?.controlKind !== "cascader") return {};
     let list = null;
     let total = 0;
     if (entry?.kind === "radio" || entry?.controlKind === "native-select") {
@@ -4855,6 +4862,7 @@
         page = "";
       }
     }
+    // fault 是 reportError 经 feedback-core exception() 得到的：message 已经只剩代码的英文报错（codeMessage），这里再按资料值脱敏。
     const exception = fault?.message ? { name: fault.name, message: redact(fault.message, 500) } : null;
     return feedback.privateReport({ unfilled: unfilled.map(field), missed: missed.map(field), outline: page, exception });
   }

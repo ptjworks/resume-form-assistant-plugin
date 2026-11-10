@@ -666,7 +666,7 @@
       const used = bytes(`${PRIVATE_HEADER}\n${blocks.join("\n\n")}\n\n[页面大纲]\n`);
       const kept = utf8Cut(page, Math.max(0, PRIVATE_BYTES - used));
       // Whole lines only.
-      const whole = kept.length < page.length ? kept.slice(0, kept.lastIndexOf("\n")).trim() : kept;
+      const whole = kept.length < page.length ? kept.slice(0, Math.max(0, kept.lastIndexOf("\n"))).trim() : kept;
       if (whole) blocks.push(`[页面大纲]\n${whole}`);
     }
     return blocks.length ? utf8Cut(`${PRIVATE_HEADER}\n${blocks.join("\n\n")}`, PRIVATE_BYTES) : "";

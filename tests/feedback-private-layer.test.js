@@ -345,14 +345,16 @@ test("地区类的下拉（就叫「现居住地」、看不出是哪一级）�
     <h3>联系方式</h3>${item("邮箱", '<input id="email">')}
     <h3>户籍信息</h3>${item("现居住地", '<select id="city"><option value="">请选择</option><option>广州</option><option>深圳</option></select>')}
     ${item("党派", '<select id="pol"><option value="">请选择</option><option>党员</option><option>群众</option></select>')}
-    ${item("民族信息", '<input id="ethnic">')}</form>`;
+    ${item("民族信息", '<input id="ethnic">')}
+    ${item("城市", '<select id="town"><option value="">请选择</option><option>杭州</option><option>宁波</option></select>')}</form>`;
   const p = page(t, { body, resume: { 姓名: "测试用户", 现住址: "深圳", 政治面貌: "群众", 民族: "汉族" }, ai: (message, ids) => ({ success: true, matches: [],
     diagnostics: { ruleMatches: 0, aiFields: message.formFields.length, aiMatches: 0, promptBytes: 500, apiMs: 800, errorCode: "none",
-      unansweredIds: [ids["现居住地"], ids["党派"], ids["民族信息"]].filter(Boolean) } }) });
+      unansweredIds: [ids["现居住地"], ids["党派"], ids["民族信息"], ids["城市"]].filter(Boolean) } }) });
   await p.run();
   const hidden = p.reports.find((entry) => entry.private)?.private || "";
   assert.match(hidden, /^label: 现居住地\nsection: 户籍信息\nkind: 现居住地\nin_resume: yes$/m, hidden);
-  assert.doesNotMatch(hidden, /广州|深圳/);
+  assert.doesNotMatch(hidden, /广州|深圳|杭州|宁波/, "a region list, whether or not the kind table knows the title");
+  assert.ok(hidden.includes("label: 城市"), hidden);
   // Not a region field: its list is kept, in page order, nothing marked.
   assert.match(hidden, /^label: 党派\nsection: 户籍信息\nkind: 政治面貌\nin_resume: yes\noptions: 请选择 \| 党员 \| 群众$/m);
   assert.match(hidden, /^\[页面大纲\]\n\[区块\] 户籍信息\n/m, "the block of a field after the first ones");

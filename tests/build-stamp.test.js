@@ -42,7 +42,7 @@ test("the repository's build.mjs says dev, and the worker writes it into [来源
 });
 
 test("the release zip's build.mjs carries the first 8 hex digits of the commit it was packed from", async () => {
-  const { BUILD_FILE, buildStamp, listPluginArchive, packPlugin } = await import("../desktop/scripts/pack-plugin.js");
+  const { BUILD_FILE, buildStamp, listPluginArchive, packPlugin, sourcePathOf } = await import("../desktop/scripts/pack-plugin.js");
   assert.equal(BUILD_FILE, "build.mjs");
   assert.ok(listPluginArchive(repo).includes(BUILD_FILE));
   assert.match(buildStamp("0123456789abcdef0123456789abcdef01234567"), /^export const BUILD = "01234567";$/m);
@@ -56,7 +56,12 @@ test("the release zip's build.mjs carries the first 8 hex digits of the commit i
     const text = lf(readZipEntry(zip, BUILD_FILE));
     assert.match(text, new RegExp(`^export const BUILD = "${head.slice(0, 8)}";$`, "m"));
     // Every other file is the commit's own.
-    assert.equal(lf(readZipEntry(zip, "manifest.json")), lf(execFileSync("git", ["show", "HEAD:extension/manifest.json"], { cwd: repo, encoding: "utf8" })));
+    const others = listPluginArchive(repo).filter(name => name !== BUILD_FILE);
+    assert.ok(others.includes("manifest.json") && others.length > 50, String(others.length));
+    for (const name of others) {
+      const committed = execFileSync("git", ["show", `HEAD:${sourcePathOf(name)}`], { cwd: repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+      assert.equal(lf(readZipEntry(zip, name)), lf(committed), name);
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
