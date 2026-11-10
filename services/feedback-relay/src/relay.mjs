@@ -3,6 +3,7 @@
 // 插件和桌面端把错误报告 POST 到 /feedback；Muse 用 x-poll-secret 拉 /pending、/ack、
 // /create-issue，统计用 /export。这四个接口的请求和返回格式 Muse 在用，不能改。
 // 私有层（private_diagnostics）单独存，只能用 x-private-secret 从 /private 读。
+// 0.5.0 以下的自动报告只存不进待处理（状态 skipped），Muse 不再为它们开 issue。
 // 桌面检查更新的备用来源 /releases 代查 GitHub 的发布列表，见 releases.mjs，不碰 KV。
 //
 // KV 里的键：
@@ -108,17 +109,31 @@ export function parseVersion(value) {
   return match ? match.slice(1, 4).map(Number) : null;
 }
 
+function compareVersion(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  }
+  return 0;
+}
+
 const V3_AFTER = [0, 5, 0];
 
 // 大于 0.5.0 的版本用 v3 键（加完整版本号），每个版本的第一条报告开新 issue。
 // 0.5.0 及以下、读不出版本号的照旧用 v2 键，继续折进已有的 issue。
 export function usesVersionedKey(appVersion) {
   const version = parseVersion(appVersion);
-  if (!version) return false;
-  for (let i = 0; i < 3; i++) {
-    if (version[i] !== V3_AFTER[i]) return version[i] > V3_AFTER[i];
-  }
-  return false;
+  return Boolean(version) && compareVersion(version, V3_AFTER) > 0;
+}
+
+const ISSUE_FLOOR = [0, 5, 0];
+
+// 0.5.0 以下的自动报告只存不进待处理：多是解压安装、不会自动更新的旧插件，
+// 报的问题新版本里修过或另有记录，报告也缺定位要用的信息，开 issue 只添乱（#301）。
+// 手动反馈是用户自己写的，不分版本照常进待处理；读不出版本号的（dev 等）也照常。
+export function skipsIssue(item) {
+  if (item.error_type === 'manual') return false;
+  const version = parseVersion(item.app_version);
+  return Boolean(version) && compareVersion(version, ISSUE_FLOOR) < 0;
 }
 
 async function digestKey(tag, parts) {
@@ -366,9 +381,11 @@ async function receiveFeedback(request, kv, now) {
     // 算不出去重键也照样收下，Muse 会按没有键处理。
   }
   const privateText = privateDiagnosticsOf(body.private_diagnostics);
+  const skipped = skipsIssue(item);
+  if (skipped) item.status = 'skipped';
   // 先写待处理标记再写报告：报告写失败时只剩一个读不到报告的标记，一小时后 /pending 会删掉。
   // 反过来的话，标记写失败的报告会留在 KV 里，Muse 却永远看不到。
-  await kv.put(pendingKey(item), '', { expirationTtl: KV_TTL });
+  if (!skipped) await kv.put(pendingKey(item), '', { expirationTtl: KV_TTL });
   await kv.put('fb:' + item.id, JSON.stringify(item), { expirationTtl: KV_TTL });
   // 私有层尽力写：写失败不影响公开层，报告照样收下。日志里只记 id，不记内容。
   if (privateText) {
