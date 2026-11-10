@@ -52,7 +52,7 @@ test("BOSS binds form titles, inner prefixes and the school search without borro
   assert.ok(!scanner.scanPage(elsewhere, { isVisible: visible }).controls.some(control => control.element.id === "gender"));
 });
 
-function simulateDropdown(root, { transferred = false, commit = true } = {}) {
+function simulateDropdown(root, { transferred = false, commit = true, choices = [["本科"], ["研究生", true]] } = {}) {
   const doc = root.ownerDocument;
   const trigger = root.querySelector(".ui-select-selection");
   const input = root.querySelector(".ui-select-input");
@@ -90,7 +90,7 @@ function simulateDropdown(root, { transferred = false, commit = true } = {}) {
   trigger.addEventListener("click", () => {
     root.classList.add("ui-select-visible");
     popup.hidden = false;
-    options(input ? [] : [["本科"], ["研究生", true]]);
+    options(input ? [] : choices);
   });
   trigger.addEventListener("keydown", event => { if (event.key === "Escape") close(); });
   input?.addEventListener("input", () => options([["示例大学"], ["示例大学附属学院"]]));
@@ -99,7 +99,7 @@ function simulateDropdown(root, { transferred = false, commit = true } = {}) {
 
 function operator(doc) {
   const w = doc.defaultView;
-  for (const file of ["ai-helpers.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
+  for (const file of ["ai-helpers.js", "region-data.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
   return w.ResumeProControls.create({ timeoutMs: 550, settleMs: 35, isVisible: visible });
 }
 
@@ -142,6 +142,72 @@ test("BOSS school search does not count the typed query as a selected school", a
   assert.equal((await api.operate(college, "示例大学")).reason, "selection_not_committed");
   assert.deepEqual(remote.picked, ["示例大学"]);
   assert.equal(remote.committed.value, "previous-id");
+});
+
+test("BOSS reveals an offscreen dropdown before opening, and maps only the appropriate education or exam terms", async t => {
+  const doc = load(t, row("最高学历", select("level")) + row("英语等级", select("english"))
+    + row("学位", select("degree")));
+  const level = doc.querySelector("#level");
+  const chooser = simulateDropdown(level, { transferred: true, choices: [["博士"], ["本科"]] });
+  const english = simulateDropdown(doc.querySelector("#english"), { choices: [["四级"], ["六级"]] });
+  const degree = simulateDropdown(doc.querySelector("#degree"), { choices: [["学士"], ["理学博士"], ["博士后"]] });
+  let scrolled = false;
+  const trigger = level.querySelector(".ui-select-selection");
+  const anchor = trigger.getBoundingClientRect;
+  level.getBoundingClientRect = trigger.getBoundingClientRect = () => scrolled ? anchor()
+    : { width: 120, left: 20, right: 140, top: -170, bottom: -140 };
+  level.scrollIntoView = () => { scrolled = true; };
+  const api = operator(doc);
+  const [a, b, c] = scanner.scanPage(doc, { isVisible: visible }).controls;
+  for (const [entry, value] of [[a, "博士研究生（全日制）"], [b, "CET-6（587 分）"], [c, "博士"]]) {
+    const result = await api.operate({ ...entry, binding: entry }, value);
+    assert.equal(result.ok, true, JSON.stringify(result));
+  }
+  assert.equal(scrolled, true);
+  assert.deepEqual([chooser.picked, english.picked, degree.picked], [["博士"], ["六级"], ["理学博士"]]);
+  assert.equal((await api.operate({ ...c, binding: c }, "本科")).reason, "no_option_match");
+});
+
+test("BOSS city selects the committed province, city and district through the website's columns", async t => {
+  const doc = load(t, row("现居住城市", '<div class="ui-cascader2"><input placeholder="请选择" aria-expanded="false"></div>'));
+  const root = doc.querySelector(".ui-cascader2"), input = root.querySelector("input");
+  const panel = doc.createElement("div");
+  panel.className = "ui-popper ui-cascader2__dropdown";
+  panel.hidden = true;
+  root.append(panel);
+  const clicked = [];
+  const columns = [["江苏省", "浙江省"], ["南京市", "苏州市"], ["栖霞区", "玄武区"]];
+  function appendColumn(index) {
+    const list = doc.createElement("ul");
+    list.className = "ui-cascader2-menu__list";
+    for (const name of columns[index]) {
+      const item = doc.createElement("li");
+      item.className = "ui-cascader2-node";
+      item.innerHTML = `<span class="ui-cascader2-node__label">${name}</span>`;
+      item.addEventListener("click", () => {
+        clicked.push(name);
+        if (index < 2) appendColumn(index + 1);
+        else {
+          input.value = clicked.join(" / ");
+          input.setAttribute("aria-expanded", "false");
+          panel.hidden = true;
+        }
+      });
+      list.append(item);
+    }
+    panel.append(list);
+  }
+  input.addEventListener("click", () => {
+    panel.hidden = false; input.setAttribute("aria-expanded", "true"); appendColumn(0);
+  });
+  const [city] = scanner.scanPage(doc, { isVisible: visible }).controls;
+  assert.equal(city.controlKind, "cascader");
+  assert.equal(city.root, root);
+  const api = operator(doc);
+  const result = await api.operate({ ...city, binding: city }, "江苏省南京市栖霞区");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(clicked, ["江苏省", "南京市", "栖霞区"]);
+  assert.equal(input.value, "江苏省 / 南京市 / 栖霞区");
 });
 
 const monthNames = "一 二 三 四 五 六 七 八 九 十 十一 十二".split(" ");
@@ -220,7 +286,11 @@ test("BOSS day calendars commit the requested day and keep date precision in the
         `<td><div><span>${i + 1}</span></div></td>`).join("")}</tr></tbody></table>
     </div></div>`));
   const panel = doc.querySelector(".ui-picker-panel"), input = doc.querySelector("input");
-  input.addEventListener("click", () => { panel.hidden = false; });
+  let scrolled = false;
+  input.getBoundingClientRect = () => scrolled ? { top: 20, bottom: 40, left: 20, right: 140 }
+    : { top: -170, bottom: -150, left: 20, right: 140 };
+  input.scrollIntoView = () => { scrolled = true; };
+  input.addEventListener("focus", () => { if (scrolled) panel.hidden = false; });
   panel.querySelector("table").addEventListener("click", event => {
     input.value = `2020/09/${event.target.textContent.padStart(2, "0")}`;
     panel.hidden = true;
@@ -229,6 +299,7 @@ test("BOSS day calendars commit the requested day and keep date precision in the
   const api = operator(doc), entry = { ...date, binding: date, controlKind: "date" };
   const result = await api.operate(entry, "2020-09-07");
   assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(scrolled, true);
   assert.equal(input.value, "2020/09/07");
   assert.equal(api.check(entry).ok, true);
 });

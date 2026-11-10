@@ -42,6 +42,36 @@ function worker(respond = () => [], { withRegions = true } = {}) {
 const fieldsOf = (call) => JSON.parse(call.user.split("\n")[1]);
 const valueOf = (result, fieldId) => result.matches.find((match) => match.fieldId === fieldId)?.value;
 
+test("BOSS pairs reversed template entries to the site's highest-first education rows without sending the school anchor to AI", async () => {
+  const resumeFields = [
+    { group: "教育背景", key: "虚构师范大学教育经历-学历", value: "本科" },
+    { group: "教育背景", key: "虚构师范大学教育经历-时间", value: "2016.09—2020.06" },
+    { group: "教育背景", key: "虚构理工大学教育经历-学历", value: "博士研究生（全日制）" },
+    { group: "教育背景", key: "虚构理工大学教育经历-时间", value: "2020.09—2025.06" },
+    { group: "教育背景", key: "虚构理工大学教育经历-学位", value: "理学博士" }
+  ];
+  const pair = (index, school = "", highestFirst = true) => ["school", "level", "degree", "start", "end"].map(role => ({
+    fieldId: `${index}-${role}`, label: role, inputType: role === "start" || role === "end" ? "date-picker" : "select",
+    bossEducation: { role, index, row: String(index), school, highestFirst }
+  }));
+  const env = worker();
+  const formFields = [...pair(0), ...pair(1), { fieldId: "other", label: "其他" }];
+  const result = await env.run({ formFields, resumeFields });
+  assert.deepEqual(["0-school", "0-level", "0-degree", "0-start", "0-end", "1-school", "1-level", "1-start", "1-end"]
+    .map(id => valueOf(result, id)), ["虚构理工大学", "博士研究生(全日制)", "理学博士", "2020-09", "2025-06",
+    "虚构师范大学", "本科", "2016-09", "2020-06"]);
+  assert.equal(result.matches.find(m => m.fieldId === "1-start").bossSchool, "虚构师范大学");
+  assert.equal(valueOf(result, "1-degree"), undefined);
+  assert.deepEqual(fieldsOf(env.calls[0]).map(f => f.fieldId), ["other"]);
+
+  const fixed = await env.run({ formFields: [...pair(0, "虚构师范大学"), ...pair(1, "虚构理工大学")], resumeFields });
+  assert.equal(valueOf(fixed, "0-start"), "2016-09");
+  assert.equal(valueOf(fixed, "1-start"), "2020-09");
+  const ambiguous = await env.run({ formFields: [...pair(0, "", false), ...pair(1, "", false)], resumeFields });
+  assert.equal(ambiguous.matches.length, 10);
+  assert.ok(ambiguous.matches.every(match => match.blocked === "education_record_unconfirmed" && match.value === ""));
+});
+
 test("BOSS education range uses one local education record and never asks the model to pair dates", async () => {
   const formFields = ["start", "end"].map((side, i) => ({
     fieldId: side, label: i ? "时间段（结束）" : "时间段（开始）", inputType: "date-picker", pickerType: "boss",

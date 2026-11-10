@@ -98,6 +98,57 @@ test('BOSS education date descriptors keep the two calendar types and the shared
   assert.equal(start.educationRangePair, end.educationRangePair);
 });
 
+test('BOSS fills the school before dependent education fields and skips them when the school was not committed', async () => {
+  for (const schoolCommits of [true, false]) {
+    const late = lateScanner(), calls = [];
+    let selected = "", matched;
+    const aiHelpers = require("../extension/ai-helpers.js");
+    const profile = require("../extension/profile-fields.js");
+    const ctx = loadHighlightHelpers({
+      formElements: [], fieldScan: late.proxy, aiHelpers,
+      customControls: { snapshot: () => selected, hasExistingValue: () => Boolean(selected),
+        readSelection: () => ({ texts: selected ? [selected] : [] }), describe: () => ({ multiple: false }) },
+      controls: { create: () => ({
+        operate: async (entry, value) => {
+          const label = entry.binding.label;
+          calls.push(label);
+          if (label === "学校名称") {
+            if (!schoolCommits) return { ok: false, reason: "no_option_match" };
+            selected = value;
+          } else entry.element.value = value;
+          return { ok: true };
+        },
+        check: () => ({ ok: true })
+      }) },
+      sendMessage: async message => {
+        if (message.type !== "AI_FILL") return {};
+        matched = aiHelpers.localRuleMatches(message.formFields, message.resumeFields, profile);
+        return { success: true, matches: matched };
+      }
+    });
+    const group = new ctx.HTMLElement(), school = new ctx.HTMLInputElement(), root = new ctx.HTMLElement(), level = new ctx.HTMLInputElement();
+    ctx.document.location = { hostname: "xiaoyuan.zhipin.com" };
+    for (const element of [school, level]) {
+      element.ownerDocument = ctx.document;
+      element.closest = selector => selector.includes("data-group-id") ? group : null;
+    }
+    group.querySelectorAll = () => [root];
+    root.querySelector = () => school;
+    late.holder.current = scanWith([
+      control(level, { label: "学历" }),
+      control(school, { label: "学校名称", root, controlKind: "custom-select" })
+    ]);
+    ctx.helpers.setCurrentStore({ templates: [{ id: "t", name: "示例", groups: [{ name: "教育背景", fields: [
+      { key: "虚构大学教育经历-学校", value: "虚构大学" }, { key: "虚构大学教育经历-学历", value: "本科" }
+    ] }] }], activeTemplateId: "t" });
+    ctx.helpers.setShadowRoot(shadow().root);
+    const result = await ctx.helpers.handleAiFillClick({ currentTarget: { disabled: false, textContent: "" } });
+    assert.deepEqual(calls, schoolCommits ? ["学校名称", "学历"] : ["学校名称"], JSON.stringify({ matched, result }));
+    assert.equal(level.value, schoolCommits ? "本科" : "");
+    assert.equal(result.filledCount, schoolCommits ? 2 : 0);
+  }
+});
+
 test('a failed parent blocks later fields in its cascade group', async () => {
   const late = lateScanner();
   const aiHelpers = { ...require('../extension/ai-helpers.js'), detectCascadeGroups(fields) {

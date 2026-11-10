@@ -408,6 +408,14 @@
       if (custom && ctx.el.ownerDocument) watched.push(ctx.el.ownerDocument);
       for (const node of watched) for (const type of ['input', 'change', 'keydown', 'pointerdown']) node.addEventListener?.(type, track, true);
       try {
+        const bossControl = ctx.entry?.pickerType === 'boss' || (custom && scope.ResumeProCustomControls.describe(ctx.entry).library === 'boss');
+        if (bossControl) {
+          const rect = ctx.el.getBoundingClientRect(), view = ctx.el.ownerDocument.defaultView;
+          if (rect.top < 0 || rect.bottom > view.innerHeight || rect.left < 0 || rect.right > view.innerWidth) {
+            ctx.el.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
+            await delay(0);
+          }
+        }
         if (['text', 'textarea'].includes(ctx.kind) && !['range', 'color'].includes(ctx.el.type)) return await text(ctx, desiredValue);
         const direct = ['week', 'range', 'color'].includes(ctx.el.type);
         if (ctx.kind === 'date' && ctx.entry.pickerType === 'antd' && ctx.el.ownerDocument) {

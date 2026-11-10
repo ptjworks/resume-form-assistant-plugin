@@ -354,6 +354,8 @@
 
   // 自定义下拉、级联、自动完成：取最外层像组件根、又只装着这个控件的祖先。
   function customSelectRoot(el, ctx) {
+    const cascader = bossItem(el, ctx) && el.closest(".ui-cascader2");
+    if (cascader && el.matches("input:not(.ui-cascader2__search-input)")) return cascader;
     const boss = bossSelect(el, ctx);
     if (boss === el || (boss && el.matches("input.ui-select-input"))) return boss;
     const ownSignal = hasComboSignal(el);
@@ -449,7 +451,7 @@
 
     customByRoot.forEach((inputs, root) => {
       const cascader = antdCss(root, ".ant-cascader, .el-cascader, .arco-cascader");
-      const cascade = root.matches(cascader) || Boolean(root.querySelector(cascader))
+      const cascade = (ctx.bossCampus && root.matches(".ui-cascader2")) || root.matches(cascader) || Boolean(root.querySelector(cascader))
         || root.getAttribute('aria-haspopup') === 'tree' || primaryInput(inputs).getAttribute('aria-haspopup') === 'tree';
       controls.push({ kind: "element", controlKind: cascade ? "cascader" : "custom-select", element: primaryInput(inputs), elements: inputs, root, merged: inputs.length - 1 });
     });

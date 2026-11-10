@@ -194,6 +194,7 @@
     isSecretFormField,
     isSafeResumeField,
     localRuleMatches,
+    bossEducationLevel,
     findSelectOptionIndex,
     isSameOptionText,
     optionSearchText,
@@ -413,32 +414,103 @@
   // #429 第五项：规则认不出的字段，再看补充字段里有没有题目原样对得上的回答（profile.savedAnswerMatches）。
   // pageFields 是整张表的字段（后来冒出来的字段只传新的几个时用），不传就是 formFields。
   // #466 BOSS 的两个「时间段」框属于同一条教育经历。只在页面和资料都能唯一配对时取日期。
-  function educationRangeMatches(fields, resume) {
-    const targets = fields.filter(field => field.educationRange);
-    if (targets.length !== 2 || targets.some(field => field.educationRangeUnique !== true)) return [];
-    const start = targets.find(field => field.educationRange === "start");
-    const end = targets.find(field => field.educationRange === "end");
-    if (!start?.educationRangePair || start.educationRangePair !== end?.educationRangePair) return [];
+  function bossEducationLevel(value, label) {
+    const raw = String(value ?? "").normalize("NFKC").trim();
+    if (/^(?:最高)?学历$/.test(label)) {
+      const text = raw.replace(/\s*\((?:全日制|非全日制|在读|预计)\)$/, "").replace(/\s+/g, "");
+      if (/^博士(?:研究生)?(?:在读)?$/.test(text)) return "博士";
+      if (/^硕士(?:研究生)?(?:在读)?$/.test(text)) return "硕士";
+      if (/^(?:大学)?本科(?:在读)?$/.test(text)) return "本科";
+      if (/^(?:大学)?(?:专科|大专)$/.test(text)) return "大专";
+    }
+    if (/^(?:最高)?学位$/.test(label)) {
+      return /^(?:哲学|经济学|法学|教育学|文学|历史学|理学|工学|农学|医学|军事学|管理学|艺术学|交叉学科|工程)?(学士|硕士|博士)(?:学位)?$/.exec(raw)?.[1] || "";
+    }
+    return "";
+  }
+
+  const BOSS_EDUCATION_KEYS = {
+    "学校": "school", "学校名称": "school", "院校": "school", "学历": "level", "学位": "degree",
+    "专业": "major", "专业名称": "major", "受教育类型": "study", "学习形式": "study"
+  };
+  function educationRecords(resume) {
     const records = new Map();
     for (const field of resume) {
       const group = /^(教育经历|教育背景|学习经历)\s*(\d*)$/.exec(String(field.group ?? "").normalize("NFKC").trim());
       if (!group || !String(field.value ?? "").trim()) continue;
-      const key = /^(?:(?:教育经历|教育背景|学习经历|教育)\s*(\d+)\s*[-_:]?\s*)?(.*)$/.exec(String(field.key ?? "").normalize("NFKC").trim());
-      if (!key || (group[2] && key[1] && group[2] !== key[1])) return [];
-      const id = `${group[1]}:${group[2] || key[1] || ""}`;
-      if (!records.has(id)) records.set(id, { start: new Set(), end: new Set() });
+      const key = String(field.key ?? "").normalize("NFKC").trim();
+      const named = /^(.{2,60}(?:大学|学院|学校|中学|研究院|研究所))(?:教育经历|教育背景|学习经历)\s*[-_:：]\s*(.+)$/.exec(key);
+      const numbered = /^(?:教育经历|教育背景|学习经历|教育)\s*(\d+)\s*[-_:：]?\s*(.+)$/.exec(key);
+      if (group[2] && numbered && group[2] !== numbered[1]) return [];
+      const id = named ? `school:${normalizeText(named[1])}` : `${group[1]}:${group[2] || numbered?.[1] || ""}`;
+      if (!records.has(id)) records.set(id, {});
       const record = records.get(id);
-      const value = String(field.value).normalize("NFKC").trim().replace(/\s*\((?:全日制|非全日制|在读|预计)\)$/, "");
-      if (/^(?:时间|时间段|起止(?:日期|时间)|在校时间|就读时间|教育时间|学习时间)$/.test(key[2])) {
-        const parts = rangeDateParts(value);
-        if (parts) { record.start.add(educationDate(parts[0])); record.end.add(educationDate(parts[1], true)); }
-      } else if (/^(?:开始|入学|入读)(?:时间|日期|年月)$/.test(key[2])) record.start.add(educationDate(value));
-      else if (/^(?:结束|毕业|离校)(?:时间|日期|年月)$/.test(key[2])) record.end.add(educationDate(value, true));
+      const add = (role, value) => {
+        if (!record[role]) record[role] = new Set();
+        record[role].add(value);
+      };
+      const detail = named?.[2] || numbered?.[2] || key;
+      const raw = String(field.value).normalize("NFKC").trim();
+      const date = raw.replace(/\s*\((?:全日制|非全日制|在读|预计)\)$/, "");
+      if (named) add("school", named[1]);
+      if (Object.hasOwn(BOSS_EDUCATION_KEYS, detail)) add(BOSS_EDUCATION_KEYS[detail], raw);
+      else if (/^(?:时间|时间段|起止(?:日期|时间)|在校时间|就读时间|教育时间|学习时间)$/.test(detail)) {
+        const parts = rangeDateParts(date);
+        if (parts) { add("start", educationDate(parts[0])); add("end", educationDate(parts[1], true)); }
+      } else if (/^(?:开始|入学|入读)(?:时间|日期|年月)$/.test(detail)) add("start", educationDate(date));
+      else if (/^(?:结束|毕业|离校)(?:时间|日期|年月)$/.test(detail)) add("end", educationDate(date, true));
     }
-    if (records.size !== 1) return [];
-    const [record] = records.values();
-    if (record.start.size !== 1 || record.end.size !== 1) return [];
-    const [from] = record.start, [to] = record.end;
+    return [...records.values()].map(record => Object.fromEntries(Object.entries(record)
+      .filter(([, values]) => values.size === 1).map(([role, values]) => [role, [...values][0]])));
+  }
+
+  function bossEducationMatches(fields, resume) {
+    const rows = new Map();
+    for (const field of fields) {
+      const meta = field.bossEducation;
+      if (!meta) continue;
+      if (!rows.has(meta.row)) rows.set(meta.row, []);
+      rows.get(meta.row).push(field);
+    }
+    if (!rows.size) return [];
+    const records = educationRecords(resume);
+    const rank = record => ["", "大专", "本科", "硕士", "博士"].indexOf(bossEducationLevel(record.level, "学历"));
+    const ordered = records.slice().sort((a, b) => rank(b) - rank(a));
+    const unambiguousOrder = records.length > 0 && records.every(r => r.school && rank(r) > 0)
+      && new Set(records.map(rank)).size === records.length;
+    const plan = [...rows.values()].map(row => {
+      const { school, index, highestFirst } = row[0].bossEducation;
+      const matching = school ? records.filter(record => record.school && normalizeText(record.school) === normalizeText(school)) : [];
+      const planned = records.length === 1 && rows.size === 1 ? records[0] : highestFirst && unambiguousOrder ? ordered[index] : null;
+      const record = school ? (matching.length === 1 ? matching[0] : null) : planned;
+      return { row, record, school };
+    });
+    return plan.flatMap(({ row, record, school }) => {
+      const needsSchool = !school && record?.school && row.filter(field => field.bossEducation.role === "school").length !== 1;
+      if (!record || needsSchool || plan.some(other => other.row !== row && other.record === record)) {
+        return records.length ? row.map(({ fieldId }) => ({ fieldId, value: "", blocked: "education_record_unconfirmed" })) : [];
+      }
+      return row.flatMap(field => {
+        const { role } = field.bossEducation;
+        if (row.filter(other => other.bossEducation.role === role).length !== 1) return [];
+        const value = record[role];
+        if (!value || role === "school" && school) return [];
+        if ((role === "start" || role === "end") && (!record.start || !record.end
+          || (record.end !== "至今" && record.start > record.end && !record.start.startsWith(`${record.end}-`)))) return [];
+        return [{ fieldId: field.fieldId, value, ...(role !== "school" && record.school ? { bossSchool: record.school } : {}) }];
+      });
+    });
+  }
+
+  function educationRangeMatches(fields, resume) {
+    const targets = fields.filter(field => field.educationRange && !field.bossEducation);
+    if (targets.length !== 2 || targets.some(field => field.educationRangeUnique !== true)) return [];
+    const start = targets.find(field => field.educationRange === "start");
+    const end = targets.find(field => field.educationRange === "end");
+    if (!start?.educationRangePair || start.educationRangePair !== end?.educationRangePair) return [];
+    const records = educationRecords(resume);
+    if (records.length !== 1) return [];
+    const { start: from, end: to } = records[0];
     if (!from || !to || (to !== "至今" && from > to && !from.startsWith(`${to}-`))) return [];
     return [{ fieldId: start.fieldId, value: from }, { fieldId: end.fieldId, value: to }];
   }
@@ -455,9 +527,10 @@
 
   function localRuleMatches(formFields, resumeFields, profile, pageFields = formFields) {
     const safe = formFields.filter((field) => !isSecretFormField(field, profile));
-    const forms = safe.filter(field => !field.educationRange);
+    const forms = safe.filter(field => !field.educationRange && !field.bossEducation);
     const resume = resumeFields.filter((field) => isSafeResumeField(field, profile));
-    const rules = [...filterValidMatches(forms, buildRuleBasedMatches(forms, resume)), ...educationRangeMatches(safe, resume)];
+    const rules = [...filterValidMatches(forms, buildRuleBasedMatches(forms, resume)),
+      ...educationRangeMatches(safe, resume), ...bossEducationMatches(safe, resume)];
     if (typeof profile.savedAnswerMatches !== "function") return rules;
     const taken = new Set(rules.map((match) => match.fieldId));
     return [...rules, ...filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields))];

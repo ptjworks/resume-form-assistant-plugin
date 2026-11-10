@@ -202,7 +202,7 @@
     "in_flight", "internal", "other"];
   // Where the desktop's AI request timed out (#299): connecting, waiting for the headers, or reading the body.
   const TIMEOUT_STAGES = ["connect", "first_byte", "body"];
-  const FILL_REASONS = ["value_not_committed", "value_reverted", "element_disconnected", "validation_not_cleared", "framework_state_unsynced", "value_changed", "verification_timeout", "unsupported_control", "no_option_match", "options_not_rendered", "options_timeout", "ambiguous_option", "ambiguous_popup", "cascade_timeout", "cascade_parent_failed", "cascade_unsupported", "selection_not_committed", "control_disabled", "invalid_date", "range_incomplete", "too_long", "format_mismatch", "readonly_picker", "operation_failed", "cancelled", "id_type_mismatch", "ai_conflict", "too_many_items", "region_unavailable", "region_too_coarse", "region_level_missing"];
+  const FILL_REASONS = ["value_not_committed", "value_reverted", "element_disconnected", "validation_not_cleared", "framework_state_unsynced", "value_changed", "verification_timeout", "unsupported_control", "no_option_match", "options_not_rendered", "options_timeout", "ambiguous_option", "ambiguous_popup", "cascade_timeout", "cascade_parent_failed", "cascade_unsupported", "selection_not_committed", "control_disabled", "invalid_date", "range_incomplete", "education_school_unconfirmed", "education_record_unconfirmed", "too_long", "format_mismatch", "readonly_picker", "operation_failed", "cancelled", "id_type_mismatch", "ai_conflict", "too_many_items", "region_unavailable", "region_too_coarse", "region_level_missing"];
   // A text the page did not keep (#399 #405): what the box held after it lost focus (empty, what it held before
   // the fill, or something else; never the text itself), and whether a suggestion list or another popup came
   // up within a second of writing. The box's inputmode is part of its structure.
@@ -562,8 +562,8 @@
       }
       if (skipping) continue;
       // Every value has its own closed pattern; the length cap only bounds the regex work.
-      // The longest reachable value is reasons with every code at six digits (773 chars).
-      const entry = /^([a-z_]{1,32}): (.{1,800})$/.exec(line);
+      // Leave room for the longest tally, with every reason at six digits.
+      const entry = /^([a-z_]{1,32}): (.{1,900})$/.exec(line);
       if (entry) {
         const known = Object.prototype.hasOwnProperty.call(VALUES, entry[1]) && VALUES[entry[1]].test(entry[2])
           && (manual || !JOB_KEYS.test(entry[1])) && !(legacy && NEW_KEYS.has(entry[1]));

@@ -94,6 +94,8 @@
     region_level_missing: "资料里没有这一级地区",
     too_long: "超出字数上限",
     range_incomplete: "起止日期缺一头",
+    education_school_unconfirmed: "未确认本行学校",
+    education_record_unconfirmed: "无法确定本行对应哪段教育经历",
     format_mismatch: "只能填数字",
     readonly_picker: "网页自己的选择框",
     operation_failed: "控件操作失败",
@@ -2125,11 +2127,12 @@
       const known = scannedControl?.entry;
       if (!known?.binding) continue;
       Object.assign(entry, { binding: known.binding, offerable: known.offerable, offerLabel: known.offerLabel });
-      if (entry.controlKind === "date" && known.pickerType === "boss") {
-        Object.assign(entry, { root: known.root, pickerType: known.pickerType, pickerInputType: known.pickerInputType });
-        const { educationRange, educationRangePair, educationRangeUnique } = scannedControl.field || {};
-        Object.assign(field, { inputType: "date-picker", pickerType: known.pickerType, pickerInputType: known.pickerInputType,
-          ...(educationRange ? { educationRange, educationRangePair, educationRangeUnique } : {}) });
+      const descriptor = scannedControl.field;
+      // 深度分析的文字推测不能覆盖 BOSS 已识别的级联或日历。
+      if (descriptor && (descriptor.bossEducation || known.pickerType === "boss" || known.root?.matches?.(".ui-cascader2")
+        && known.root.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com")) {
+        Object.assign(entry, { root: known.root, controlKind: known.controlKind, pickerType: known.pickerType, pickerInputType: known.pickerInputType });
+        Object.assign(field, descriptor, { fieldId: field.fieldId });
       }
     }
     return prepared;
@@ -3776,6 +3779,15 @@
 
       const fieldMetaMap = new Map(fields.map((f) => [f.fieldId, f]));
       const domOrderMap = new Map(fields.map((field, index) => [field.fieldId, index]));
+      const educationRowOrder = new Map();
+      for (const field of fields) {
+        const row = field.bossEducation?.row;
+        if (row !== undefined && !educationRowOrder.has(row)) educationRowOrder.set(row, domOrderMap.get(field.fieldId));
+      }
+      const orderOf = field => {
+        const index = domOrderMap.get(field?.fieldId) ?? 0;
+        return field?.bossEducation?.role === "school" ? (educationRowOrder.get(field.bossEducation.row) ?? index) - 0.5 : index;
+      };
       const byOrder = (a, b) => {
         const ma = fieldMetaMap.get(a.fieldId);
         const mb = fieldMetaMap.get(b.fieldId);
@@ -3783,7 +3795,7 @@
           return (ma.cascadeLevel ?? 0) - (mb.cascadeLevel ?? 0);
         }
         // 其余按页面顺序从上往下填：没被识别成联动组的省/市/县也能等上一级先选好。
-        return (domOrderMap.get(a.fieldId) ?? 0) - (domOrderMap.get(b.fieldId) ?? 0);
+        return orderOf(ma) - orderOf(mb);
       };
 
       // 等 AI 时字段所在的同源框架换了页或被删掉（#400）：和顶层换页一样算页面变了，不往旧文档里写。
@@ -3975,6 +3987,7 @@
         const customGroup = self.ResumeProProfile?.CUSTOM_GROUP;
         const siteGroup = self.ResumeProProfile?.SITE_GROUP;
         for (const field of added) {
+          if (field.bossEducation || field.educationRange) continue;
           if (local.some(match => match.fieldId === field.fieldId)) continue;
           const same = resumeFields.filter(item => item?.value && (!customGroup || item.group !== customGroup) && (!siteGroup || item.group !== siteGroup)
             && normalize(item.key) === normalize(field.label));
@@ -4034,6 +4047,7 @@
           // 还没有选项的原生下拉多半在等上一级选好：不先填。
           const ready = new Set(local.filter(match => {
             const entry = fieldMap.get(match.fieldId);
+            if (fieldMetaMap.get(match.fieldId)?.bossEducation) return false;
             // #429 第 4 项：传完简历后网站解析填上的不算已有内容，照样先填。
             return entry && isFieldBindingCurrent(entry) && (!hasExistingValue(entry) || parsedBySite(entry))
               && !(entry.kind === "element" && isSelectElement(entry.element) && !hasRealSelectOptions(entry.element));
@@ -4364,6 +4378,12 @@
         }
         if (assisted && (!isAssistedTextField(element) || hasExistingValue(element) || !assisted.scopes.some(scope => scope.isConnected && scope.contains(element.element)))) continue;
 
+        const fieldMeta = fieldMetaMap.get(match.fieldId);
+        const schoolStillMatches = () => !match.bossSchool || bossEducationSchoolMatches(element.element, match.bossSchool);
+        if (!schoolStillMatches()) {
+          noteControlFailure(element, fieldMeta, match.value, 'education_school_unconfirmed');
+          continue;
+        }
         // 控件内部也会异步等待；实际写入及重试前复查，不能仅在进入控件时检查。
         const beforeWrite = assisted ? undefined : (userEdited = false) => {
           if (overwriteDeclined || !isCurrent()) return false;
@@ -4375,7 +4395,6 @@
           showStatus(`填写期间检测到字段内容变化，已停止后续填写，保留该字段的现有内容。此前已填写 ${filledCount} 项，请核对网页。`, "error", true);
           return false;
         };
-        const fieldMeta = fieldMetaMap.get(match.fieldId);
         if (fieldMeta?.cascadeGroup !== undefined && failedCascadeGroups.has(fieldMeta.cascadeGroup)) {
           noteControlFailure(element, fieldMeta, match.value, 'cascade_parent_failed');
           continue;
@@ -4388,7 +4407,7 @@
         // skipped, while an interrupted attempted write remains unconfirmed.
         let writeAttempted = false;
         const onWrite = () => { writeAttempted = true; };
-        const controlCurrent = () => isCurrent() && isFieldBindingCurrent(element);
+        const controlCurrent = () => isCurrent() && isFieldBindingCurrent(element) && schoolStillMatches();
         const stopInterruptedControl = () => {
           if (!overwriteDeclined && isCurrent()) return;
           cancelRequested = true;
@@ -5162,8 +5181,30 @@
       unreadable: scans.some(({ scan }) => scan.unreadable) };
   }
 
+  function bossEducationSchoolMatches(element, expected) {
+    const row = element.closest('.group-part-item[data-group-id="EDUCATION"]');
+    const schools = row?.querySelectorAll(".combo-input-container > .content > .ui-select") || [];
+    if (schools.length !== 1) return false;
+    const root = schools[0];
+    const selected = self.ResumeProCustomControls?.readSelection?.({ element: root.querySelector(".ui-select-input") || root, root });
+    return selected?.texts.length === 1 && self.ResumeProAIHelpers.normalizeText(selected.texts[0]) === self.ResumeProAIHelpers.normalizeText(expected);
+  }
+
   function addScannedControls(scan, fields, fieldMap, prefix) {
     const educationPairs = new Map();
+    const educationRows = new Map();
+    const educationRow = el => el.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com"
+      && el.closest('.group-part-item[data-group-id="EDUCATION"]');
+    const schools = new Map();
+    for (const control of scan.controls) {
+      const row = educationRow(control.element);
+      if (!row) continue;
+      if (!educationRows.has(row)) educationRows.set(row, educationRows.size);
+      if (control.label === "学校名称" && control.controlKind === "custom-select") {
+        const selected = self.ResumeProCustomControls?.readSelection?.(control);
+        if (selected?.texts.length === 1) schools.set(row, selected.texts[0]);
+      }
+    }
     scan.controls.forEach((control) => {
       const element = control.element;
       // 扫描时的对应关系原样留着，填写和「加到我的信息」用之前拿它复查。
@@ -5172,12 +5213,19 @@
         : control.controlKind === 'date-picker' ? 'date' : control.controlKind;
       const common = { controlKind, root: control.root, binding,
         offerable: control.offerable, offerLabel: control.offerLabel };
+      const row = educationRow(element);
+      const educationRole = row && (control.rangePart ? (control.rangePart === "开始" ? "start" : "end")
+        : ({ "学校名称": "school", "学历": "level", "学位": "degree", "受教育类型": "study", "专业名称": "major", "专业": "major" })[control.label]);
       const base = {
         controlKind,
         label: control.label,
         placeholder: control.placeholder,
         ariaLabel: element.getAttribute("aria-label") || "",
-        group: control.group
+        group: control.group,
+        ...(educationRole ? { bossEducation: { role: educationRole, row: `${prefix}${educationRows.get(row)}`,
+          index: educationRows.get(row), school: schools.get(row) || "",
+          highestFirst: /从最高学历填起/.test(row.closest?.(".group-part-container")
+            ?.querySelector(":scope > .group-part-title")?.textContent || "") } } : {})
       };
 
       if (control.kind === "radio") {
