@@ -1683,24 +1683,23 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
 
   function recycleFolder(parent: Folder, recycled: boolean) {
     withTransition(async () => {
+      const editingId = edit?.id;
       if (!(await finishEdit())) return;
+      if (editingId) await readNote(editingId);
       if (recycled) {
         const ok = await openSettingsDialog({
           title: `回收「${parent.name}」`, intro: "文件夹与其中的心得会一起保留在心得回收站。",
           confirmLabel: "移到回收站",
         });
-        if (!ok) {
-          if (selectedNote) await readNote(selectedNote);
-          else renderEmpty();
-          return;
-        }
+        if (!ok) return;
       }
       await change({ kind: "recycleFolder", id: parent.id, recycled });
-      if (selectedFolder === parent.id) { selectedNote = undefined; selectedFolder = undefined; }
+      const affectsSelection = selectedFolder === parent.id;
+      if (affectsSelection) { selectedNote = undefined; selectedFolder = undefined; }
       if (recycled) expanded.delete(parent.id);
       rememberWorkspace();
       await refreshIndex();
-      renderEmpty();
+      if (affectsSelection) renderEmpty();
       const restored = folder(parent.id);
       notify(recycled ? "文件夹已移到回收站。" :
         parent.applicationId && !restored?.applicationId ? "已恢复文件夹，原申请已有其他文件夹，关联已解除。" : "已恢复文件夹。");

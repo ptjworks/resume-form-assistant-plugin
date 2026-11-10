@@ -37,8 +37,12 @@ async function openNote(initialText: string | null) {
     if (command === "note_body_cmd") return '<div data-note-file="image"></div>' as T;
     if (command === "read_note_file_cmd") return file as T;
     if (command === "change_note_cmd") {
-      const change = args?.change as { kind: string; text: string };
+      const change = args?.change as { kind: string; id: string; text: string; recycled: boolean };
       if (change.kind === "ocr") { ocrText = change.text; return null as T; }
+      if (change.kind === "recycleFolder") {
+        folders = folders.map(folder => folder.id === change.id ? { ...folder, recycled: change.recycled } : folder);
+        return null as T;
+      }
     }
     throw new Error(`Unexpected command ${command}`);
   });
@@ -104,4 +108,30 @@ test("the move dialog reports a destination removed during a background index re
   await vi.waitFor(() => expect(dialog.querySelector('[role="alert"]')?.textContent).toBe("目标文件夹已不可用，请重新选择。"));
   expect(root.querySelector('[data-folder-id="source"] .notes-item')).not.toBeNull();
   expect(invoke.mock.calls.filter(([name]) => name === "change_note_cmd")).toHaveLength(1);
+});
+
+test("recycling a different folder keeps the current note and reading position", async () => {
+  const { root, invoke } = await openNote("STAR");
+  const reader = root.querySelector<HTMLElement>(".notes-document-scroll")!;
+  reader.scrollTop = 120;
+  reader.dispatchEvent(new Event("scroll"));
+  const recycle = async (folderId: string) => {
+    const group = root.querySelector(`[data-folder-id="${folderId}"]`)!;
+    button("移到回收站", group).click();
+    button("移到回收站", await vi.waitFor(() => {
+      const dialog = document.querySelector("dialog");
+      expect(dialog).not.toBeNull();
+      return dialog!;
+    })).click();
+    await vi.waitFor(() => expect(root.querySelector(`[data-folder-id="${folderId}"]`)).toBeNull());
+  };
+
+  await recycle(target.id);
+  expect(root.querySelector(".notes-document-scroll")).toBe(reader);
+  expect(reader.scrollTop).toBe(120);
+  expect(invoke.mock.calls.filter(([name]) => name === "note_body_cmd")).toHaveLength(1);
+
+  await recycle(source.id);
+  expect(root.querySelector(".notes-document-scroll")).toBeNull();
+  expect(root.querySelector(".notes-empty h2")?.textContent).toBe("打开一篇心得");
 });
