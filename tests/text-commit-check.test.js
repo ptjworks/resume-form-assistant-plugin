@@ -314,7 +314,7 @@ test("#399 a later field's focus resetting an earlier date box is caught by the 
   p.input("name").addEventListener("focus", () => { p.input("birth").value = ""; });
   const result = await p.run();
   assert.equal(result.filledCount, 1);
-  assert.deepEqual(p.unfilledLine(), ["- 出生年月: input[text] after=empty reason=value_reverted"]);
+  assert.deepEqual(p.unfilledLine(), ["- 出生日期: input[text] after=empty form=text reason=value_reverted"]);
 });
 
 test("#399 an amount example in the placeholder is not a date format: 2010.5 stays 2010.5", async (t) => {
@@ -402,7 +402,7 @@ test("a suggestion list with date inside a word of its class name is reported as
     p.doc.body.append(list);
   });
   await p.run();
-  assert.deepEqual(p.unfilledLine(), ["- 当前城市: input[text] after=previous overlay=list reason=value_not_committed"]);
+  assert.deepEqual(p.unfilledLine(), ["- 现居住地: input[text] after=previous overlay=list form=text reason=value_not_committed"]);
 });
 
 test("#399 the report for such a date box says the text was changed and a calendar came up", async (t) => {
@@ -410,7 +410,7 @@ test("#399 the report for such a date box says the text was changed and a calend
   calendarBox(p, "birth");
   const result = await p.run();
   assert.equal(result.filledCount, 0);
-  assert.deepEqual(p.unfilledLine(), ["- 出生年月: input[text] after=other overlay=other reason=value_reverted"]);
+  assert.deepEqual(p.unfilledLine(), ["- 出生日期: input[text] after=other overlay=other form=text reason=value_reverted"]);
 });
 
 // ---- #405 数字框 ----
@@ -569,7 +569,7 @@ test("#405 the status names a number box it did not write", async (t) => {
   const result = await p.run();
   assert.equal(result.unfilledCount, 1);
   assert.equal(p.ui.status.textContent, "已填写 0 个字段。1 项没填上：期望薪资（只能填数字），请手动补上。");
-  assert.deepEqual(p.unfilledLine(), ["- （字段名已隐藏）: input[text] inputmode=numeric reason=format_mismatch"]);
+  assert.deepEqual(p.unfilledLine(), ["- 期望: input[text] inputmode=numeric form=number reason=format_mismatch"]);
 });
 
 // ---- 写入被拒时的诊断 ----
@@ -603,9 +603,9 @@ test("a rejected write says what the box was left with and whether a popup came 
   assert.equal(city.state, "北京");
   const lines = p.unfilledLine();
   assert.deepEqual(lines, [
-    "- 出生年月: input[text] after=empty overlay=none reason=value_reverted",
-    "- 当前城市: input[text] after=previous overlay=list reason=value_not_committed",
-    "- 学校: input[text] after=other overlay=other reason=value_not_committed"
+    "- 出生日期: input[text] after=empty overlay=none form=text reason=value_reverted",
+    "- 现居住地: input[text] after=previous overlay=list form=text reason=value_not_committed",
+    "- 学校: input[text] after=other overlay=other form=text reason=value_not_committed"
   ]);
   for (const words of ["1998", "北京", "上海", "示例大学", "请从列表选择"]) assert.ok(!p.reports.at(-1).includes(words), words);
   assert.equal(core.diagnostics(p.reports.at(-1)), p.reports.at(-1));
@@ -622,7 +622,7 @@ test("popup class words are matched whatever their case", async (t) => {
     p.doc.body.append(list);
   });
   await p.run();
-  assert.deepEqual(p.unfilledLine(), ["- 当前城市: input[text] after=previous overlay=list reason=value_not_committed"]);
+  assert.deepEqual(p.unfilledLine(), ["- 现居住地: input[text] after=previous overlay=list form=text reason=value_not_committed"]);
 });
 
 test("a popup seen in an earlier fill is not reported for the same box when this fill did not watch it", async (t) => {
@@ -639,10 +639,10 @@ test("a popup seen in an earlier fill is not reported for the same box when this
   });
   const lines = () => p.unfilledLine().map((line) => line.replace(/^- [^:]+: /, ""));
   await p.run();
-  assert.deepEqual(lines(), ["input[text] after=empty overlay=list reason=value_reverted"]);
+  assert.deepEqual(lines(), ["input[text] after=empty overlay=list form=text reason=value_reverted"]);
   p.doc.getElementById("wrap").className = "my-datepicker";
   await p.run();
-  assert.deepEqual(lines(), ["input[text] picker=generic reason=value_reverted"]);
+  assert.deepEqual(lines(), ["input[text] picker=generic form=date reason=value_reverted"]);
 });
 
 test("a popup the next field opens is not put down to the box rejected before it", async (t) => {
@@ -655,7 +655,7 @@ test("a popup the next field opens is not put down to the box rejected before it
     p.doc.body.append(list);
   });
   await p.run();
-  assert.deepEqual(p.unfilledLine(), ["- 出生年月: input[text] after=empty overlay=none reason=value_reverted"]);
+  assert.deepEqual(p.unfilledLine(), ["- 出生日期: input[text] after=empty overlay=none form=text reason=value_reverted"]);
 });
 
 test("a page that refuses every text only holds up the first 3 boxes to watch for popups", async (t) => {
@@ -666,12 +666,12 @@ test("a page that refuses every text only holds up the first 3 boxes to watch fo
   await p.run();
   // 前 3 个看满了窗口，没有弹层报 none；后面的到下一个字段开始就停，没看到弹层不报 overlay。
   assert.deepEqual(p.unfilledLine().map((line) => line.replace(/^- [^:]+: /, "")), [
-    "input[text] after=empty overlay=none reason=value_reverted",
-    "input[text] after=empty overlay=none reason=value_reverted",
-    "input[text] after=empty overlay=none reason=value_reverted",
-    "input[text] after=empty reason=value_reverted",
-    "input[text] after=empty reason=value_reverted",
-    "input[text] after=empty reason=value_reverted"
+    "input[text] after=empty overlay=none form=text reason=value_reverted",
+    "input[text] after=empty overlay=none form=text reason=value_reverted",
+    "input[text] after=empty overlay=none form=text reason=value_reverted",
+    "input[text] after=empty form=text reason=value_reverted",
+    "input[text] after=empty form=text reason=value_reverted",
+    "input[text] after=empty form=text reason=value_reverted"
   ]);
 });
 
@@ -716,7 +716,7 @@ test("a readonly box that opens the page's own picker says so, and the picker it
   assert.equal(p.input("name").value, "张三");
   assert.equal(dialog.counts.opened, 1);
   assert.equal(dialog.wrapper.style.display, "none", "聚焦时打开的对话框收起来了");
-  assert.deepEqual(p.unfilledLine(), ["- 专业: input[text] readonly after=empty overlay=other reason=readonly_picker"]);
+  assert.deepEqual(p.unfilledLine(), ["- 专业: input[text] readonly after=empty overlay=other form=text reason=readonly_picker"]);
   assert.match(p.ui.status.textContent, /专业（网页自己的选择框）/);
 });
 
@@ -830,13 +830,13 @@ test("the allowlist keeps the new words and drops anything else a page could put
     { label: "出生年月", reasonCode: "value_reverted", observed: { after: "previous", overlay: "list" }, control: { tag: "input", type: "text", inputMode: "decimal" } },
     { label: "手机", reasonCode: "value_not_committed", observed: { after: "1998-06", overlay: "calendar" }, control: { tag: "input", type: "number", inputMode: "13800138000" } }
   ] });
-  assert.match(report, /^- 出生年月: input\[text\] inputmode=decimal after=previous overlay=list reason=value_reverted$/m);
+  assert.match(report, /^- 出生日期: input\[text\] inputmode=decimal after=previous overlay=list reason=value_reverted$/m);
   assert.match(report, /^- 手机: input\[number\] reason=value_not_committed$/m);
   const forged = ["[未填字段]",
-    "- 出生年月: input[text] inputmode=numeric after=empty overlay=other reason=format_mismatch",
+    "- 出生日期: input[text] inputmode=numeric after=empty overlay=other reason=format_mismatch",
     "- 学校: input[text] after=示例大学 overlay=张三 inputmode=13800138000 after=https://evil.example overlay=listbox inputmode=Numeric reason=value_reverted"
   ].join("\n");
   assert.equal(core.diagnostics(forged), ["[未填字段]",
-    "- 出生年月: input[text] inputmode=numeric after=empty overlay=other reason=format_mismatch",
+    "- 出生日期: input[text] inputmode=numeric after=empty overlay=other reason=format_mismatch",
     "- 学校: input[text] reason=value_reverted"].join("\n"));
 });

@@ -909,7 +909,7 @@ test("an ID type the number contradicts is left empty and reported, not sent to 
   assert.equal(result.unfilledCount, 1);
   assert.equal(p.ui.status.textContent, "已填写 3 个字段。1 项没填上：证件类型（和证件号码对不上），请手动补上。");
   const report = (await p.report()).diagnosticsReport;
-  assert.match(report, /^- .*: select reason=id_type_mismatch$/m);
+  assert.match(report, /^- 证件类型: select form=select reason=id_type_mismatch$/m);
 });
 
 test("a contradicted ID type that already has a value asks no overwrite question and stays as it is", async (t) => {

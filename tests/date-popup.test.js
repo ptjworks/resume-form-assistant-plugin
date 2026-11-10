@@ -617,8 +617,11 @@ test("the fill report and the side panel say a date picker left another date in 
   const result = await helpersOf.handleAiFillClick({ currentTarget: ui.fill });
   assert.equal(result.filledCount, 0);
   assert.equal(field.value, "2026-10-22");
+  // #497 等待的毫秒数每次不同，只看有没有。
   const lines = (reports.at(-1) || "").split("\n").filter((line) => line.startsWith("- "));
-  assert.deepEqual(lines, ["- 毕业时间: input[text] readonly lib=antd opened=calendar after=other reason=selection_not_committed"]);
+  assert.match(lines[0] || "", / open_ms=\d+ wait_ms=\d+ /);
+  assert.deepEqual(lines.map((line) => line.replace(/ (?:open|wait)_ms=\d+/g, "")),
+    ["- 毕业时间: input[text] readonly lib=antd opened=calendar after=other form=date spinner=no reason=selection_not_committed"]);
   assert.equal(core.diagnostics(reports.at(-1)), reports.at(-1));
   assert.match(`${ui.status.textContent}\n${ui.diag.value}`, /毕业时间（选成了别的日期）/);
 });

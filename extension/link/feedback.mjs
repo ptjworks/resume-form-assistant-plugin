@@ -1,7 +1,10 @@
 import '../feedback-core.js';
+import { BUILD } from '../build.mjs';
 import { KEYS } from './store.mjs';
 
-export const ENDPOINT = 'https://app-feedback-relay.nebula-lab.workers.dev/feedback';
+// #497 The relay's own domain: the workers.dev name does not resolve in mainland China. The old address keeps
+// working for older versions.
+export const ENDPOINT = 'https://feedback.19991107.xyz/feedback';
 export const STORAGE_KEY = 'feedbackStateV1';
 // The explanation the user agreed to. Raise it when automatic reports start carrying something
 // the notice does not describe: earlier grants then count as undecided and the user is asked again.
@@ -10,7 +13,12 @@ export const STORAGE_KEY = 'feedbackStateV1';
 // #299 adds how long the AI service took to start answering and where a timeout stopped, before any
 // release carried version 2, so it stays 2.
 // 3 (#301 U2 U5): every unfilled field counted by its failure reason code, not only the ten listed.
+// #497 adds to 3 before any release carried it: field kinds, what each control is and how its popup waited,
+// the AI's misses by kind and a report for them, the property a TypeError failed on, the build, and the
+// private layer kept only in the relay.
 export const CONSENT_VERSION = 3;
+// The commit the release zip was packed from (first 8 hex digits), or `dev` for a copy loaded from the repository.
+const BUILD_ID = /^(?:[0-9a-f]{8}|dev)$/.test(BUILD) ? BUILD : 'dev';
 // chrome.management.getSelf().installType; getSelf needs no "management" permission.
 const INSTALL_TYPES = ['normal', 'development', 'sideload', 'admin', 'other'];
 const HOUR = 3600000;
@@ -63,18 +71,33 @@ export function createFeedback({ storage, fetchImpl = fetch, now = Date.now, uui
     const kind = ['fill_failed', 'fill_partial', 'manual'].includes(input.kind) ? input.kind : 'exception';
     const errorType = kind === 'exception' ? (['Error','TypeError','ReferenceError','SyntaxError','RangeError','URIError','EvalError','AggregateError'].includes(input.name) ? input.name : 'Error') : kind;
     const stack = kind === 'exception' ? String(input.stack || '').split('\n').filter(line => /^(?:[a-z][a-z0-9-]*\.js|link\/(?:[a-z][a-z0-9-]*\/)*[a-z][a-z0-9-]*\.mjs):\d{1,6}:\d{1,6}$/.test(line)).slice(0, 20).join('\n') : '';
-    // Only manual feedback, which the user previews, may carry the job flow's [岗位] (#301).
-    const details = core.diagnostics(input.diagnostics, { manual: kind === 'manual' });
+    // Only manual feedback, which the user previews, may carry the job flow's [岗位] (#301). A manual report
+    // from someone who has not agreed to notice 3 carries what reports carried before #497 (`legacy`).
+    const legacy = kind === 'manual' && input.legacy === true;
+    // An exception's property (#497 failedProperty) is the only part of its message in the public report.
+    const property = kind === 'exception' && typeof input.property === 'string' ? `[错误]\nerror_property: ${input.property}` : '';
+    const details = core.diagnostics(kind === 'exception' ? property : input.diagnostics, { manual: kind === 'manual', legacy });
     const description = kind === 'manual' ? core.redact(input.description, 1400) : kind === 'exception' ? `${errorType}: ${input.source === 'unhandledrejection' ? '未处理的 Promise 拒绝' : '未处理的代码异常'}` : '';
     // Diagnostics block v1. Only the worker writes [来源]; core.diagnostics() drops it from page input.
     // The desktop version goes only into manual feedback, which the user previews: the notice for
     // automatic reports does not mention it.
     const desktop = kind === 'manual' && /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(input.desktopVersion || '') ? [`desktop_version: ${input.desktopVersion}`] : [];
     const source = ['[来源]', `app_version: ${version}`, `os: ${os}`, ...(installType ? [`install: ${installType}`] : []),
-      ...desktop, ...(host ? [`host: ${host}`] : [])].join('\n');
+      ...(legacy ? [] : [`build: ${BUILD_ID}`]), ...desktop, ...(host ? [`host: ${host}`] : [])].join('\n');
+    // #497 The private layer: only in the relay, never in an issue. Not for a manual report from someone who has not
+    // agreed to notice 3. An exception's is its message, kept to the code's own English wording (codeMessage), here
+    // again whatever the page did.
+    const message = kind === 'exception' && typeof input.message === 'string' ? core.codeMessage(input.message) : '';
+    const raw = kind === 'exception' ? (message ? core.privateReport({ exception: { name: errorType, message } }) : '') : input.private;
+    const hidden = legacy ? '' : core.privateLayer(raw);
+    // The relay keeps 5000 characters. A long description leaves less room: the block is cut at a line, from the end,
+    // where the listed unfilled fields are (fillReport puts them last).
+    const head = `${description}${description ? '\n' : ''}--- 诊断信息 v1 ---\n${source}`;
+    const room = 5000 - head.length - 2;
+    const block = details.length <= room ? details : details.slice(0, Math.max(0, details.lastIndexOf('\n', room)));
     return { app: 'resume-form-assistant-plugin', app_version: version, os, error_type: errorType,
-      error_stack: stack, user_description: `${description}${description ? '\n' : ''}--- 诊断信息 v1 ---\n${source}${details ? `\n\n${details}` : ''}`.slice(0, 5000),
-      anonymous_id: id, timestamp: new Date(now()).toISOString() };
+      error_stack: stack, user_description: `${head}${block ? `\n\n${block}` : ''}`.slice(0, 5000),
+      anonymous_id: id, timestamp: new Date(now()).toISOString(), ...(hidden ? { private_diagnostics: hidden } : {}) };
   }
   async function transmit(payload, automatic) {
     const controller = new AbortController();
@@ -130,10 +153,13 @@ export function createFeedback({ storage, fetchImpl = fetch, now = Date.now, uui
         const body = build(input, host, state.anonymousId || uuid());
         // A failed AI request (timeout or service error, #301 U1) with no field left unfilled has its own
         // daily slot per site, so it never holds back that day's report of fields the site did not take.
-        // One that also lists unfilled fields is such a report and takes the usual slot.
+        // One that also lists unfilled fields is such a report and takes the usual slot. So do fields of kinds
+        // the resume has that the AI left alone (#497 ai_missed, only when nothing else failed).
         const aiFailed = /^error_category: (?:timeout|service_error)$/m.test(body.user_description)
           && !/^\[未填字段\]$/m.test(body.user_description);
-        const signature = input.kind?.startsWith('fill_') ? `${body.error_type}|${host}${aiFailed ? '|ai' : ''}` : `${body.error_type}|${body.user_description.split('\n')[0]}|${body.error_stack.split('\n')[0]}`;
+        const aiMissed = /^error_category: ai_missed$/m.test(body.user_description);
+        const slot = aiFailed ? '|ai' : aiMissed ? '|ai_missed' : '';
+        const signature = input.kind?.startsWith('fill_') ? `${body.error_type}|${host}${slot}` : `${body.error_type}|${body.user_description.split('\n')[0]}|${body.error_stack.split('\n')[0]}`;
         const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature)))].map(x => x.toString(16).padStart(2, '0')).join('');
         state.hourly = state.hourly.filter(t => time - t < HOUR);
         state.fillHourly = state.fillHourly.filter(t => time - t < HOUR);
@@ -196,8 +222,11 @@ export function installFeedback(api) {
       if (message.type === 'FEEDBACK_STATUS') return service.status();
       if (message.type === 'FEEDBACK_CONSENT') return service.setConsent(message.enabled === true);
       if (message.type === 'FEEDBACK_PREVIEW') {
-        const input = { description: core.redact(message.description, 1400), diagnostics: core.diagnostics(message.diagnostics, { manual: true }),
-          desktopVersion: await desktopVersion() };
+        // #497 Only someone who agreed to notice 3 sends what it added: the new report words and the private
+        // layer, both shown in the preview. Anyone else sends what manual reports carried before.
+        const legacy = (await service.status().catch(() => null))?.consent !== true;
+        const input = { description: core.redact(message.description, 1400), diagnostics: core.diagnostics(message.diagnostics, { manual: true, legacy }),
+          desktopVersion: await desktopVersion(), legacy, private: legacy ? '' : core.privateLayer(message.private) };
         let host = '';
         if (Number.isInteger(message.tabId)) {
           const tab = await api.tabs.get(message.tabId).catch(() => null); host = core.hostname(tab?.url);
