@@ -33,7 +33,7 @@ fn shown(error: archive_store::StoreError) -> CommandError {
 }
 
 /// 读用户选的文件：一个句柄读到底，超过上限在读满之前就停下。
-fn read_picked(path: &Path) -> Result<(String, Vec<u8>), CommandError> {
+pub(crate) fn read_picked(path: &Path) -> Result<(String, Vec<u8>), CommandError> {
     let unreadable = || fail("FILE_UNREADABLE", "读不了这个文件，请确认它还在、没被别的程序占用。");
     let file = std::fs::File::open(path).map_err(|_| unreadable())?;
     if !file.metadata().map_err(|_| unreadable())?.is_file() {

@@ -167,13 +167,14 @@ fn restore_requires_the_original_application_to_be_active_and_purge_cascades_the
 #[test]
 fn opening_a_v6_archive_creates_a_backup_and_preserves_existing_notification_metadata() {
     let d = tempfile::tempdir().unwrap();
-    let store = open(d.path());
+    let migrations = archive_store::schema::MIGRATIONS;
+    let old = migrations.iter().position(|migration| migration.to_version > 6).unwrap();
+    let store = ArchiveStore::open_with_migrations(
+        ArchiveConfig::new(d.path().join("archive"), d.path().join("current.json")),
+        &migrations[..old],
+    ).unwrap();
     let e = evidence(&store, None);
     drop(store);
-    let path = d.path().join("archive/archive.db");
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("DROP TABLE evidence_recycle; DROP TABLE site_answers; DROP TABLE resume_files; DELETE FROM schema_migrations WHERE version>=7; PRAGMA user_version=6; UPDATE archive_meta SET schema_version=6 WHERE id=1;").unwrap();
-    drop(conn);
     let store = open(d.path());
     assert_eq!(store.schema_version(), archive_store::current_schema_version());
     assert_eq!(store.list_evidence(None).unwrap()[0].id, e.id);

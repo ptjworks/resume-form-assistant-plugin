@@ -3,11 +3,12 @@ import type { Invoke } from "./api";
 import { cloudBackupApi, type CloudConfig, type CloudJob, type CloudListed, type CloudNamespace } from "./cloud-backup-api";
 import { restoreBody } from "./backup-ui";
 import { BACKUP_LEAVE } from "./backup";
-import { factList, fragment, openSettingsDialog, paragraph } from "./settings-dialog";
+import { describeDialogError, factList, fragment, openSettingsDialog, paragraph } from "./settings-dialog";
 import { must } from "./dom";
 
 export function cloudError(error: unknown): string {
   const code = typeof error === "string" ? error : (error as { code?: string } | null)?.code ?? "";
+  if (code === "NOTE_ARCHIVE_EDITING" || code === "NOTE_ARCHIVE_REPLACING") return describeDialogError(error);
   const hints: Array<[string, string]> = [
     ["Authentication", "认证失败：请检查账号和坚果云第三方应用密码，重新保存后再试。"],
     ["Permission", "没有目录读写权限：请检查 WebDAV 授权和远端目录。"],

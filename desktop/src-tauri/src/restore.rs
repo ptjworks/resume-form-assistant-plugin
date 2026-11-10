@@ -238,7 +238,12 @@ pub(crate) fn prepare_restore(
         rehearsal_pointer.clone(),
     )) {
         Ok(store) => {
+            let verified = store.verify_note_files();
             let _ = store.close();
+            if let Err(error) = verified {
+                cleanup(&staging);
+                return Err(fail("BACKUP_ERROR", format!("备份里的心得附件不完整：{error}")));
+            }
         }
         Err(e) => {
             cleanup(&staging);

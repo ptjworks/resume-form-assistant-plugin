@@ -22,6 +22,7 @@ pub mod legacy_import;
 pub mod migration;
 pub mod model;
 pub mod normalize;
+pub mod notes;
 pub mod plugin;
 pub mod receipts;
 pub mod resume;

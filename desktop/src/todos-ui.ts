@@ -1,3 +1,4 @@
+import type { NotesApplication } from "./notes/view.ts";
 // D10 待办视图（#262 改版）：左侧按时间分组的列表，右侧选中待办的详情。
 // 新建/编辑在弹窗里；完成、取消、重新打开直接执行并在状态行反馈。
 //
@@ -84,12 +85,13 @@ const ICON = {
 /** 宿主注入的事：没有申请时把人领去新增申请。测试里可以不给。 */
 export interface TodosHost {
   createApplication?: (() => void) | null;
+  writeNote?: (application: NotesApplication, suggested: string) => void;
 }
 
 export function mountTodos(
   invoke: Invoke,
   now: () => Date = () => new Date(),
-  { createApplication = null }: TodosHost = {},
+  { createApplication = null, writeNote }: TodosHost = {},
 ) {
   const shell = must("todo-shell");
   const list = must("todo-list");
@@ -267,7 +269,8 @@ export function mountTodos(
       : `本机时区${localTimeZone() ? `（${escapeHtml(localTimeZone())}）` : ""}`;
     detail.innerHTML = `
       <article class="todo-detail" data-status="${escapeHtml(todo.status)}">
-        <div class="todo-detail-actions">${actions}</div>
+        <div class="todo-detail-actions">${actions}${writeNote && todo.status !== "cancelled"
+          ? `<button type="button" data-todo="${id}" data-act="write-note">写心得</button>` : ""}</div>
         <div class="todo-detail-head">
           <p class="todo-detail-kicker"><span class="todo-status-chip" data-status="${escapeHtml(todo.status)}">${todo.status === "open" ? "未完成" : STATUS_LABEL[todo.status]}</span>${timing}</p>
           <h2>${escapeHtml(todo.title)}</h2>
@@ -542,6 +545,11 @@ export function mountTodos(
     if (act === "select") {
       selectedId = id;
       render();
+      return;
+    }
+    if (act === "write-note") {
+      const item = todos.find(todo => todo.id === id);
+      if (item) writeNote?.({ id: item.applicationId, company: item.company ?? "", title: item.position ?? "" }, item.title);
       return;
     }
     if (saving || editLoading) return;

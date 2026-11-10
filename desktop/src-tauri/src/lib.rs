@@ -41,6 +41,7 @@ mod lifecycle;
 mod single_instance_guard;
 mod legacy_import_commands;
 mod nm;
+mod note_commands;
 mod plugin_bridge;
 
 use archive_store::ArchiveStore;
@@ -1990,6 +1991,8 @@ pub fn run() {
                 );
             }
         }))
+        .manage(note_commands::NoteEditing::default())
+        .manage(note_commands::NoteDrops::default())
         .manage(AppState {
             quit_guard: Mutex::new(None),
             host: Mutex::new(None),
@@ -2287,6 +2290,14 @@ pub fn run() {
             edit_todo_cmd,
             set_todo_status_cmd,
             list_todos_cmd,
+            note_commands::set_note_editing_cmd,
+            note_commands::note_index_cmd,
+            note_commands::note_body_cmd,
+            note_commands::save_note_cmd,
+            note_commands::change_note_cmd,
+            note_commands::read_note_file_cmd,
+            note_commands::read_note_drop_cmd,
+            note_commands::open_note_pdf_cmd,
             overdue_digest_cmd,
             reminder_capability_cmd,
             export_archive_cmd,
@@ -2352,6 +2363,11 @@ pub fn run() {
             if window.label() != "main" {
                 return;
             }
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position, .. }) =
+                event
+            {
+                note_commands::grant_native_drop(window, paths, position);
+            }
             if matches!(event, tauri::WindowEvent::Focused(true)) {
                 telemetry::focused(window);
             }
@@ -2404,7 +2420,12 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => lifecycle::show_main_window(app),
             "quit" => {
-                lifecycle::quit_or_report(app, "tray");
+                if app.try_state::<note_commands::NoteEditing>().is_some_and(|editor| editor.active()) {
+                    lifecycle::show_main_window(app);
+                    let _ = app.emit_to("main", "note-quit-requested", ());
+                } else {
+                    lifecycle::quit_or_report(app, "tray");
+                }
             }
             _ => {}
         })

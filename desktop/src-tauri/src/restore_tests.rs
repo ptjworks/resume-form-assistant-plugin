@@ -531,3 +531,36 @@ fn sqlite_snapshot_cleanup_removes_the_database_and_both_sidecars() {
         .collect();
     assert!(leftovers.is_empty(), "侧车文件也必须清理：{leftovers:?}");
 }
+
+#[test]
+fn notes_restore_with_original_images_and_ocr_while_orphans_stay_out() {
+    use archive_store::notes::{NoteChange, NoteDraft, NoteUpload};
+
+    let source = layout();
+    let (store, app) = seeded(&source.paths);
+    let folder = store
+        .change_note(NoteChange::Folder { id: None, name: "一面".into(), application_id: Some(app) })
+        .unwrap().unwrap();
+    let note = uuid::Uuid::new_v4().to_string();
+    let image = uuid::Uuid::new_v4().to_string();
+    let png = b"\x89PNG\r\n\x1a\nprivate";
+    let body = format!("<p>考题</p><span data-note-file=\"{image}\"></span>");
+    store.save_note(NoteDraft {
+        id: note.clone(), folder_id: folder, title: "面试心得".into(), record_date: "2026-11-09".into(),
+        body: body.clone(), plain_text: "考题".into(), file_ids: vec![image.clone()],
+    }, vec![NoteUpload { id: image.clone(), name: "截图.png".into(), bytes: png.to_vec() }]).unwrap();
+    store.change_note(NoteChange::Ocr { id: image.clone(), text: "ROW_NUMBER".into() }).unwrap();
+    let orphan = format!("attachments/notes/{}", uuid::Uuid::new_v4());
+    std::fs::write(store.archive_dir().join(&orphan), b"interrupted write").unwrap();
+    let package = export_to(&store, &source.paths, "notes.zip");
+    let manifest = backup::read_manifest(&package).unwrap();
+    assert!(manifest.entries.iter().any(|entry| entry.path == format!("archive/attachments/notes/{image}")));
+    assert!(!manifest.entries.iter().any(|entry| entry.path == format!("archive/{orphan}")));
+
+    let target = layout();
+    let (_, restored) = restore_archive_open(&target.paths, &package, NOW, || Ok(())).unwrap();
+    assert_eq!(restored.note_body(&note).unwrap(), body);
+    assert_eq!(restored.read_note_file(&image).unwrap().2, png);
+    let index = serde_json::to_value(restored.note_index().unwrap()).unwrap();
+    assert_eq!(index["notes"][0]["files"][0]["ocrText"], "ROW_NUMBER");
+}
