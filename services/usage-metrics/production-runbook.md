@@ -1,6 +1,14 @@
 # 正式使用统计服务
 
-正式环境使用独立 Worker `resume-usage-metrics` 和独立 D1 `resume-usage-metrics`，不得复用测试数据库、HMAC Key 或限流命名空间。公开活动地址为 `https://resume-usage-metrics.nebula-lab.workers.dev/v1/activity`。
+正式环境使用独立 Worker `resume-usage-metrics` 和独立 D1 `resume-usage-metrics`，不得复用测试数据库、HMAC Key 或限流命名空间。公开活动地址为 `https://metrics.19991107.xyz/v1/activity`。
+
+## 两个地址
+
+- `metrics.19991107.xyz`：绑在 Worker 上的自定义域名，2026-11-09 起的发布包发往这里。`workers.dev` 在国内被 DNS 污染，国内不开代理的用户连不上旧地址（#497）。
+- `resume-usage-metrics.nebula-lab.workers.dev`：旧地址，已发布的旧版本还在往这里发，一直保留。部署配置里 `workers_dev` 必须是 `true`，改成 `false` 会关掉旧地址。
+- 两个地址进的是同一个 Worker、同一个 D1，数据不用合并。
+- 只改域名、不改代码时，用 `wrangler triggers deploy -c <配置>`：它按配置更新域名、`workers_dev` 和 Cron，不上传代码。配置里的 Cron 会整组覆盖线上的，写成空列表就删光（包括每日邮件）；`routes` 里列了自定义域名时也整组覆盖，漏写的域名会被解绑。先从线上拉配置（`wrangler init --from-dash resume-usage-metrics`），在副本上加改动，`--dry-run` 后再正式跑；跑完核对 Cron 还在、两个地址的 `/health` 都是 200。
+- 仓库里的 `wrangler.production.example.json` 已写上这个域名，用它生成的部署配置会保留绑定。
 
 ## 安全上线顺序
 
@@ -25,7 +33,7 @@
 
 ## 正式环境验收记录
 
-- Worker：`resume-usage-metrics`，公开 health 与活动地址使用 `resume-usage-metrics.nebula-lab.workers.dev`。
+- Worker：`resume-usage-metrics`，上线时公开 health 与活动地址使用 `resume-usage-metrics.nebula-lab.workers.dev`；2026-11-09 加绑 `metrics.19991107.xyz`，旧地址保留。
 - D1：`resume-usage-metrics`，与测试库隔离；迁移 `0001` 至 `0003` 已应用。
 - Cron：北京时间 08:10 执行汇总、清理与 GitHub 下载快照；08:30 在日报开关开启后向两个已验证邮箱发送日报。
 - 初始部署保持活动与日报关闭。虚构 Windows 活动 POST、DELETE、HMAC 去重、D1 清理均已验证；测试活动和撤销记录随后清除。

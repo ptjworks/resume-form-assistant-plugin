@@ -75,7 +75,7 @@ jobs:
           metrics_endpoint=
           if [ "$(node desktop/scripts/check-desktop-release.js --metrics-ready "$REPOSITORY" "$TAG" "$RELEASE_EVENT")" = "1" ]; then
             metrics_ready=1
-            metrics_endpoint=https://resume-usage-metrics.nebula-lab.workers.dev/v1/activity
+            metrics_endpoint=https://metrics.19991107.xyz/v1/activity
           fi
           echo "metrics_ready=$metrics_ready" >> "$GITHUB_OUTPUT"
           echo "metrics_endpoint=$metrics_endpoint" >> "$GITHUB_OUTPUT"

@@ -13,7 +13,9 @@ use std::{
 };
 use tauri::State;
 
-const ENDPOINT: &str = "https://app-feedback-relay.nebula-lab.workers.dev/feedback";
+// workers.dev is DNS-poisoned in mainland China; the relay's old address stays up for
+// already-installed versions.
+const ENDPOINT: &str = "https://feedback.19991107.xyz/feedback";
 const HOUR: u64 = 3_600_000;
 const DAY: u64 = 24 * HOUR;
 const SAVE_ERROR: &str = "反馈设置未能保存，请重试。";
@@ -633,6 +635,12 @@ mod tests {
             let _ = socket.write_all(response.as_bytes());
         });
         (url, rx)
+    }
+    #[test]
+    fn reports_go_to_the_relay_custom_domain() {
+        assert_eq!(ENDPOINT, "https://feedback.19991107.xyz/feedback");
+        let (_dir, reporter) = reporter();
+        assert_eq!(reporter.endpoint, ENDPOINT);
     }
     #[test]
     fn consent_identity_and_persistent_concurrent_dedup() {
