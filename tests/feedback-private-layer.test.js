@@ -385,3 +385,17 @@ test("只同意过旧版说明的人：手动反馈预览按旧内容，不带�
   const layer = core.privateLayer("--- 私有诊断 v9 ---\nlabel: 最高学历");
   assert.equal(layer, "--- 私有诊断 v1 ---\nlabel: 最高学历");
 });
+
+test("先填了学校这类文本框、再点开的下拉：列表可能按填的学校加载，私有部分不收它的选项", async (t) => {
+  const select = twoSelects([["major", "所学专业", ["计算机科学", "数学"]]]);
+  const body = select.body.replace('<form><h3>教育信息</h3>', `<form><h3>教育信息</h3>${item("毕业学校", '<input id="school">')}`);
+  const p = page(t, { body, setup: select.setup, resume: { 学校名称: "示例大学", 专业: "历史学" },
+    ai: (message, ids) => ({ success: true, matches: [{ fieldId: ids["毕业学校"], value: "示例大学" }, { fieldId: ids["所学专业"], value: "历史学" }].filter(match => match.fieldId),
+      diagnostics: { ruleMatches: 0, aiFields: message.formFields.length, aiMatches: 2, promptBytes: 500, apiMs: 800, errorCode: "none" } }) });
+  const result = await p.run();
+  assert.equal(p.doc.getElementById("school").value, "示例大学", p.ui.diag.value);
+  assert.equal(result.unfilledCount, 1);
+  const report = p.reports.find((entry) => entry.kind === "fill_partial");
+  assert.match(report?.private || "", /^label: 所学专业\nsection: 教育信息\nkind: 专业\nreason: no_option_match$/m);
+  assert.doesNotMatch(report.private, /计算机科学/);
+});

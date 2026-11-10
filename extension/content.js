@@ -120,7 +120,9 @@
   function readFeedbackAgreed() {
     try {
       Promise.resolve(chrome.storage?.local?.get?.("feedbackStateV1"))
-        .then(found => { feedbackAgreed = found?.feedbackStateV1?.consent === true; }, () => {});
+        // 后台只认当前版本的同意（link/feedback.mjs 的 CONSENT_VERSION，现在是 3）；读失败当没同意。
+        .then(found => { feedbackAgreed = found?.feedbackStateV1?.consent === true && found.feedbackStateV1.consentVersion >= 3; },
+          () => { feedbackAgreed = false; });
     } catch {
       feedbackAgreed = false;
     }
@@ -6651,8 +6653,9 @@
   // #497 自定义下拉最近一次操作的样子：能不能搜索、是不是后台加载、单选多选、组件库大版本、等了多久、结束时还在不在加载；
   // 第一层的选项文字（插件输入之前的）只给私有诊断用。
   const controlShapes = new WeakMap();
-  // 这次填写会话里选上的下拉、级联和单选有几个（见 setElementValue）。
+  // 这次填写会话里选上的下拉、级联和单选，以及写上的可能带出别的列表的文本框有几个（见 setElementValue）。
   let choiceWrites = { session: null, count: 0 };
+  const DRIVER_KINDS = new Set(["学校", "专业", "学历", "学位", "公司", "职位", "籍贯户口", "现居住地", "地址", "国家地区"]);
   // 没弹出（opened=none）只在插件点开过、弹层却没出来时才记（没有发现选项、级联等待超时）；
   // 被禁用、不支持这类还没去点开就停下的，不说弹层的事。
   function popupObserved(observed, reason) {
@@ -6799,7 +6802,9 @@
       if (choiceWrites.session !== fillSession) choiceWrites = { session: fillSession, count: 0 };
       if (result.observed?.shape) controlShapes.set(control, { ...result.observed.shape, afterChoice: choiceWrites.count > 0, session: fillSession });
       else controlShapes.delete(control);
-      if (result.ok && (target?.kind === "radio" || ["custom-select", "cascader", "native-select", "radio"].includes(target?.controlKind))) choiceWrites.count += 1;
+      // 文本框也算：学校、专业、公司、地区这类写进去的字，页面可能拿它去加载后面下拉的列表（学校 → 专业）。
+      if (result.ok && (target?.kind === "radio" || ["custom-select", "cascader", "native-select", "radio"].includes(target?.controlKind)
+        || DRIVER_KINDS.has(fieldKindOf(target?.binding?.label)))) choiceWrites.count += 1;
     }
     return result.ok;
   }
