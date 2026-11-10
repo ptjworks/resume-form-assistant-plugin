@@ -24,8 +24,9 @@ export async function recognizeImage(image: string): Promise<string> {
       worker = created;
       const text = (await worker.recognize(image)).data.text;
       // OCR may insert a space between two Chinese words on the same line. Keep
-      // line breaks and English spaces so the text remains readable and searchable.
-      return text.replace(/(\p{Script=Han})[ \t]+(?=\p{Script=Han})/gu, "$1").trim();
+      // line breaks and indentation so the text remains readable and searchable.
+      if (!text.trim()) return "";
+      return text.replace(/(\p{Script=Han})[ \t]+(?=\p{Script=Han})/gu, "$1").replace(/[\r\n]+$/, "");
     };
     return await Promise.race([
       run(),

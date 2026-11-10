@@ -56,9 +56,10 @@ test("re-recognition keeps corrected text searchable until a replacement is conf
   const { root, invoke } = await openNote("5TAR");
   button("识别文字", root).click();
   button("校正", root).click();
-  root.querySelector<HTMLTextAreaElement>(".notes-ocr-content textarea")!.value = "STAR";
+  const corrected = "    STAR\n";
+  root.querySelector<HTMLTextAreaElement>(".notes-ocr-content textarea")!.value = corrected;
   button("保存校正", root).click();
-  await vi.waitFor(() => expect(root.querySelector(".notes-ocr-result")?.textContent).toBe("STAR"));
+  await vi.waitFor(() => expect(root.querySelector(".notes-ocr-result")?.textContent).toBe(corrected));
   const search = root.querySelector<HTMLInputElement>('input[aria-label="搜索心得"]')!;
   const hits = (query: string) => {
     search.value = query;

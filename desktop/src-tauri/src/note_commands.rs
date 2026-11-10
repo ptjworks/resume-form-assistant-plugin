@@ -57,17 +57,16 @@ pub struct NoteDrops(Mutex<Option<DropGrant>>);
 
 impl NoteDrops {
     fn grant(&self, paths: &[PathBuf], now: Instant) -> Result<String, CommandError> {
-        let mut pending = self
-            .0
-            .lock()
-            .map_err(|_| failure("无法接收拖入的图片，请重试。"))?;
-        *pending = None;
         if paths.len() > MAX_NOTE_FILES {
             return Err(failure("一次最多拖入 30 张图片。"));
         }
         if paths.is_empty() || paths.iter().any(|path| !path.is_absolute()) {
             return Err(failure("未收到可读取的拖入文件。"));
         }
+        let mut pending = self
+            .0
+            .lock()
+            .map_err(|_| failure("无法接收拖入的图片，请重试。"))?;
         let token = uuid::Uuid::new_v4().to_string();
         *pending = Some(DropGrant {
             token: token.clone(),
@@ -329,5 +328,18 @@ mod tests {
         assert!(drops.claim(&old, now).is_err());
         assert!(drops.claim(&latest, now + DROP_GRANT_LIFETIME).is_err());
         assert!(drops.claim(&latest, now).is_err());
+    }
+
+    #[test]
+    fn a_rejected_drop_does_not_invalidate_the_previous_grant() {
+        let drops = NoteDrops::default();
+        let now = Instant::now();
+        let path = std::env::temp_dir().join("first.png");
+        let first = drops.grant(std::slice::from_ref(&path), now).unwrap();
+
+        assert!(drops.grant(&vec![path.clone(); MAX_NOTE_FILES + 1], now).is_err());
+        assert!(drops.grant(&[PathBuf::from("relative.png")], now).is_err());
+        assert_eq!(drops.claim(&first, now).unwrap(), vec![path]);
+        assert!(drops.claim(&first, now).is_err());
     }
 }

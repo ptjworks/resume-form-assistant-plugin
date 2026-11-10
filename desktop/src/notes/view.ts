@@ -956,7 +956,8 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
           save.disabled = cancel.disabled = true;
           text.readOnly = true;
           editStatus.textContent = "正在保存…";
-          void change({ kind: "ocr", id: file.id, text: text.value.trim() }, epoch).then(async () => {
+          const corrected = text.value;
+          void change({ kind: "ocr", id: file.id, text: corrected.trim() ? corrected : "" }, epoch).then(async () => {
             delete marker.dataset.ocrEditing;
             await refreshIndex();
             refreshOcrPanels();
