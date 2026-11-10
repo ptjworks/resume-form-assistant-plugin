@@ -69,13 +69,15 @@ const views: Record<string, HTMLElement> = {
   inbox: must("view-inbox"),
   todos: must("view-todos"),
   settings: must("view-settings"),
+  support: must("view-support"),
 };
+const routeButtons = document.querySelectorAll<HTMLButtonElement>(".topbar button[data-route]");
 
 function showRoute(name: string | undefined) {
   Object.entries(views).forEach(([key, el]) => {
     el.classList.toggle("hidden", key !== name);
   });
-  document.querySelectorAll<HTMLElement>(".nav button[data-route]").forEach((btn) => {
+  routeButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.route === name);
     if (btn.dataset.route === name) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
@@ -103,6 +105,10 @@ async function navigate(route: string | undefined): Promise<boolean> {
   const enteringResume = route === "resume" && !onResume;
   const enteringApplications = route === "applications" && views.applications.classList.contains("hidden");
   showRoute(route);
+  if (route === "support") {
+    const main = views.support.closest("main");
+    if (main) main.scrollTop = 0;
+  }
   if (route !== "settings") leaveBackup();
   if (enteringResume) resumeView.refresh();
   if (enteringApplications) void applications.refreshView();
@@ -115,7 +121,7 @@ must("cloud-auto-open").addEventListener("click", async () => {
   must<HTMLDetailsElement>("cloud-auto").open = true;
 });
 
-document.querySelectorAll<HTMLElement>(".nav button[data-route]").forEach((btn) => {
+routeButtons.forEach((btn) => {
   btn.addEventListener("click", async () => {
     if (!(await navigate(btn.dataset.route))) return;
     // 待办的逾期汇总要在进入视图时算一次，不能在启动时就把它消费掉。

@@ -1,0 +1,4 @@
+# 本地 wrangler dev 用的假口令。复制成 .dev.vars（已忽略）再改，不要填真实的值。
+POLL_SECRET=local-poll-secret-not-real
+PRIVATE_READ_SECRET=local-private-read-secret-not-real-0123456789
+GITHUB_TOKEN=
