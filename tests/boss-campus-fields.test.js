@@ -143,3 +143,92 @@ test("BOSS school search does not count the typed query as a selected school", a
   assert.deepEqual(remote.picked, ["示例大学"]);
   assert.equal(remote.committed.value, "previous-id");
 });
+
+const monthNames = "一 二 三 四 五 六 七 八 九 十 十一 十二".split(" ");
+
+function bossMonth(root, { portal = false, min = "" } = {}) {
+  const doc = root.ownerDocument, input = root.querySelector("input");
+  const panel = doc.createElement("div");
+  panel.className = "ui-picker-panel ui-date-picker ui-popper";
+  panel.hidden = true;
+  (portal ? doc.body : root).append(panel);
+  input.getBoundingClientRect = () => ({ width: 120, left: 20, right: 140, top: 20, bottom: 40 });
+  panel.getBoundingClientRect = () => ({ width: 120, left: 20, right: 140, top: 44, bottom: 200 });
+  let year = 2026;
+  let opened = 0;
+  function render() {
+    panel.innerHTML = `<div class="ui-date-picker-header"><button type="button" class="ui-icon-d-arrow-left"></button>
+      <span class="ui-date-picker-header-label">${year} 年</span><button type="button" class="ui-icon-d-arrow-right"></button></div>
+      <table class="ui-month-table"><tbody><tr>${monthNames.map((name, index) => {
+        const month = String(index + 1).padStart(2, "0");
+        return `<td class="${`${year}/${month}` < min ? "disabled" : ""}"><div><a class="cell">${name}月</a></div></td>`;
+      }).join("")}</tr></tbody></table>`;
+    panel.querySelector(".ui-icon-d-arrow-left").onclick = () => { year -= 1; render(); };
+    panel.querySelector(".ui-icon-d-arrow-right").onclick = () => { year += 1; render(); };
+    panel.querySelectorAll("td").forEach((cell, i) => {
+      cell.onclick = () => {
+        if (cell.classList.contains("disabled")) return;
+        input.value = `${year}/${String(i + 1).padStart(2, "0")}`;
+        panel.hidden = true;
+      };
+    });
+  }
+  input.addEventListener("click", () => { opened += 1; render(); panel.hidden = false; });
+  input.addEventListener("keydown", event => { if (event.key === "Escape") panel.hidden = true; });
+  return { opened: () => opened, panel };
+}
+
+test("BOSS education dates open and commit two independent calendars instead of a shared range panel", async t => {
+  const doc = load(t, `<div class="group-part-item" data-group-id="EDUCATION">${row("时间段", `
+    <div class="date-picker-range-wrapper">
+      <div class="ui-date-editor ui-date-editor-month"><input readonly placeholder="开始时间"></div>
+      <span class="date-range-separator">至</span>
+      <div class="ui-date-editor ui-date-editor-month"><input readonly placeholder="结束时间"></div>
+    </div>`)}</div>`);
+  const [left, right] = doc.querySelectorAll(".ui-date-editor");
+  const first = bossMonth(left);
+  const last = bossMonth(right, { portal: true, min: "2020/09" });
+  const stale = doc.createElement("div");
+  stale.className = last.panel.className;
+  stale.getBoundingClientRect = last.panel.getBoundingClientRect;
+  doc.body.append(stale);
+  const [start, end] = scanner.scanPage(doc, { isVisible: visible }).controls;
+  assert.equal(start.root, end.root);
+  assert.deepEqual([start, end].map(c => [c.label, c.pickerType, c.rangePart]), [
+    ["时间段（开始）", "boss", "开始"], ["时间段（结束）", "boss", "结束"]
+  ]);
+  const api = operator(doc);
+  const entry = control => ({ ...control, binding: control, pickerInputType: "month", controlKind: "date" });
+  const startResult = await api.operate(entry(start), "2020-09");
+  assert.equal(startResult.ok, true, JSON.stringify(startResult));
+  assert.equal(end.element.value, "", "the first click sequence cannot commit the second picker");
+  assert.equal(last.opened(), 0);
+  const endResult = await api.operate(entry(end), "2024-06");
+  assert.equal(endResult.ok, true, JSON.stringify(endResult));
+  assert.deepEqual([start.element.value, end.element.value], ["2020/09", "2024/06"]);
+  assert.deepEqual([first.opened(), last.opened()], [1, 1]);
+  const invalid = await api.operate(entry(end), "2020-08");
+  assert.equal(invalid.reason, "no_option_match");
+  assert.equal(end.element.value, "2024/06");
+});
+
+test("BOSS day calendars commit the requested day and keep date precision in the read-back", async t => {
+  const doc = load(t, row("出生年月", `<div class="ui-date-editor ui-date-editor-date"><input readonly placeholder="请选择">
+    <div class="ui-picker-panel ui-date-picker ui-popper" hidden>
+      <div class="ui-date-picker-header"><span>2020 年</span><span>九月</span></div>
+      <table class="ui-date-table"><tbody><tr>${Array.from({ length: 30 }, (_, i) =>
+        `<td><div><span>${i + 1}</span></div></td>`).join("")}</tr></tbody></table>
+    </div></div>`));
+  const panel = doc.querySelector(".ui-picker-panel"), input = doc.querySelector("input");
+  input.addEventListener("click", () => { panel.hidden = false; });
+  panel.querySelector("table").addEventListener("click", event => {
+    input.value = `2020/09/${event.target.textContent.padStart(2, "0")}`;
+    panel.hidden = true;
+  });
+  const [date] = scanner.scanPage(doc, { isVisible: visible }).controls;
+  const api = operator(doc), entry = { ...date, binding: date, controlKind: "date" };
+  const result = await api.operate(entry, "2020-09-07");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(input.value, "2020/09/07");
+  assert.equal(api.check(entry).ok, true);
+});

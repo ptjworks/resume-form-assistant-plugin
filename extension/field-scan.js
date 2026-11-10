@@ -322,6 +322,11 @@
   const CALENDAR_RANGE_INPUT = ".ant-calendar-range-picker-input";
   // 取 5 层以内最外层的日期组件容器：range picker 的两个输入框共用一个根。
   function datePickerRoot(el, ctx) {
+    const boss = bossItem(el, ctx) && el.closest(".ui-date-editor-date, .ui-date-editor-month");
+    if (boss) {
+      const pair = boss.closest(".date-picker-range-wrapper");
+      return pair && componentScopeOk(pair, ctx, 2) ? pair : boss;
+    }
     if (el.matches(antdCss(el, CALENDAR_RANGE_INPUT))) {
       const root = el.closest(antdCss(el, ".ant-calendar-picker"));
       if (root && root !== ctx.body && componentScopeOk(root, ctx, 2)) return root;
@@ -336,7 +341,10 @@
     return best;
   }
 
-  function pickerTypeOf(root) {
+  function pickerTypeOf(root, ctx) {
+    const bossDates = ".ui-date-editor-date, .ui-date-editor-month";
+    if (bossItem(root, ctx) && (root.matches(bossDates)
+      || (root.matches(".date-picker-range-wrapper") && root.querySelector(bossDates)))) return "boss";
     const antd = antdCss(root, ".ant-picker");
     if (root.closest(antd) || root.matches(antd) || root.querySelector?.(antd)) return "antd";
     if (root.closest(".el-date-editor") || root.matches(".el-date-editor")) return "element";
@@ -447,7 +455,7 @@
     });
 
     pickerInputs.forEach((inputs, root) => {
-      const pickerType = pickerTypeOf(root);
+      const pickerType = pickerTypeOf(root, ctx);
       inputs.forEach((input, index) => {
         controls.push({ kind: "element", controlKind: "date-picker", element: input, elements: [input], root, pickerType,
           rangePart: inputs.length > 1 ? rangePart(input, index) : "" });

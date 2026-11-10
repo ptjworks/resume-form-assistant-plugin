@@ -42,6 +42,44 @@ function worker(respond = () => [], { withRegions = true } = {}) {
 const fieldsOf = (call) => JSON.parse(call.user.split("\n")[1]);
 const valueOf = (result, fieldId) => result.matches.find((match) => match.fieldId === fieldId)?.value;
 
+test("BOSS education range uses one local education record and never asks the model to pair dates", async () => {
+  const formFields = ["start", "end"].map((side, i) => ({
+    fieldId: side, label: i ? "时间段（结束）" : "时间段（开始）", inputType: "date-picker", pickerType: "boss",
+    pickerInputType: "month", educationRange: side, educationRangePair: "pair-1", educationRangeUnique: true
+  }));
+  const resumeFields = [
+    { group: "教育经历", key: "教育经历1-时间", value: "2020年9月—2024年6月（全日制）" },
+    { group: "教育经历", key: "教育经历1-学校", value: "虚构大学" },
+    { group: "实习经历", key: "实习1时间", value: "2023.09—2024.02" }
+  ];
+  const env = worker();
+  const result = await env.run({ formFields, resumeFields });
+  assert.deepEqual(result.matches, [{ fieldId: "start", value: "2020-09" }, { fieldId: "end", value: "2024-06" }]);
+  assert.equal(env.calls.length, 0);
+
+  const separate = await env.run({ formFields, resumeFields: [
+    { group: "教育经历", key: "教育经历1-入学时间", value: "2020/09" },
+    { group: "教育经历", key: "教育经历1-毕业时间", value: "至今" }
+  ] });
+  assert.deepEqual(separate.matches.map(match => match.value), ["2020-09", "至今"]);
+
+  for (const resume of [
+    [...resumeFields, { group: "教育经历", key: "教育经历2-学校", value: "另一所虚构大学" }],
+    [{ group: "教育经历", key: "教育经历1-入学时间", value: "2020/09" },
+      { group: "教育经历", key: "教育经历2-毕业时间", value: "2024/06" }],
+    [{ group: "教育经历", key: "教育经历1-时间", value: "2024.09—2020.06" }],
+    [{ group: "教育经历", key: "教育经历1-时间", value: "2020.13—2024.06" }]
+  ]) {
+    const invalid = await env.run({ formFields, resumeFields: resume });
+    assert.deepEqual(invalid.matches, []);
+  }
+  const repeated = await env.run({ formFields: formFields.map(field => ({ ...field, educationRangeUnique: false })), resumeFields });
+  assert.deepEqual(repeated.matches, []);
+  const unmatchedPair = await env.run({ formFields: [formFields[0], { ...formFields[1], educationRangePair: "pair-2" }], resumeFields });
+  assert.deepEqual(unmatchedPair.matches, []);
+  assert.equal(env.calls.length, 0);
+});
+
 test("the request carries the questions and the resume keys, and no resume value", async () => {
   // 桌面解析出来的字段名带着学校、公司名（semanticizeParsedFields），也不能出去。
   const resume = helpers.semanticizeParsedFields([

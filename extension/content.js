@@ -2113,14 +2113,24 @@
       }
     }
     const byElement = new Map();
-    for (const entry of scanned.fieldMap.values()) {
+    const descriptors = new Map(scanned.fields.map(field => [field.fieldId, field]));
+    for (const [id, entry] of scanned.fieldMap) {
       const key = entry.kind === "radio" ? entry.elements?.[0] : entry.element;
-      if (key) byElement.set(key, entry);
+      if (key) byElement.set(key, { entry, field: descriptors.get(id) });
     }
-    for (const entry of prepared.fieldMap.values()) {
-      const known = byElement.get(entry.kind === "radio" ? entry.elements?.[0] : entry.element);
+    for (const field of prepared.fields) {
+      const entry = prepared.fieldMap.get(field.fieldId);
+      if (!entry) continue;
+      const scannedControl = byElement.get(entry.kind === "radio" ? entry.elements?.[0] : entry.element);
+      const known = scannedControl?.entry;
       if (!known?.binding) continue;
       Object.assign(entry, { binding: known.binding, offerable: known.offerable, offerLabel: known.offerLabel });
+      if (entry.controlKind === "date" && known.pickerType === "boss") {
+        Object.assign(entry, { root: known.root, pickerType: known.pickerType, pickerInputType: known.pickerInputType });
+        const { educationRange, educationRangePair, educationRangeUnique } = scannedControl.field || {};
+        Object.assign(field, { inputType: "date-picker", pickerType: known.pickerType, pickerInputType: known.pickerInputType,
+          ...(educationRange ? { educationRange, educationRangePair, educationRangeUnique } : {}) });
+      }
     }
     return prepared;
   }
@@ -5153,6 +5163,7 @@
   }
 
   function addScannedControls(scan, fields, fieldMap, prefix) {
+    const educationPairs = new Map();
     scan.controls.forEach((control) => {
       const element = control.element;
       // 扫描时的对应关系原样留着，填写和「加到我的信息」用之前拿它复查。
@@ -5184,10 +5195,16 @@
       if (control.controlKind === "date-picker") {
         const pickerType = control.pickerType || "generic";
         const pickerInputType = inferPickerInputType(control.root, element);
-        fieldMap.set(fieldId, { kind: "element", element, pickerType, pickerInputType, ...common });
+        const root = pickerType === "boss" ? element.closest(".ui-date-editor-date, .ui-date-editor-month") || control.root : control.root;
+        fieldMap.set(fieldId, { kind: "element", element, pickerType, pickerInputType, ...common, root });
+        const educationRange = pickerType === "boss" && control.rangePart
+          && element.closest('.group-part-item[data-group-id="EDUCATION"]')
+          ? (control.rangePart === "开始" ? "start" : "end") : "";
+        if (educationRange && !educationPairs.has(control.root)) educationPairs.set(control.root, fieldId);
         fields.push({
           fieldId, ...base, name: element.getAttribute("name") || "", idAttr: element.id || "",
-          tagName: "input", inputType: "date-picker", pickerType, pickerInputType, options: []
+          tagName: "input", inputType: "date-picker", pickerType, pickerInputType, options: [],
+          ...(educationRange ? { educationRange, educationRangePair: educationPairs.get(control.root), educationRangeUnique: control.repeatCount === 1 } : {})
         });
         return;
       }
@@ -5272,7 +5289,7 @@
 
   // #429 区间日期的另一头：同一个日期组件（root 相同）里另一个框的字段 id。
   function rangePartnerId(fieldMap, entry) {
-    if (entry?.kind !== "element" || !entry.binding?.rangePart) return "";
+    if (entry?.kind !== "element" || !entry.binding?.rangePart || entry.pickerType === "boss") return "";
     for (const [fieldId, other] of fieldMap) {
       if (other !== entry && other?.kind === "element" && other.root === entry.root
         && other.binding?.rangePart && other.binding.rangePart !== entry.binding.rangePart) return fieldId;
@@ -5476,7 +5493,13 @@
     const fresh = { ...entry, binding: control, root: control.root };
     if (entry.kind === "radio") fresh.elements = control.elements;
     else fresh.element = control.element;
-    if (entry.pickerType) fresh.pickerInputType = inferPickerInputType(control.root, control.element);
+    if (entry.pickerType) {
+      if (entry.pickerType === "boss") {
+        if (control.pickerType !== "boss") return null;
+        fresh.root = control.element.closest(".ui-date-editor-date, .ui-date-editor-month") || control.root;
+      }
+      fresh.pickerInputType = inferPickerInputType(control.root, control.element);
+    }
     return isFieldBindingCurrent(fresh) ? fresh : null;
   }
 
@@ -7563,6 +7586,10 @@
   }
 
   function inferPickerInputType(container, inner) {
+    if (inner.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com") {
+      if (inner.closest(".ui-date-editor-month")) return "month";
+      if (inner.closest(".ui-date-editor-date")) return "date";
+    }
     // 简道云日期框的类名都带 datetime（x-datetime），说明不了格式，只看占位文字。
     const cls = container.matches?.(".fx-form-datetime .x-datetime") ? "" : container.className || "";
     const placeholder = (inner.getAttribute("placeholder") || "").toLowerCase();

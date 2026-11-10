@@ -188,7 +188,7 @@
     + "baoming onboard onboarding entry m h5 mobile pc web wap app wx wechat mp en zh cn us api s p c u hr ats cms open public "
     + "static html htm shtml php jsp aspx asp do action").split(" "));
   // `generic`: custom selects the fill handled on its generic path (北森), which carry no library class.
-  const LIBRARY_NAMES = ["antd", "element", "arco", "iview", "semi", "vant", "layui", "mui", "yui", "ui5", "generic", "other"];
+  const LIBRARY_NAMES = ["antd", "element", "arco", "iview", "semi", "vant", "layui", "mui", "yui", "ui5", "generic", "boss", "other"];
   // How a fill was started (#301): the side panel's 一键填写, 深度分析本页, a 本站配方 run, AI 辅助新增条目.
   const ENTRIES = ["panel", "deep", "recipe", "assist", "other"];
   // What an unfilled select's popup showed: a list (by role) and whether it had any option, a calendar, or nothing opened at all.
@@ -252,7 +252,7 @@
   const VERSIONS = ["antd3", "antd4", "antd5", "antd6", "element-ui", "element-plus"];
   const CONTROL_TOKEN = new RegExp("^(?:(?:input|textarea|select|button|div|span)(?:\\[(?:text|date|month|number|radio|checkbox|email|tel|search)\\])?"
     + "|role=(?:textbox|combobox|listbox|button|radio|checkbox)|popup=(?:listbox|dialog|true)|readonly"
-    + `|(?:picker|lib)=(?:antd|element|arco|iview|semi|vant|layui|generic|mui|jiandaoyun|yui|ui5)|opened=(?:${OPENED.join("|")})|options=(?:0|1\\+)`
+    + `|(?:picker|lib)=(?:antd|element|arco|iview|semi|vant|layui|generic|mui|jiandaoyun|yui|ui5|boss)|opened=(?:${OPENED.join("|")})|options=(?:0|1\\+)`
     + `|inputmode=(?:${INPUT_MODES.join("|")})|after=(?:${AFTER.join("|")})|overlay=(?:${OVERLAYS.join("|")})`
     + `|form=(?:${FORMS.join("|")})|(?:search|remote|multi|spinner)=(?:yes|no)|ver=(?:${VERSIONS.join("|")})|(?:open_ms|wait_ms)=\\d{1,6}`
     + `|reason=(?:${FILL_REASONS.join("|")}))$`);

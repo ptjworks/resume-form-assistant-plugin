@@ -5,6 +5,7 @@
   const SHELLS = '.ant-select-dropdown, .ant-cascader-dropdown, .el-select__popper, .el-select-dropdown, .el-cascader__dropdown, .arco-select-popup, .arco-cascader-popup, .arco-trigger-popup';
   const POPUPS = `${SHELLS}, [role="listbox"], [role="tree"]`;
   const BOSS_POPUP = '.ui-select-dropdown';
+  const BOSS_CALENDAR = '.ui-picker-panel.ui-date-picker.ui-popper';
   // #301 antd 换了类名前缀（飞书招聘 atsx-，见 antd-prefix.js）：选择器里的 .ant- 按节点所在文档的前缀展开。
   const antd = (node, selector) => scope.ResumeProAntdPrefix?.css(node, selector) ?? selector;
   const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -342,7 +343,7 @@
     const View = doc.defaultView;
     const floating = node => ['absolute', 'fixed'].includes(View?.getComputedStyle(node).position);
     const shells = new Set([...popups(doc, visible), ...Array.from(doc.querySelectorAll(antd(doc, FLOATING))).filter(visible)]);
-    if (isBossCampus(doc)) doc.querySelectorAll(BOSS_POPUP).forEach(node => { if (visible(node)) shells.add(node); });
+    if (isBossCampus(doc)) doc.querySelectorAll(`${BOSS_POPUP}, ${BOSS_CALENDAR}`).forEach(node => { if (visible(node)) shells.add(node); });
     const worded = Array.from(doc.querySelectorAll(FLOATING_WORDS)).filter(node => !shells.has(node) && trim(node.textContent) && visible(node) && floating(node));
     // 组件库的弹层外壳一块只装一个弹层，里面重画了也还是旧的；只按类名里的词认出的可能是网页放弹层的常驻外壳，记下里面原有的元素。
     for (const layer of worded) {
@@ -831,17 +832,18 @@
       }
       return false;
     };
-    const cells = (read, keep = () => true) => leaves.filter(el => inCell(el) && read(el.textContent) && keep(el)).map(el => ({ value: read(el.textContent), node: el }));
     const headYear = leaves.find(el => !inCell(el) && yearOf(el.textContent));
     const headMonth = leaves.find(el => !inCell(el) && monthOf(el.textContent));
     const headBoth = headYear || headMonth ? null : yearMonthOf(leaves.find(el => !inCell(el) && yearMonthOf(el.textContent))?.textContent);
     const disabledCell = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
-        if (node.getAttribute?.('aria-disabled') === 'true' || node.hasAttribute?.('disabled')) return true;
+        if (node.getAttribute?.('aria-disabled') === 'true' || node.hasAttribute?.('disabled') || node.classList.contains('disabled')) return true;
         if (node.matches?.('td, [role="gridcell"]')) return false;
       }
       return false;
     };
+    const cells = (read, keep = () => true) => leaves.filter(el => inCell(el) && read(el.textContent) && keep(el))
+      .map(el => ({ value: read(el.textContent), node: el, disabled: disabledCell(el) }));
     const pickedCell = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
         if (node.getAttribute?.('aria-selected') === 'true' || String(node.getAttribute?.('class') || '').split(/\s+/).some(token => SELECTED_TOKEN.test(token))) return true;
@@ -900,6 +902,39 @@
     });
     return near.length === 1 ? near[0] : null;
   }
+  function bossCalendar(info, h) {
+    const local = Array.from(info.root.querySelectorAll(BOSS_CALENDAR)).filter(h.visible);
+    if (local.length) return local.length === 1 ? local[0] : null;
+    // Popper 可以把面板移到 body。只接本次打开、紧贴该输入框且唯一的面板。
+    const a = info.el.getBoundingClientRect();
+    const near = Array.from(info.el.ownerDocument.querySelectorAll(BOSS_CALENDAR)).filter(node => {
+      if (!h.visible(node) || staleLayer(node, info) || node.closest('.ui-date-editor')) return false;
+      const b = node.getBoundingClientRect();
+      if (a.width <= 0 || b.width <= 0) return false;
+      const alignedX = a.left < b.right && a.right > b.left;
+      const alignedY = a.top < b.bottom && a.bottom > b.top;
+      return (alignedX && Math.min(Math.abs(a.bottom - b.top), Math.abs(a.top - b.bottom)) <= 24)
+        || (alignedY && Math.min(Math.abs(a.right - b.left), Math.abs(a.left - b.right)) <= 24);
+    });
+    return near.length === 1 ? near[0] : null;
+  }
+
+  async function pickBossDate(ctx, raw, h) {
+    const el = ctx.el;
+    const root = isBossCampus(el.ownerDocument) ? el.closest('.ui-date-editor-date, .ui-date-editor-month') : null;
+    if (!root) return { reason: 'unsupported_control' };
+    const info = { el, root, library: 'boss-date', before: ctx.popupsBeforeFocus || shownLayers(el.ownerDocument, h.visible) };
+    if (!bossCalendar(info, h)) {
+      const reason = h.click(el, ctx); if (reason) return { reason };
+    }
+    const opened = await h.waitUntil(ctx, el.ownerDocument.documentElement, () => bossCalendar(info, h), Boolean, 1500);
+    if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
+    const layer = opened.value;
+    const outcome = await pickDate(ctx, raw, h, layer, info);
+    if (outcome.reason && !h.stop(ctx)) await leaveCalendar(ctx, el, root, layer, h);
+    return outcome;
+  }
+
   async function pickPresent(ctx, h, layer, info) {
     // 日历里自带「至今」选项（勾选框或按钮）才点；没有就交还，由页面上单独的「至今」勾选题去填。
     const marks = Array.from(layer.querySelectorAll('*')).filter(el => h.visible(el) && PRESENT.test(trim(el.textContent))
@@ -907,7 +942,8 @@
     if (marks.length !== 1) return { reason: 'no_option_match' };
     const target = marks[0].closest('label') || marks[0];
     const reason = h.click(optionTarget(target), ctx, true); if (reason) return { reason };
-    const accepted = () => (selectedTexts(info) || []).some(text => PRESENT.test(trim(text))) || isChecked(target);
+    const accepted = () => info.library === 'boss-date' ? PRESENT.test(trim(info.el.value)) && (!layer.isConnected || !h.visible(layer))
+      : (selectedTexts(info) || []).some(text => PRESENT.test(trim(text))) || isChecked(target);
     const done = await h.waitUntil(ctx, info.el.ownerDocument.documentElement, accepted, Boolean);
     return done.reason ? { reason: done.reason === 'verification_timeout' ? 'selection_not_committed' : done.reason } : { accepted };
   }
@@ -917,8 +953,8 @@
     ctx.observed = { ...ctx.observed, popupRole: 'calendar' };
     // 日历切换年/月时整块重建的：旧面板不在了就在控件旁边重新找一次。
     const current = () => {
-      if (layer.isConnected && h.visible(layer)) return layer;
-      const again = calendarNear(info, h);
+      if (info.library !== 'boss-date' && layer.isConnected && h.visible(layer)) return layer;
+      const again = info.library === 'boss-date' ? bossCalendar(info, h) : calendarNear(info, h);
       if (again) layer = again;
       return again;
     };
@@ -929,7 +965,7 @@
     if (!target || target.y < 1900 || target.y > 2100) return { reason: 'invalid_date' };
     const modeOf = current => current.dayCells >= 28 ? 'date' : current.months.length >= 12 ? 'month' : current.years.length >= 6 ? 'year' : '';
     // 日历打开有动画（Element 从 0 放大）：格子显示出来才看得出是选日、选月还是选年。
-    const shown = await h.waitUntil(ctx, doc.documentElement, () => calendarView(layer, h), current => Boolean(modeOf(current)), 1500);
+    const shown = await h.waitUntil(ctx, doc.documentElement, () => current() && calendarView(layer, h), view => Boolean(view && modeOf(view)), 1500);
     if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'unsupported_control' : shown.reason };
     let view = shown.value;
     const mode = modeOf(view);
@@ -937,12 +973,14 @@
     const dayDefaulted = mode === 'date' && !target.d;
     const want = { ...target, d: target.d || 1 };
     const expected = mode === 'date' ? `${want.y}-${pad2(want.m)}-${pad2(want.d)}` : mode === 'month' ? `${want.y}-${pad2(want.m)}` : String(want.y);
-    const accepted = () => (selectedTexts(info) || []).some(text => shownDate(text, mode) === expected)
-      || (info.el.tagName === 'INPUT' && shownDate(info.el.value, mode) === expected);
+    const accepted = () => info.library === 'boss-date' ? shownDate(info.el.value, mode) === expected && (!layer.isConnected || !h.visible(layer))
+      : (selectedTexts(info) || []).some(text => shownDate(text, mode) === expected)
+        || (info.el.tagName === 'INPUT' && shownDate(info.el.value, mode) === expected);
     ctx.observed = { ...ctx.observed, calendarMode: mode };
     // 没选上时框里换成了别的日子（既不是要填的，也不是点开前的）：回车交出了日历原来指着的日子（#418 是今天）。
     // 照没选上报，诊断里写明框里是别的（after=other），侧栏也不说成只是没选上。
-    const shownNow = () => [...(selectedTexts(info) || []), info.el.tagName === 'INPUT' ? info.el.value : ''].join(' ');
+    const shownNow = () => info.library === 'boss-date' ? info.el.value
+      : [...(selectedTexts(info) || []), info.el.tagName === 'INPUT' ? info.el.value : ''].join(' ');
     const original = shownDate(shownNow(), mode);
     const missed = () => {
       const now = shownDate(shownNow(), mode);
@@ -1004,12 +1042,12 @@
           || view.headMonthNode || view.headYearNode;
       } else if (view.months.length >= 12) {
         if (!view.headYear || view.headYear === want.y) {
-          const hits = view.months.filter(cell => cell.value === want.m);
+          const hits = view.months.filter(cell => cell.value === want.m && (info.library !== 'boss-date' || !cell.disabled));
           node = hits.length === 1 ? hits[0].node : null; last = mode === 'month';
         } else node = view.button('year', want.y < view.headYear ? -1 : 1) || view.headYearNode;
       } else if (view.years.length >= 6) {
         const hits = view.years.filter(cell => cell.value === want.y);
-        if (hits.length === 1) { node = hits[0].node; last = mode === 'year'; }
+        if (hits.length === 1 && (info.library !== 'boss-date' || !hits[0].disabled)) { node = hits[0].node; last = mode === 'year'; }
         else if (!hits.length) node = view.button('year', want.y < Math.min(...view.years.map(cell => cell.value)) ? -1 : 1);
       }
       if (!node) return { reason: 'no_option_match' };
@@ -2187,5 +2225,5 @@
       || String(el.getAttribute('class') || '').split(/\s+/).some(token => CHECKED_TOKEN.test(token)));
   }
   scope.ResumeProCustomControls = { describe, acceptsFreeText, snapshot, hasExistingValue, readSelection, visiblePopups, optionTarget, isChecked, run, suggest, libraryVersion,
-    openLayers, dismissOpened, pickRange, leaveRange };
+    openLayers, dismissOpened, pickRange, leaveRange, pickBossDate };
 })(typeof self !== 'undefined' ? self : globalThis);

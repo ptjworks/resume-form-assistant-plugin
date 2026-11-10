@@ -412,10 +412,52 @@
   // 本地规则的匹配结果（#402）：worker 的 ruleMatches、网页先填的字段和后来冒出来的字段用同一份口径。
   // #429 第五项：规则认不出的字段，再看补充字段里有没有题目原样对得上的回答（profile.savedAnswerMatches）。
   // pageFields 是整张表的字段（后来冒出来的字段只传新的几个时用），不传就是 formFields。
+  // #466 BOSS 的两个「时间段」框属于同一条教育经历。只在页面和资料都能唯一配对时取日期。
+  function educationRangeMatches(fields, resume) {
+    const targets = fields.filter(field => field.educationRange);
+    if (targets.length !== 2 || targets.some(field => field.educationRangeUnique !== true)) return [];
+    const start = targets.find(field => field.educationRange === "start");
+    const end = targets.find(field => field.educationRange === "end");
+    if (!start?.educationRangePair || start.educationRangePair !== end?.educationRangePair) return [];
+    const records = new Map();
+    for (const field of resume) {
+      const group = /^(教育经历|教育背景|学习经历)\s*(\d*)$/.exec(String(field.group ?? "").normalize("NFKC").trim());
+      if (!group || !String(field.value ?? "").trim()) continue;
+      const key = /^(?:(?:教育经历|教育背景|学习经历|教育)\s*(\d+)\s*[-_:]?\s*)?(.*)$/.exec(String(field.key ?? "").normalize("NFKC").trim());
+      if (!key || (group[2] && key[1] && group[2] !== key[1])) return [];
+      const id = `${group[1]}:${group[2] || key[1] || ""}`;
+      if (!records.has(id)) records.set(id, { start: new Set(), end: new Set() });
+      const record = records.get(id);
+      const value = String(field.value).normalize("NFKC").trim().replace(/\s*\((?:全日制|非全日制|在读|预计)\)$/, "");
+      if (/^(?:时间|时间段|起止(?:日期|时间)|在校时间|就读时间|教育时间|学习时间)$/.test(key[2])) {
+        const parts = rangeDateParts(value);
+        if (parts) { record.start.add(educationDate(parts[0])); record.end.add(educationDate(parts[1], true)); }
+      } else if (/^(?:开始|入学|入读)(?:时间|日期|年月)$/.test(key[2])) record.start.add(educationDate(value));
+      else if (/^(?:结束|毕业|离校)(?:时间|日期|年月)$/.test(key[2])) record.end.add(educationDate(value, true));
+    }
+    if (records.size !== 1) return [];
+    const [record] = records.values();
+    if (record.start.size !== 1 || record.end.size !== 1) return [];
+    const [from] = record.start, [to] = record.end;
+    if (!from || !to || (to !== "至今" && from > to && !from.startsWith(`${to}-`))) return [];
+    return [{ fieldId: start.fieldId, value: from }, { fieldId: end.fieldId, value: to }];
+  }
+
+  function educationDate(value, allowPresent = false) {
+    if (allowPresent && isPresentDate(value)) return "至今";
+    const raw = String(value).trim();
+    if (!/^\d{4}(?:\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?|\s*[-/.]\s*\d{1,2}(?:\s*[-/.]\s*\d{1,2})?)$/.test(raw)) return "";
+    const { year, month, day } = parseDateParts(raw) || {};
+    const y = Number(year), m = Number(month), d = Number(day || 1), date = new Date(y, m - 1, d);
+    if (y < 1900 || y > 2100 || date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return "";
+    return day ? `${y}-${pad2(m)}-${pad2(d)}` : `${y}-${pad2(m)}`;
+  }
+
   function localRuleMatches(formFields, resumeFields, profile, pageFields = formFields) {
-    const forms = formFields.filter((field) => !isSecretFormField(field, profile));
+    const safe = formFields.filter((field) => !isSecretFormField(field, profile));
+    const forms = safe.filter(field => !field.educationRange);
     const resume = resumeFields.filter((field) => isSafeResumeField(field, profile));
-    const rules = filterValidMatches(forms, buildRuleBasedMatches(forms, resume));
+    const rules = [...filterValidMatches(forms, buildRuleBasedMatches(forms, resume)), ...educationRangeMatches(safe, resume)];
     if (typeof profile.savedAnswerMatches !== "function") return rules;
     const taken = new Set(rules.map((match) => match.fieldId));
     return [...rules, ...filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields))];

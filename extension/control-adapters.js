@@ -419,7 +419,7 @@
         // 只读日期框也走 custom-controls 的日历路径（#301 智联 Element 日期一聚焦就打开）。
         if (custom || (ctx.kind === 'date' && ctx.el?.readOnly)) ctx.popupsBeforeFocus = scope.ResumeProCustomControls?.visiblePopups?.(ctx.entry, visible) || null;
         // #429 区间日期的两个框由 operateRange 自己去点：先不聚焦，Element 一聚焦就打开日历，两头已经填好时只核对、不该打开。
-        if (!direct && !(ctx.kind === 'date' && rangeBoxes(ctx))) focus(ctx.el);
+        if (!direct && !(ctx.kind === 'date' && (rangeBoxes(ctx) || ctx.entry.pickerType === 'boss'))) focus(ctx.el);
         await delay(0);
         const afterFocus = stop(ctx, true);
         if (afterFocus) return result(false, afterFocus, ctx);
@@ -524,6 +524,8 @@
     // 题目和占位提示：一段起止取哪一头看它们（见 ai-helpers.js 的 rangeDateValue）。
     const dateHint = ctx => [ctx.entry?.binding?.label, ctx.el?.getAttribute?.('placeholder'), ctx.el?.getAttribute?.('aria-label')].filter(Boolean).join(' ');
     async function operateDate(ctx, raw) {
+      if (ctx.entry.pickerType === 'boss') return await scope.ResumeProCustomControls?.pickBossDate?.(ctx, raw, host)
+        || { reason: 'unsupported_control' };
       const boxes = rangeBoxes(ctx);
       const ranged = boxes ? await operateRange(ctx, raw, boxes) : null;
       if (ranged && !ranged.single) return ranged;

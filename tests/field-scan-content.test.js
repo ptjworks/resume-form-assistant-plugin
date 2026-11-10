@@ -71,6 +71,33 @@ test('a Jiandaoyun date box is described as a date, not a time: its class names 
   assert.deepEqual(Array.from(sent.formFields, field => [field.controlKind, field.pickerType, field.pickerInputType]), [['date', 'jiandaoyun', 'date']]);
 });
 
+test('BOSS education date descriptors keep the two calendar types and the shared question identity', async () => {
+  const late = lateScanner(); let sent;
+  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy,
+    sendMessage: async message => { sent = message; return { success: true, matches: [] }; } });
+  const pair = new ctx.HTMLElement(), group = new ctx.HTMLElement();
+  late.holder.current = scanWith(["开始", "结束"].map(part => {
+    const element = new ctx.HTMLInputElement(), picker = new ctx.HTMLElement();
+    element.ownerDocument = { location: { hostname: "xiaoyuan.zhipin.com" } };
+    element.setAttribute("placeholder", `${part}时间`);
+    element.closest = selector => {
+      if (selector.includes("data-group-id")) return group;
+      if (selector.includes(".ui-date-editor-month")) return picker;
+      return null;
+    };
+    return control(element, { controlKind: "date-picker", pickerType: "boss", root: pair, rangePart: part,
+      repeatCount: 1, label: `时间段（${part}）` });
+  }));
+  ctx.helpers.setCurrentStore(store); ctx.helpers.setShadowRoot(shadow().root);
+  await ctx.helpers.handleAiFillClick({ currentTarget: { disabled: false, textContent: '' } });
+  assert.ok(sent);
+  const [start, end] = sent.formFields;
+  assert.deepEqual(Array.from(sent.formFields, field => [field.pickerInputType, field.educationRange, field.educationRangeUnique]),
+    [["month", "start", true], ["month", "end", true]]);
+  assert.ok(start.educationRangePair);
+  assert.equal(start.educationRangePair, end.educationRangePair);
+});
+
 test('a failed parent blocks later fields in its cascade group', async () => {
   const late = lateScanner();
   const aiHelpers = { ...require('../extension/ai-helpers.js'), detectCascadeGroups(fields) {
