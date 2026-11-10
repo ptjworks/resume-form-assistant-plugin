@@ -72,14 +72,16 @@ const views: Record<string, HTMLElement> = {
   todos: must("view-todos"),
   notes: must("view-notes"),
   settings: must("view-settings"),
+  support: must("view-support"),
 };
+const routeButtons = document.querySelectorAll<HTMLButtonElement>(".topbar button[data-route]");
 
 function showRoute(name: string | undefined) {
   views.notes.parentElement?.classList.toggle("notes-workspace-active", name === "notes");
   Object.entries(views).forEach(([key, el]) => {
     el.classList.toggle("hidden", key !== name);
   });
-  document.querySelectorAll<HTMLElement>(".nav button[data-route]").forEach((btn) => {
+  routeButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.route === name);
     if (btn.dataset.route === name) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
@@ -110,6 +112,10 @@ async function navigate(route: string | undefined, refreshApplications = true): 
   const enteringResume = route === "resume" && !onResume;
   const enteringApplications = route === "applications" && views.applications.classList.contains("hidden");
   showRoute(route);
+  if (route === "support") {
+    const main = views.support.closest("main");
+    if (main) main.scrollTop = 0;
+  }
   if (route !== "settings") leaveBackup();
   if (enteringResume) resumeView.refresh();
   if (enteringApplications && refreshApplications) void applications.refreshView();
@@ -122,7 +128,7 @@ must("cloud-auto-open").addEventListener("click", async () => {
   must<HTMLDetailsElement>("cloud-auto").open = true;
 });
 
-document.querySelectorAll<HTMLElement>(".nav button[data-route]").forEach((btn) => {
+routeButtons.forEach((btn) => {
   btn.addEventListener("click", async () => {
     const enteringNotes = btn.dataset.route === "notes" && views.notes.classList.contains("hidden");
     if (!(await navigate(btn.dataset.route))) return;

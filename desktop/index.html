@@ -12,8 +12,16 @@
       <header class="topbar">
         <div class="brand">
           <img class="brand-mark" src="./src-tauri/icons/64x64.png" alt="" width="32" height="32" />
-          <span class="brand-name">网申快填</span>
-          <span id="app-version" class="brand-version" hidden></span>
+          <div class="brand-lockup">
+            <div class="brand-product">
+              <span class="brand-name">网申快填</span>
+              <span id="app-version" class="brand-version" hidden></span>
+            </div>
+            <div class="brand-publisher">
+              <img src="./src/assets/ptj-works.png" alt="" width="14" height="14" />
+              <span>PTJ Works</span>
+            </div>
+          </div>
         </div>
         <nav class="nav" aria-label="主导航">
           <button type="button" data-route="applications" class="active" aria-current="page">申请</button>
@@ -24,6 +32,10 @@
           <button type="button" data-route="settings">设置<span class="update-dot" data-update-dot aria-hidden="true" hidden></span></button>
         </nav>
         <div class="topbar-status">
+          <button type="button" id="nav-support" data-route="support" aria-controls="view-support">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Zm13 1h1.5a2.5 2.5 0 0 1 0 5H17M3 21h16M8 3v2m5-2v2"/></svg>
+            <span>支持开发</span>
+          </button>
           <p id="runtime-pill" class="status-pill" data-tone="pending">正在读取浏览器注册…</p>
           <button type="button" id="nav-install-extension">安装扩展</button>
         </div>
@@ -664,6 +676,34 @@
               </section>
             </div>
           </div>
+        </section>
+        <section id="view-support" class="support-view hidden" aria-labelledby="support-title">
+          <header class="support-heading">
+            <h1 id="support-title">支持开发</h1>
+            <p>如果网申快填帮你省下了一点时间，欢迎请开发者喝杯咖啡。</p>
+          </header>
+          <section class="support-card" aria-labelledby="support-payment-title">
+            <div class="support-card-head">
+              <h2 id="support-payment-title">手机扫码支持</h2>
+              <p>选择你常用的支付方式，金额随意。</p>
+            </div>
+            <div class="support-methods">
+              <figure class="support-method">
+                <figcaption><span class="payment-dot wechat" aria-hidden="true"></span>微信支付</figcaption>
+                <img src="./src/assets/support-wechat.png" alt="微信支付收款二维码" width="184" height="184" loading="lazy" />
+                <span class="support-method-hint">打开微信扫一扫</span>
+              </figure>
+              <figure class="support-method">
+                <figcaption><span class="payment-dot alipay" aria-hidden="true"></span>支付宝</figcaption>
+                <img src="./src/assets/support-alipay.png" alt="支付宝收款二维码" width="184" height="184" loading="lazy" />
+                <span class="support-method-hint">打开支付宝扫一扫</span>
+              </figure>
+            </div>
+            <footer class="support-note">
+              <p><strong>支持完全自愿，所有功能照常使用。</strong></p>
+              <p>款项由开发者收取，用于开发和日常维护。付款前请在支付 App 中确认收款信息和金额。</p>
+            </footer>
+          </section>
         </section>
       </main>
     </div>

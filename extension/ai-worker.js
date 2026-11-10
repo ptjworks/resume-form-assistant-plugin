@@ -506,6 +506,9 @@ async function handleAiFill(message, controller = new AbortController()) {
     .map(field => field.fieldId)).size;
   // 目录装不下、只发了一部分的那几批里没答上的题：可能是资料被裁掉了，不一定是没有。
   diagnostics.trimmedUnanswered = [...trimmedFields].filter(fieldId => !seenMatchIds.has(fieldId)).length;
+  // #497 AI 看过、没给值的题（开放题除外）：网页按字段类别计数，看资料里有没有这一类。只有字段编号。
+  diagnostics.unansweredIds = [...new Set(answeredFields.filter(field => !opinion(field) && !seenMatchIds.has(field.fieldId))
+    .map(field => field.fieldId))].filter(id => typeof id === "string").slice(0, 200);
   const warning = [...new Set(warnings)].join(" ");
   return { success: !warning || matches.some(match => !match.blocked), matches, warning, error: warning, diagnostics,
     ...(openView ? { openView } : {}) };

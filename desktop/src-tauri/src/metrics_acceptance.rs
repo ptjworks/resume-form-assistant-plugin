@@ -2,7 +2,7 @@
 use std::path::{Path, PathBuf};
 
 pub const IDENTIFIER: &str = "com.resumepro.metrics.acceptance";
-pub const ENDPOINT: &str = "https://resume-usage-metrics-test.nebula-lab.workers.dev/v1/activity";
+pub const ENDPOINT: &str = "https://metrics-test.19991107.xyz/v1/activity";
 
 pub fn build_enabled() -> bool {
     cfg!(feature = "usage-metrics-acceptance")

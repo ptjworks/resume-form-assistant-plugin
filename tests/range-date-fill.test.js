@@ -270,5 +270,5 @@ test("a range the AI answers only one end of is left alone and reported as missi
   assert.equal(p.log.opened, 0, "nothing was opened");
   assert.match(p.ui.status.textContent, /在校时间（开始）（起止日期缺一头）/);
   // 上报里不带字段名，只有控件结构和原因码。
-  assert.match(await p.report(), /^- （字段名已隐藏）: input\[text\] picker=element lib=element reason=range_incomplete$/m);
+  assert.match(await p.report(), /^- 起止时间: input\[text\] picker=element lib=element form=date reason=range_incomplete$/m);
 });

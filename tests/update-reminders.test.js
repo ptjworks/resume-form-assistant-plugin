@@ -80,7 +80,7 @@ test('手动反馈带上桌面版本，自动上报不带', async () => {
     fetchImpl: async (url, request) => { sent.push(JSON.parse(request.body)); return new Response(JSON.stringify({ ok: true, id: 'test-1' })); }
   });
   assert.equal(service.preview({ description: '按钮不可用', desktopVersion: '0.4.4' }).user_description,
-    '按钮不可用\n--- 诊断信息 v1 ---\n[来源]\napp_version: 0.5.0\nos: Windows / Edge 140\ndesktop_version: 0.4.4');
+    '按钮不可用\n--- 诊断信息 v1 ---\n[来源]\napp_version: 0.5.0\nos: Windows / Edge 140\nbuild: dev\ndesktop_version: 0.4.4');
   for (const odd of ['', '0.4.4\nhost: evil.example', '下一版', undefined]) {
     assert.ok(!service.preview({ description: 'x', desktopVersion: odd }).user_description.includes('desktop_version'), String(odd));
   }

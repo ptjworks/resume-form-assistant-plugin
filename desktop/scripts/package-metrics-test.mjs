@@ -55,7 +55,7 @@ if (runtimeInfo.purpose !== 'isolated-usage-metrics-acceptance'
     || runtimeInfo.identifier !== 'com.resumepro.metrics.acceptance'
     || runtimeInfo.native_host !== 'com.resumepro.metrics.test'
     || runtimeInfo.data_root_isolated !== true || runtimeInfo.feedback_disabled !== true
-    || runtimeInfo.endpoint !== 'https://resume-usage-metrics-test.nebula-lab.workers.dev/v1/activity') {
+    || runtimeInfo.endpoint !== 'https://metrics-test.19991107.xyz/v1/activity') {
   throw new Error('Binary is not the isolated TEST acceptance build; package refused');
 }
 // Finder metadata and receipt come from the binary we actually package.
@@ -70,7 +70,7 @@ writeFileSync(join(destination, 'build-receipt.json'), JSON.stringify({
   identifier: 'com.resumepro.metrics.acceptance', native_host: 'com.resumepro.metrics.test',
   desktop_binary_sha256: sha256(readFileSync(artifact)), plugin_original_sha256: sha256(readFileSync(pluginZip)),
   plugin_staged_changes: ['manifest name/description', 'Native Messaging host', 'feedback bootstrap disabled'],
-  endpoint: 'https://resume-usage-metrics-test.nebula-lab.workers.dev/v1/activity',
+  endpoint: 'https://metrics-test.19991107.xyz/v1/activity',
   test_only: true, no_secret_in_artifacts: true,
 }, null, 2));
 // Keep only the adapted test plugin in the deliverable, avoiding two similar ZIP choices.

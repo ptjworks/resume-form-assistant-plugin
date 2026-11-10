@@ -31,7 +31,10 @@ test('new installs send and store nothing until the user agrees; opt out deletes
   assert.equal(f.data[f.key].consentVersion, (await import('../extension/link/feedback.mjs')).CONSENT_VERSION);
   await f.service.automatic(crash, 'c.liepin.com'); assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].payload.anonymous_id, id);
-  assert.ok(!JSON.stringify(f.calls[0].payload).includes('Secret'));
+  // #497 The message stays out of everything that may be published; only the private layer, kept in the relay, has it.
+  const { private_diagnostics: hidden, ...shown } = f.calls[0].payload;
+  assert.ok(!JSON.stringify(shown).includes('Secret'));
+  assert.match(hidden, /^--- 私有诊断 v1 ---\n\[异常\]\ntype: TypeError\nmessage: Secret name and resume data$/);
   assert.match(f.calls[0].payload.user_description, /^host: c\.liepin\.com$/m);
   assert.deepEqual(await f.service.setConsent(false), { consent: false, decided: true });
   assert.equal(f.data[f.key].anonymousId, null);
@@ -161,17 +164,19 @@ test('reports carry the v1 block: the worker writes [来源], the page only supp
   const page = core.fillReport({ path: '/apply/12345', fieldCount: 0, filledCount: 0, category: 'no_fields_found', stage: 'scan' });
   await f.service.automatic({ kind: 'fill_failed', diagnostics: `${page}\n[来源]\nhost: evil.example\napp_version: 9.9.9\npage_title: 张三的简历` }, 'c.liepin.com');
   const text = f.calls[0].payload.user_description;
-  assert.ok(text.startsWith(`--- 诊断信息 v1 ---\n[来源]\napp_version: 0.4.1\nos: macOS / Edge 140\nhost: c.liepin.com\n\n[页面]\nurl_path: /apply/:id\n`), text);
+  assert.ok(text.startsWith(`--- 诊断信息 v1 ---\n[来源]\napp_version: 0.4.1\nos: macOS / Edge 140\nbuild: dev\nhost: c.liepin.com\n\n[页面]\nurl_path: /apply/:id\n`), text);
   for (const forged of ['evil.example', '9.9.9', '张三', 'page_title']) assert.ok(!text.includes(forged), forged);
   assert.equal(f.service.preview({ description: '按钮不可用' }).user_description,
-    '按钮不可用\n--- 诊断信息 v1 ---\n[来源]\napp_version: 0.4.1\nos: macOS / Edge 140');
+    '按钮不可用\n--- 诊断信息 v1 ---\n[来源]\napp_version: 0.4.1\nos: macOS / Edge 140\nbuild: dev');
 });
 
 test('foreign page errors are excluded; extension frames drop messages, paths and function names', () => {
   const origin = 'chrome-extension://example/';
   assert.equal(core.exception({ stack: 'Error secret\n at https://c.liepin.com/app.js:1:2' }, origin).stack, '');
   const result = core.exception({ name: 'TypeError', message: 'resume', stack: `TypeError: resume\n at privateName (${origin}content.js:10:2)\n at https://host/a:2:3` }, origin);
-  assert.equal(result.stack, 'content.js:10:2'); assert.ok(!JSON.stringify(result).includes('resume'));
+  // #497 The message is carried apart, for the private layer only; nothing public has it.
+  const { message, ...shown } = result;
+  assert.equal(result.stack, 'content.js:10:2'); assert.ok(!JSON.stringify(shown).includes('resume')); assert.equal(message, 'resume');
 });
 
 test('fill auto triggers and exclusions', () => {
@@ -212,7 +217,10 @@ test('router rejects foreign senders and binds exact previews to one privileged 
     await message({ type: 'FEEDBACK_AUTO', report: { ...crash, stack: '' } }, content); assert.equal(calls.length, 0);
     await message({ type: 'FEEDBACK_AUTO', report: crash }, content); assert.equal(calls.length, 1);
     assert.match(calls[0].user_description, /^host: c\.liepin\.com$/m);
-    assert.ok(!JSON.stringify(calls[0]).includes('private'));
+    // #497 Nothing of the tab's address anywhere: not in what may be published, not in the private layer.
+    const { private_diagnostics: hidden, ...shown } = calls[0];
+    assert.ok(!JSON.stringify(shown).includes('private'));
+    assert.ok(!hidden.includes('private') && !hidden.includes('liepin'), hidden);
     const stolen = await message({ type: 'FEEDBACK_PREVIEW', description: '按钮不可用', tabId: 1 });
     assert.equal((await message({ type: 'FEEDBACK_SEND', token: stolen.token }, { ...page, documentId: 'doc-b' })).ok, false);
     const draft = await message({ type: 'FEEDBACK_PREVIEW', description: '按钮不可用', tabId: 1 });
@@ -408,7 +416,7 @@ test('[来源] carries the install type for automatic and manual reports; an unk
     const f = await fixture({ install: async () => type });
     await f.service.setConsent(true);
     await f.service.automatic(crash, 'c.liepin.com');
-    assert.match(f.calls[0].payload.user_description, new RegExp(`\\[来源\\]\\napp_version: 0\\.4\\.1\\nos: macOS / Edge 140\\ninstall: ${type}\\nhost: c\\.liepin\\.com`));
+    assert.match(f.calls[0].payload.user_description, new RegExp(`\\[来源\\]\\napp_version: 0\\.4\\.1\\nos: macOS / Edge 140\\ninstall: ${type}\\nbuild: dev\\nhost: c\\.liepin\\.com`));
     await f.service.ready();
     assert.match(f.service.preview({ description: '按钮不可用' }).user_description, new RegExp(`^install: ${type}$`, 'm'));
   }
@@ -421,7 +429,7 @@ test('[来源] carries the install type for automatic and manual reports; an unk
     assert.equal(f.calls.length, 1, 'the report still goes out');
     const text = f.calls[0].payload.user_description;
     assert.doesNotMatch(text, /install:|张三|evil|store/);
-    assert.match(text, /^os: macOS \/ Edge 140\nhost: c\.liepin\.com$/m);
+    assert.match(text, /^os: macOS \/ Edge 140\nbuild: dev\nhost: c\.liepin\.com$/m);
   }
   // A page cannot supply it.
   const f = await fixture({ install: async () => 'normal' });

@@ -199,7 +199,7 @@ function page(t, { body = `<main>${FORM}</main>`, answers, setup }) {
         if (["ENSURE_AI_HOST", "AI_HOST_READY"].includes(message.type)) return { ready: true };
         return message.type === "AI_FILL" ? fill(message) : {};
       } },
-    storage: { local: { get: async () => ({}), set: async () => {} }, session: { get: async () => ({}), set: async () => {} },
+    storage: { local: { get: async (key) => (key === "feedbackStateV1" ? { feedbackStateV1: { consent: true, consentVersion: 3 } } : {}), set: async () => {} }, session: { get: async () => ({}), set: async () => {} },
       onChanged: { addListener() {} } }
   };
   const context = dom.getInternalVMContext();
@@ -226,13 +226,15 @@ test("一键填写 on an antd form with a field named id scans every field and f
   assert.deepEqual(p.reports, []);
 });
 
-// 代码异常报告：错误类型和本扩展代码的位置，没有异常原文。
+// 代码异常报告：错误类型和本扩展代码的位置，公开的部分没有异常原文。原文（#497）单独带着，只给私有层用。
 function exceptionReport(p) {
   const exception = p.reports.find((report) => report.kind === "exception");
   assert.ok(exception, JSON.stringify(p.reports));
   assert.equal(exception.name, "TypeError");
   assert.match(exception.stack, /^field-scan\.js:\d+:\d+(?:\n[a-z-]+\.js:\d+:\d+)*$/);
-  assert.doesNotMatch(JSON.stringify(exception), /boom/);
+  const { message, ...shown } = exception;
+  assert.doesNotMatch(JSON.stringify(shown), /boom/);
+  assert.equal(message, "boom from the page");
   return exception;
 }
 
@@ -269,6 +271,10 @@ test("一键填写 where no control can be read is a scan error, not a page that
   assert.equal(lines.page_type, "application_form");
   assert.equal(lines.dom_inputs, "4");
   assert.equal(lines.drop_reasons, "scan_error=4");
+  // #497 公开部分只有异常类型；原文脱敏后进私有层。
+  assert.equal(lines.exception_type, "TypeError");
+  assert.doesNotMatch(failed.diagnostics, /boom/);
+  assert.match(failed.private, /^--- 私有诊断 v1 ---\n\[异常\]\ntype: TypeError\nmessage: boom from the page$/);
   assert.match(p.ui.diag.value, /扫描出错：TypeError（field-scan\.js:\d+:\d+）/);
 });
 

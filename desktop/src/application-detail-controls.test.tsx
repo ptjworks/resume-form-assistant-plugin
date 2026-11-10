@@ -296,9 +296,11 @@ test("an empty archive gives the whole page to the empty state", async () => {
   expect(document.getElementById("apps-msg")!.textContent).toBe("");
 });
 
-test("the top bar keeps every route and the install entry, without a fixed version or avatar", () => {
-  const routes = Array.from(document.querySelectorAll<HTMLElement>(".topbar [data-route]"), (node) => node.textContent);
-  expect(routes).toEqual(["申请", "简历", "招聘通知", "待办", "心得", "设置"]);
+test("the top bar shows the workspace routes, publisher, support and install entries", () => {
+  const routes = Array.from(document.querySelectorAll<HTMLElement>(".topbar [data-route]"), (node) => node.textContent?.trim());
+  expect(routes).toEqual(["申请", "简历", "招聘通知", "待办", "心得", "设置", "支持开发"]);
+  expect(document.querySelector(".brand-publisher")?.textContent?.trim()).toBe("PTJ Works");
+  expect(document.getElementById("nav-support")!.getAttribute("aria-controls")).toBe("view-support");
   expect(document.getElementById("nav-install-extension")).toBeTruthy();
   const version = document.getElementById("app-version")!;
   expect(version.hidden).toBe(true);

@@ -558,8 +558,52 @@
     return { parts, nodes, stats, redact, titles, clues };
   }
 
+  // #497 错误报告私有层里的页面大纲：只取出错字段（targets 里的元素）所在区块的标题和它们前后各 EXCERPT_AROUND 行，
+  // 出错的那一行行首写「>」。和 build 同一套控件、同一套脱敏。选项有一项被藏成「〔内容〕」时，藏起来的那项多半就是
+  // 资料里的值，等于标出了要选哪一项：这种选项列表整段换成「（略）」；复选框自己的文字一律不带。
+  const EXCERPT_AROUND = 3;
+  const EXCERPT_CHARS = 2500;
+  function excerpt(doc, targets, options = {}) {
+    const wanted = new Set(Array.from(targets || []).filter(Boolean));
+    if (!wanted.size) return "";
+    const built = build(doc, { ...options, maxChars: Number.MAX_SAFE_INTEGER, maxParts: 1 });
+    const refs = new Set();
+    for (const [ref, item] of built.nodes) {
+      if (item.type !== "control") continue;
+      if ([item.element, ...(item.elements || []), item.root].some(el => el && wanted.has(el))) refs.add(ref);
+    }
+    if (!refs.size) return "";
+    const lines = built.parts.map(part => part.text).join("\n").split("\n");
+    const keep = new Set();
+    let header = -1;
+    lines.forEach((line, at) => {
+      if (line.startsWith("[区块]")) { header = at; return; }
+      const ref = /^ {2}(e\d+) /.exec(line)?.[1];
+      if (!ref || !refs.has(ref)) return;
+      if (header >= 0) keep.add(header);
+      for (let near = Math.max(header + 1, at - EXCERPT_AROUND); near <= Math.min(lines.length - 1, at + EXCERPT_AROUND); near += 1) {
+        if (lines[near].startsWith("[区块]")) break;
+        keep.add(near);
+      }
+    });
+    const out = [];
+    let last = -1;
+    for (const at of [...keep].sort((a, b) => a - b)) {
+      if (last >= 0 && at > last + 1) out.push("  …");
+      let line = lines[at].replace(/ 选项="[^"]*"/, match => (match.includes(REDACTED) ? " 选项=（略）" : match));
+      // 复选框自己的文字是 lineFor 里前面带空格的那一段引号（ph="…" 的引号前是等号）。
+      if (/^ {2}e\d+ checkbox\b/.test(line)) line = line.replace(/ "[^"]*"/, "");
+      const ref = /^ {2}(e\d+) /.exec(line)?.[1];
+      if (ref && refs.has(ref)) line = `>${line.slice(1)}`;
+      out.push(line);
+      last = at;
+    }
+    const text = out.join("\n");
+    return text.length > EXCERPT_CHARS ? text.slice(0, Math.max(0, text.lastIndexOf("\n", EXCERPT_CHARS))) : text;
+  }
+
   const api = { MAX_SEGMENT, MAX_CHARS, MAX_PARTS, MAX_BUTTON_TEXT, REDACTED, build, createRedactor, sensitiveShape, domKindOf, describeButton,
-    libraryOf, normalizeForOverlap };
+    libraryOf, normalizeForOverlap, excerpt };
   scope.ResumeProPageOutline = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);

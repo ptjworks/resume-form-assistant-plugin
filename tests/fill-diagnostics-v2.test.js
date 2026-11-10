@@ -68,7 +68,7 @@ test("the allowlist keeps the new values and drops anything else, including resu
     "[未填字段]",
     "- 学历: input[text] opened=listbox options=1+ reason=no_option_match",
     "- 专业: input[text] opened=tree options=0 reason=no_option_match",
-    "- 当前城市: input[text] opened=listbox options=13 reason=no_option_match",
+    "- 现居住地: input[text] opened=listbox options=13 reason=no_option_match",
     "- 学校: input[text] opened=张三 options=200 options=12 options=1 options=2+ options=1++ options=-1 opened=https://evil.example options=13800138000 opened=示例大学",
     "- （字段名已隐藏）: div opened=none"
   ].join("\n");
@@ -79,9 +79,9 @@ test("the allowlist keeps the new values and drops anything else, including resu
     "", "[未填字段]",
     "- 学历: input[text] opened=listbox options=1+ reason=no_option_match",
     "- 专业: input[text] opened=tree options=0 reason=no_option_match",
-    "- 当前城市: input[text] opened=listbox reason=no_option_match",
+    "- 现居住地: input[text] opened=listbox reason=no_option_match",
     "- 学校: input[text]",
-    "- （字段名已隐藏）: div opened=none"
+    "- unknown: div opened=none"
   ].join("\n"));
 });
 
@@ -93,13 +93,13 @@ test("the worker drops an option count a page puts in: only options=0 and option
     fetchImpl: async (_url, request) => { bodies.push(JSON.parse(request.body)); return new Response('{"ok":true,"id":"x"}'); } });
   await worker.setConsent(true);
   await worker.automatic({ kind: "fill_failed", diagnostics: ["[错误]", "error_category: fill_rejected", "", "[未填字段]",
-    "- 当前城市: input[text] opened=listbox options=13 reason=no_option_match",
+    "- 籍贯户口: input[text] opened=listbox options=13 reason=no_option_match",
     "- 现居住地: input[text] opened=tree options=5 options=200 reason=no_option_match",
     "- 学校: input[text] opened=listbox options=1+ reason=no_option_match",
     "- 专业: input[text] opened=component options=0 reason=no_option_match"].join("\n") }, "jobs.example.test");
   assert.equal(bodies.length, 1);
   const sent = bodies[0].user_description;
-  assert.match(sent, /^- 当前城市: input\[text\] opened=listbox reason=no_option_match$/m);
+  assert.match(sent, /^- 籍贯户口: input\[text\] opened=listbox reason=no_option_match$/m);
   assert.match(sent, /^- 现居住地: input\[text\] opened=tree reason=no_option_match$/m);
   assert.match(sent, /^- 学校: input\[text\] opened=listbox options=1\+ reason=no_option_match$/m);
   assert.match(sent, /^- 专业: input\[text\] opened=component options=0 reason=no_option_match$/m);
@@ -422,10 +422,10 @@ test("unfilled custom selects tell 'never opened', 'opened empty' and 'opened wi
       diagnostics: diag({ ruleMatches: 4, aiFields: 0, promptBytes: 0 }) }) });
   assert.deepEqual(reports.map(item => item.kind), ["fill_failed"]);
   const block = reports[0].diagnostics;
-  assert.match(block, /^- 学历: input\[text\] opened=none reason=options_not_rendered$/m);
-  assert.match(block, /^- 学校: input\[text\] opened=listbox options=1\+ reason=no_option_match$/m);
-  assert.match(block, /^- 现居住地: input\[text\] opened=tree options=0 reason=no_option_match$/m);
-  assert.match(block, /^- 专业: input\[text\] opened=component reason=no_option_match$/m, "not looked at is not options=0");
+  assert.match(block, /^- 学历: input\[text\] opened=none form=dropdown reason=options_not_rendered$/m);
+  assert.match(block, /^- 学校: input\[text\] opened=listbox options=1\+ form=dropdown reason=no_option_match$/m);
+  assert.match(block, /^- 现居住地: input\[text\] opened=tree options=0 form=dropdown reason=no_option_match$/m);
+  assert.match(block, /^- 专业: input\[text\] opened=component form=dropdown reason=no_option_match$/m, "not looked at is not options=0");
   assert.equal(lineOf(block, "custom_controls"), "4");
   assert.equal(lineOf(block, "custom_libraries"), "generic=4");
   assert.equal(lineOf(block, "ai_tier"), "-", "the rules matched everything; the AI was not called");
@@ -442,9 +442,9 @@ test("a select that stops before the plugin opens it says nothing about its popu
     respond: message => ({ success: true, matches: message.formFields.map((field, index) => ({ fieldId: field.fieldId, value: ["女", "本科", "示例大学"][index] })),
       diagnostics: diag({ ruleMatches: 3, aiFields: 0, promptBytes: 0 }) }) });
   const block = reports[0].diagnostics;
-  assert.match(block, /^- 性别: input\[text\] reason=control_disabled$/m);
-  assert.match(block, /^- 学历: input\[text\] reason=unsupported_control$/m);
-  assert.match(block, /^- 学校: input\[text\] opened=none reason=cascade_timeout$/m, "a cascader that never opened did try");
+  assert.match(block, /^- 性别: input\[text\] form=dropdown reason=control_disabled$/m);
+  assert.match(block, /^- 学历: input\[text\] form=dropdown reason=unsupported_control$/m);
+  assert.match(block, /^- 学校: input\[text\] opened=none form=dropdown reason=cascade_timeout$/m, "a cascader that never opened did try");
 });
 
 test("a custom control the diagnostics cannot describe is left out of the count, and the fill goes on", async () => {
@@ -492,7 +492,7 @@ test("a fill on a page full of personal data leaves none of it in the report, th
   for (const text of [JSON.stringify(reports), report, sentBody]) {
     for (const value of PRIVATE) assert.ok(!text.includes(value), `${value} leaked`);
   }
-  assert.match(sentBody, /^- （字段名已隐藏）: input\[text\] opened=listbox options=1\+ reason=no_option_match$/m);
+  assert.match(sentBody, /^- 学校: input\[text\] opened=listbox options=1\+ form=dropdown reason=no_option_match$/m);
   assert.match(sentBody, /^install: development$/m);
 });
 
@@ -566,10 +566,11 @@ test("a city select loaded for the province picked from the resume carries no co
       await worker.setConsent(true);
       await worker.automatic(reports[0], "jobs.example.test");
       assert.equal(bodies.length, 1);
-      const line = text => text.split("\n").find(item => item.startsWith("- 当前城市: "));
+      // #497 The line names the field's kind; how long the popup took varies from run to run, so only its presence counts.
+      const line = text => text.split("\n").find(item => item.startsWith("- 现居住地: "))?.replace(/ (?:open|wait)_ms=\d+/g, "");
       // The panel's block, the report the page hands the worker, and what the worker sends.
       lines.push(line(report), line(reports[0].diagnostics), line(bodies[0]));
     }
-    assert.deepEqual([...new Set(lines)], [`- 当前城市: input[text] opened=${opened} options=1+ reason=no_option_match`], kind);
+    assert.deepEqual([...new Set(lines)], [`- 现居住地: input[text] opened=${opened} options=1+ form=dropdown search=${kind === "beisen" ? "yes" : "no"} remote=no multi=no spinner=no reason=no_option_match`], kind);
   }
 });

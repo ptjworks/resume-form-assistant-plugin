@@ -1,0 +1,80 @@
+[
+  {
+    "name": "fill_failed 0.4.4",
+    "item": {
+      "app": "resume-form-assistant-plugin",
+      "app_version": "0.4.4",
+      "error_type": "fill_failed",
+      "error_stack": "",
+      "user_description": "--- 诊断信息 v1 ---\n[来源]\napp_version: 0.4.4\nos: Windows 10\ninstall: normal\nhost: campus.example.com.cn\n\n[结果]\nerror_category: dropdown_no_option\nfirst_failing_stage: select\nerror_code: http_503",
+      "anonymous_id": "anon-1",
+      "client_ts": "2026-10-20T08:00:00.000Z"
+    },
+    "expected": "v2:d4b5992b092d9709"
+  },
+  {
+    "name": "fill_partial 0.5.0",
+    "item": {
+      "app": "resume-form-assistant-plugin",
+      "app_version": "0.5.0",
+      "error_type": "fill_partial",
+      "error_stack": "",
+      "user_description": "--- 诊断信息 v1 ---\n[来源]\napp_version: 0.5.0\nos: Windows 10\ninstall: normal\nhost: campus.example.com.cn\n\n[结果]\nerror_category: dropdown_no_option\nfirst_failing_stage: select\nerror_code: timeout",
+      "anonymous_id": "anon-2",
+      "client_ts": "2026-11-01T08:00:00.000Z"
+    },
+    "expected": "v2:75fa929e951a0b1a"
+  },
+  {
+    "name": "manual 0.4.4",
+    "item": {
+      "app": "resume-form-assistant-plugin",
+      "app_version": "0.4.4",
+      "error_type": "manual",
+      "error_stack": "",
+      "user_description": "下拉框选不上\n--- 诊断信息 v1 ---",
+      "anonymous_id": "anon-3",
+      "client_ts": "2026-10-21T09:30:00.000Z"
+    },
+    "expected": "v2:1e66a2a12ba6f7fd"
+  },
+  {
+    "name": "exception 0.4.4",
+    "item": {
+      "app": "resume-form-assistant-plugin",
+      "app_version": "0.4.4",
+      "error_type": "TypeError",
+      "error_stack": "content.js:12:34\nfield-scan.js:56:78",
+      "user_description": "TypeError: 未处理的代码异常",
+      "anonymous_id": "anon-4",
+      "client_ts": "2026-10-22T10:00:00.000Z"
+    },
+    "expected": "v2:65ca12042f2479e6"
+  },
+  {
+    "name": "desktop panic 0.4.3",
+    "item": {
+      "app": "resume-form-assistant-desktop",
+      "app_version": "0.4.3",
+      "error_type": "panic",
+      "error_stack": "src/main.rs:10:5",
+      "user_description": "",
+      "anonymous_id": "anon-5",
+      "client_ts": "2026-10-23T11:00:00.000Z"
+    },
+    "expected": "v2:74153715600c8362"
+  },
+  {
+    "name": "unreadable version",
+    "item": {
+      "app": "resume-form-assistant-plugin",
+      "app_version": "dev",
+      "error_type": "fill_failed",
+      "error_stack": "",
+      "user_description": "--- 诊断信息 v1 ---\n[来源]\napp_version: 0.4.4\nos: Windows 10\ninstall: normal\nhost: campus.example.com.cn\n\n[结果]\nerror_category: dropdown_no_option\nfirst_failing_stage: select\nerror_code: http_503",
+      "anonymous_id": "anon-6",
+      "client_ts": "2026-10-24T12:00:00.000Z"
+    },
+    "expected": "v2:d4b5992b092d9709"
+  }
+]

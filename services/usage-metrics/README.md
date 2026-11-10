@@ -52,7 +52,7 @@ node scripts/report.mjs --local
 ## 3. 维护者：测试环境部署顺序
 
 1. 先确认代码评审版本和目标资源。#267、#270、#272、#274 已依次合入 main；邮件日报 #281 在独立分支评审和测试后再部署。
-2. 将 `wrangler.test.example.json` 复制为已忽略的 `wrangler.test.json`，填入共享条目的非敏感 account_id、database_id，核对 Worker/D1 名称和 `DB` 绑定。保持 `METRICS_ENABLED=false`。
+2. 将 `wrangler.test.example.json` 复制为已忽略的 `wrangler.test.json`，填入共享条目的非敏感 account_id、database_id，核对 Worker/D1 名称和 `DB` 绑定。保持 `METRICS_ENABLED=false`。示例里的 `routes`（自定义域名）和 `"workers_dev": true` 都不要删，删了会解绑新域名或关掉旧地址。
 3. 为 ACTIVITY_LIMITER 选择账号内未与其他服务共用的数字 namespace_id；测试/生产不同。默认 60 次/分钟/来源 IP 的短期键是近似、每个 Cloudflare 位置的限流，不是全球精确额度，也不是费用硬上限。
 4. 维护者通过自己的安全登录/环境配置使用管理 Token，不把值填进配置文件。先应用业务迁移，再设置独立随机 HMAC Key，然后部署经审核的源码。
 
@@ -70,7 +70,7 @@ secret put 使用交互输入，由维护者生成高熵密钥（建议随机 32
 6. 核对日志自动采集已关闭、无 Tail/Trace 记录请求体或标识；D1 写入权限与数据库指向符合目标。管理 Token 属于管理权限，不用于活动请求。
 7. 仅在隔离测试环境把 METRICS_ENABLED 改为 true 并重新部署，使用虚构数据验证 POST/DELETE、同机去重、410、非法字段、超大请求与 429。部署后自测地址必须普通 HTTPS 客户端可访问，不能要求管理员 Access 登录或浏览器验证码。
 8. Cron 配置为 `10 0 * * *`（北京时间 08:10）。先让一次任务成功，或通过维护者测试方法触发；核对 maintenance_state 的 summary、cleanup、downloads。
-9. 返回测试地址、部署提交、DB/Secret/限流/Cron 的配置确认和不含真实编号的测试证据。当前已知测试地址为 `https://resume-usage-metrics-test.nebula-lab.workers.dev`。测试服务部署后 `/health` 已返回 200；部署传播期间不同请求可能暂时命中旧版本，测试须区分旧版本的 metrics_disabled 响应与新版本功能缺陷。网络连接失败不等于业务接口失败。
+9. 返回测试地址、部署提交、DB/Secret/限流/Cron 的配置确认和不含真实编号的测试证据。当前测试地址为 `https://metrics-test.19991107.xyz`（自定义域名，统计验收包用它），原来的 `https://resume-usage-metrics-test.nebula-lab.workers.dev` 仍然可用。正式地址为 `https://metrics.19991107.xyz`，旧的 `workers.dev` 地址留给已发布的版本，见 [production-runbook.md](production-runbook.md)。`workers.dev` 在国内被 DNS 污染，客户端只用自定义域名。测试服务部署后 `/health` 已返回 200；部署传播期间不同请求可能暂时命中旧版本，测试须区分旧版本的 metrics_disabled 响应与新版本功能缺陷。网络连接失败不等于业务接口失败。
 
 只读远端报表由维护者执行：
 

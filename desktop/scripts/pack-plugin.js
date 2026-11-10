@@ -43,6 +43,7 @@ export const PLUGIN_ARCHIVE_OPERANDS = [
   "site-knowledge.js",
   "upload-slots.js",
   "feedback-core.js",
+  "build.mjs",
   "usage-signals.js",
   "usage-ui.js",
   "usage-ui.css",
@@ -108,6 +109,18 @@ function pluginTreeOf(root, commit) {
   }
 }
 
+/**
+ * 构建标识（#497）：仓库里的 `build.mjs` 写的是 `dev`，包里换成打包的提交号前 8 位，
+ * 插件错误报告的 [来源] 靠它分开发布包和本地加载的开发版。
+ */
+export const BUILD_FILE = "build.mjs";
+export function buildStamp(commit) {
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(commit)) {
+    throw new Error(`${commit} 不是完整的提交号`);
+  }
+  return `// Written by desktop/scripts/pack-plugin.js: the commit this release zip was packed from.\nexport const BUILD = "${commit.slice(0, 8)}";\n`;
+}
+
 /** 拼一棵包根目录的树：插件目录下的清单条目，加上仓库根目录的 `REPO_ROOT_ENTRIES`。 */
 function archiveTree(root, commit) {
   const plugin = PLUGIN_ARCHIVE_OPERANDS.filter((entry) => !REPO_ROOT_ENTRIES.includes(entry));
@@ -115,7 +128,12 @@ function archiveTree(root, commit) {
   const entries = [
     ...lines(git(root, ["ls-tree", pluginTreeOf(root, commit), "--", ...plugin])),
     ...lines(git(root, ["ls-tree", commit, "--", ...repo])),
-  ];
+  ].map((line) => {
+    // build.mjs 换成写着提交号的那一份，其余原样。
+    if (line.slice(line.indexOf("\t") + 1) !== BUILD_FILE) return line;
+    const blob = git(root, ["hash-object", "-w", "--stdin"], buildStamp(commit)).trim();
+    return `100644 blob ${blob}\t${BUILD_FILE}`;
+  });
   // git archive 碰到不存在的路径会报错，ls-tree 只会静默跳过，这里补上同样的检查。
   const names = new Set(entries.map((line) => line.slice(line.indexOf("\t") + 1)));
   const missing = PLUGIN_ARCHIVE_OPERANDS.filter((entry) => !names.has(entry));
