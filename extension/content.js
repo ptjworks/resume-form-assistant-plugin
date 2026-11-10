@@ -4944,7 +4944,7 @@
       `结果：${({ success: "完成", partial: "部分完成", failed: "失败" })[outcome] || "未知"}；错误类别：${category}；失败阶段：${stage}`,
       ...(fault ? [`扫描出错：${fault.name}${fault.stack ? `（${fault.stack.split("\n")[0]}）` : ""}`] : []),
       `页面类型：${pageType}；扫描时已加载完：${result.readyAtScan === true ? "是" : result.readyAtScan === false ? "否" : "未取得"}`,
-      `输入框：页面共 ${count(stats.domInputs)} → 可见可填 ${count(stats.visible)} → 进入匹配 ${count(result.fieldCount)}`
+      `输入控件：页面共 ${count(stats.domInputs)} → 可见可填 ${count(stats.visible)} → 进入匹配 ${count(result.fieldCount)}`
         + ` → 匹配 ${count(result.matched)} → 填入 ${count(result.filledCount)}`,
       ...(drops.length ? [`丢弃原因：${drops.map(([key, value]) => `${dropLabels[key] || key} ${value}`).join("、")}`] : []),
       ...formatScanStats(result.stats, feedback),
@@ -5229,7 +5229,7 @@
   // 页头页脚的不算）。都只给侧栏诊断、零字段提示和深度分析入口用，不进上报。
   function scanStats(scans, fields) {
     const list = scans || fillDocuments().map(({ doc }) => ({ doc, scan: null, before: 0 }));
-    const all = list.flatMap(({ doc }) => Array.from(doc.querySelectorAll("input, select, textarea")))
+    const all = list.flatMap(({ doc, scan }) => [...doc.querySelectorAll("input, select, textarea"), ...(scan?.bossRoots || [])])
       .filter((element) => !element.closest?.(`#${SIDEBAR_ID}`));
     let typeHidden = 0;
     let nonFillable = 0;
@@ -5239,7 +5239,8 @@
       const type = isInputElement(element) ? String(element.type || "").toLowerCase() : "";
       if (type === "hidden") typeHidden += 1;
       else if (["file", "button", "submit", "reset", "image"].includes(type)) nonFillable += 1;
-      else if (element.disabled) disabled += 1;
+      else if (element.disabled || (element.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com"
+        && (element.closest?.("form.ui-form .form-item.lock") || element.matches?.(".ui-select.ui-select-disabled, .ui-select[aria-disabled='true']")))) disabled += 1;
       else if (isVisible(element)) visible += 1;
     }
     const count = (value) => Number.isInteger(value) && value > 0 ? value : 0;

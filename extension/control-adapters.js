@@ -76,10 +76,14 @@
       if (ctx.kind === 'checkbox' && ctx.el.type !== 'checkbox') return 'unsupported_control';
       if (ctx.kind === 'radio' && ctx.nodes.some(el => ctx.customRadio ? isInput(el) : el.type !== 'radio')) return 'unsupported_control';
       if (ctx.kind !== 'radio' && ctx.nodes.some(el => el.disabled)) return 'control_disabled';
+      if (ctx.el.ownerDocument?.location?.hostname === 'xiaoyuan.zhipin.com'
+        && ctx.el.closest('form.ui-form .form-item.lock')) return 'control_disabled';
       if (['custom-select', 'cascader'].includes(ctx.kind)) {
-        const root = scope.ResumeProCustomControls?.describe(ctx.entry).root;
+        const info = scope.ResumeProCustomControls?.describe(ctx.entry);
+        const root = info?.root;
         if (!root?.isConnected || !root.contains(ctx.el)) return 'element_disconnected';
         if (root.getAttribute('aria-disabled') === 'true' || root.matches(antd(root, '.ant-select-disabled, .ant-cascader-disabled, .is-disabled, .arco-select-disabled, .arco-cascader-disabled, .layui-select-disabled'))) return 'control_disabled';
+        if (info.library === 'boss' && root.classList.contains('ui-select-disabled')) return 'control_disabled';
       }
       if (ctx.kind === 'date' && ['date', 'month', 'datetime-local', 'time', 'week'].includes(ctx.el.type) && ctx.el.readOnly) return 'unsupported_control';
       if (ctx.options.isCurrent && !ctx.options.isCurrent()) return 'cancelled';
@@ -122,7 +126,8 @@
     function click(el, ctx, committing = false) {
       const reason = stop(ctx, true);
       if (reason) return reason;
-      const disabled = () => el.disabled || Boolean(el.closest?.(antd(el, '[aria-disabled="true"], .ant-select-item-option-disabled, .ant-cascader-menu-item-disabled, .is-disabled, .arco-select-option-disabled, .arco-cascader-list-item-disabled')));
+      const disabled = () => el.disabled || Boolean(el.closest?.(antd(el, '[aria-disabled="true"], .ant-select-item-option-disabled, .ant-cascader-menu-item-disabled, .is-disabled, .arco-select-option-disabled, .arco-cascader-list-item-disabled')))
+        || (Boolean(el.closest?.('.ui-select-item-disabled')) && scope.ResumeProCustomControls?.describe(ctx.entry).library === 'boss');
       if (disabled()) return 'control_disabled';
       // ARIA/component markup does not authorize form submission or reset.
       const submits = () => ['BUTTON', 'INPUT'].includes(el.tagName) && ['submit', 'reset', 'image'].includes(el.type)

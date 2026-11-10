@@ -4,6 +4,7 @@
   const ROOTS = '.ant-select, .ant-cascader, .el-select, .el-cascader, .arco-select, .arco-cascader, .layui-form-select';
   const SHELLS = '.ant-select-dropdown, .ant-cascader-dropdown, .el-select__popper, .el-select-dropdown, .el-cascader__dropdown, .arco-select-popup, .arco-cascader-popup, .arco-trigger-popup';
   const POPUPS = `${SHELLS}, [role="listbox"], [role="tree"]`;
+  const BOSS_POPUP = '.ui-select-dropdown';
   // #301 antd 换了类名前缀（飞书招聘 atsx-，见 antd-prefix.js）：选择器里的 .ant- 按节点所在文档的前缀展开。
   const antd = (node, selector) => scope.ResumeProAntdPrefix?.css(node, selector) ?? selector;
   const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -152,6 +153,10 @@
   function describe(target) {
     const el = target?.element || target;
     if (yuiBox(el)) return { el, root: target?.root || el, combo: el, library: 'yui', cascade: false, multiple: false };
+    const boss = isBossCampus(el?.ownerDocument) ? el.closest?.('form.ui-form .form-item .ui-select') : null;
+    const bossTrigger = boss?.querySelector(':scope > .ui-select-selection');
+    if (bossTrigger) return { el, root: boss, combo: bossTrigger, library: 'boss', cascade: false,
+      multiple: boss.classList.contains('ui-select-multiple') };
     const root = el?.closest?.(antd(el, ROOTS)) || target?.root || el;
     let library = root?.matches?.(antd(root, '.ant-select, .ant-cascader')) ? 'antd'
       : root?.matches?.('.el-select, .el-cascader') ? 'element'
@@ -165,6 +170,18 @@
       || root?.matches?.(antd(root, '.ant-select-multiple, .el-select--multiple, .arco-select-multiple'))
       || Boolean(root?.querySelector?.(antd(root, '.ant-select-selection-overflow, .ant-select-selection--multiple, .el-select__tags, .el-select__selection .el-tag, .arco-select-view-tag')));
     return { el, root, combo, library, cascade: Boolean(cascade), multiple: Boolean(multiple) };
+  }
+  function isBossCampus(doc) {
+    return doc?.location?.hostname === 'xiaoyuan.zhipin.com';
+  }
+
+  function bossValueInput(info) {
+    return info.combo.querySelector(':scope > input[type="hidden"]');
+  }
+
+  function bossSchoolRegion(info) {
+    if (!info.root.matches('.combo-input-container > .content > .ui-select')) return null;
+    return trim(info.root.parentElement.parentElement.querySelector(':scope > .ui-dropmenu > .ui-dropmenu-label')?.textContent);
   }
   // #269 联想输入框（智联学校名称、#299 51job 的 el-autocomplete）：本来就允许直接输入。
   // 只认组件类名写明是联想输入框的；单有 aria-autocomplete 的可能是只能从列表里选的下拉。
@@ -220,6 +237,12 @@
   function selectedTexts(info) {
     const { root, el, library, cascade } = info;
     if (!root?.isConnected) return null;
+    if (library === 'boss') {
+      const labels = Array.from(info.combo.querySelectorAll('.ui-select-selected-value')).filter(shown).map(node => trim(node.textContent)).filter(Boolean);
+      if (labels.length) return labels;
+      const input = info.combo.querySelector('input.ui-select-input');
+      return input && trim(input.value) && bossValueInput(info)?.value ? [trim(input.value)] : [];
+    }
     // 多选（#429）：一个标签一项；读不全（「+ 2」这类折起来的）时返回 null。
     if (info.multiple && !cascade && ['antd', 'element'].includes(library)) {
       const tags = multiTags(info);
@@ -287,6 +310,7 @@
     // 那是插件自己的操作，不能被写入前复查当成用户改了字段。
     // Element 的输入框里就是已选文字（展开时清空），已经由 selection 表示。
     return JSON.stringify({ selection: selectedTexts(info),
+      ...(info.library === 'boss' ? { committed: bossValueInput(info)?.value ?? null, region: bossSchoolRegion(info) } : {}),
       query: info.el.tagName === 'INPUT' && info.library !== 'element' ? String(info.el.value ?? '') : null });
   }
   function hasExistingValue(target) {
@@ -318,6 +342,7 @@
     const View = doc.defaultView;
     const floating = node => ['absolute', 'fixed'].includes(View?.getComputedStyle(node).position);
     const shells = new Set([...popups(doc, visible), ...Array.from(doc.querySelectorAll(antd(doc, FLOATING))).filter(visible)]);
+    if (isBossCampus(doc)) doc.querySelectorAll(BOSS_POPUP).forEach(node => { if (visible(node)) shells.add(node); });
     const worded = Array.from(doc.querySelectorAll(FLOATING_WORDS)).filter(node => !shells.has(node) && trim(node.textContent) && visible(node) && floating(node));
     // 组件库的弹层外壳一块只装一个弹层，里面重画了也还是旧的；只按类名里的词认出的可能是网页放弹层的常驻外壳，记下里面原有的元素。
     for (const layer of worded) {
@@ -325,6 +350,19 @@
       if (nodes.length <= LAYER_NODES_MAX) layerNodes.set(layer, new WeakSet(nodes));
     }
     return new Set([...shells, ...worded]);
+  }
+  function bossPopup(info, h) {
+    if (!info.root.classList.contains('ui-select-visible')) return null;
+    const local = Array.from(info.root.querySelectorAll(BOSS_POPUP))
+      .filter(node => node.closest('.ui-select') === info.root && h.visible(node));
+    const nearby = node => {
+      const a = info.combo.getBoundingClientRect(), b = node.getBoundingClientRect();
+      return a.width > 0 && b.width > 0 && a.left < b.right && a.right > b.left
+        && Math.min(Math.abs(a.bottom - b.top), Math.abs(a.top - b.bottom)) <= 24;
+    };
+    const layers = local.length ? local : Array.from(info.el.ownerDocument.querySelectorAll('.ui-select-dropdown-transfer[data-transfer="true"]'))
+      .filter(node => !node.closest('.ui-select') && h.visible(node) && !staleLayer(node, info) && nearby(node));
+    return layers.length > 1 ? { reason: 'ambiguous_popup' } : layers.length === 1 ? { popup: layers[0] } : null;
   }
   // 被点开前就开着的浮层装着、或装着它的一块不是这次点开的。装着这个控件的不算：页面上常驻的大块 listbox、tree。
   // 旧浮层装着它时：组件库的外壳算旧的；只按类名里的词认出的，只有它自己点开前就在这块里才算旧的——
@@ -372,7 +410,8 @@
     const realSelector = info.library === 'antd' ? antd(popup, '.ant-select-item-option')
       : info.library === 'element' ? '.el-select-dropdown__item'
       : info.library === 'arco' ? '.arco-select-option'
-      : info.library === 'layui' ? 'dd:not(.layui-select-tips)' : '';
+      : info.library === 'layui' ? 'dd:not(.layui-select-tips)'
+      : info.library === 'boss' ? '.ui-dropdown-list .ui-select-item' : '';
     const real = realSelector ? Array.from(popup.querySelectorAll(realSelector)) : [];
     return real.length ? real : Array.from(popup.querySelectorAll('[role="option"]'));
   }
@@ -527,7 +566,8 @@
       const text = info.library === 'aria' && info.cascade ? trim(node.getAttribute('aria-label') || Array.from(node.childNodes)
         .filter(child => child.nodeType !== 1 || !child.matches('[role="group"]')).map(child => child.textContent).join(' ')) : trim(label.textContent);
       return { node, text, value: node.getAttribute('data-value') ?? node.getAttribute('value') ?? text,
-        disabled: node.getAttribute('aria-disabled') === 'true' || node.matches(antd(node, '.ant-select-item-option-disabled, .ant-cascader-menu-item-disabled, .is-disabled, .arco-select-option-disabled, .arco-cascader-list-item-disabled, .layui-disabled')) || Boolean(node.disabled) };
+        disabled: node.getAttribute('aria-disabled') === 'true' || node.matches(antd(node, '.ant-select-item-option-disabled, .ant-cascader-menu-item-disabled, .is-disabled, .arco-select-option-disabled, .arco-cascader-list-item-disabled, .layui-disabled'))
+          || (info.library === 'boss' && node.classList.contains('ui-select-item-disabled')) || Boolean(node.disabled) };
     });
   }
   // #301 虚拟列表（antd 4/5/6 默认、Element Plus el-select-v2）只画出看得见的十来项，同名的一项可能还在屏外。
@@ -1127,6 +1167,11 @@
       && (ctx.kind === 'date' || DATE_VALUE.test(desired[0]) || PRESENT.test(desired[0]));
     // 通用路线：组件上显示的已经就是要填的值（整段或中文部分完全相同），不再点开。
     // 「勾选 + 确定」式弹层右侧的「已选」栏会把已选项再列一遍，点开反而分不清两个同名选项（金发民族）。
+    if (info.library === 'boss' && !info.root.classList.contains('ui-select-visible')) {
+      const accepted = () => !info.root.classList.contains('ui-select-visible')
+        && selectedTexts(info)?.length === 1 && sameText(selectedTexts(info)[0], desired[0]);
+      if (accepted()) return { accepted };
+    }
     if (info.library === 'generic' && !dateWanted) {
       const sameAsWanted = text => {
         const full = trim(text), [first, ...rest] = full.split(/\s*\/\s*/);
@@ -1177,13 +1222,15 @@
       return list && h.visible(list) ? list : null;
     };
     const initiallyOwned = ownedPopup(info, h.visible);
-    const alreadyOpen = (info.combo.getAttribute('aria-expanded') === 'true' && initiallyOwned.popup) || layuiList();
+    const alreadyOpen = (info.combo.getAttribute('aria-expanded') === 'true' && initiallyOwned.popup) || layuiList()
+      || (info.library === 'boss' && info.root.classList.contains('ui-select-visible'));
     const trigger = info.cascade ? info.el : info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector, .ant-select-content')) || info.root
       : info.library === 'element' ? info.root.querySelector('.el-select__wrapper, .el-input') || info.root
       : info.library === 'arco' ? info.root.querySelector('.arco-select-view') || info.root : info.combo;
     state.clickedAt = Date.now();
     if (!alreadyOpen) { const reason = h.click(info.library === 'generic' ? coverOf(trigger, info) || trigger : trigger, ctx); if (reason) return { reason }; }
     const findOpened = () => {
+      if (info.library === 'boss') return bossPopup(info, h);
       if (info.library === 'generic') {
         // 新出现的弹层自己带 role=listbox 一类标记时直接用它，否则按位置和条目认。
         const marked = popups(doc, h.visible).filter(node => !before.has(node) && !node.contains(info.root) && node.querySelector('[role="option"]'));
@@ -1218,7 +1265,8 @@
       opened = await h.waitUntil(ctx, doc.documentElement, () => genericOpened(), Boolean);
     }
     let typedFirst = false, typedAt = 0;
-    const typeInto = info.library === 'generic' || info.freeText ? info.el
+    const typeInto = info.library === 'boss' ? info.combo.querySelector('input.ui-select-input')
+      : info.library === 'generic' || info.freeText ? info.el
       : ['antd', 'element'].includes(info.library) && !info.cascade && !info.root.matches(antd(info.root, '.ant-select-auto-complete, .ant-select-combobox'))
         ? Array.from(info.root.querySelectorAll('input')).find(input => safeSearch(input) && h.visible(input)) : null;
     if (typeInto && !dateWanted && opened.reason === 'verification_timeout' && safeSearch(typeInto) && h.visible(typeInto)) {
@@ -1257,8 +1305,9 @@
     // 通用路径先用弹层自带的搜索框（北森），没有才在下拉自己的输入框里输入（Moka 学校、专业）。
     const candidates = info.library === 'generic' ? [...ctx.popup.querySelectorAll('input'), info.combo, ...info.root.querySelectorAll('input')]
       : [info.combo, ...info.root.querySelectorAll('input'), ...popup.querySelectorAll('input')];
-    const searchInput = candidates.find(input => safeSearch(input) && h.visible(input));
-    const searchable = !info.cascade && searchInput && (ctx.hints.searchable === true || info.library === 'generic'
+    const searchInput = candidates.find(input => safeSearch(input) && h.visible(input) && (info.library !== 'boss'
+      || input.matches('input.ui-select-input, .select-dropdown-search input')));
+    const searchable = !info.cascade && searchInput && (ctx.hints.searchable === true || info.library === 'generic' || info.library === 'boss'
       || info.combo.getAttribute('aria-autocomplete') === 'list' || searchInput.getAttribute('aria-autocomplete') === 'list'
       || searchInput.getAttribute('role') === 'searchbox' || searchInput.type === 'search'
       || info.root.matches(antd(info.root, '.ant-select-show-search')) || Boolean(info.root.querySelector('.el-select__wrapper.is-filterable')));
@@ -1268,6 +1317,11 @@
     const optionKey = option => option.full ?? option.text;
     const seenOptions = new Set();
     const readOptions = level => {
+      if (info.library === 'boss') {
+        const current = bossPopup(info, h)?.popup;
+        if (!current) return [];
+        popup = current; ctx.popup = current; info.popup = current;
+      }
       if (info.library === 'generic' && !popup.isConnected) {
         const again = genericOpened(searchDone ? 1 : 2);
         if (again?.popup) { popup = again.popup; ctx.popup = again.layer || popup; info.popup = popup; }
@@ -1302,7 +1356,8 @@
       && Array.from(ctx.popup.querySelectorAll('[class]')).some(node => !trim(node.textContent)
         && String(node.getAttribute('class')).split(/\s+/).some(token => LOADING_TOKEN.test(token)) && h.visible(node) && !faded(node));
     const loading = () => {
-      const now = info.combo.getAttribute('aria-busy') === 'true' || popup.getAttribute('aria-busy') === 'true' || spinnerShown();
+      const now = info.combo.getAttribute('aria-busy') === 'true' || popup.getAttribute('aria-busy') === 'true' || spinnerShown()
+        || (info.library === 'boss' && Array.from(popup.querySelectorAll('.ui-dropdown-loading')).some(h.visible));
       // #497 诊断：等选项时见过加载的样子，也算后台加载。
       if (now) state.sawLoading = true;
       return now;
@@ -1336,9 +1391,13 @@
     const noSuggestions = list => info.freeText && !list.length && collapsed() && (!popup.isConnected || !h.visible(popup))
       && Date.now() - typedAt >= FREE_TEXT_SETTLE_MS;
     const chosenLabels = [], chosenValues = [];
+    const bossBefore = info.library === 'boss' ? bossValueInput(info)?.value : null;
     // 联想框（#299、#404 51job）不标出选中状态：点了建议（只会是同名的一项，见 pick）、框里换成这一项、建议框也收起了就算选上。
     // 之后的核对只看框里的字：插件打字引起的建议晚到时建议框会再弹出来。失焦后留不留得住由宿主核对，页面没收下的失焦时会还原。
     const accepted = (picking = true) => {
+      if (info.library === 'boss' && (info.root.classList.contains('ui-select-visible')
+        || (state.searchInput && info.combo.contains(state.searchInput)
+          && (!bossValueInput(info)?.value || bossValueInput(info).value === bossBefore)))) return false;
       const values = selectedTexts(info);
       if (values === null && info.freeText && info.library === 'aria') {
         return chosenLabels.length === 1 && (!picking || collapsed()) && h.helpers.normalizeText(info.el.value) === h.helpers.normalizeText(chosenLabels[0]);
@@ -1556,7 +1615,9 @@
       // 列表不全时只认同名的一项（见 partialList），没有就先搜索，搜完照样看列表全不全。
       const partial = current => partialList(current, popup, ctx.popup);
       // 联想框只选同名的一项（见 sameOption）：网页先给出的建议里没有，就打字再找；打字后还没有，交宿主按文本框写。
-      const pick = items => info.freeText ? sameOption(items, desired[level], h.helpers) : match(items, wantedIn(items, level), h.helpers, partial(items));
+      const pick = items => info.freeText ? sameOption(items, desired[level], h.helpers)
+        : info.library === 'boss' ? sameOption(items, wantedIn(items, level), h.helpers)
+        : match(items, wantedIn(items, level), h.helpers, partial(items));
       const listReady = list => (!loading() && list.length > 0 && (!generic || Date.now() - steadySince >= 300) && (!typedAntd || sameName(list) || typedSettled(steadySince)))
         || (eagerSearch && list.length === 0) || (typedAntd && noSuggestions(list));
       const waitedFrom = Date.now();
@@ -2090,14 +2151,14 @@
         // YUI 联想框没选成：失焦时它自己收起建议框；窗口不在前台时 blur() 不派发事件，就补一个 blur 给它。
         // 不按 Esc：会冒泡到外层对话框（#395）。
         if (info?.library === 'yui' && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) info.el.dispatchEvent(new info.el.ownerDocument.defaultView.FocusEvent('blur'));
-        if ((['generic', 'element'].includes(info?.library) || outcome.reason === 'cascade_unsupported') && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) {
+        if ((['generic', 'element', 'boss'].includes(info?.library) || outcome.reason === 'cascade_unsupported') && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) {
           const doc = info.el.ownerDocument, View = doc.defaultView, layer = ctx.popup;
           const dialog = dialogOf(info.root);
           if (dialog) {
             const spot = pressSpot(info.root, dialog);
             if (spot) press(spot);
           } else {
-            info.el.dispatchEvent(new View.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+            (info.library === 'boss' ? info.combo : info.el).dispatchEvent(new View.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
             const left = await h.waitUntil(ctx, doc.documentElement, () => !layer.isConnected || !h.visible(layer), Boolean, ESC_LEAVE_MS);
             if (left.reason === 'verification_timeout' && layer.isConnected && h.visible(layer) && !h.stop(ctx)) press(doc.body);
           }
@@ -2107,7 +2168,8 @@
       // 一边改 class 一边淡出，下一个相邻的下拉会把它也当成新出现的弹层，报「无法确定控件弹层」（#301 北森）。
       // 看装着选项的那一块：它不见了，外壳就算还在页面上也不会再被认成弹层。
       // AntD、Element 的下拉失败时也等：AntD 失焦后过一会儿才开始收（#301 hotjob），收起还有动画。
-      const own = state.info?.library === 'generic' || (outcome?.reason && ['antd', 'element'].includes(state.info?.library)) ? state.info.popup : null;
+      const own = ['generic', 'boss'].includes(state.info?.library)
+        || (outcome?.reason && ['antd', 'element'].includes(state.info?.library)) ? state.info.popup : null;
       const gone = () => !own.isConnected || !h.visible(own);
       if (own && !gone()) await h.waitUntil(ctx, state.info.el.ownerDocument.documentElement, gone, Boolean, POPUP_LEAVE_MS);
     }
