@@ -566,9 +566,10 @@
       const entry = /^([a-z_]{1,32}): (.{1,800})$/.exec(line);
       if (entry) {
         const known = Object.prototype.hasOwnProperty.call(VALUES, entry[1]) && VALUES[entry[1]].test(entry[2])
-          && (manual || !JOB_KEYS.test(entry[1]))
-          && !(legacy && (NEW_KEYS.has(entry[1]) || (entry[1] === "error_category" && !LEGACY_CATEGORIES.includes(entry[2]))));
-        if (known && (entry[1] !== "url_path" || safePath(entry[2]))) safe.push(line);
+          && (manual || !JOB_KEYS.test(entry[1])) && !(legacy && NEW_KEYS.has(entry[1]));
+        // A category added since (ai_missed) reads as `unknown` in the old vocabulary, so [错误] keeps its category.
+        if (known && legacy && entry[1] === "error_category" && !LEGACY_CATEGORIES.includes(entry[2])) safe.push("error_category: unknown");
+        else if (known && (entry[1] !== "url_path" || safePath(entry[2]))) safe.push(line);
         continue;
       }
       const control = /^- (.{1,40}): (.{1,400})$/.exec(line);
@@ -676,7 +677,8 @@
   function privateLayer(value) {
     if (typeof value !== "string") return "";
     let body = value.slice(0, 40000).replace(/\r\n?/g, "\n");
-    if (body.startsWith(PRIVATE_HEADER)) body = body.slice(PRIVATE_HEADER.length);
+    // Whatever header a page put first (any version) goes; the worker writes its own.
+    body = body.replace(/^--- 私有诊断 v[^\n]{0,20} ---(?:\n|$)/, "");
     body = redact(body, 30000).trim();
     return body ? utf8Cut(`${PRIVATE_HEADER}\n${body}`, PRIVATE_BYTES) : "";
   }

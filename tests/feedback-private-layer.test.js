@@ -360,3 +360,28 @@ test("地区类的下拉（就叫「现居住地」、看不出是哪一级）�
   assert.match(hidden, /^\[页面大纲\]\n\[区块\] 户籍信息\n/m, "the block of a field after the first ones");
   assert.match(hidden, /^> {1}e\d+ select ← 现居住地$/m);
 });
+
+test("只同意过旧版说明的人：手动反馈预览按旧内容，不带私有层；旧版本里 ai_missed 读作 unknown；伪造的首行去掉", async () => {
+  const { installFeedback, STORAGE_KEY } = await import("../extension/link/feedback.mjs");
+  const origin = "chrome-extension://test/";
+  // A grant under notice 2, the way an earlier build stored it.
+  const data = { [STORAGE_KEY]: { consent: true, consentVersion: 2, anonymousId: "11111111-2222-4333-8444-555555555555", recent: {}, hourly: [], fillHourly: [], backoff: 0, manualAt: 0 } };
+  let listener;
+  const api = {
+    runtime: { id: "test", getURL: p => origin + p, getManifest: () => ({ version: "0.5.0" }), onMessage: { addListener: fn => { listener = fn; } } },
+    storage: { local: { get: async () => structuredClone(data), set: async value => Object.assign(data, structuredClone(value)) } },
+    tabs: { get: async () => ({ url: "https://jobs.example.test/apply" }) }
+  };
+  installFeedback(api);
+  const page = { id: "test", url: `${origin}sidepanel.html`, documentId: "doc" };
+  const block = core.fillReport({ fieldCount: 3, filledCount: 3, category: "ai_missed", stage: "match", aiMissed: [{ kind: "学校", inResume: true }] });
+  const preview = await new Promise(resolve => listener({ type: "FEEDBACK_PREVIEW", description: "", diagnostics: block, tabId: 1,
+    private: core.privateReport({ unfilled: [{ label: "最高学历", kind: "学历" }] }) }, page, resolve));
+  assert.equal(preview.ok, true);
+  assert.equal(preview.payload.private_diagnostics, undefined);
+  assert.doesNotMatch(preview.payload.user_description, /build:|\[AI未匹配\]|ai_missed/);
+  assert.match(preview.payload.user_description, /^\[错误\]\nerror_category: unknown$/m);
+  // A header a page put in front, of any version, is replaced by the worker's own.
+  const layer = core.privateLayer("--- 私有诊断 v9 ---\nlabel: 最高学历");
+  assert.equal(layer, "--- 私有诊断 v1 ---\nlabel: 最高学历");
+});

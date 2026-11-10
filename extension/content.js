@@ -4688,7 +4688,8 @@
       writeFillDiagnostics(reportInput);
       // #497 私有诊断的材料：有没写上的、AI 没匹配上的字段，或扫描出错时才留。拼成文字（要遍历整页做大纲）留到用得上时：
       // 同意了自动报告、这次要发的时候（放开忙碌状态之后），或手动反馈预览的时候。
-      lastPrivate = privateUnfilled.length || aiMisses.length || scanFault?.message
+      // 没同意自动报告的人，自动报告和手动反馈都不带私有层：页面元素和资料值不留到下一次填写。
+      lastPrivate = feedbackAgreed && (privateUnfilled.length || aiMisses.length || scanFault?.message)
         ? { input: { unfilled: privateUnfilled, missed: aiMisses, fault: scanFault, values: privateValues || redactionValues(activeTemplate, profileFields) },
           text: null } : null;
       const privateHolder = lastPrivate;
