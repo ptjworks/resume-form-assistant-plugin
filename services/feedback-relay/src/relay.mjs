@@ -3,6 +3,7 @@
 // 插件和桌面端把错误报告 POST 到 /feedback；Muse 用 x-poll-secret 拉 /pending、/ack、
 // /create-issue，统计用 /export。这四个接口的请求和返回格式 Muse 在用，不能改。
 // 私有层（private_diagnostics）单独存，只能用 x-private-secret 从 /private 读。
+// 桌面检查更新的备用来源 /releases 代查 GitHub 的发布列表，见 releases.mjs，不碰 KV。
 //
 // KV 里的键：
 //   fb:<id>                                  报告本身（公开层），90 天
@@ -12,6 +13,7 @@
 //   fb:index:pending                         旧的待处理索引，只读出来补标记，不再写入
 //   meta:legacy-index-first-seen             第一次看到旧索引的时间，一小时后删旧索引
 //   throttle:<ip>                            每个 IP 10 分钟 30 条，10 分钟过期
+import { releases } from './releases.mjs';
 
 export const KV_TTL = 90 * 24 * 3600;
 export const LEGACY_PENDING_INDEX = 'fb:index:pending';
@@ -46,10 +48,10 @@ const corsHeaders = {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function json(data, status = 200) {
+function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    headers: { 'Content-Type': 'application/json', ...corsHeaders, ...headers },
   });
 }
 
@@ -477,7 +479,8 @@ async function createIssue(request, env) {
   return json({ ok: true, issue_url: data.html_url, issue_number: data.number });
 }
 
-export function createWorker({ now = () => new Date() } = {}) {
+// cache 不给时用 Cloudflare 的边缘缓存；给 null 就不缓存（Node 里直接跑时没有边缘缓存）。
+export function createWorker({ now = () => new Date(), cache } = {}) {
   return {
     async fetch(request, env) {
       const url = new URL(request.url);
@@ -494,6 +497,11 @@ export function createWorker({ now = () => new Date() } = {}) {
         }
         if (request.method !== 'GET') return json({ ok: false, error: 'not found' }, 404);
         return readPrivate(url, kv);
+      }
+      if (url.pathname === '/releases') {
+        if (request.method !== 'GET') return json({ ok: false, error: 'not found' }, 404);
+        const result = await releases(url, env, cache === undefined ? globalThis.caches?.default : cache);
+        return json(result.data, result.status, result.headers);
       }
       // 其余地址（包括根地址、GET /feedback）都当作健康检查。
       if (!POLL_PATHS.has(url.pathname)) {

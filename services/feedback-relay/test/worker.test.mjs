@@ -9,6 +9,10 @@ import {
   createWorker, dedupeKey, parseVersion, usesVersionedKey, privateDiagnosticsOf,
   PRIVATE_MAX_BYTES, LEGACY_PENDING_INDEX, KV_TTL,
 } from '../src/relay.mjs';
+import {
+  RELEASES_UPSTREAM, RELEASES_FRESH_SECONDS, RELEASES_STALE_SECONDS, RELEASES_FAILURE_SECONDS,
+  releasesCacheKey, parseReleasesQuery,
+} from '../src/releases.mjs';
 
 // 全部是测试用的假口令。
 const POLL = 'poll-secret-for-tests-only';
@@ -20,19 +24,20 @@ const OLD_ITEM_FIELDS = ['id', 'app', 'app_version', 'os', 'error_type', 'error_
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const PRIVATE_ITEM_FIELDS = ['id', 'dedupe_key', 'app_version', 'server_ts', 'private_diagnostics'];
 
-let mf, kv, outbound, ipCounter = 0;
+let mf, kv, edgeCache, outbound, ipCounter = 0;
 
 before(async () => {
   mf = new Miniflare(convertV4MiniflareOptions({
-    // 和 wrangler 部署时一样：入口 index.mjs 加上它引入的 relay.mjs。
+    // 和 wrangler 部署时一样：入口 index.mjs 加上它引入的 relay.mjs、releases.mjs。
     modulesRoot: SRC,
-    modules: ['index.mjs', 'relay.mjs'].map(name => ({ type: 'ESModule', path: join(SRC, name) })),
+    modules: ['index.mjs', 'relay.mjs', 'releases.mjs'].map(name => ({ type: 'ESModule', path: join(SRC, name) })),
     compatibilityDate: '2026-09-29',
     kvNamespaces: ['FEEDBACK_KV'],
     bindings: { POLL_SECRET: POLL, PRIVATE_READ_SECRET: PRIVATE, GITHUB_TOKEN: GITHUB },
     outboundService: request => outbound(request),
   }));
   kv = await mf.getKVNamespace('FEEDBACK_KV');
+  edgeCache = (await mf.getCaches()).default;
 });
 beforeEach(async () => {
   outbound = () => { throw new Error('unexpected outbound request'); };
@@ -42,6 +47,9 @@ beforeEach(async () => {
     await Promise.all(page.keys.map(key => kv.delete(key.name)));
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
+  for (const kind of ['fresh', 'stale', 'failed']) {
+    for (let page = 1; page <= 10; page++) await edgeCache.delete(releasesCacheKey('https://relay.test', kind, page));
+  }
 });
 after(async () => { await mf?.dispose(); });
 
@@ -541,4 +549,239 @@ test('/ack keeps the original 90-day expiry of a report instead of renewing it',
   assert.equal(JSON.parse(await kv.get('fb:' + id)).status, 'processed');
   const [entry] = (await kv.list({ prefix: 'fb:' + id })).keys;
   assert.equal(entry.expiration, Math.floor(received / 1000) + KV_TTL);
+});
+
+// ---- /releases ----
+
+const RELEASE_FIELDS = ['tag_name', 'draft', 'prerelease', 'html_url'];
+const RELEASES = '/releases?per_page=100&page=1';
+const cacheKey = (kind, page = 1) => releasesCacheKey('https://relay.test', kind, page);
+
+// GitHub 返回的样子：字段比桌面用到的多得多。
+function githubRelease(i, overrides = {}) {
+  const tag = i % 3 === 0 ? `desktop-v0.${i}.0` : `v0.${i}.0`;
+  return {
+    url: `https://api.github.com/repos/ptjworks/resume-form-assistant-plugin/releases/${1000 + i}`,
+    id: 1000 + i,
+    author: { login: 'someone', id: 1 },
+    tag_name: tag,
+    name: tag,
+    draft: false,
+    prerelease: i % 5 === 4,
+    html_url: `https://github.com/ptjworks/resume-form-assistant-plugin/releases/tag/${tag}`,
+    assets: [{ name: 'setup.exe', browser_download_url: 'https://github.com/x/setup.exe' }],
+    body: 'release notes',
+    ...overrides,
+  };
+}
+
+function trimmed(item) {
+  return { tag_name: item.tag_name, draft: item.draft, prerelease: item.prerelease, html_url: item.html_url };
+}
+
+// 假的 GitHub：按 per_page、page 分页返回 all，记下每次请求。
+function fakeGitHub(all) {
+  const calls = [];
+  outbound = request => {
+    const url = new URL(request.url);
+    const perPage = Number(url.searchParams.get('per_page'));
+    const page = Number(url.searchParams.get('page'));
+    calls.push({
+      url: request.url, page, auth: request.headers.get('authorization'),
+      agent: request.headers.get('user-agent'), accept: request.headers.get('accept'),
+    });
+    return Response.json(all.slice((page - 1) * perPage, page * perPage));
+  };
+  return calls;
+}
+
+test('/releases returns the GitHub list with only the four fields the desktop reads, and hides drafts', async () => {
+  const all = Array.from({ length: 150 }, (_, i) => githubRelease(i));
+  all[0] = githubRelease(0, {
+    tag_name: 'desktop-v9.9.9', name: 'UNPUBLISHED', draft: true,
+    html_url: 'https://github.com/ptjworks/resume-form-assistant-plugin/releases/tag/untagged-UNPUBLISHED',
+  });
+  const calls = fakeGitHub(all);
+  const response = await send(RELEASES);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'application/json');
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.equal(response.headers.get('x-relay-cache'), 'miss');
+  assert.equal(response.data.length, 100);
+  assert.ok(response.data.every(item => Object.keys(item).join() === RELEASE_FIELDS.join()));
+  assert.deepEqual(response.data[0], { tag_name: null, draft: true, prerelease: false, html_url: null });
+  assert.equal(response.text.includes('9.9.9') || response.text.includes('UNPUBLISHED'), false);
+  assert.deepEqual(response.data.slice(1), all.slice(1, 100).map(trimmed));
+  assert.deepEqual(calls, [{
+    url: `${RELEASES_UPSTREAM}?per_page=100&page=1`, page: 1, auth: `Bearer ${GITHUB}`,
+    agent: 'app-feedback-relay', accept: 'application/vnd.github+json',
+  }]);
+  assert.equal(RELEASES_UPSTREAM, 'https://api.github.com/repositories/1217054301/releases');
+
+  // 其余页照 GitHub 的分页；超过最后一页是空列表。
+  assert.deepEqual((await send('/releases?page=2&per_page=100')).data, all.slice(100, 150).map(trimmed));
+  assert.deepEqual((await send('/releases?per_page=100&page=10')).data, []);
+  assert.deepEqual(calls.slice(1).map(call => call.url), [
+    `${RELEASES_UPSTREAM}?per_page=100&page=2`, `${RELEASES_UPSTREAM}?per_page=100&page=10`,
+  ]);
+});
+
+test('/releases answers from the edge cache for ten minutes and keeps the last good list for a day', async () => {
+  const all = Array.from({ length: 25 }, (_, i) => githubRelease(i));
+  const calls = fakeGitHub(all);
+  assert.equal((await send(RELEASES)).headers.get('x-relay-cache'), 'miss');
+  const again = await send(RELEASES);
+  assert.equal(again.headers.get('x-relay-cache'), 'hit');
+  assert.deepEqual(again.data, all.map(trimmed));
+  assert.equal(calls.length, 1);
+  for (const [kind, seconds] of [['fresh', RELEASES_FRESH_SECONDS], ['stale', RELEASES_STALE_SECONDS]]) {
+    const stored = await edgeCache.match(cacheKey(kind));
+    assert.equal(stored.headers.get('cache-control'), `max-age=${seconds}`, kind);
+    // 缓存里也只有四个字段。
+    assert.ok((await stored.json()).every(item => Object.keys(item).join() === RELEASE_FIELDS.join()), kind);
+  }
+  assert.equal(await edgeCache.match(cacheKey('failed')), undefined);
+  assert.deepEqual([RELEASES_FRESH_SECONDS, RELEASES_STALE_SECONDS, RELEASES_FAILURE_SECONDS], [600, 86400, 60]);
+});
+
+test('/releases accepts only per_page=100 and page 1-10', async () => {
+  const calls = fakeGitHub([]);
+  for (const query of ['', 'per_page=100', 'page=1', 'per_page=30&page=1', 'per_page=1&page=1', 'per_page=99&page=1',
+    'per_page=0100&page=1', 'per_page=100&page=0', 'per_page=100&page=11', 'per_page=100&page=01', 'per_page=100&page=abc',
+    'per_page=100&page=-1', 'per_page=100&page=1.5', 'per_page=100&page=', 'per_page=100&page=%201', 'per_page=100&page=1e1',
+    'per_page=100&page=1&page=2', 'per_page=100&per_page=100', 'per_page=100&page=1&token=x',
+    'toString=1&page=1', '__proto__=1&per_page=100']) {
+    const response = await send(`/releases?${query}`);
+    assert.equal(response.status, 400, query);
+    assert.deepEqual(response.data, { ok: false, error: 'only per_page=100 and page=1-10 are accepted' }, query);
+  }
+  assert.equal(calls.length, 0);
+  assert.equal(parseReleasesQuery(new URLSearchParams('per_page=100&page=10')), 10);
+  assert.equal(parseReleasesQuery(new URLSearchParams('page=3&per_page=100')), 3);
+  assert.equal((await send(RELEASES, { method: 'POST', body: {} })).status, 404);
+  assert.equal(calls.length, 0);
+});
+
+test('/releases passes GitHub failures on and does not ask GitHub again for a minute', async () => {
+  const cases = [
+    [() => new Response('oops', { status: 500 }), 502, { ok: false, error: 'github_error', status: 500 }],
+    [() => new Response('{}', { status: 404 }), 502, { ok: false, error: 'github_error', status: 404 }],
+    [() => Response.json({ message: 'API rate limit exceeded' }, { status: 403 }), 503,
+      { ok: false, error: 'github_rate_limited', status: 403 }],
+    [() => new Response('', { status: 429 }), 503, { ok: false, error: 'github_rate_limited', status: 429 }],
+    [() => new Response('<html>not json</html>', { status: 200 }), 502, { ok: false, error: 'github_bad_response' }],
+    [() => Response.json({ message: 'Not Found' }), 502, { ok: false, error: 'github_bad_response' }],
+  ];
+  for (const [answer, status, data] of cases) {
+    for (const kind of ['fresh', 'stale', 'failed']) await edgeCache.delete(cacheKey(kind));
+    let asked = 0;
+    outbound = request => { asked++; return answer(request); };
+    const first = await send(RELEASES);
+    assert.equal(first.status, status, JSON.stringify(data));
+    assert.deepEqual(first.data, data);
+    assert.equal(first.headers.get('x-relay-cache'), 'miss');
+    // 一分钟内同样的答复，不再问 GitHub。
+    const second = await send(RELEASES);
+    assert.equal(second.status, status, JSON.stringify(data));
+    assert.deepEqual(second.data, data);
+    assert.equal(second.headers.get('x-relay-cache'), 'hit');
+    assert.equal(asked, 1, JSON.stringify(data));
+    const marker = await edgeCache.match(cacheKey('failed'));
+    assert.equal(marker.headers.get('cache-control'), `max-age=${RELEASES_FAILURE_SECONDS}`);
+    // 失败不进 10 分钟的新鲜结果，也不顶替上次成功的结果。
+    assert.equal(await edgeCache.match(cacheKey('fresh')), undefined);
+    assert.equal(await edgeCache.match(cacheKey('stale')), undefined);
+  }
+  // 失败标记过期后（这里直接删掉）GitHub 好了，就照常返回。
+  await edgeCache.delete(cacheKey('failed'));
+  const all = [githubRelease(3)];
+  fakeGitHub(all);
+  const recovered = await send(RELEASES);
+  assert.deepEqual(recovered.data, all.map(trimmed));
+  assert.equal(recovered.headers.get('x-relay-cache'), 'miss');
+
+  // 连不上（Workerd 会把 outboundService 抛的错变成 500，这里在 Node 里换掉全局 fetch）。
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('network down'); };
+  try {
+    const unreachable = await local()(RELEASES);
+    assert.equal(unreachable.status, 502);
+    assert.deepEqual(unreachable.data, { ok: false, error: 'github_unreachable' });
+    // 响应头到了、正文读到一半断开，也算连不上，不算返回的东西不对。
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('[{"tag_name":'));
+        controller.error(new TypeError('connection reset'));
+      },
+    }), { status: 200 });
+    const cut = await local()(RELEASES);
+    assert.equal(cut.status, 502);
+    assert.deepEqual(cut.data, { ok: false, error: 'github_unreachable' });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('/releases falls back to the last good list while GitHub is failing', async () => {
+  const before = [githubRelease(3), githubRelease(4)];
+  fakeGitHub(before);
+  assert.equal((await send(RELEASES)).headers.get('x-relay-cache'), 'miss');
+  // 十分钟过去（新鲜结果过期，这里直接删掉），GitHub 出错。
+  await edgeCache.delete(cacheKey('fresh'));
+  let asked = 0;
+  outbound = () => { asked++; return new Response('', { status: 503 }); };
+  const stale = await send(RELEASES);
+  assert.equal(stale.status, 200);
+  assert.equal(stale.headers.get('x-relay-cache'), 'stale');
+  assert.deepEqual(stale.data, before.map(trimmed));
+  // 一分钟内照样用上次的结果，不再问 GitHub。
+  const again = await send(RELEASES);
+  assert.equal(again.headers.get('x-relay-cache'), 'stale');
+  assert.deepEqual(again.data, before.map(trimmed));
+  assert.equal(asked, 1);
+
+  // 失败标记过期后 GitHub 好了：新结果同时替换新鲜结果和上次成功的结果。
+  await edgeCache.delete(cacheKey('failed'));
+  const after = [githubRelease(6), ...before];
+  fakeGitHub(after);
+  const fresh = await send(RELEASES);
+  assert.equal(fresh.headers.get('x-relay-cache'), 'miss');
+  assert.deepEqual(fresh.data, after.map(trimmed));
+  assert.deepEqual(await (await edgeCache.match(cacheKey('stale'))).json(), after.map(trimmed));
+});
+
+test('/releases prefers its own token, retries without it when GitHub rejects it, and asks anonymously when none is set', async () => {
+  const all = [githubRelease(3), githubRelease(4)];
+  const auths = [];
+  outbound = request => {
+    const auth = request.headers.get('authorization');
+    auths.push(auth);
+    return auth ? Response.json({ message: 'Bad credentials' }, { status: 401 }) : Response.json(all);
+  };
+  const response = await send(RELEASES);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.data, all.map(trimmed));
+  assert.deepEqual(auths, [`Bearer ${GITHUB}`, null]);
+
+  // 没配口令：直接匿名问。这里在 Node 里跑，换掉全局 fetch 记下请求。
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), auth: new Headers(init?.headers).get('authorization') });
+    return Response.json(all);
+  };
+  try {
+    const anonymous = await local({ GITHUB_TOKEN: undefined })(RELEASES);
+    assert.equal(anonymous.status, 200);
+    assert.deepEqual(anonymous.data, all.map(trimmed));
+    // 配了 /releases 专用的口令就用它，不用 Muse 的 GITHUB_TOKEN。
+    const dedicated = await local({ GITHUB_TOKEN: GITHUB, RELEASES_GITHUB_TOKEN: 'releases-token-for-tests-only' })(RELEASES);
+    assert.equal(dedicated.status, 200);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepEqual(seen, [
+    { url: `${RELEASES_UPSTREAM}?per_page=100&page=1`, auth: null },
+    { url: `${RELEASES_UPSTREAM}?per_page=100&page=1`, auth: 'Bearer releases-token-for-tests-only' },
+  ]);
 });
