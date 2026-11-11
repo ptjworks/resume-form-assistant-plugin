@@ -60,8 +60,14 @@
       candidates.push({ id, domain: domain.id, label: text(button), current, target: targets[domain.id] });
       refs.set(id, { button, scope, domain, current, target: targets[domain.id], heading, headingText: text(heading) });
     }
+    const campus = collectSpec(campusGroups(document), fields);
+    for (const candidate of campus.candidates) {
+      const id = `add-${candidates.length}`;
+      candidates.push({ ...candidate, id });
+      refs.set(id, campus.refs.get(candidate.id));
+    }
     // Multiple indistinguishable sections of one type need human disambiguation.
-    return { candidates: candidates.filter(c => candidates.filter(x => x.domain === c.domain).length === 1), refs };
+    return { candidates: candidates.filter(c => candidates.filter(x => x.domain === c.domain).length === 1), refs, problems: campus.problems };
   }
   function validatePlan(plan, candidates) {
     if (!Array.isArray(plan) || plan.length > 4) throw new Error("AI 新增计划格式无效。");
@@ -115,6 +121,40 @@
   const bare = value => String(value ?? "").replace(/[\s\p{P}\p{S}]/gu, "");
   const containsAny = (node, list) => list.some(el => el !== node && node.contains(el));
   function specControls(ref) { return Array.from(ref.scope.querySelectorAll(editable)).filter(ref.visible); }
+  const CAMPUS_WORK_TITLE = /^(?:工作实习经历|工作与实习经历|工作及实习经历|实习经历|工作经历)$/;
+  const CAMPUS_SCOPE = "form.ui-form .render-map-container > .group-part-container";
+  const CAMPUS_ADD = ":scope > .group-part-title > .op-text-wrapper > .edit-part";
+  const campusRows = scope => Array.from(scope.querySelectorAll(":scope > .group-part-item[data-group-id][data-part-id]"));
+  const campusTitle = scope => scope.querySelector(":scope > .group-part-title > .text-part .label-text");
+  function campusWorkScope(element) {
+    if (element.ownerDocument?.location?.hostname !== "xiaoyuan.zhipin.com") return null;
+    const scope = element.closest(CAMPUS_SCOPE);
+    return scope && CAMPUS_WORK_TITLE.test(bare(campusTitle(scope)?.textContent)) ? scope : null;
+  }
+  function isCampusAdd(button, scope) {
+    return button === scope.querySelector(CAMPUS_ADD) && scope.querySelectorAll(CAMPUS_ADD).length === 1
+      && !button.matches(".readonly, .disabled") && !button.closest("a[href], button, [aria-disabled='true']")
+      && bare(button.textContent) === "添加" && CAMPUS_WORK_TITLE.test(bare(campusTitle(scope)?.textContent));
+  }
+  function campusGroups(doc) {
+    if (doc.location?.hostname !== "xiaoyuan.zhipin.com") return [];
+    return Array.from(doc.querySelectorAll(CAMPUS_SCOPE)).flatMap(scope => {
+      const button = scope.querySelector(CAMPUS_ADD);
+      const title = campusTitle(scope);
+      return button && title && CAMPUS_WORK_TITLE.test(bare(title.textContent)) ? [{ domain: "work", button, scope, title }] : [];
+    });
+  }
+  function locateCampusGroup(group, isVisible) {
+    const { button, scope, title } = group;
+    if (!button.isConnected || !isVisible(button) || !isCampusAdd(button, scope)) return { reason: "target_changed" };
+    const existing = campusRows(scope);
+    const initial = Array.from(scope.querySelectorAll(editable)).filter(isVisible);
+    if (new Set(existing.map(row => row.dataset.partId)).size !== existing.length
+      || new Set(existing.map(row => row.dataset.groupId)).size > 1
+      || scope.querySelectorAll(".group-part-item").length !== existing.length
+      || initial.some(el => !existing.some(row => row.contains(el)))) return { reason: "uncountable" };
+    return { scope, current: existing.length, initial, existing, title, titleText: bare(title.textContent) };
+  }
   function shapeOf(el, isVisible) {
     return Array.from(el.querySelectorAll(editable)).filter(isVisible).map(c => `${c.tagName}:${c.getAttribute("type") || ""}`).join(",");
   }
@@ -224,7 +264,7 @@
       const mine = groups.filter(group => group.domain === domain.id);
       if (!mine.length || !targets[domain.id]) continue;
       if (mine.length > 1) { problems.push({ domain: domain.id, reason: "ambiguous" }); continue; }
-      const located = locateGroup(mine[0], isVisible, options.labelOf);
+      const located = mine[0].scope ? locateCampusGroup(mine[0], isVisible) : locateGroup(mine[0], isVisible, options.labelOf);
       if (located.reason) { problems.push({ domain: domain.id, reason: located.reason }); continue; }
       if (located.current >= targets[domain.id]) continue;
       if (targets[domain.id] - located.current > 5) { problems.push({ domain: domain.id, reason: "over_limit", needed: targets[domain.id] - located.current }); continue; }
@@ -238,7 +278,8 @@
   function specSafe(ref) {
     const button = ref.button;
     return button.isConnected && ref.scope.isConnected && ref.scope.contains(button) && ref.visible(button) && !button.disabled &&
-      button.getAttribute?.("aria-disabled") !== "true" && (!ref.allowed || ref.allowed(button) === true);
+      button.getAttribute?.("aria-disabled") !== "true" && (!ref.allowed || ref.allowed(button) === true)
+      && (!ref.existing || (campusTitle(ref.scope) === ref.title && bare(ref.title.textContent) === ref.titleText && isCampusAdd(button, ref.scope)));
   }
   // 本次已经点过「添加」后，原按钮被网页重画或挪进了新的最后一条（北森真机）：在同一分组范围里找结构和文字
   // 都相同、看得见的唯一一个按钮接着用；找不到或不止一个就不点。第一次点击永远只点预览时确认的那个按钮。
@@ -255,6 +296,19 @@
   // 都归到同一个容器就是一条，归到几个结构相同的容器就是多条。有已有条目时，新记录还必须和已有条目是
   // 结构相同的兄弟。返回 none（还没变化）、one（正好一条）、many（多出多条）、unclear（有变化但归不成一条）。
   function detectSpecRow(ref, oldControls) {
+    if (ref.existing) {
+      const rows = campusRows(ref.scope);
+      const fresh = rows.filter(row => !ref.existing.includes(row));
+      if (rows.length > ref.existing.length + 1) return { state: "many", count: rows.length - ref.existing.length };
+      if (ref.existing.some(row => !rows.includes(row))) return { state: "unclear", fresh: fresh.length };
+      if (!fresh.length) return { state: "none" };
+      const [row] = fresh;
+      const controls = specControls(ref).filter(el => !oldControls.includes(el));
+      if (!controls.length) return { state: "none" };
+      if (fresh.length !== 1 || ref.existing.some(old => old.dataset.partId === row.dataset.partId || old.dataset.groupId !== row.dataset.groupId)
+        || controls.some(el => !row.contains(el))) return { state: "unclear", fresh: fresh.length };
+      return { state: "one", row };
+    }
     const fresh = specControls(ref).filter(el => !oldControls.includes(el));
     if (!fresh.length) return { state: "none" };
     const old = oldControls.filter(el => el.isConnected);
@@ -322,7 +376,8 @@
     const { stopped, onProgress, beforeClick } = hooks;
     if (!specSafe(ref) && !(i > 0 && rebindButton(ref) && specSafe(ref))) throw new Error("新增按钮或分组已变化，请手动检查。");
     const oldControls = specControls(ref);
-    const before = ref.model ? modelRows(ref).length : ref.current + i;
+    const before = ref.existing ? campusRows(ref.scope).length : ref.model ? modelRows(ref).length : ref.current + i;
+    if (ref.existing && ref.existing.some(row => row.parentElement !== ref.scope)) throw new Error("网页条目已变化，请重新预览。");
     // 第一次点之前，分组里的输入框必须还是预览时那些（模型还没定型时靠它确认条目没变）。
     if (!ref.model && i === 0 && (oldControls.length !== ref.initial.length || oldControls.some(el => !ref.initial.includes(el)))) {
       throw new Error("条目数量已变化，已停止。");
@@ -334,6 +389,7 @@
     if (onProgress) onProgress(step);
     if (ref.press) ref.press(ref.button); else ref.button.click();
     const found = await waitForSpecRow(ref, oldControls, stopped);
+    if (ref.existing) ref.existing.push(found.row);
     ref.model = found.model;
     ref.anchor = found.anchor;
     if (saved.some(({ el, value, checked }) => !el.isConnected || el.value !== value || el.checked !== checked)) {
@@ -404,7 +460,7 @@
     return { added, scopes };
   }
   const labels = Object.fromEntries(domains.map(domain => [domain.id, domain.label]));
-  const api = { targetCounts, collect, collectSpec, validatePlan, execute, labels };
+  const api = { targetCounts, collect, collectSpec, campusGroups, campusRows, campusWorkScope, validatePlan, execute, labels };
   root.ResumeProFormAgent = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);

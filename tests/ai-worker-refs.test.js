@@ -42,6 +42,57 @@ function worker(respond = () => [], { withRegions = true } = {}) {
 const fieldsOf = (call) => JSON.parse(call.user.split("\n")[1]);
 const valueOf = (result, fieldId) => result.matches.find((match) => match.fieldId === fieldId)?.value;
 
+test("CET grades and scores stay paired across explicit score fields and the BOSS language row", async () => {
+  const env = worker(() => { throw new Error("CET fields should be handled locally"); });
+  const field = (fieldId, label, inputType, bossCet) => ({ fieldId, label, inputType, bossCet });
+  const resumeFields = [{ group: "基本信息", key: "英语水平", value: "CET-6（587 分）" }];
+  const pair = (selected = "") => [
+    field("level", "英语等级", "select", { role: "level", selected }),
+    field("score", "英语分数", "text", { role: "score", selected }),
+    field("other-site", "大学英语六级成绩", "text")
+  ];
+  const single = await env.run({ formFields: pair(), resumeFields });
+  assert.equal(valueOf(single, "level"), "CET6");
+  assert.equal(valueOf(single, "other-site"), "587");
+  assert.deepEqual(single.matches.find(m => m.fieldId === "score"), { fieldId: "score", value: "587", cetScoreLevel: "CET6" });
+  resumeFields.push({ group: "证书", key: "英语四级成绩", value: "526" });
+  const selected = await env.run({ formFields: pair("CET4"), resumeFields });
+  assert.equal(valueOf(selected, "score"), "526");
+  assert.equal(valueOf(selected, "other-site"), "587");
+  const ambiguous = await env.run({ formFields: pair(), resumeFields });
+  assert.equal(ambiguous.matches.find(m => m.fieldId === "score").blocked, "english_level_unconfirmed");
+  resumeFields.push({ group: "证书", key: "六级成绩", value: "590" });
+  const conflict = await env.run({ formFields: pair("CET6"), resumeFields });
+  assert.equal(conflict.matches.find(m => m.fieldId === "score").blocked, "english_score_conflict");
+  assert.equal(env.calls.length, 0);
+});
+
+test("BOSS internship fields follow the company record after one existing row is already occupied", async () => {
+  const env = worker();
+  const resumeFields = [
+    { group: "实习经历", key: "虚构甲公司实习经历-公司", value: "虚构甲公司" },
+    { group: "实习经历", key: "虚构甲公司实习经历-职位", value: "运营实习生" },
+    { group: "实习经历", key: "虚构甲公司实习经历-时间", value: "2025.06—2025.09" },
+    { group: "实习经历", key: "虚构乙公司实习经历-公司", value: "虚构乙公司" },
+    { group: "实习经历", key: "虚构乙公司实习经历-职位", value: "研发实习生" },
+    { group: "实习经历", key: "虚构乙公司实习经历-时间", value: "2024.07—2024.08" }
+  ];
+  const row = (companies, index) => [["company", "工作单位"], ["position", "职务"], ["start", "时间段（开始）"], ["end", "时间段（结束）"]]
+    .map(([role, label]) => ({ fieldId: `${index}-${role}`, label, inputType: "text",
+      bossWork: { role, companies, index, companyReady: true } }));
+  const fresh = await env.run({ formFields: [...row(["", ""], 0), ...row(["", ""], 1)], resumeFields });
+  assert.equal(valueOf(fresh, "0-company"), "虚构甲公司");
+  assert.equal(valueOf(fresh, "1-position"), "研发实习生");
+  assert.equal(valueOf(fresh, "1-end"), "2024-08");
+  const addition = await env.run({ formFields: row(["虚构乙公司", ""], 1), resumeFields });
+  assert.equal(valueOf(addition, "1-company"), "虚构甲公司");
+  assert.deepEqual(addition.matches.find(m => m.fieldId === "1-start"),
+    { fieldId: "1-start", value: "2025-06", bossCompany: "虚构甲公司" });
+  const unclear = await env.run({ formFields: row(["", ""], 1), resumeFields: resumeFields.slice(0, 3) });
+  assert.ok(unclear.matches.every(match => match.blocked === "work_record_unconfirmed"));
+  assert.equal(env.calls.length, 0);
+});
+
 test("BOSS pairs reversed template entries to the site's highest-first education rows without sending the school anchor to AI", async () => {
   const resumeFields = [
     { group: "教育背景", key: "虚构师范大学教育经历-学历", value: "本科" },

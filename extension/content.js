@@ -96,6 +96,11 @@
     range_incomplete: "起止日期缺一头",
     education_school_unconfirmed: "未确认本行学校",
     education_record_unconfirmed: "无法确定本行对应哪段教育经历",
+    work_record_unconfirmed: "无法确定本行对应哪段工作或实习经历",
+    work_company_unconfirmed: "未确认本行公司",
+    english_level_unconfirmed: "未确认英语考试等级",
+    english_score_missing: "简历中缺少对应等级的英语分数",
+    english_score_conflict: "简历中同一等级有多个英语分数",
     format_mismatch: "只能填数字",
     readonly_picker: "网页自己的选择框",
     operation_failed: "控件操作失败",
@@ -1744,9 +1749,14 @@
       setRepeat(run, "failed", "未识别到可安全新增的分组，请先手动新增条目，再一键填写。");
       return;
     }
-    setRepeat(run, "planning", "AI 正在规划需要新增的条目…");
+    const campus = run.snapshot.candidates.filter(candidate => run.snapshot.refs.get(candidate.id)?.existing);
+    const remaining = run.snapshot.candidates.filter(candidate => !campus.includes(candidate));
+    const local = campus.map(({ id, target, current }) => ({ id, count: target - current }));
     // Only the local candidate summary goes out: id, domain, label, current, target.
-    const reply = await self.ResumeProAIClient.send({ type: "AI_PLAN_REPEAT", requestId: run.requestId, candidates: run.snapshot.candidates });
+    if (remaining.length) setRepeat(run, "planning", "AI 正在规划需要新增的条目…");
+    const reply = remaining.length
+      ? await self.ResumeProAIClient.send({ type: "AI_PLAN_REPEAT", requestId: run.requestId, candidates: remaining })
+      : { success: true, plan: [] };
     // A stop, cancel, tab switch or newer run already answered the user; this reply is late.
     if (repeatStopped(run)) { abandonRepeat(run); return; }
     if (!reply?.success) {
@@ -1759,7 +1769,7 @@
     }
     let plan;
     try {
-      plan = agent.validatePlan(reply.plan, run.snapshot.candidates);
+      plan = agent.validatePlan([...local, ...agent.validatePlan(reply.plan, remaining)], run.snapshot.candidates);
     } catch (error) {
       setRepeat(run, "failed", `${error.message || "AI 计划无效。"}未执行新增。`);
       return;
@@ -2049,7 +2059,15 @@
         type: "AI_ANALYZE_PAGE", requestId, outline: text, part, parts
       }).catch(() => ({ success: false, error: "无法连接 AI 请求进程，请重新加载扩展后再试。", errorCode: "unavailable" })),
       cancelRequest: requestId => { self.ResumeProAIClient.cancel(requestId).catch(() => {}); },
-      toFillInput: (fields, nodes) => withScanBindings(api.toFillInput(fields, nodes, { optionText: getRadioOptionLabel, pickerInputType: inferPickerInputType })),
+      toFillInput: (fields, nodes) => {
+        const prepared = api.toFillInput(fields, nodes, { optionText: getRadioOptionLabel, pickerInputType: inferPickerInputType });
+        if (location.hostname !== "xiaoyuan.zhipin.com") return withScanBindings(prepared);
+        const scanned = scanFillableFields();
+        const bound = withScanBindings(prepared, scanned);
+        const known = scanned.fields.filter(field => field.bossWork || field.bossCet);
+        return known.length ? { ...bound, ...mergeRecipeScan(bound, { ...scanned, fields: known }) } : bound;
+      },
+      hasLocalSections: () => Boolean(self.ResumeProFormAgent?.campusGroups(document).length),
       planActions: self.ResumeProPageActions && self.ResumeProFormAgent ? planDeepActions : null,
       // #226 站点配方：保存（深度分析效果更好时）、配方模式下找按钮和字段。
       baseline: deepBaseline,
@@ -2129,7 +2147,7 @@
       Object.assign(entry, { binding: known.binding, offerable: known.offerable, offerLabel: known.offerLabel });
       const descriptor = scannedControl.field;
       // 深度分析的文字推测不能覆盖 BOSS 已识别的级联或日历。
-      if (descriptor && (descriptor.bossEducation || known.pickerType === "boss" || known.root?.matches?.(".ui-cascader2")
+      if (descriptor && (descriptor.bossEducation || descriptor.bossWork || descriptor.bossCet || known.pickerType === "boss" || known.root?.matches?.(".ui-cascader2")
         && known.root.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com")) {
         Object.assign(entry, { root: known.root, controlKind: known.controlKind, pickerType: known.pickerType, pickerInputType: known.pickerInputType });
         Object.assign(field, descriptor, { fieldId: field.fieldId });
@@ -3514,8 +3532,9 @@
     return { ok: true, recipe: recipeStatus() };
   }
 
-  function isAssistedTextField(entry) {
+  function isAssistedField(entry, field) {
     const el = entry.element;
+    if (field?.bossWork && entry.pickerType === "boss") return !el.disabled;
     if (["custom-select", "cascader"].includes(entry.controlKind)) return false;
     return !el.disabled && !el.readOnly && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && ["text", "email", "tel", "url", "search"].includes(el.type)));
   }
@@ -3663,6 +3682,7 @@
     let genericLocked = 0;
     // #226 本站配方这次用没用上：只有固定状态码和计数。
     let recipeUse = deep?.mode === "recipe" ? deep.report?.recipe || null : null;
+    let missingWorkRows = 0;
     // 猎聘这类查看状态的页面：页头搜索框之类会被扫描到，但一个都没填上，照样提示先点「编辑」。
     // 只在什么都没匹配上、AI 也没出错时这样说：AI 超时、匹配到了却写不上（#299）都不是查看状态。
     // 从同源框架里扫到了一张表单那么多的字段（#400）：表单已经显示出来，不是查看状态。只有一两个（留言框）照样提示。
@@ -3703,7 +3723,7 @@
       let fieldMap = scanned.fieldMap;
       let fields = assisted ? scanned.fields.filter(field => {
         const entry = fieldMap.get(field.fieldId);
-        return entry?.kind === "element" && isAssistedTextField(entry) && assisted.scopes.some(scope => scope.contains(entry.element)) && !hasExistingValue(entry);
+        return entry?.kind === "element" && isAssistedField(entry, field) && assisted.scopes.some(scope => scope.contains(entry.element)) && !hasExistingValue(entry);
       }) : scanned.fields;
       timing.scanMs = performance.now() - phaseStart;
       phase = null;
@@ -3779,14 +3799,17 @@
 
       const fieldMetaMap = new Map(fields.map((f) => [f.fieldId, f]));
       const domOrderMap = new Map(fields.map((field, index) => [field.fieldId, index]));
-      const educationRowOrder = new Map();
+      const recordOrder = new Map();
+      const recordKey = field => field?.bossEducation ? `education:${field.bossEducation.row}`
+        : field?.bossWork ? `work:${field.bossWork.row}` : field?.bossCet ? `cet:${field.bossCet.row}` : "";
       for (const field of fields) {
-        const row = field.bossEducation?.row;
-        if (row !== undefined && !educationRowOrder.has(row)) educationRowOrder.set(row, domOrderMap.get(field.fieldId));
+        const row = recordKey(field);
+        if (row && !recordOrder.has(row)) recordOrder.set(row, domOrderMap.get(field.fieldId));
       }
       const orderOf = field => {
         const index = domOrderMap.get(field?.fieldId) ?? 0;
-        return field?.bossEducation?.role === "school" ? (educationRowOrder.get(field.bossEducation.row) ?? index) - 0.5 : index;
+        const anchor = field?.bossEducation?.role === "school" || field?.bossWork?.role === "company" || field?.bossCet?.role === "level";
+        return anchor ? (recordOrder.get(recordKey(field)) ?? index) - 0.5 : index;
       };
       const byOrder = (a, b) => {
         const ma = fieldMetaMap.get(a.fieldId);
@@ -3935,7 +3958,7 @@
       let waitingAi = false;
       let awaiting = [];
       const pageFilled = new Set();
-      const pickUpNewFields = async (position, doc) => {
+      const pickUpNewFields = async (position, doc, cetRow = null) => {
         await waitForPageSettle(doc);
         if (!isCurrent()) return;
         // 同名题目的序号会因为新字段插进来而变（两段教育经历都有「专业」）：原来就扫到过的元素不算新字段。
@@ -3951,6 +3974,7 @@
         }
         const added = fresh.fields.filter(field => {
           const entry = fresh.fieldMap.get(field.fieldId);
+          if (cetRow && (field.bossCet?.role !== "score" || !cetRow.contains(entry?.element))) return false;
           const key = fieldBindingKey(entry?.binding);
           return key && !known.has(key) && !knownNodes.has(nodeOf(entry)) && isFieldBindingCurrent(entry) && !hasExistingValue(entry);
         });
@@ -3987,7 +4011,7 @@
         const customGroup = self.ResumeProProfile?.CUSTOM_GROUP;
         const siteGroup = self.ResumeProProfile?.SITE_GROUP;
         for (const field of added) {
-          if (field.bossEducation || field.educationRange) continue;
+          if (field.bossEducation || field.educationRange || field.bossWork) continue;
           if (local.some(match => match.fieldId === field.fieldId)) continue;
           const same = resumeFields.filter(item => item?.value && (!customGroup || item.group !== customGroup) && (!siteGroup || item.group !== siteGroup)
             && normalize(item.key) === normalize(field.label));
@@ -4047,7 +4071,8 @@
           // 还没有选项的原生下拉多半在等上一级选好：不先填。
           const ready = new Set(local.filter(match => {
             const entry = fieldMap.get(match.fieldId);
-            if (fieldMetaMap.get(match.fieldId)?.bossEducation) return false;
+            const meta = fieldMetaMap.get(match.fieldId);
+            if (meta?.bossEducation || meta?.bossWork || meta?.bossCet) return false;
             // #429 第 4 项：传完简历后网站解析填上的不算已有内容，照样先填。
             return entry && isFieldBindingCurrent(entry) && (!hasExistingValue(entry) || parsedBySite(entry))
               && !(entry.kind === "element" && isSelectElement(entry.element) && !hasRealSelectOptions(entry.element));
@@ -4376,12 +4401,19 @@
           }
           continue;
         }
-        if (assisted && (!isAssistedTextField(element) || hasExistingValue(element) || !assisted.scopes.some(scope => scope.isConnected && scope.contains(element.element)))) continue;
-
         const fieldMeta = fieldMetaMap.get(match.fieldId);
-        const schoolStillMatches = () => !match.bossSchool || bossEducationSchoolMatches(element.element, match.bossSchool);
-        if (!schoolStillMatches()) {
-          noteControlFailure(element, fieldMeta, match.value, 'education_school_unconfirmed');
+        if (assisted && (!isAssistedField(element, fieldMeta) || hasExistingValue(element) || !assisted.scopes.some(scope => scope.isConnected && scope.contains(element.element)))) continue;
+        const recordFailure = () => {
+          if (match.bossSchool && !bossEducationSchoolMatches(element.element, match.bossSchool)) return "education_school_unconfirmed";
+          if (match.bossCompany && !bossWorkCompanyMatches(element.element, match.bossCompany)) return "work_company_unconfirmed";
+          if (match.cetScoreLevel && bossCetSelection(element.element.closest(".group-part-item")).selected !== match.cetScoreLevel) {
+            return "english_level_unconfirmed";
+          }
+          return "";
+        };
+        const mismatch = recordFailure();
+        if (mismatch) {
+          noteControlFailure(element, fieldMeta, match.value, mismatch);
           continue;
         }
         // 控件内部也会异步等待；实际写入及重试前复查，不能仅在进入控件时检查。
@@ -4407,7 +4439,7 @@
         // skipped, while an interrupted attempted write remains unconfirmed.
         let writeAttempted = false;
         const onWrite = () => { writeAttempted = true; };
-        const controlCurrent = () => isCurrent() && isFieldBindingCurrent(element) && schoolStillMatches();
+        const controlCurrent = () => isCurrent() && isFieldBindingCurrent(element) && !recordFailure();
         const stopInterruptedControl = () => {
           if (!overwriteDeclined && isCurrent()) return;
           cancelRequested = true;
@@ -4538,8 +4570,9 @@
           }
         }
 
-        if (filled && !assisted && !deep && CHOICE_CONTROL_KINDS.has(element.kind === "radio" ? "radio" : element.controlKind)) {
-          await pickUpNewFields(position, entryDocument(element));
+        const cetRow = deep && fieldMeta?.bossCet?.role === "level" ? element.element.closest(".group-part-item") : null;
+        if (filled && !assisted && (!deep || cetRow) && CHOICE_CONTROL_KINDS.has(element.kind === "radio" ? "radio" : element.controlKind)) {
+          await pickUpNewFields(position, entryDocument(element), cetRow);
           const partnerNow = partner ? fillValueSnapshot(partner) : null;
           if (partnerNow !== null && partnerNow !== partnerBefore) {
             approvedValues.set(partner, partnerNow);
@@ -4565,7 +4598,13 @@
         const entry = fieldMap.get(field.fieldId);
         return isFieldBindingCurrent(entry) || Boolean(rebindFieldEntry(entry));
       });
-      outcome = response.warning || unconfirmedCount || unfilledLabels.length || grownLeft.length || kept.length ? "partial" : "success";
+      const agent = self.ResumeProFormAgent;
+      if (plain && location.hostname === "xiaoyuan.zhipin.com" && agent?.campusGroups) {
+        const { candidates } = agent.collectSpec(agent.campusGroups(document), templateFields, { isVisible: isVisibleInOwnDocument });
+        const work = candidates.find(candidate => candidate.domain === "work");
+        if (work) missingWorkRows = work.target - work.current;
+      }
+      outcome = response.warning || unconfirmedCount || unfilledLabels.length || grownLeft.length || kept.length || missingWorkRows ? "partial" : "success";
       const supplementNote = (supplemented ? `（其中新出现的字段补填 ${supplemented} 项）` : "")
         + (dayDefaulted ? `（${dayDefaulted} 项日期资料里只有年月，已按 1 日填写）` : "");
       const unfilledNote = (unfilledLabels.length
@@ -4573,7 +4612,8 @@
         + (unconfirmedCount ? `${unconfirmedCount} 项未确认，请核对网页。` : '')
         + (grownLeft.length ? `新出现的 ${grownLeft.length} 项没有补填：${summarizeLabels(grownLeft.map(field => field.label))}，请手动补上。`
           + (grownWarning !== response.warning ? grownWarning : '') : '')
-        + (kept.length ? `等 AI 时有改动的 ${kept.length} 项没有覆盖：${summarizeLabels(kept)}，请核对。` : '');
+        + (kept.length ? `等 AI 时有改动的 ${kept.length} 项没有覆盖：${summarizeLabels(kept)}，请核对。` : '')
+        + (missingWorkRows ? `工作/实习经历还差 ${missingWorkRows} 条，可点「AI 辅助新增条目」预览并添加。` : "");
       const emptyHint = viewModeHint();
       const recipeLead = !deep && recipeUse?.status === "hit" ? "已按本站配方定位字段。" : "";
       const recipeTail = !deep && recipeUse?.status === "stale" ? "本站配方可能已过期，可以重新深度分析。" : "";
@@ -4694,7 +4734,7 @@
       const summaryInput = { ...timing, totalMs,
         fieldCount: totalFields, filledCount, unfilledCount: unfilledLabels.length, outcome, diagnostics, probe, unfilledControls,
         path: scanPath, pageType, readyAtScan, stats, matched: totalMatched, requested, unconfirmedCount, ...verdict, grown,
-        entry, pageFocused, genericCustom, genericLocked, scanFault, earlyFilled, keptCount: kept.length,
+        entry, pageFocused, genericCustom, genericLocked, scanFault, earlyFilled, keptCount: kept.length, missingWorkRows,
         // #497 公开报告只用类别和「资料里有没有」，题目留在私有诊断。
         aiMissed: aiMisses.map(item => ({ kind: item.kind, inResume: item.inResume })),
         // 「深度分析本页」入口判断用（#224）；只有计数和标记。
@@ -4993,6 +5033,7 @@
       `填写：${seconds(result.fillMs)}；总计：${seconds(result.totalMs)}`,
       // #402 AI 返回前先填上的项数；只在本机显示。
       ...(Number.isInteger(result.earlyFilled) && result.earlyFilled > 0 ? [`AI 返回前先填：${result.earlyFilled} 项`] : []),
+      ...(result.missingWorkRows > 0 ? [`工作/实习经历还需新增 ${count(result.missingWorkRows)} 条`] : []),
       ...(result.deep ? formatDeepDiagnostics(result.deep) : []),
       ...(result.recipe ? [formatRecipeDiagnostics(result.recipe, d)] : []),
       // #429 第 4 项：这次一键填写前后的上传，只有计数和原因码。
@@ -5190,13 +5231,56 @@
     return selected?.texts.length === 1 && self.ResumeProAIHelpers.normalizeText(selected.texts[0]) === self.ResumeProAIHelpers.normalizeText(expected);
   }
 
+  function bossWorkCompanyInput(row) {
+    if (!row) return null;
+    const inputs = Array.from(row.querySelectorAll(".form-item")).flatMap(item => {
+      const label = item.querySelector(".item-label .label-text")?.textContent?.trim();
+      if (self.ResumeProAIHelpers?.workRole?.(label) !== "company") return [];
+      return Array.from(item.querySelectorAll('input[type="text"], input:not([type])')).filter(isVisible);
+    });
+    return inputs.length === 1 ? inputs[0] : null;
+  }
+
+  function bossWorkCompanyMatches(element, expected) {
+    const input = bossWorkCompanyInput(element.closest(".group-part-item"));
+    const normalize = self.ResumeProAIHelpers.normalizeText;
+    return Boolean(input && normalize(input.value) === normalize(expected));
+  }
+
+  function bossCetSelection(row) {
+    const roots = Array.from(row?.querySelectorAll(".form-item") || []).flatMap(item => {
+      const label = item.querySelector(".item-label .label-text")?.textContent?.trim();
+      return /^英语(?:能力)?等级$/.test(label) ? Array.from(item.querySelectorAll(".ui-select")).filter(isVisible) : [];
+    });
+    if (roots.length !== 1) return { root: null, selected: "", otherSelected: false };
+    const root = roots[0];
+    const selection = self.ResumeProCustomControls?.readSelection?.({ element: root, root });
+    const labels = selection?.texts || [];
+    const selected = labels.length === 1 ? self.ResumeProAIHelpers.cetLevel(labels[0]) : "";
+    return { root, selected, otherSelected: Boolean(labels.length && !selected) };
+  }
+
   function addScannedControls(scan, fields, fieldMap, prefix) {
     const educationPairs = new Map();
     const educationRows = new Map();
     const educationRow = el => el.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com"
       && el.closest('.group-part-item[data-group-id="EDUCATION"]');
     const schools = new Map();
+    const workGroups = new Map();
+    const cetRows = new Map();
+    const agent = self.ResumeProFormAgent;
     for (const control of scan.controls) {
+      const el = control.element;
+      const workScope = agent?.campusWorkScope?.(el);
+      if (workScope && !workGroups.has(workScope)) {
+        const rows = agent.campusRows(workScope);
+        const inputs = rows.map(bossWorkCompanyInput);
+        workGroups.set(workScope, { rows, inputs, companies: inputs.map(input => input?.value?.trim() || ""), id: workGroups.size });
+      }
+      if (el.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com" && /^英语(?:能力)?等级$/.test(control.label)) {
+        const row = el.closest(".group-part-item");
+        if (row && !cetRows.has(row)) cetRows.set(row, { ...bossCetSelection(row), index: cetRows.size });
+      }
       const row = educationRow(control.element);
       if (!row) continue;
       if (!educationRows.has(row)) educationRows.set(row, educationRows.size);
@@ -5216,12 +5300,23 @@
       const row = educationRow(element);
       const educationRole = row && (control.rangePart ? (control.rangePart === "开始" ? "start" : "end")
         : ({ "学校名称": "school", "学历": "level", "学位": "degree", "受教育类型": "study", "专业名称": "major", "专业": "major" })[control.label]);
+      const rowElement = element.closest?.(".group-part-item");
+      const work = workGroups.get(agent?.campusWorkScope?.(element));
+      const workIndex = work?.rows.indexOf(rowElement) ?? -1;
+      const workRole = workIndex >= 0 && self.ResumeProAIHelpers?.workRole?.(control.label.replace(/（(?:开始|结束)）$/, ""));
+      const workPart = workRole === "range" && control.rangePart ? (control.rangePart === "开始" ? "start" : "end") : workRole;
+      const cet = cetRows.get(rowElement);
+      const cetRole = cet?.root && (control.root === cet.root ? "level"
+        : control.controlKind === "text" && /^英语(?:考试)?(?:分数|成绩|得分)$/.test(control.label) ? "score" : "");
       const base = {
         controlKind,
         label: control.label,
         placeholder: control.placeholder,
         ariaLabel: element.getAttribute("aria-label") || "",
         group: control.group,
+        ...(workPart && workPart !== "range" ? { bossWork: { role: workPart, row: `${prefix}${work.id}:${workIndex}`,
+          index: workIndex, companies: work.companies, companyReady: work.inputs.every(Boolean) } } : {}),
+        ...(cetRole ? { bossCet: { role: cetRole, row: `${prefix}${cet.index}`, selected: cet.selected, otherSelected: cet.otherSelected } } : {}),
         ...(educationRole ? { bossEducation: { role: educationRole, row: `${prefix}${educationRows.get(row)}`,
           index: educationRows.get(row), school: schools.get(row) || "",
           highestFirst: /从最高学历填起/.test(row.closest?.(".group-part-container")

@@ -624,7 +624,7 @@
       const { merged, outline } = analysed;
 
       const wantsAdd = merged.sections.some(section => section.addRef);
-      if ((merged.preActions.length || wantsAdd) && deps.planActions) {
+      if (deps.planActions && (merged.preActions.length || wantsAdd || deps.hasLocalSections?.())) {
         let plan;
         try {
           plan = deps.planActions({ spec: merged, outline, templateFields: run.templateFields });
@@ -728,7 +728,7 @@
       if (merged.preActions.length) {
         state.notes.push(`AI 认为还需要点击${describeActions(merged.preActions, outline.nodes)}；这一次不再自动点击，需要时手动操作后再分析。`);
       }
-      if (deps.planActions && merged.sections.some(section => section.addRef)) {
+      if (deps.planActions && (merged.sections.some(section => section.addRef) || deps.hasLocalSections?.())) {
         // 只数一数还差几条（不点击），告诉用户填完后可以再分析一次来新增。
         let again = null;
         try {

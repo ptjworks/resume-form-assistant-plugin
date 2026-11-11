@@ -800,12 +800,9 @@
       if (hits.length) return hits.length === 1 ? { option: hits[0] } : { reason: 'ambiguous_option' };
     }
     if (/^英语(?:能力)?等级$/.test(label)) {
-      const level = /^(?:CET|大学英语)\s*[-－]?\s*([46四六])(?:级)?\s*(?:[（(]\s*\d+(?:\.\d+)?\s*分?\s*[）)])?$/i.exec(trim(value))?.[1];
+      const level = helpers.cetLevel(trim(value).replace(/\s*[（(]\s*\d+(?:\.\d+)?\s*分?\s*[）)]$/, ''));
       if (level) {
-        const number = /[4四]/.test(level) ? '4' : '6';
-        const name = number === '4' ? '四' : '六';
-        const hits = list.filter(option => !option.disabled
-          && new RegExp(`^(?:(?:大学)?英语)?${name}级$|^CET[-－ ]?${number}$`, 'i').test(trim(option.text)));
+        const hits = list.filter(option => !option.disabled && helpers.cetLevel(option.text) === level);
         if (hits.length) return hits.length === 1 ? { option: hits[0] } : { reason: 'ambiguous_option' };
       }
     }

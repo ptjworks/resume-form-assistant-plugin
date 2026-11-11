@@ -148,8 +148,10 @@
       items.push({ kind: action.kind, ref: action.ref, element: node.element, label: name.label });
     }
     let adds = null;
-    const sections = (spec.sections || []).filter(section => section.addRef);
-    if (sections.length && templateFields.length) {
+    const campus = formAgent?.campusGroups?.(doc) || [];
+    const sections = (spec.sections || []).filter(section => section.addRef && !campus.some(group =>
+      group.domain === section.domain || group.button === nodes.get(section.addRef)?.element));
+    if ((sections.length || campus.length) && templateFields.length) {
       if (items.length || manual.length) {
         blocked.push("先完成「编辑 / 展开」；如果网页上的经历条目比简历少，完成后再点一次「深度分析本页」来新增。");
       } else {
@@ -158,9 +160,9 @@
           button: nodes.get(section.addRef)?.element,
           rows: section.rowRefs.map(ref => nodes.get(ref)?.element).filter(Boolean)
         });
-        const groups = sections.map(groupOf);
+        const groups = [...sections.map(groupOf), ...campus];
         groups.forEach((group, index) => {
-          group.others = groups.filter((_, i) => i !== index).flatMap(other => [other.button, ...other.rows]).filter(Boolean);
+          group.others = groups.filter((_, i) => i !== index).flatMap(other => [other.button, ...(other.rows || [])]).filter(Boolean);
         });
         const snapshot = formAgent.collectSpec(groups, templateFields, {
           isVisible, labelOf, press, timing: timing?.add,
