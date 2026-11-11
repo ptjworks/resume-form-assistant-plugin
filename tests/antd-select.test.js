@@ -26,7 +26,7 @@ function load(label, control) {
 // loadAfter：点开后过一会儿才有选项。没有选项时弹层里是一个禁用条目（加载圈、「暂无数据」或一段文字），
 // 弹层带 --empty；emptyClass=false 时不带。remote：输入前没有弹层，输入后按搜索词给选项。
 // stale：输入前发出的请求晚到，先显示这份旧列表，再显示搜索结果。combobox：mode=combobox（AutoComplete 也是），输入框一直显示。
-function antd3(choices, { label = '学历', loadAfter = 0, multiple = false, selected = '', remote = false, emptyClass = true, notFound = 'spin', stale = null, combobox = false } = {}) {
+function antd3(choices, { label = '学历', loadAfter = 0, multiple = false, selected = '', remote = false, emptyClass = true, notFound = 'spin', stale = null, combobox = false, initialOptions } = {}) {
   const mode = multiple ? 'multiple' : 'single';
   const field = '<div class="ant-select-search__field__wrap"><input autocomplete="off" class="ant-select-search__field" value=""></div>';
   const search = multiple ? `<ul><li class="ant-select-search ant-select-search--inline">${field}</li></ul>`
@@ -38,7 +38,7 @@ function antd3(choices, { label = '学历', loadAfter = 0, multiple = false, sel
   const { doc } = h;
   const root = doc.querySelector('.ant-select'), combo = root.querySelector('[role="combobox"]'), input = root.querySelector('input');
   const picked = [], searches = [];
-  let dropdown = null, open = false, items = loadAfter || remote || combobox ? [] : choices;
+  let dropdown = null, open = false, items = initialOptions ?? (loadAfter || remote || combobox ? [] : choices);
   const close = () => {
     open = false; if (dropdown) dropdown.hidden = true; combo.setAttribute('aria-expanded', 'false');
     if (remote) { input.value = ''; input.closest('.ant-select-search').hidden = true; }
@@ -104,7 +104,7 @@ function antd3(choices, { label = '学历', loadAfter = 0, multiple = false, sel
 
 // AntD 4/5（rc-select 14）：input[type=search][role=combobox] 在组件根里，真选项是 .ant-select-item-option（虚拟列表只渲染第一屏）。
 // remote：边输边搜，输入前没有弹层。autoComplete：AutoComplete 组件，输入框里的字就是字段的值。
-function antd4(choices, { label = '专业', remote = false, autoComplete = false } = {}) {
+function antd4(choices, { label = '专业', remote = false, autoComplete = false, matchesQuery = (text, query) => text.includes(query) } = {}) {
   const typing = remote || autoComplete;
   const h = load(label, `<div class="ant-select${autoComplete ? ' ant-select-auto-complete' : ''} ant-select-single${typing ? ' ant-select-show-search' : ''}">
     <div class="ant-select-selector"><span class="ant-select-selection-search"><input type="search" autocomplete="off" class="ant-select-selection-search-input"
@@ -150,7 +150,7 @@ function antd4(choices, { label = '专业', remote = false, autoComplete = false
     searches.push(input.value);
     if (!typing) return;
     const query = input.value;
-    setTimeout(() => { items = query ? choices.filter(text => text.includes(query)) : []; render(); }, 30);
+    setTimeout(() => { items = query ? choices.filter(text => matchesQuery(text, query)) : []; render(); }, 30);
   });
   return { ...h, root, input, picked, searches };
 }
@@ -191,12 +191,32 @@ test('a gender select whose M and F options appear only when opened takes 男 as
   assert.deepEqual(size.picked, []);
 });
 
-test('#481 a searchable education-level select drops the doctoral program note from its query', async (t) => {
+test('#481 a searchable education-level select falls back to the level if the original query has no result', async (t) => {
   const h = antd4(['硕士研究生', '博士研究生'], { label: '学历', remote: true });
   t.after(() => h.w.close());
   const result = await h.api.operate({ ...h.target, binding: h.found }, '博士研究生（直博）');
   assert.equal(result.ok, true, result.reason);
-  assert.deepEqual(h.searches, ['博士研究生']);
+  assert.deepEqual(h.searches, ['博士研究生（直博）', '博士研究生']);
+  assert.deepEqual(h.picked, ['博士研究生']);
+});
+
+test('#481 a prefix-filtered education select prefers the full original option', async (t) => {
+  const value = '全日制硕士研究生';
+  const h = antd4(['硕士研究生', value], { label: '学历', remote: true, matchesQuery: (text, query) => text.startsWith(query) });
+  t.after(() => h.w.close());
+  const result = await h.api.operate({ ...h.target, binding: h.found }, value);
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.searches, [value]);
+  assert.deepEqual(h.picked, [value]);
+});
+
+test('#481 a searchable education multi-select also tries the original query before the level', async (t) => {
+  const value = '博士研究生（直博）';
+  const h = antd3(['博士研究生'], { label: '学历', multiple: true, remote: true, initialOptions: ['本科'] });
+  t.after(() => h.w.close());
+  const result = await h.api.operate({ ...h.target, binding: h.found }, value);
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.searches.filter(Boolean), [value, '博士研究生']);
   assert.deepEqual(h.picked, ['博士研究生']);
 });
 

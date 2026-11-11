@@ -421,6 +421,30 @@ test("#481 an internship description joins only the saved content for the matche
   assert.equal(valueOf(ambiguous, "description"), undefined);
 });
 
+test("#481 experience completion leaves a description blank after conflicting AI answers", async () => {
+  const group = "实习经历";
+  const env = worker(() => [
+    { fieldId: "company", ref: "r1" },
+    { fieldId: "description", ref: "r2" },
+    { fieldId: "description", ref: "r4" }
+  ]);
+  const result = await env.run({
+    formFields: [
+      { fieldId: "company", label: "单位名称", group, inputType: "text" },
+      { fieldId: "description", label: "实习内容", group, inputType: "textarea" }
+    ],
+    resumeFields: [
+      { group, key: "实习经历1-公司", value: "虚构甲单位" },
+      { group, key: "实习经历1-内容1", value: "整理项目资料。" },
+      { group, key: "实习经历2-公司", value: "虚构乙单位" },
+      { group, key: "实习经历2-内容1", value: "复核测试记录。" }
+    ]
+  });
+  assert.equal(valueOf(result, "company"), "虚构甲单位");
+  assert.equal(valueOf(result, "description"), undefined);
+  assert.equal(result.diagnostics.openUnanswered, 1);
+});
+
 test("#481 same-employer experience descriptions use the matched period to identify the right record", async () => {
   const group = "工作经历";
   const item = (key, value) => ({ group, key, value });

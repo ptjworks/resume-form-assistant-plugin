@@ -488,7 +488,8 @@ async function handleAiFill(message, controller = new AbortController()) {
   // 开放题（见 isOpinionField）的回答被拦下时（资料项太多、同一个回复里给了不同的值），和没有现成回答一样算开放题，不报成没写上。
   const opinion = isOpinionField;
   const opinionIds = new Set(formFields.filter(opinion).map(field => field.fieldId));
-  const answers = settleAnswers(aiMatches).filter(match => !(match.blocked && opinionIds.has(match.fieldId)));
+  const settled = settleAnswers(aiMatches);
+  const answers = settled.filter(match => !(match.blocked && opinionIds.has(match.fieldId)));
   const matches = ResumeProAIHelpers.filterValidMatches(formFields, [...ruleMatches, ...answers])
     .filter(match => {
       if (seenMatchIds.has(match.fieldId)) return false;
@@ -496,7 +497,8 @@ async function handleAiFill(message, controller = new AbortController()) {
       return true;
     });
   const matchIndexes = new Map(matches.map((match, index) => [match.fieldId, index]));
-  for (const match of completeExperienceDescriptions(formFields, matches, catalog, matchedFieldIds)) {
+  const excludedFromCompletion = new Set([...matchedFieldIds, ...settled.filter(match => match.blocked).map(match => match.fieldId)]);
+  for (const match of completeExperienceDescriptions(formFields, matches, catalog, excludedFromCompletion)) {
     const index = matchIndexes.get(match.fieldId);
     if (index === undefined) matches.push(match);
     else matches[index] = match;
@@ -667,14 +669,14 @@ function experienceEvidence(record, row, values) {
 }
 
 // 同一条网页经历能对应到一段资料时，按原顺序拼接该段内容；同名单位用岗位或日期消除歧义。
-function completeExperienceDescriptions(fields, matches, catalog, ruleIds) {
+function completeExperienceDescriptions(fields, matches, catalog, excludedIds) {
   const normalize = ResumeProAIHelpers.normalizeText;
   const values = new Map(matches.filter(match => !match.blocked).map(match => [match.fieldId, match.value]));
   const filled = [];
   let records;
   for (const field of fields) {
     const type = experienceSection(field.group);
-    if (!type || !isOpenQuestion(field) || ruleIds.has(field.fieldId)
+    if (!type || !isOpenQuestion(field) || excludedIds.has(field.fieldId)
       || !EXPERIENCE_DESCRIPTION.test(normalize(field.label))) continue;
     const section = normalize(field.group);
     const row = fields.filter(item => normalize(item.group) === section);
