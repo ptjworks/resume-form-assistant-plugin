@@ -197,6 +197,8 @@
     findSelectOptionIndex,
     isSameOptionText,
     optionSearchText,
+    isEnglishLevelLabel,
+    englishLevelSearchAlternative,
     splitMultipleValues,
     isPlaceholderOption,
     filterValidMatches,
@@ -416,9 +418,11 @@
     const forms = formFields.filter((field) => !isSecretFormField(field, profile));
     const resume = resumeFields.filter((field) => isSafeResumeField(field, profile));
     const rules = filterValidMatches(forms, buildRuleBasedMatches(forms, resume));
-    if (typeof profile.savedAnswerMatches !== "function") return rules;
     const taken = new Set(rules.map((match) => match.fieldId));
-    return [...rules, ...filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields))];
+    const saved = typeof profile.savedAnswerMatches === "function"
+      ? filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields)) : [];
+    const occupied = new Set([...taken, ...saved.map((match) => match.fieldId)]);
+    return [...rules, ...saved, ...englishResultMatches(forms, resume, pageFields, occupied)];
   }
 
   function filterValidMatches(formFields, matches) {
@@ -481,7 +485,7 @@
   // 下拉框、单选框选值：先精确，再归一化，最后「包含」。
   // 网页选项和资料写法常对不上（本科 / 大学本科），只做全等会让大量下拉框填不上。
   // 「包含」只在唯一命中时采用：「博士」同时包含于「博士研究生」和「博士后」时宁可不选。
-  function findSelectOptionIndex(options, value) {
+  function findSelectOptionIndex(options, value, englishLevel = false) {
     const list = Array.isArray(options) ? options : [];
     const target = String(value ?? "").trim();
 
@@ -512,13 +516,14 @@
     if (index >= 0) return index;
 
     // 同一个意思的另一种写法（见 OPTION_SYNONYMS）：选项里正好一项是才用它，几项都是就照下面的规则。
-    // 外语等级（LEVEL_SYNONYMS）还要选项里至少有两种外语等级，免得「一级 … 四级」的计算机等级题收下「CET-4」。
+    // 题目没明确问英语等级时，仍要求有两种外语等级，免得计算机等级题收下「CET-4」。
     const group = SYNONYM_GROUPS.get(normalizedTarget);
     const groupOf = (option) => SYNONYM_GROUPS.get(normalizeText(optionText(option))) || SYNONYM_GROUPS.get(normalizeText(optionValue(option)));
-    const outOfScope = Boolean(group?.family)
+    const outOfScope = !englishLevel && Boolean(group?.family)
       && new Set(usable.map(({ option }) => groupOf(option)).filter((other) => other?.family === group.family)).size < 2;
     const synonyms = group && !outOfScope ? usable.filter(({ option }) => groupOf(option) === group) : [];
     if (synonyms.length === 1) return synonyms[0].index;
+    if (englishLevel && group?.family && synonyms.length > 1) return -1;
 
     if ([ID_TYPE_NAMES.hkmo[0], ID_TYPE_NAMES.tw[0]].includes(normalizedTarget)) {
       index = findUsable((option) => normalizeText(optionText(option)) === JOINT_RESIDENCE);
@@ -552,12 +557,12 @@
 
   // 选项文字和要填的值是不是同一项：归一化后相同，或是同一个意思的另一种写法（OPTION_SYNONYMS）。
   // 虚拟列表只画出一部分时只认这样的一项（custom-controls.js 的 match）。外语等级要看整张列表才算数，这里不认。
-  function isSameOptionText(text, value) {
+  function isSameOptionText(text, value, englishLevel = false) {
     const a = normalizeText(text);
     const b = normalizeText(value);
     if (!a || !b) return false;
     const group = SYNONYM_GROUPS.get(b);
-    return a === b || Boolean(group && !group.family && group.normalized.has(a));
+    return a === b || Boolean(group && (!group.family || englishLevel) && group.normalized.has(a));
   }
 
   // #429 多选（原生 select multiple、antd 和 Element 的多选下拉）要选的几项：按顿号、逗号、分号、竖线和换行拆开，
@@ -580,14 +585,63 @@
 
   // 下拉框里搜索时打的字：要填的值有别的写法、且每种写法都含着其中最短的一种时打这一种
   // （「土家族」打「土家」，选项写「土家」也搜得到），否则照原样打。
-  function optionSearchText(value) {
-    const raw = String(value ?? "").trim();
+  function optionSearchText(value, label) {
+    const raw = educationLevelWithoutQualifier(label, value) || String(value ?? "").trim();
     const group = SYNONYM_GROUPS.get(normalizeText(raw));
     if (!group) return raw;
     const core = group.names
       .filter((name) => Array.from(group.normalized).every((other) => other.includes(normalizeText(name))))
       .sort((a, b) => a.length - b.length)[0];
     return core || raw;
+  }
+
+  function isEnglishLevelLabel(label) {
+    const text = normalizeText(label);
+    return /^(?:大学)?(?:英语|英文)(?:考试)?(?:水平|等级|级别|能力(?:等级)?)$/.test(text)
+      || /^english(?:test)?(?:proficiency(?:level)?|level)$/.test(text);
+  }
+
+  function isEnglishScoreLabel(label) {
+    return /^(?:大学)?(?:英语|英文)(?:考试|等级|级别|水平)?(?:成绩|分数)$/.test(normalizeText(label));
+  }
+
+  // #481 简历可能把考试和分数存成一项证书，例如 CET-6（587 分）。
+  function cetResult(value) {
+    const text = String(value ?? "").normalize("NFKC").trim();
+    const match = /^(.+?)(?:\s*\(\s*(\d{1,3})\s*分?\s*\)|(?:\s+|:\s*)(\d{1,3})\s*分?)$/.exec(text);
+    const group = match && SYNONYM_GROUPS.get(normalizeText(match[1]));
+    return group && /^CET-[46]$/.test(group.names[0])
+      ? { level: match[1].trim(), code: group.names[0], score: match[2] ?? match[3] } : null;
+  }
+
+  // 同一区块明确分开问等级和成绩，且资料只有一份无歧义的成绩时，两栏用同一个考试结果。
+  function englishResultMatches(forms, resume, pageFields, occupied) {
+    const levels = pageFields.filter(field => isEnglishLevelLabel(field.label) && field.multiple !== true
+      && (field.inputType === "select" || field.inputType === "radio"));
+    const scores = pageFields.filter(field => isEnglishScoreLabel(field.label)
+      && ["text", "number"].includes(field.inputType));
+    if (levels.length !== 1 || scores.length !== 1) return [];
+    const [level] = levels, [score] = scores;
+    if (level.group !== score.group || occupied.has(level.fieldId) || occupied.has(score.fieldId)) return [];
+    const candidates = resume.map(field => cetResult(field.value)).filter(Boolean);
+    const result = candidates[0];
+    if (!result || candidates.some(item => item.code !== result.code || item.score !== result.score)) return [];
+    // 已单独存了等级或分数时，交给已有的匹配流程，避免用另一场考试的分数覆盖。
+    if (resume.some(field => isEnglishLevelLabel(field.key) || isEnglishScoreLabel(field.key)
+      || /^(?:外语等级|外语成绩|外语分数)$/.test(normalizeText(field.key))
+      || /^cet[46]$/.test(normalizeText(field.value)) && normalizeText(field.value) !== normalizeText(result.code))) return [];
+    if (!isValueValidForField(level, result.level)) return [];
+    return [{ fieldId: level.fieldId, value: result.level }, { fieldId: score.fieldId, value: result.score }]
+      .filter(match => forms.some(field => field.fieldId === match.fieldId));
+  }
+
+  function englishLevelSearchAlternative(value) {
+    const key = normalizeText(value);
+    const group = SYNONYM_GROUPS.get(key);
+    if (!group?.family) return "";
+    const [code, , , shortName] = group.names;
+    // 「六级」能搜到「大学英语六级」，「CET」同时兼容 CET6 和 CET-6。结果还会按具体等级核对。
+    return key === normalizeText(code) ? shortName : code.split("-")[0];
   }
 
   // 籍贯、高考生源地、户口所在地是三个问题，不能互相顶替；同一个问题下的省、市、县也要分清。
@@ -776,7 +830,35 @@
   // #429 英文表单的性别下拉只写首字母（M、F）：只在问性别的字段上，把「男」「女」换成选项里的 M、F。
   // 不放进 OPTION_SYNONYMS：「T 恤尺码」这类下拉也有 M，全局认了会把性别算成能填进去。
   const GENDER_LETTERS = [["M", ["男", "男性", "male"]], ["F", ["女", "女性", "female"]]];
+  const EDUCATION_LEVEL = "博士研究生|硕士研究生|大学本科|本科|大学专科|大专|专科|中专|高中";
+  const EDUCATION_QUALIFIER = "非全日制|全日制|统招|直博|普博|硕博连读|专升本|自考|成人教育";
+  const QUALIFIED_EDUCATION = new RegExp(
+    `^(?:(?:${EDUCATION_QUALIFIER})[,，、]?)*(${EDUCATION_LEVEL})(?:[,，、]?(?:${EDUCATION_QUALIFIER}))*$`
+  );
+
+  // 题目只问学历时，才从「全日制硕士研究生」这类写法里提取层次。
+  function educationLevelWithoutQualifier(label, value) {
+    if (!/^(?:最高|当前|在读|教育)?学历(?:层次)?$/.test(normalizeText(label))) return "";
+    const full = normalizeText(String(value ?? "").normalize("NFKC"));
+    const level = QUALIFIED_EDUCATION.exec(full)?.[1];
+    return level && level !== full ? level : "";
+  }
+
   function choiceValue(field, value) {
+    if (isEnglishLevelLabel(field?.label) || isEnglishScoreLabel(field?.label)) {
+      const result = cetResult(value);
+      if (result) return isEnglishScoreLabel(field.label) ? result.score : result.level;
+    }
+    const level = educationLevelWithoutQualifier(field?.label, value);
+    if (level && hasRealOptions(field)) {
+      const full = normalizeText(value);
+      const available = field.options.filter(option => !isPlaceholderOption(option));
+      const names = option => [option?.text ?? option, option?.value];
+      if (available.some(option => names(option).some(text => normalizeText(text) === full))) return value;
+      const equivalent = available.filter(option => names(option).some(text => isSameOptionText(text, level)));
+      if (equivalent.length === 1) return level;
+      if (equivalent.length > 1) return "";
+    }
     if (inferFieldSemantic(field) !== "gender" || !hasRealOptions(field) || findSelectOptionIndex(field.options, value) >= 0) return value;
     const text = normalizeText(value);
     const letter = GENDER_LETTERS.find(([, words]) => words.includes(text))?.[0];
@@ -805,7 +887,8 @@
     if ((field?.inputType === "select" || field?.inputType === "radio") && hasRealOptions(field) && field?.cascadeGroup === undefined) {
       // 和网页上实际选值用同一套规则，否则页面能选上的值会先在这里被丢掉。多选（#429）每一项都要对得上。
       const parts = field?.multiple === true ? splitMultipleValues(text, field.options) : [text];
-      if (!parts.length || parts.some((part) => findSelectOptionIndex(field.options, part) < 0)) {
+      const englishLevel = isEnglishLevelLabel(field.label);
+      if (!parts.length || parts.some((part) => findSelectOptionIndex(field.options, part, englishLevel) < 0)) {
         return false;
       }
     }
@@ -987,8 +1070,10 @@
   const SPAN_OPEN_END = /^\s*(?:(?:[\-~～—–到]|至(?!今))\s*)?(至今在读|至今|现在|今|present|now|till now|to date)\s*$/i;
   function rangeDateParts(rawValue) {
     const raw = String(rawValue ?? "").trim();
-    const dates = raw.match(SPAN_DATE) || [];
-    if (dates.length === 2 && !raw.replace(SPAN_DATE, "").replace(/[\s\-~～—–至到]/g, "")) return [dates[0].trim(), dates[1].trim()];
+    // #481 预计毕业只是结束年月的备注。仅在两个日期的区间里忽略这一种明确尾注。
+    const span = raw.replace(/\s*(?:（\s*预计毕业\s*）|\(\s*预计毕业\s*\))$/, "");
+    const dates = span.match(SPAN_DATE) || [];
+    if (dates.length === 2 && !span.replace(SPAN_DATE, "").replace(/[\s\-~～—–至到]/g, "")) return [dates[0].trim(), dates[1].trim()];
     const open = dates.length === 1 && raw.startsWith(dates[0]) ? SPAN_OPEN_END.exec(raw.slice(dates[0].length)) : null;
     return open ? [dates[0].trim(), open[1]] : null;
   }
@@ -1048,6 +1133,7 @@
     if (CN_ID_VALUE.test(compact)) return "18 位证件号";
     if (/^https?:\/\//i.test(text)) return "网址";
     if (rangeDateParts(text)) return "起止日期";
+    if (cetResult(text)) return "大学英语考试等级及成绩";
     if (/^[\d\s年月日\/\-.:T]+$/.test(text) && parseDateParts(text)?.year) return "日期";
     if (/^\d+$/.test(compact)) return `${compact.length} 位数字`;
     return text.length > 60 ? "长文本" : "";
@@ -1102,7 +1188,7 @@
   // 发给 AI 的目录换成「教育经历1-专业」：同一段的几项编号相同，值不出现。
   // 经历类分组里，字段名以这一组的某个值开头的，后面不管是什么，前缀都换成编号（「某校社团经历-职位」→「校园经历1-社团经历-职位」）；
   // 前缀对不上现在的值（解析以后改过学校名）时，「某某 + 教育经历」这样的也换掉，前面多长都算（英文全称常超过 18 个字）。别的字段名原样。
-  // withPrefixes：同时给出每个字段名开头这次起的编号有几个字（prefixes，原样的字段名是 0），遮值时只有这一段不找。
+  // withPrefixes：同时给出编号前缀长度，以及仅供本地配对、尚未脱敏的字段名。
   function catalogKeys(resumeFields, { withPrefixes = false } = {}) {
     const labels = [...new Set(ENTITY_LABEL_BY_GROUP.map((item) => item.label))];
     const numbers = new Map();
@@ -1165,7 +1251,7 @@
     const prefixes = renamed.map((item) => item.prefix);
     const keys = maskResumeValues(renamed.map((item) => item.key), resumeFields,
       { labels: renamed.map((item) => item.key), groups: resumeFields.map((field) => field?.group), prefixes });
-    return withPrefixes ? { keys, prefixes } : keys;
+    return withPrefixes ? { keys, prefixes, recordKeys: renamed.map(item => item.key) } : keys;
   }
 
   // 人名类字段（本人、家庭成员、配偶、紧急联系人、推荐人的姓名，曾用名）：值 2 个字起就遮，出现在哪段文字里都换。

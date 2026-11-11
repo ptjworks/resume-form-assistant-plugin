@@ -191,6 +191,15 @@ test('a gender select whose M and F options appear only when opened takes 男 as
   assert.deepEqual(size.picked, []);
 });
 
+test('#481 a searchable education-level select drops the doctoral program note from its query', async (t) => {
+  const h = antd4(['硕士研究生', '博士研究生'], { label: '学历', remote: true });
+  t.after(() => h.w.close());
+  const result = await h.api.operate({ ...h.target, binding: h.found }, '博士研究生（直博）');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.searches, ['博士研究生']);
+  assert.deepEqual(h.picked, ['博士研究生']);
+});
+
 // 英文性别题的题目只写在控件的 aria-label 上（字段名看不出是性别）：按扫描时的完整上下文认出是性别题，「男」选上 M。
 // 选项写成 Male、Female 的，「男」选上 Male。
 test('a gender select named only by its aria-label takes 男 as M, and Male, Female options take 男 as Male', async () => {
@@ -285,6 +294,26 @@ test('AntD 3 combobox mode without suggestions is not typed into', async () => {
   assert.equal(result.reason, 'options_not_rendered');
   assert.deepEqual(h.searches, []);
   assert.equal(h.input.value, '');
+});
+
+test('#481 an English level select can choose the only matching grade on its list', async (t) => {
+  const h = antd3(['四级', '其他'], { label: '英语等级' });
+  const other = antd3(['四级', '其他'], { label: '计算机等级' });
+  t.after(() => { h.w.close(); other.w.close(); });
+  const result = await h.api.operate({ ...h.target, binding: h.found }, 'CET4');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.picked, ['四级']);
+  assert.equal((await other.api.operate({ ...other.target, binding: other.found }, 'CET4')).reason, 'no_option_match');
+  assert.deepEqual(other.picked, []);
+});
+
+test('#481 an English level select searches again when only the other spelling renders options', async (t) => {
+  const h = antd4(['大学英语六级', '其他'], { label: '英语等级', remote: true });
+  t.after(() => h.w.close());
+  const result = await h.api.operate({ ...h.target, binding: h.found }, 'CET6（587 分）');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.searches, ['CET6', '六级']);
+  assert.deepEqual(h.picked, ['大学英语六级']);
 });
 
 test('AntD 4/5 search select without a popup before typing is searched in its own input', async () => {

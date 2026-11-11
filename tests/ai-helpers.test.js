@@ -249,6 +249,28 @@ test("findSelectOptionIndex: another way of writing the same thing is used when 
   assert.equal(pick(["高中", "大专", "本科", "硕士研究生"], "大学专科"), "大专");
 });
 
+test("#481 a labeled English level field accepts a single equivalent option before filling", () => {
+  const field = { label: "英语等级", inputType: "select", options: ["六级", "其他"] };
+  assert.equal(helpers.isValueValidForField(field, "CET6"), true);
+  assert.equal(helpers.isValueValidForField({ ...field, label: "计算机等级" }, "CET6"), false);
+  assert.equal(helpers.isValueValidForField({ ...field, options: ["六级", "大学英语六级"] }, "CET6"), false);
+});
+
+test("#481 an education level keeps an offered program-specific choice and separates degrees from levels", () => {
+  const value = "博士研究生（直博）";
+  const field = { label: "学历", inputType: "select", options: ["本科", "博士研究生"] };
+  assert.equal(helpers.choiceValue(field, value), "博士研究生");
+  assert.equal(helpers.choiceValue({ ...field, options: [...field.options, value] }, value), value);
+  assert.equal(helpers.isValueValidForField({ ...field, options: ["博士研究生（普博）"] }, value), false);
+  assert.equal(helpers.isValueValidForField(field, "理学学士"), false);
+  assert.equal(helpers.choiceValue({ ...field, label: "学位" }, value), value);
+  assert.equal(helpers.choiceValue({ ...field, options: ["硕士研究生"] }, "非全日制硕士研究生"), "硕士研究生");
+  assert.equal(helpers.choiceValue({ ...field, options: ["大学本科"] }, "本科（全日制、统招）"), "本科");
+  assert.equal(helpers.choiceValue({ ...field, options: ["专科"] }, "大专（自考）"), "大专");
+  assert.equal(helpers.isValueValidForField({ ...field, options: ["本科", "大学本科"] }, "本科（全日制）"), false);
+  assert.equal(helpers.choiceValue({ ...field, options: ["本科"] }, "本科（未毕业）"), "本科（未毕业）");
+});
+
 test("findSelectOptionIndex: synonyms stay inside their own meaning", () => {
   const index = (list, value) => helpers.findSelectOptionIndex(options(list), value);
   // 学历和学位不混。

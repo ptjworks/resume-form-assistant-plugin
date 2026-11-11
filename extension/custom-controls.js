@@ -610,7 +610,7 @@
   // 没找到、出错时都滚回原处。
   // read 读弹层里当前画出来的选项。
   const SCAN_SCREENS = 50, SCAN_STEADY_MS = 80, SCAN_MS = 8000, SCAN_TAIL_MS = 500, SCAN_SETTLE_MS = 400;
-  async function scanList(ctx, h, read, popup, layer, value) {
+  async function scanList(ctx, h, read, popup, layer, value, englishLevel) {
     if (!popup?.isConnected) return { reason: 'no_option_match' };
     const started = Date.now();
     const left = () => SCAN_MS - (Date.now() - started);
@@ -677,7 +677,7 @@
         break;
       }
       const list = seen.sort((a, b) => a.at - b.at);
-      const matched = match(list, value, h.helpers, true);
+      const matched = match(list, value, h.helpers, true, englishLevel);
       if (!matched.option) return { reason: matched.reason };
       const wanted = matched.option;
       const locate = list => placed(list).find(({ option, at }) => keyOf(option) === wanted.key && Math.abs(at - wanted.at) < row / 2)?.option || null;
@@ -706,22 +706,25 @@
   // partial：列表不全（见 partialList），或滚着看过、说不准看全了没有（见 scanList）。只认完全相同、归一化相同或同一个意思的
   // 另一种写法（#429，ai-helpers.js 的 OPTION_SYNONYMS）的一项，不靠「包含」去猜，几项都沾边也按没有匹配，好去搜索或滚着往下找。
   // 联想框的建议不走这里，见 sameOption。
-  function match(list, value, helpers, partial = false) {
+  function match(list, value, helpers, partial = false, englishLevel = false) {
     const same = option => [option.value, option.text].some(text => trim(text) === trim(value)
-      || (helpers.isSameOptionText ? helpers.isSameOptionText(text, value) : helpers.normalizeText(text) === helpers.normalizeText(value)));
-    const index = helpers.findSelectOptionIndex(list, value);
-    if (partial && (index < 0 || !same(list[index]))) return { reason: 'no_option_match' };
+      || (helpers.isSameOptionText ? helpers.isSameOptionText(text, value, englishLevel) : helpers.normalizeText(text) === helpers.normalizeText(value)));
+    const index = helpers.findSelectOptionIndex(list, value, englishLevel);
+    if (partial && index >= 0 && !same(list[index])) return { reason: 'no_option_match' };
     if (index < 0) {
       const possible = list.filter(option => !helpers.isPlaceholderOption(option)).filter(option => {
         const text = helpers.normalizeText(option.text), target = helpers.normalizeText(value);
         return text.includes(target) || target.includes(text);
       });
-      return { reason: possible.length > 1 ? 'ambiguous_option' : 'no_option_match' };
+      if (englishLevel && list.filter(option => !helpers.isPlaceholderOption(option) && same(option)).length > 1) {
+        return { reason: 'ambiguous_option' };
+      }
+      return { reason: !partial && possible.length > 1 ? 'ambiguous_option' : 'no_option_match' };
     }
     // Preserve native first-exact semantics, but never guess between indistinguishable
     // custom choices. Re-running the same resolver without the winner exposes ties.
     const remaining = list.map((option, at) => at === index ? { ...option, disabled: true } : option);
-    const another = helpers.findSelectOptionIndex(remaining, value);
+    const another = helpers.findSelectOptionIndex(remaining, value, englishLevel);
     if (another >= 0) {
       const exact = option => [trim(option.value), trim(option.text)].includes(trim(value));
       const normalized = option => [option.value, option.text].some(text => helpers.normalizeText(text) === helpers.normalizeText(value));
@@ -1094,6 +1097,8 @@
     info.requireCascadeSignal = info.library === 'element' && info.cascade && ctx.startedEditable;
     info.freeText = acceptsFreeText(ctx);
     if (!info.root) return { reason: 'unsupported_control' };
+    const englishLevel = !info.cascade && !info.freeText && h.helpers.isEnglishLevelLabel?.(ctx.entry?.binding?.label);
+    if (englishLevel && h.helpers.controlChoiceValue) raw = h.helpers.controlChoiceValue(ctx.entry.binding, [], raw);
     // #429 多选：antd、Element 的多选下拉一项一项选（见 pickMultiple），别的多选照旧不支持。
     if (info.multiple || ctx.hints.multiple === true) {
       return info.multiple && !info.cascade && ['antd', 'element'].includes(info.library) ? await pickMultiple(ctx, raw, h, info, state) : { reason: 'unsupported_control' };
@@ -1109,9 +1114,11 @@
     if (info.library === 'generic' && info.cascade && !region) return { reason: 'unsupported_control' };
     const desired = info.cascade ? (Array.isArray(raw) ? raw.map(trim) : trim(raw).split(/\s*(?:\/|>|→)\s*/)) : [trim(raw)];
     // 搜索框里打的字：有别的写法时打各种写法共有的一段（「土家族」打「土家」），见 ai-helpers.js 的 optionSearchText。
-    const searchText = text => h.helpers.optionSearchText ? h.helpers.optionSearchText(text) : text;
+    const searchLabel = !info.cascade && !info.freeText ? ctx.entry?.binding?.label : undefined;
+    const searchText = text => h.helpers.optionSearchText ? h.helpers.optionSearchText(text, searchLabel) : text;
+    const alternateSearch = text => englishLevel ? h.helpers.englishLevelSearchAlternative?.(text) : '';
     // 选项文字和要填的值算不算同一项：归一化后相同，或是同一个意思的另一种写法（#429）。
-    const sameText = (text, value) => h.helpers.isSameOptionText ? h.helpers.isSameOptionText(text, value)
+    const sameText = (text, value) => h.helpers.isSameOptionText ? h.helpers.isSameOptionText(text, value, englishLevel)
       : h.helpers.normalizeText(text) === h.helpers.normalizeText(value);
     // #429 问性别的题，英文表单的选项只写 M、F，要点开才看得到：worker 拿不到选项，给的是「男」「女」。按点开的列表再换一次
     // （ai-helpers.js 的 controlChoiceValue：题目上下文取扫描时的对应关系 binding，只在问性别的字段上换）。级联不换。
@@ -1218,16 +1225,27 @@
       opened = await h.waitUntil(ctx, doc.documentElement, () => genericOpened(), Boolean);
     }
     let typedFirst = false, typedAt = 0;
+    const typeSearch = (input, query) => {
+      if (state.searchInput !== input) state.searchBefore = input.value;
+      state.searchInput = input;
+      state.query = query;
+      if (info.freeText) h.type(input, query, ctx);
+      else { h.write(input, query, ctx); h.input(input); }
+      typedAt = Date.now();
+    };
     const typeInto = info.library === 'generic' || info.freeText ? info.el
       : ['antd', 'element'].includes(info.library) && !info.cascade && !info.root.matches(antd(info.root, '.ant-select-auto-complete, .ant-select-combobox'))
         ? Array.from(info.root.querySelectorAll('input')).find(input => safeSearch(input) && h.visible(input)) : null;
     if (typeInto && !dateWanted && opened.reason === 'verification_timeout' && safeSearch(typeInto) && h.visible(typeInto)) {
-      const reason = h.stop(ctx, true); if (reason) return { reason };
-      state.searchInput = typeInto; state.searchBefore = typeInto.value; state.query = info.freeText ? desired[0] : searchText(desired[0]);
-      if (info.freeText) h.type(typeInto, desired[0], ctx); else { h.write(typeInto, state.query, ctx); h.input(typeInto); }
-      typedFirst = true; typedAt = Date.now();
-      opened = await h.waitUntil(ctx, doc.documentElement, info.library === 'generic' ? () => genericOpened(1) : findOpened, Boolean,
-        info.freeText ? Math.min(FREE_TEXT_TYPED_MS, h.timeoutMs ?? FREE_TEXT_TYPED_MS) : undefined);
+      const queries = info.freeText ? [desired[0]] : [searchText(desired[0]), alternateSearch(desired[0])];
+      for (const query of queries.filter(Boolean)) {
+        if (opened.reason !== 'verification_timeout' || !typeInto.isConnected || !safeSearch(typeInto) || !h.visible(typeInto)) break;
+        const reason = h.stop(ctx, true); if (reason) return { reason };
+        typeSearch(typeInto, query);
+        typedFirst = true;
+        opened = await h.waitUntil(ctx, doc.documentElement, info.library === 'generic' ? () => genericOpened(1) : findOpened, Boolean,
+          info.freeText ? Math.min(FREE_TEXT_TYPED_MS, h.timeoutMs ?? FREE_TEXT_TYPED_MS) : undefined);
+      }
     }
     if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
     if (opened.value.reason) return opened.value;
@@ -1549,6 +1567,8 @@
       };
       // AntD 先输入了要找的值：先到的列表可能是输入前的请求晚到的结果。列表里有同名的一项才马上选，否则等满再用最后的列表。
       const typedAntd = typedFirst && !generic;
+      const alternateQuery = searchable && alternateSearch(desired[level]);
+      const canTryAlternate = alternateQuery && alternateQuery !== state.query;
       const sameName = list => list.some(option => !option.disabled && [option.text, option.value]
         .some(text => sameText(text, wantedIn(list, level))));
       // 联想框打字后的建议里没有同名的一项：停住一阵再算没有（见 FREE_TEXT_STEADY_MS），不用等满。
@@ -1556,7 +1576,11 @@
       // 列表不全时只认同名的一项（见 partialList），没有就先搜索，搜完照样看列表全不全。
       const partial = current => partialList(current, popup, ctx.popup);
       // 联想框只选同名的一项（见 sameOption）：网页先给出的建议里没有，就打字再找；打字后还没有，交宿主按文本框写。
-      const pick = items => info.freeText ? sameOption(items, desired[level], h.helpers) : match(items, wantedIn(items, level), h.helpers, partial(items));
+      const pick = items => {
+        if (info.freeText) return sameOption(items, desired[level], h.helpers);
+        const wanted = wantedIn(items, level);
+        return wanted ? match(items, wanted, h.helpers, partial(items), englishLevel) : { reason: 'ambiguous_option' };
+      };
       const listReady = list => (!loading() && list.length > 0 && (!generic || Date.now() - steadySince >= 300) && (!typedAntd || sameName(list) || typedSettled(steadySince)))
         || (eagerSearch && list.length === 0) || (typedAntd && noSuggestions(list));
       const waitedFrom = Date.now();
@@ -1572,7 +1596,8 @@
           return { reason: info.cascade ? 'cascade_timeout' : 'options_timeout' };
         }
       }
-      if (ready.reason === 'verification_timeout' && (generic && (searchable && !searchDone || lastSeen) || typedAntd && lastSeen)) ready = { value: readOptions(level) };
+      if (ready.reason === 'verification_timeout' && (generic && (searchable && !searchDone || lastSeen)
+        || typedAntd && lastSeen || canTryAlternate && !loading())) ready = { value: readOptions(level) };
       if (ready.reason) return { reason: ready.reason === 'verification_timeout' ? info.cascade ? 'cascade_timeout' : 'options_not_rendered' : ready.reason };
       let list = ready.value;
       // 诊断（#301）只记列表里有没有选项，不记项数：省、市分成两个下拉时，市的第一层就是网页按简历里的省加载的
@@ -1590,15 +1615,19 @@
       }
       const regionPick = items => level === 0 ? regionStart(items) : regionStep(items, regionAt, level);
       let found = region ? regionPick(list) : pick(list);
-      if (searchable && !found.option && found.reason !== 'ambiguous_option' && !searchDone) {
+      const queries = searchable ? [
+        !searchDone && (info.freeText ? desired[level] : searchText(desired[level])),
+        canTryAlternate && alternateQuery
+      ].filter(Boolean) : [];
+      for (const query of queries) {
+        if (found.option || found.reason === 'ambiguous_option') break;
         const reason = h.stop(ctx, true); if (reason) return { reason };
         if (!safeSearch(searchInput)) return { reason: 'unsupported_control' };
         if (!searchInput.isConnected || (!info.root.contains(searchInput) && !popup.contains(searchInput) && !ctx.popup.contains(searchInput))) return { reason: 'element_disconnected' };
         const signature = list.map(option => `${option.value}:${option.text}`).join('\n');
-        state.searchInput = searchInput; state.searchBefore = searchInput.value; state.query = info.freeText ? desired[level] : searchText(desired[level]);
         info.requireCommitSignal = info.library === 'aria';
-        if (info.freeText) h.type(searchInput, desired[level], ctx); else { h.write(searchInput, state.query, ctx); h.input(searchInput); }
-        searchDone = true; typedAt = Date.now();
+        typeSearch(searchInput, query);
+        searchDone = true;
         let lastSignature = signature, stableSince = Date.now();
         const updated = await h.waitUntil(ctx, doc.documentElement, () => {
           const current = readOptions(level);
@@ -1607,8 +1636,13 @@
           return current;
         }, current => !loading() && lastSignature !== signature && current.length > 0
           && (info.freeText ? sameName(current) || typedSettled(stableSince) : Date.now() - stableSince >= 80) || noSuggestions(current));
-        // 等满了列表还是空的：搜之前有选项、搜完变空，或弹层写着「暂无数据」一类，就是没有这一项，不报超时。
-        if (updated.reason === 'verification_timeout' && !loading() && !readOptions(level).length && (signature || emptyShown())) return { reason: 'no_option_match' };
+        // 列表空了或显示「暂无数据」就是没有这一项。英语等级还有另一种写法时，空列表也可以再搜一次。
+        if (updated.reason === 'verification_timeout' && !loading() && !readOptions(level).length
+          && (signature || emptyShown() || canTryAlternate && query !== alternateQuery)) {
+          list = [];
+          found = { reason: 'no_option_match' };
+          continue;
+        }
         if (updated.reason) return { reason: updated.reason === 'verification_timeout' ? 'options_timeout' : updated.reason };
         list = updated.value; found = pick(list);
       }
@@ -1616,7 +1650,7 @@
       let scanned = false;
       if (!searchable && !region && !info.cascade && !info.freeText && ['antd', 'element'].includes(info.library)
         && found.reason === 'no_option_match' && partial(list)) {
-        found = await scanList(ctx, h, () => readOptions(level), popup, ctx.popup, desired[level]);
+        found = await scanList(ctx, h, () => readOptions(level), popup, ctx.popup, desired[level], englishLevel);
         scanned = Boolean(found.option);
       }
       if (found.reason) return found;
@@ -1683,6 +1717,7 @@
     // 要选的几项：拆的是要填的值 raw。传进来的文字（已选标签、列表里的选项）只用来判断整段是不是正好是其中一项，是的话不拆。
     const wantedFrom = knownTexts => helpers.splitMultipleValues ? helpers.splitMultipleValues(raw, knownTexts) : [trim(raw)].filter(Boolean);
     const searchText = text => helpers.optionSearchText ? helpers.optionSearchText(text) : text;
+    const englishLevel = helpers.isEnglishLevelLabel?.(ctx.entry?.binding?.label);
     const safeSearch = input => input?.tagName === 'INPUT' && !input.readOnly && !input.disabled && ['text', 'search'].includes(input.type);
     state.safeSearch = safeSearch;
     let popup = openedPopup;
@@ -1713,7 +1748,7 @@
     };
     const fail = async outcome => { clearSearch(); await close(); return outcome; };
     const tagOf = (tags, value) => {
-      const index = helpers.findSelectOptionIndex(tags.map(tag => ({ value: tag.text, text: tag.text })), value);
+      const index = helpers.findSelectOptionIndex(tags.map(tag => ({ value: tag.text, text: tag.text })), value, englishLevel);
       return index >= 0 ? tags[index] : null;
     };
     const tags = multiTags(info);
@@ -1769,7 +1804,8 @@
       const reason = h.stop(ctx, true); if (reason) return { reason };
       const before = signature(list);
       let last = before, since = Date.now();
-      state.searchInput = input; state.searchBefore = input.value; state.query = text;
+      if (state.searchInput !== input) state.searchBefore = input.value;
+      state.searchInput = input; state.query = text;
       h.write(input, text, ctx); h.input(input);
       const updated = await h.waitUntil(ctx, doc.documentElement, () => {
         const current = listOf(), next = signature(current);
@@ -1799,19 +1835,22 @@
       const ready = await h.waitUntil(ctx, doc.documentElement, listOf, list => list.length > 0);
       if (ready.reason) return fail({ reason: ready.reason === 'verification_timeout' ? 'options_not_rendered' : ready.reason });
       let list = ready.value;
-      let found = match(list, value, helpers, partialList(list, popup, ctx.popup));
-      if (!found.option && found.reason !== 'ambiguous_option') {
-        const searched = await search(searchText(value), list);
+      let found = match(list, value, helpers, partialList(list, popup, ctx.popup), englishLevel);
+      const queries = [searchText(value), englishLevel && helpers.englishLevelSearchAlternative?.(value)];
+      for (const query of queries.filter(Boolean)) {
+        if (found.option || found.reason === 'ambiguous_option') break;
+        const searched = await search(query, list);
         if (searched.reason) return fail(searched);
         if (searched.list) {
           list = searched.list;
-          if (!list.length) return fail({ reason: 'no_option_match' });
-          found = match(list, value, helpers, partialList(list, popup, ctx.popup));
-        } else if (['antd', 'element'].includes(info.library) && found.reason === 'no_option_match' && partialList(list, popup, ctx.popup)) {
+          found = match(list, value, helpers, partialList(list, popup, ctx.popup), englishLevel);
+        } else {
           // 没有能打字的搜索框：滚着看完整张列表（见 scanList），点之前按文字和位置再认一次。
-          // pickMultiple 只从 antd、Element 进来（两个调用处都先判断了库），这里照单选的门槛再写一遍。
-          found = await scanList(ctx, h, listOf, popup, ctx.popup, value);
-          if (found.option) found = await found.again();
+          if (['antd', 'element'].includes(info.library) && partialList(list, popup, ctx.popup)) {
+            found = await scanList(ctx, h, listOf, popup, ctx.popup, value, englishLevel);
+            if (found.option) found = await found.again();
+          }
+          break;
         }
       }
       if (found.reason) return fail(found);

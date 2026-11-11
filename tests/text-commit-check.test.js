@@ -533,6 +533,50 @@ test("#405 inputmode only hints the keyboard: a date or an ID number in such a b
   assert.equal(p.input("phone").value, "13800138000");
 });
 
+test("#481 one-click fill uses one CET certificate for the separate level and score fields", async (t) => {
+  const p = page(t, '<div class="form-item"><label for="level">英语等级</label>'
+    + '<select id="level"><option value="">请选择</option><option value="cet4">四级</option>'
+    + '<option value="cet6">六级</option></select></div>'
+    + item("score", "英语等级成绩") + item("other", "计算机等级成绩"), [
+    ["证书1", "CET-6（587 分）"]
+  ]);
+  await p.run();
+  assert.equal(p.input("level").value, "cet6");
+  assert.equal(p.input("score").value, "587");
+  assert.equal(p.input("other").value, "");
+});
+
+test("#481 one-click fill removes phone spacing when the field declares an 11-digit pattern", async (t) => {
+  const p = page(t, item("phone", "手机号", 'pattern="\\d{11}"') + item("intl", "国际联系电话"), [
+    ["手机号", "138 0000 0000"], ["国际联系电话", "+44 7700 900123"]
+  ]);
+  const writes = [];
+  p.input("phone").addEventListener("input", () => writes.push(p.input("phone").value));
+  await p.run();
+  assert.equal(p.input("phone").value, "13800000000");
+  assert.ok(writes.length > 0 && writes.every(value => value === "13800000000"));
+  assert.equal(p.input("intl").value, "+44 7700 900123");
+});
+
+test("#481 an explicit 11-digit phone error triggers one correction through the text lifecycle", async (t) => {
+  const p = page(t, item("phone", "手机号", 'aria-describedby="phone-error"')
+    + '<p id="phone-error" role="alert" hidden>请输入11位手机号</p>'
+    + item("other", "联系手机", 'aria-describedby="other-error"')
+    + '<p id="other-error" role="alert" hidden>此号码已被使用</p>');
+  const phone = p.input("phone");
+  const writes = [];
+  phone.addEventListener("input", () => {
+    writes.push(phone.value);
+    p.input("phone-error").hidden = /^\d{11}$/.test(phone.value);
+  });
+  p.input("other").addEventListener("input", () => { p.input("other-error").hidden = false; });
+  assert.equal(await p.set("phone", "138 0000 0000"), true, p.reason("phone"));
+  assert.deepEqual(writes, ["138 0000 0000", "13800000000"]);
+  assert.equal(await p.set("other", "139 0000 0000"), false);
+  assert.equal(p.reason("other"), "validation_not_cleared");
+  assert.equal(p.input("other").value, "139 0000 0000");
+});
+
 test("#405 inputmode boxes that take any text keep what main wrote: phone with dashes, letters, ranges, spaces", async (t) => {
   const cases = [["联系方式", "138-0013-8000"], ["联系电话", "+86 13800138000"], ["学号", "2016A0123"], ["在校时间", "2016.09-2020.06"],
     ["邮政编码", "100 080"], ["身高", "175cm"]];

@@ -22,7 +22,7 @@ const AI_SYSTEM_PROMPT = [
   '9. 带 multiple 的字段可以多选：用 "refs":["r1","r2"] 给出几项',
   '10. 带 cascade 的字段是逐级选择（省 → 市 → 区县）：资料里一项写全了就给 ref；省、市、县分成几项的，按从上到下给 "refs"。带 cascadeLevel 的是同一组联动下拉的几级，每一级都给写着这个地区的那一项（写全了的一项可以给每一级）',
   '11. 字段只要日期里的年、月或日（出生年份、毕业月份分开的下拉）时加 "part":"year"、"month" 或 "day"；带 fits 的照 fits 里写的给，如 "ref":"r3.month"',
-  '12. 字段要一段起止时间、资料里开始和结束是分开的两项时，给 "refs":[开始那项, 结束那项]；一道文本题要两三项资料合起来答的（工作单位及职务），按顺序给 "refs"，插件用空格连起来',
+  '12. 网页分别问同一段经历的开始和结束时间、资料是一段起止日期时，两题用同一个资料编号，分别给 "part":"start" 和 "part":"end"；字段要一段起止时间、资料的开始和结束分开存时，按顺序给 "refs":[开始那项, 结束那项]；一道文本题要两三项资料合起来答的（工作单位及职务），按顺序给 "refs"，插件用空格连起来',
   "13. 开放题（为什么选择我们、职业规划、优势和不足、讲一段经历这类问动机、看法、经历的题）只在资料里有一项回答的是同一个问题时给它；自我评价、技能、奖励这类资料只给问同一件事的题，不要拿来答别的问题",
   "14. 匹配考虑同义词：手机=电话=联系方式=mobile=phone；学历=最高学历=培养层次；aka 是这项资料别的叫法；英文题目按意思对应中文字段名",
   "15. 补充字段、本网站回答两组的 key 是用户以前答过的题目原文：网页上的题意思相同（换了说法也算）就用它",
@@ -495,6 +495,13 @@ async function handleAiFill(message, controller = new AbortController()) {
       seenMatchIds.add(match.fieldId);
       return true;
     });
+  const matchIndexes = new Map(matches.map((match, index) => [match.fieldId, index]));
+  for (const match of completeExperienceDescriptions(formFields, matches, catalog, matchedFieldIds)) {
+    const index = matchIndexes.get(match.fieldId);
+    if (index === undefined) matches.push(match);
+    else matches[index] = match;
+    seenMatchIds.add(match.fieldId);
+  }
   // 拦下不填、只报原因的（blocked：日期不对、同一个回复里给了不同的值）不算 AI 填上的，另记 aiBlocked：网页把它们记作没写上。
   const aiAnswered = matches.filter(match => !matchedFieldIds.has(match.fieldId));
   diagnostics.aiMatches = aiAnswered.filter(match => !match.blocked).length;
@@ -559,7 +566,7 @@ function buildCatalog(resumeFields) {
   const helpers = ResumeProAIHelpers;
   refreshAliases();
   const filled = resumeFields.filter(field => String(field?.value ?? "").trim());
-  const { keys, prefixes } = helpers.catalogKeys(filled, { withPrefixes: true });
+  const { keys, prefixes, recordKeys } = helpers.catalogKeys(filled, { withPrefixes: true });
   const rawGroups = filled.map(field => String(field.group ?? ""));
   const masked = helpers.maskResumeValues([...distinctKeys(keys, rawGroups), ...rawGroups], filled,
     { labels: keys, groups: [...rawGroups, ...rawGroups], prefixes });
@@ -577,7 +584,118 @@ function buildCatalog(resumeFields) {
     const mark = latest.has(index) ? `${shape}，本组最近一段` : shape;
     return { ref, group: groupNames[index], key: shortKeys[index], ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}) };
   });
-  return { entries, values, items };
+  return { entries, values, items, recordKeys };
+}
+
+const EXPERIENCE_SECTIONS = [
+  [/^(?:实习(?:经历|经验)?|internships?)\d*$/, "internship"],
+  [/^(?:工作(?:经历|经验)?|employment|workexperience)\d*$/, "employment"],
+  [/^(?:项目(?:经历|经验)?|projects?|projectexperience)\d*$/, "project"]
+];
+const EXPERIENCE_DESCRIPTION = /^(?:(?:实习|工作|项目)?(?:内容|描述|职责)|主要(?:工作|工作内容|职责)|岗位职责|responsibilities|description)(\d*)$/;
+function experienceSection(label) {
+  const key = ResumeProAIHelpers.normalizeText(label);
+  return EXPERIENCE_SECTIONS.find(([pattern]) => pattern.test(key))?.[1];
+}
+
+function experiencePart(label, type) {
+  const key = ResumeProAIHelpers.normalizeText(label);
+  if (type === "project" ? /^(?:项目名称|项目名|名称|projectname|projecttitle)$/.test(key)
+    : /^(?:(?:实习|工作|任职)?(?:公司|单位|机构)(?:名称)?|雇主|employer|company(?:name)?)$/.test(key)) return "name";
+  if (/^(?:(?:实习|工作|项目)?(?:职位|岗位|职务|角色)(?:名称)?|jobtitle|position|role)$/.test(key)) return "role";
+  if (/^(?:开始时间|起始时间|入职时间|startdate)$/.test(key)) return "start";
+  if (/^(?:结束时间|截止时间|离职时间|enddate)$/.test(key)) return "end";
+  if (/^(?:时间|起止时间|时间段|(?:实习|工作|项目)时间|period|daterange)$/.test(key)) return "period";
+  return EXPERIENCE_DESCRIPTION.test(key) ? "description" : "";
+}
+
+// 配对用本地的原始分组和条目编号，展示给模型的字段名可能已经脱敏或截断。
+function experienceRecords(catalog) {
+  const records = new Map();
+  catalog.entries.forEach(({ ref }, index) => {
+    const group = catalog.items.get(ref)?.group;
+    const key = catalog.recordKeys[index];
+    const numbered = /^(实习|工作|项目)(?:经历)?(\d+)[\s\-_:：]*(.+)$/.exec(key);
+    const type = numbered ? experienceSection(numbered[1]) : experienceSection(group);
+    if (!type) return;
+    const label = numbered?.[3] || key;
+    const part = experiencePart(label, type);
+    if (!part) return;
+    const id = JSON.stringify([group, type, numbered?.[2] || ""]);
+    if (!records.has(id)) records.set(id, { type, parts: new Map() });
+    const { parts } = records.get(id);
+    if (!parts.has(part)) parts.set(part, []);
+    const order = Number(/\d+$/.exec(label)?.[0] || 0);
+    parts.get(part).push({ order, value: String(catalog.values.get(ref)).trim() });
+  });
+  return [...records.values()].filter(record => record.parts.get("name")?.length === 1);
+}
+
+function experienceDate(value) {
+  const helpers = ResumeProAIHelpers;
+  if (helpers.isPresentDate(value)) return "至今";
+  const month = helpers.normalizeDateValue(value, "month");
+  return /^\d{4}-\d{2}$/.test(month) ? month : "";
+}
+
+function experienceEvidence(record, row, values) {
+  const helpers = ResumeProAIHelpers;
+  const parts = record.parts;
+  const period = parts.get("period");
+  const span = period?.length === 1 ? helpers.rangeDateParts(period[0].value) : null;
+  return row.flatMap(field => {
+    const value = values.get(field.fieldId);
+    if (!value) return [];
+    const part = experiencePart(field.label, record.type);
+    const sources = parts.get(part);
+    const source = sources?.length === 1 ? sources[0].value : "";
+    if (part === "role" && source) return [source === String(value).trim()];
+    if (part === "start" || part === "end") {
+      const known = experienceDate(source || span?.[part === "start" ? 0 : 1]);
+      const asked = experienceDate(value);
+      if (known && asked) return [known === asked];
+    }
+    if (part === "period" && span) {
+      const asked = helpers.rangeDateParts(value);
+      if (asked) return asked.flatMap((date, index) => {
+        const known = experienceDate(span[index]), actual = experienceDate(date);
+        return known && actual ? [known === actual] : [];
+      });
+    }
+    return [];
+  });
+}
+
+// 同一条网页经历能对应到一段资料时，按原顺序拼接该段内容；同名单位用岗位或日期消除歧义。
+function completeExperienceDescriptions(fields, matches, catalog, ruleIds) {
+  const normalize = ResumeProAIHelpers.normalizeText;
+  const values = new Map(matches.filter(match => !match.blocked).map(match => [match.fieldId, match.value]));
+  const filled = [];
+  let records;
+  for (const field of fields) {
+    const type = experienceSection(field.group);
+    if (!type || !isOpenQuestion(field) || ruleIds.has(field.fieldId)
+      || !EXPERIENCE_DESCRIPTION.test(normalize(field.label))) continue;
+    const section = normalize(field.group);
+    const row = fields.filter(item => normalize(item.group) === section);
+    if (row.filter(item => experiencePart(item.label, type) === "description").length !== 1) continue;
+    const anchors = row.filter(item => experiencePart(item.label, type) === "name");
+    const name = anchors.length === 1 ? String(values.get(anchors[0].fieldId) ?? "").trim() : "";
+    if (!name) continue;
+    records ??= experienceRecords(catalog);
+    const candidates = records.filter(record => record.type === type && record.parts.get("name")[0].value === name);
+    const assessed = candidates.map(record => ({ record, evidence: experienceEvidence(record, row, values) }))
+      .filter(item => !item.evidence.includes(false));
+    if (assessed.length !== 1 || (candidates.length > 1 && !assessed[0].evidence.includes(true))) continue;
+    const contents = assessed[0].record.parts.get("description") || [];
+    const existing = String(values.get(field.fieldId) ?? "").trim();
+    // 已有回答若是某段经历的一条原文，以已配对的经历为准；单独保存的自定义回答照旧。
+    if (existing && !records.some(record => record.type === type
+      && record.parts.get("description")?.some(part => part.value === existing))) continue;
+    const text = [...new Set(contents.slice().sort((a, b) => a.order - b.order).map(part => part.value))].join("\n");
+    if (text) filled.push({ fieldId: field.fieldId, value: text });
+  }
+  return filled;
 }
 
 // 字段名最多留 60 个字：本网站回答、补充字段的字段名是题目原文，可能很长；前 60 个字足够认出是哪道题，目录也不容易超出预算。
