@@ -3,7 +3,10 @@
 // 再找每个控件所在的最小表单项，题目只从明确关联或这一项里取，不跨到别的题目借字。
 // 占位文字、字数计数器、帮助说明、校验错误都不能当字段名；对不上题目的控件直接跳过。
 (function attachResumeProFieldScan(globalScope) {
-  const CONTROL_SELECTOR = "input, textarea, select, [role='combobox'], button[aria-haspopup='listbox']";
+  const COMBO_TRIGGER = "[role='combobox'], button[aria-haspopup='listbox']";
+  const STANDARD_CONTROL = `input, textarea, select, ${COMBO_TRIGGER}`;
+  const STRUCTURED_SELECT = ".ui-select:has(> .ui-select-selection)";
+  const CONTROL_SELECTOR = `${STANDARD_CONTROL}, ${STRUCTURED_SELECT}`;
   const NON_CONTROL_TYPES = new Set(["hidden", "button", "submit", "reset", "image"]);
   const DATE_TYPES = new Set(["date", "month", "time", "datetime-local", "week"]);
   // 这几类控件的自带文字是选项本身，不能当题目。
@@ -80,11 +83,43 @@
     return el.tagName === "INPUT" ? String(el.getAttribute("type") || "text").toLowerCase() : "";
   }
 
+  // #466 BOSS 校招：地区和电话区号只辅助同一题，不作为可从简历匹配的字段。
+  function bossItem(el, ctx) {
+    return ctx.bossCampus ? el.closest("form.ui-form .form-item") : null;
+  }
+
+  function structuredSelect(el) {
+    const root = el.closest(STRUCTURED_SELECT);
+    return root?.querySelectorAll(":scope > .ui-select-selection").length === 1 ? root : null;
+  }
+
+  // 外层有明确的下拉触发器，且没有别的题目，就沿用外层。
+  function outerCombo(root, ctx) {
+    const outer = root.parentElement?.closest(COMBO_TRIGGER);
+    if (!outer || !ctx.isVisible(outer) || ctx.excluded(outer)) return null;
+    const otherControl = Array.from(outer.querySelectorAll(CONTROL_SELECTOR)).some(child =>
+      !root.contains(child) && ctx.isVisible(child) && !ctx.excluded(child)
+      && !NON_CONTROL_TYPES.has(inputType(child)));
+    return otherControl ? null : outer;
+  }
+
   function isControlElement(el, ctx) {
     if (!el) return false;
+    if (bossItem(el, ctx) && el.closest(".combo-input-container > .ui-dropmenu")) return false;
+    const select = structuredSelect(el);
+    if (!select && el.matches(STRUCTURED_SELECT) && !el.matches(STANDARD_CONTROL)) return false;
+    if (ctx.bossCampus && select?.matches(".phone-combine .area-code-select")) return false;
+    if (select === el) {
+      if (outerCombo(select, ctx)) return false;
+      const trigger = select.querySelector(":scope > .ui-select-selection");
+      // 可搜索版用真实输入框，普通版只有 div；两个形态只保留一个扫描入口。
+      return !Array.from(trigger.querySelectorAll("input.ui-select-input")).some(input => ctx.isVisible(input) && !ctx.excluded(input));
+    }
     if (!["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) {
-      return hasComboSignal(el) && !Array.from(el.querySelectorAll(CONTROL_SELECTOR)).some(child => {
+      return hasComboSignal(el) && !Array.from(el.querySelectorAll(STANDARD_CONTROL)).some(child => {
         if (ctx && !ctx.isVisible(child)) return false;
+        const inner = structuredSelect(child);
+        if (inner && el.contains(inner) && outerCombo(inner, ctx) === el) return false;
         if (["INPUT", "TEXTAREA", "SELECT"].includes(child.tagName)) return !NON_CONTROL_TYPES.has(inputType(child));
         return hasComboSignal(child);
       });
@@ -170,7 +205,8 @@
       }
     };
     // doc 也可以是开放的 ShadowRoot（#224 页面大纲）：它没有 body，查询都在这个根里做。
-    return { doc, body: doc.body || null, isVisible, excluded, boundaries: null };
+    const bossCampus = (doc.ownerDocument || doc).location?.hostname === "xiaoyuan.zhipin.com";
+    return { doc, body: doc.body || null, isVisible, excluded, boundaries: null, bossCampus };
   }
 
   // 最小表单项的边界：页面上所有可见的真实控件（含禁用、文件、单选、勾选）。
@@ -302,6 +338,11 @@
   const CALENDAR_RANGE_INPUT = ".ant-calendar-range-picker-input";
   // 取 5 层以内最外层的日期组件容器：range picker 的两个输入框共用一个根。
   function datePickerRoot(el, ctx) {
+    const boss = bossItem(el, ctx) && el.closest(".ui-date-editor-date, .ui-date-editor-month");
+    if (boss) {
+      const pair = boss.closest(".date-picker-range-wrapper");
+      return pair && componentScopeOk(pair, ctx, 2) ? pair : boss;
+    }
     if (el.matches(antdCss(el, CALENDAR_RANGE_INPUT))) {
       const root = el.closest(antdCss(el, ".ant-calendar-picker"));
       if (root && root !== ctx.body && componentScopeOk(root, ctx, 2)) return root;
@@ -316,7 +357,10 @@
     return best;
   }
 
-  function pickerTypeOf(root) {
+  function pickerTypeOf(root, ctx) {
+    const bossDates = ".ui-date-editor-date, .ui-date-editor-month";
+    if (bossItem(root, ctx) && (root.matches(bossDates)
+      || (root.matches(".date-picker-range-wrapper") && root.querySelector(bossDates)))) return "boss";
     const antd = antdCss(root, ".ant-picker");
     if (root.closest(antd) || root.matches(antd) || root.querySelector?.(antd)) return "antd";
     if (root.closest(".el-date-editor") || root.matches(".el-date-editor")) return "element";
@@ -326,6 +370,10 @@
 
   // 自定义下拉、级联、自动完成：取最外层像组件根、又只装着这个控件的祖先。
   function customSelectRoot(el, ctx) {
+    const cascader = bossItem(el, ctx) && el.closest(".ui-cascader2");
+    if (cascader && el.matches("input:not(.ui-cascader2__search-input)")) return cascader;
+    const select = structuredSelect(el);
+    if (select === el || (select && el.matches("input.ui-select-input"))) return outerCombo(select, ctx) || select;
     const ownSignal = hasComboSignal(el);
     let best = attr(el, 'role') === 'combobox' ? el : null;
     let node = el.parentElement;
@@ -419,13 +467,13 @@
 
     customByRoot.forEach((inputs, root) => {
       const cascader = antdCss(root, ".ant-cascader, .el-cascader, .arco-cascader");
-      const cascade = root.matches(cascader) || Boolean(root.querySelector(cascader))
+      const cascade = (ctx.bossCampus && root.matches(".ui-cascader2")) || root.matches(cascader) || Boolean(root.querySelector(cascader))
         || root.getAttribute('aria-haspopup') === 'tree' || primaryInput(inputs).getAttribute('aria-haspopup') === 'tree';
       controls.push({ kind: "element", controlKind: cascade ? "cascader" : "custom-select", element: primaryInput(inputs), elements: inputs, root, merged: inputs.length - 1 });
     });
 
     pickerInputs.forEach((inputs, root) => {
-      const pickerType = pickerTypeOf(root);
+      const pickerType = pickerTypeOf(root, ctx);
       inputs.forEach((input, index) => {
         controls.push({ kind: "element", controlKind: "date-picker", element: input, elements: [input], root, pickerType,
           rangePart: inputs.length > 1 ? rangePart(input, index) : "" });
@@ -489,13 +537,30 @@
 
   // 控件所在的最小表单项：从控件（组件根）往上，直到再往上一层就会装进别的控件为止。
   function findItem(root, ctx) {
+    const boss = bossItem(root, ctx);
     let current = root;
     for (;;) {
+      if (current === boss) return current;
       const parent = current.parentElement;
       if (!parent || parent === ctx.body || parent.tagName === "HTML") return current;
       if (hasForeignControl(parent, root, ctx)) return current;
       current = parent;
     }
+  }
+
+  function bossLabel(control, item, ctx) {
+    if (item !== bossItem(control.root, ctx)) return null;
+    const titles = Array.from(item.querySelectorAll(":scope > .item-label .form-label-tips .label-text"));
+    const content = item.querySelector(":scope > .item-content");
+    if (!content?.contains(control.root)) return null;
+    // 表单把真正题目包在 form-label-tips 中。只读标题节点，不把提示或必填图标当成题目。
+    const candidates = titles.length ? titles : Array.from(content.querySelectorAll(".label-prefix"))
+      .filter(node => node.closest(".form-item") === item && (control.root.contains(node) || isBefore(node, control.root)));
+    const visible = candidates.filter(node => ctx.isVisible(node) && !node.closest('[aria-hidden="true"]'));
+    if (visible.length !== 1) return null;
+    const [labelEl] = visible;
+    const text = cleanLabel(labelEl.textContent);
+    return text ? { text, source: "item", labelEl } : null;
   }
 
   // --- 文字收集 ---------------------------------------------------------------
@@ -867,6 +932,7 @@
       return explicitLabel(control, ctx) || mixedRadioLabel(control, ctx) || { text: "", source: "none", labelEl: null };
     }
     return explicitLabel(control, ctx)
+      || bossLabel(control, item, ctx)
       || itemLabel(control, item, ctx)
       || tableLabel(control, item, ctx)
       || gridLabel(control, item, ctx)
@@ -1010,7 +1076,7 @@
         control.searchLike = control.controlKind === "text" && control.elements.some(looksSearchLike);
         control.chrome = isPageChrome(control.root);
         // 禁用的控件和文件框只用来划分表单项边界，不填写。
-        const disabled = control.elements.every((el) => el.disabled);
+        const disabled = isDisabledControl(control, ctx);
         control.fillable = control.controlKind !== "file" && !disabled && control.labelSource !== "none";
         control.skipReason = control.controlKind === "file" ? "file" : disabled ? "disabled" : control.labelSource === "none" ? "noLabel" : "";
       } catch (error) {
@@ -1120,13 +1186,21 @@
 
     skipped.ambiguous = ambiguousSkipped;
     const idCounts = new Map();
+    const bossRoots = ctx.bossCampus ? allControls.filter(el => structuredSelect(el) === el) : [];
     return {
       controls: kept.map((control) => publicControl(control, idCounts)),
       skipped,
       sources,
+      bossRoots,
       fault,
       unreadable
     };
+  }
+
+  function isDisabledControl(control, ctx) {
+    return control.elements.every((el) => el.disabled)
+      || bossItem(control.root, ctx)?.classList.contains("lock")
+      || (structuredSelect(control.root) === control.root && control.root.matches(".ui-select-disabled, [aria-disabled='true']"));
   }
 
   // 重画后找回字段用的 id 锚点（#479）：只认扫描时在所在文档里只出现一次的 id。
@@ -1196,6 +1270,8 @@
   function displayedStateForGuard(control, options = {}) {
     if (!control?.root?.isConnected) return [];
     const ctx = makeContext(control.root.ownerDocument, options);
+    // BOSS 下拉的标题、图标和选项都可能在根里，已选值和搜索词由控件适配器单独读。
+    if (structuredSelect(control.root) === control.root) return [];
     const placeholders = placeholdersOf(control);
     const skip = new Set();
     const segments = [];
@@ -1238,7 +1314,8 @@
       control = { kind: "radio", controlKind: "radio", element, elements: [element], root: element.closest("[role='radiogroup']") || element };
     } else {
       const picker = element.tagName === "INPUT" && !DATE_TYPES.has(type) && !CHOICE_TYPES.has(type) ? datePickerRoot(element, ctx) : null;
-      const selectRoot = !picker && element.tagName === "INPUT" && !DATE_TYPES.has(type) && !CHOICE_TYPES.has(type) ? customSelectRoot(element, ctx) : null;
+      const selectRoot = !picker && (element.tagName === "INPUT" || structuredSelect(element) === element)
+        && !DATE_TYPES.has(type) && !CHOICE_TYPES.has(type) ? customSelectRoot(element, ctx) : null;
       const controlKind = element.tagName === "SELECT" ? "select" : element.tagName === "TEXTAREA" ? "textarea"
         : CHOICE_TYPES.has(type) ? type : picker ? "date-picker" : selectRoot ? "custom-select" : "text";
       control = { kind: "element", controlKind, element, elements: [element], root: picker || selectRoot || element };
@@ -1282,7 +1359,7 @@
         control.labelSource = resolved.source;
         control.labelEl = resolved.labelEl;
         control.question = resolved.question || null;
-        control.disabled = control.elements.every((el) => el.disabled);
+        control.disabled = isDisabledControl(control, ctx);
         control.chrome = isPageChrome(control.root);
         control.searchLike = control.controlKind === "text" && control.elements.some(looksSearchLike);
         return true;

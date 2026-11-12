@@ -58,6 +58,106 @@ function run(doc, built, planned, { stopped = () => "", onProgress } = {}) {
   return actions.executePlan(planned, { doc, deep, describe: outline.describeButton, isVisible, formAgent: agent, stopped, onProgress, timing: FAST });
 }
 
+function campusGroup(id, title) {
+  return `<div id="${id}" class="group-part-container">
+    <div class="group-part-title"><div class="text-part"><span class="label-text">${title}</span></div>
+    <div class="op-text-wrapper"><div class="edit-part" style="cursor:pointer"><span>添加</span></div></div></div>
+    </div>`;
+}
+
+test("BOSS empty work section shares the deep and assisted plan without relying on the model to list it", async t => {
+  const dom = new JSDOM(`<form class="ui-form"><div class="render-map-container">
+    ${campusGroup("work", "工作/实习经历")}${campusGroup("language", "语言能力")}</div>
+    <section><h2>工作经历</h2><button type="button" id="other-work">新增工作经历</button></section></form>`,
+  { url: "https://xiaoyuan.zhipin.com/volunteer/index" });
+  t.after(() => dom.window.close());
+  dom.window.HTMLElement.prototype.getClientRects = function () { return this.hidden ? [] : [{}]; };
+  const doc = dom.window.document;
+  const work = doc.getElementById("work");
+  let clicks = 0;
+  work.querySelector(".edit-part").addEventListener("click", () => {
+    clicks++;
+    const title = work.querySelector(".label-text");
+    title.replaceWith(title.cloneNode(true));
+    work.insertAdjacentHTML("beforeend", `<div class="group-part-item" data-group-id="WORK" data-part-id="${clicks}"><input></div>`);
+  });
+  doc.querySelector("#language .edit-part").addEventListener("click", () => assert.fail("must not add a language row"));
+  const template = [
+    { group: "工作经历", key: "工作1公司", value: "甲公司" },
+    { group: "实习经历", key: "实习１－公司", value: "乙公司" }
+  ];
+  const { built, checked } = analyse(doc, { pageState: "editing" });
+  assert.equal(checked.ok, true, checked.reason);
+  assert.match(built.parts[0].text, /\[区块\] 工作\/实习经历\s+e\d+ button "添加"/);
+  const planned = plan(doc, built, checked.spec, template);
+  assert.equal(planned.items.length, 1);
+  assert.equal(planned.items[0].element, work.querySelector(".edit-part"));
+  assert.equal(planned.items[0].count, 2);
+  assert.equal(clicks, 0);
+  const initial = agent.collect(doc, template);
+  assert.equal(initial.candidates.length, 1);
+  assert.equal(initial.candidates[0].current, 0);
+  assert.equal(initial.candidates[0].target, 2);
+  assert.equal(initial.refs.get(initial.candidates[0].id).button, work.querySelector(".edit-part"));
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.done.add, 2);
+  assert.deepEqual(result.scopes, Array.from(work.querySelectorAll(".group-part-item")));
+  assert.equal(agent.collect(doc, template).candidates.length, 0);
+  assert.equal(plan(doc, built, checked.spec, template).items.length, 0);
+  const first = result.scopes[0];
+  first.querySelector("input").value = "已填的工作单位";
+  result.scopes[1].remove();
+  const assisted = agent.collect(doc, template);
+  assert.equal(assisted.candidates[0].current, 1);
+  assisted.refs.get(assisted.candidates[0].id).timing = { settleMs: 30, pollMs: 5 };
+  const again = await agent.execute([{ id: assisted.candidates[0].id, count: 1 }], assisted);
+  assert.equal(again.added, 1);
+  assert.equal(first.querySelector("input").value, "已填的工作单位");
+  assert.equal(agent.collect(doc, template).candidates.length, 0);
+  work.querySelector(".label-text").textContent = "工作经历";
+  work.querySelectorAll(".group-part-item").forEach(row => row.remove());
+  const internshipOnly = template.slice(1);
+  assert.equal(agent.collect(doc, internshipOnly).candidates.length, 0);
+  assert.equal(plan(doc, built, checked.spec, internshipOnly).items.length, 0);
+});
+
+test("BOSS plans separate work and internship sections, while duplicate internship sections are ambiguous", async t => {
+  const dom = new JSDOM(`<form class="ui-form"><div class="render-map-container">
+    ${campusGroup("work", "工作经历")}${campusGroup("internship", "实习经历")}</div></form>`,
+  { url: "https://xiaoyuan.zhipin.com/volunteer/index" });
+  t.after(() => dom.window.close());
+  dom.window.HTMLElement.prototype.getClientRects = () => [{}];
+  const doc = dom.window.document;
+  const clicks = [];
+  for (const id of ["work", "internship"]) {
+    const section = doc.getElementById(id);
+    section.querySelector(".edit-part").addEventListener("click", () => {
+      clicks.push(id);
+      section.insertAdjacentHTML("beforeend", `<div class="group-part-item" data-group-id="${id}" data-part-id="1"><input></div>`);
+    });
+  }
+  const template = [
+    { group: "工作经历", key: "工作1公司", value: "甲公司" },
+    { group: "实习经历", key: "实习1公司", value: "乙公司" }
+  ];
+  const { built, checked } = analyse(doc, { pageState: "editing" });
+  const expected = ["work", "internship"];
+  assert.deepEqual(agent.collect(doc, template).candidates.map(item => item.domain), expected);
+  const planned = plan(doc, built, checked.spec, template);
+  assert.deepEqual(planned.items.map(item => item.domain), expected);
+  assert.deepEqual(clicks, []);
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(clicks, expected);
+  assert.deepEqual(result.scopes.map(row => row.parentElement.id), expected);
+  assert.equal(agent.collect(doc, template).candidates.length, 0);
+  doc.querySelector(".render-map-container").insertAdjacentHTML("beforeend", campusGroup("duplicate", "实习经历"));
+  const duplicate = agent.collect(doc, template);
+  assert.equal(duplicate.candidates.length, 0);
+  assert.deepEqual(duplicate.problems, [{ domain: "internship", reason: "ambiguous" }]);
+});
+
 test("the preview names each target as 区块：按钮 and clicks nothing; cross-page edits are only offered as manual steps", () => {
   const { doc, clicks } = viewPage();
   const { built, checked } = analyse(doc, { preActions: [

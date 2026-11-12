@@ -71,6 +71,133 @@ test('a Jiandaoyun date box is described as a date, not a time: its class names 
   assert.deepEqual(Array.from(sent.formFields, field => [field.controlKind, field.pickerType, field.pickerInputType]), [['date', 'jiandaoyun', 'date']]);
 });
 
+test('BOSS education date descriptors keep the two calendar types and the shared question identity', async () => {
+  const late = lateScanner(); let sent;
+  const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy,
+    sendMessage: async message => { sent = message; return { success: true, matches: [] }; } });
+  const pair = new ctx.HTMLElement(), group = new ctx.HTMLElement();
+  late.holder.current = scanWith(["开始", "结束"].map(part => {
+    const element = new ctx.HTMLInputElement(), picker = new ctx.HTMLElement();
+    element.ownerDocument = { location: { hostname: "xiaoyuan.zhipin.com" } };
+    element.setAttribute("placeholder", `${part}时间`);
+    element.closest = selector => {
+      if (selector.includes("data-group-id")) return group;
+      if (selector.includes(".ui-date-editor-month")) return picker;
+      return null;
+    };
+    return control(element, { controlKind: "date-picker", pickerType: "boss", root: pair, rangePart: part,
+      repeatCount: 1, label: `时间段（${part}）` });
+  }));
+  ctx.helpers.setCurrentStore(store); ctx.helpers.setShadowRoot(shadow().root);
+  await ctx.helpers.handleAiFillClick({ currentTarget: { disabled: false, textContent: '' } });
+  assert.ok(sent);
+  const [start, end] = sent.formFields;
+  assert.deepEqual(Array.from(sent.formFields, field => [field.pickerInputType, field.educationRange, field.educationRangeUnique]),
+    [["month", "start", true], ["month", "end", true]]);
+  assert.ok(start.educationRangePair);
+  assert.equal(start.educationRangePair, end.educationRangePair);
+});
+
+test('BOSS fills the school before dependent education fields and skips them when the school was not committed', async () => {
+  for (const schoolCommits of [true, false]) {
+    const late = lateScanner(), calls = [];
+    let selected = "", matched;
+    const aiHelpers = require("../extension/ai-helpers.js");
+    const profile = require("../extension/profile-fields.js");
+    const ctx = loadHighlightHelpers({
+      formElements: [], fieldScan: late.proxy, aiHelpers,
+      customControls: { snapshot: () => selected, hasExistingValue: () => Boolean(selected),
+        readSelection: () => ({ texts: selected ? [selected] : [] }), describe: () => ({ multiple: false }) },
+      controls: { create: () => ({
+        operate: async (entry, value) => {
+          const label = entry.binding.label;
+          calls.push(label);
+          if (label === "学校名称") {
+            if (!schoolCommits) return { ok: false, reason: "no_option_match" };
+            selected = value;
+          } else entry.element.value = value;
+          return { ok: true };
+        },
+        check: () => ({ ok: true })
+      }) },
+      sendMessage: async message => {
+        if (message.type !== "AI_FILL") return {};
+        matched = aiHelpers.localRuleMatches(message.formFields, message.resumeFields, profile);
+        return { success: true, matches: matched };
+      }
+    });
+    const group = new ctx.HTMLElement(), school = new ctx.HTMLInputElement(), root = new ctx.HTMLElement(), level = new ctx.HTMLInputElement();
+    ctx.document.location = { hostname: "xiaoyuan.zhipin.com" };
+    for (const element of [school, level]) {
+      element.ownerDocument = ctx.document;
+      element.closest = selector => selector.includes("data-group-id") ? group : null;
+    }
+    group.querySelectorAll = () => [root];
+    root.querySelector = () => school;
+    late.holder.current = scanWith([
+      control(level, { label: "学历" }),
+      control(school, { label: "学校名称", root, controlKind: "custom-select" })
+    ]);
+    ctx.helpers.setCurrentStore({ templates: [{ id: "t", name: "示例", groups: [{ name: "教育背景", fields: [
+      { key: "虚构大学教育经历-学校", value: "虚构大学" }, { key: "虚构大学教育经历-学历", value: "本科" }
+    ] }] }], activeTemplateId: "t" });
+    ctx.helpers.setShadowRoot(shadow().root);
+    const result = await ctx.helpers.handleAiFillClick({ currentTarget: { disabled: false, textContent: "" } });
+    assert.deepEqual(calls, schoolCommits ? ["学校名称", "学历"] : ["学校名称"], JSON.stringify({ matched, result }));
+    assert.equal(level.value, schoolCommits ? "本科" : "");
+    assert.equal(result.filledCount, schoolCommits ? 2 : 0);
+  }
+});
+
+test('BOSS writes the English score only after the matching CET option is actually selected', async () => {
+  for (const [selectedAfterClick, dynamic] of [["CET6", false], ["CET4", false], ["CET6", true]]) {
+    const late = lateScanner();
+    const aiHelpers = require("../extension/ai-helpers.js");
+    const profile = require("../extension/profile-fields.js");
+    let selected = "";
+    const writes = [];
+    const ctx = loadHighlightHelpers({ formElements: [], fieldScan: late.proxy, aiHelpers,
+      customControls: { snapshot: () => selected, hasExistingValue: () => Boolean(selected),
+        readSelection: () => ({ texts: selected ? [selected] : [] }), describe: () => ({ multiple: false }) },
+      controls: { create: () => ({
+        operate: async (entry, value) => {
+          writes.push(entry.binding.label);
+          if (entry.binding.label === "英语等级") selected = selectedAfterClick;
+          else entry.element.value = value;
+          return { ok: true };
+        },
+        check: () => ({ ok: true })
+      }) },
+      sendMessage: async message => ({ success: true,
+        matches: aiHelpers.localRuleMatches(message.formFields || [], message.resumeFields || [], profile) })
+    });
+    const row = new ctx.HTMLElement(), level = new ctx.HTMLElement(), score = new ctx.HTMLInputElement();
+    level.tagName = "DIV";
+    ctx.document.location = { hostname: "xiaoyuan.zhipin.com" };
+    for (const element of [level, score]) {
+      element.ownerDocument = ctx.document;
+      element.closest = selector => selector === ".group-part-item" ? row : null;
+    }
+    row.querySelectorAll = () => [{
+      querySelector: () => ({ textContent: "英语等级" }),
+      querySelectorAll: () => [level]
+    }];
+    row.contains = element => [level, score].includes(element);
+    const grade = control(level, { label: "英语等级", controlKind: "custom-select" });
+    const points = control(score, { label: "英语分数" });
+    const scanner = scanWith([points, grade]);
+    late.holder.current = { ...scanner, scanPage: () => ({ ...scanner.scanPage(), controls: dynamic && !selected ? [grade] : [points, grade] }) };
+    ctx.helpers.setCurrentStore({ templates: [{ id: "t", name: "示例", groups: [{ name: "基本信息", fields: [
+      { key: "英语水平", value: "CET-6（587 分）" }
+    ] }] }], activeTemplateId: "t" });
+    ctx.helpers.setShadowRoot(shadow().root);
+    const result = await ctx.helpers.handleAiFillClick({ currentTarget: { disabled: false, textContent: "" } }, null,
+      dynamic ? { mode: "analyze", report: {} } : null);
+    assert.deepEqual(writes, selectedAfterClick === "CET6" ? ["英语等级", "英语分数"] : ["英语等级"], JSON.stringify(result));
+    assert.equal(score.value, selectedAfterClick === "CET6" ? "587" : "");
+  }
+});
+
 test('a failed parent blocks later fields in its cascade group', async () => {
   const late = lateScanner();
   const aiHelpers = { ...require('../extension/ai-helpers.js'), detectCascadeGroups(fields) {

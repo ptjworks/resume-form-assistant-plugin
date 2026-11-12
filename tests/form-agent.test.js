@@ -185,7 +185,7 @@ test('progress is only a report: a successful run is unchanged with or without i
   const result = await agent.execute([{ id: 'add-0', count: 2 }], agent.collect(f.document, f.fields), () => false, (step) => seen.push(step.index));
   assert.equal(result.added, 2);
   assert.deepEqual(seen, [1, 2]);
-  assert.deepEqual(agent.labels, { papers: '论文', education: '教育经历', work: '工作经历', projects: '项目经历' });
+  assert.deepEqual(agent.labels, { papers: '论文', education: '教育经历', work: '工作经历', projects: '项目经历', internship: '实习经历' });
 });
 
 // #225/#195：说明书定位的分组。条目数由插件按网页结构核对，模型列的条目对不上就不新增。

@@ -4,6 +4,9 @@
   const ROOTS = '.ant-select, .ant-cascader, .el-select, .el-cascader, .arco-select, .arco-cascader, .layui-form-select';
   const SHELLS = '.ant-select-dropdown, .ant-cascader-dropdown, .el-select__popper, .el-select-dropdown, .el-cascader__dropdown, .arco-select-popup, .arco-cascader-popup, .arco-trigger-popup';
   const POPUPS = `${SHELLS}, [role="listbox"], [role="tree"]`;
+  const BOSS_POPUP = '.ui-select-dropdown';
+  const BOSS_CALENDAR = '.ui-picker-panel.ui-date-picker.ui-popper';
+  const BOSS_CASCADE = '.ui-cascader2__dropdown';
   // #301 antd 换了类名前缀（飞书招聘 atsx-，见 antd-prefix.js）：选择器里的 .ant- 按节点所在文档的前缀展开。
   const antd = (node, selector) => scope.ResumeProAntdPrefix?.css(node, selector) ?? selector;
   const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -152,6 +155,15 @@
   function describe(target) {
     const el = target?.element || target;
     if (yuiBox(el)) return { el, root: target?.root || el, combo: el, library: 'yui', cascade: false, multiple: false };
+    const cascadeRoot = isBossCampus(el?.ownerDocument) ? el.closest?.('form.ui-form .form-item .ui-cascader2') : null;
+    if (cascadeRoot) return { el, root: cascadeRoot, combo: el, library: 'boss', cascade: true,
+      multiple: Boolean(cascadeRoot.querySelector('.ui-cascader2__tags')) };
+    const rootCandidate = target?.root || el?.closest?.('.ui-select');
+    const boss = rootCandidate?.matches?.('.ui-select') && rootCandidate.contains(el) ? rootCandidate : null;
+    const triggers = boss?.querySelectorAll(':scope > .ui-select-selection');
+    const bossTrigger = triggers?.length === 1 ? triggers[0] : null;
+    if (bossTrigger) return { el, root: boss, combo: bossTrigger, library: 'boss', cascade: false,
+      multiple: boss.classList.contains('ui-select-multiple') };
     const root = el?.closest?.(antd(el, ROOTS)) || target?.root || el;
     let library = root?.matches?.(antd(root, '.ant-select, .ant-cascader')) ? 'antd'
       : root?.matches?.('.el-select, .el-cascader') ? 'element'
@@ -165,6 +177,18 @@
       || root?.matches?.(antd(root, '.ant-select-multiple, .el-select--multiple, .arco-select-multiple'))
       || Boolean(root?.querySelector?.(antd(root, '.ant-select-selection-overflow, .ant-select-selection--multiple, .el-select__tags, .el-select__selection .el-tag, .arco-select-view-tag')));
     return { el, root, combo, library, cascade: Boolean(cascade), multiple: Boolean(multiple) };
+  }
+  function isBossCampus(doc) {
+    return doc?.location?.hostname === 'xiaoyuan.zhipin.com';
+  }
+
+  function bossValueInput(info) {
+    return info.combo.querySelector(':scope > input[type="hidden"]');
+  }
+
+  function bossSchoolRegion(info) {
+    if (!info.root.matches('.combo-input-container > .content > .ui-select')) return null;
+    return trim(info.root.parentElement.parentElement.querySelector(':scope > .ui-dropmenu > .ui-dropmenu-label')?.textContent);
   }
   // #269 联想输入框（智联学校名称、#299 51job 的 el-autocomplete）：本来就允许直接输入。
   // 只认组件类名写明是联想输入框的；单有 aria-autocomplete 的可能是只能从列表里选的下拉。
@@ -220,6 +244,13 @@
   function selectedTexts(info) {
     const { root, el, library, cascade } = info;
     if (!root?.isConnected) return null;
+    if (library === 'boss') {
+      if (cascade) return trim(el.value).split(/\s*[/／>→]\s*/).filter(Boolean);
+      const labels = Array.from(info.combo.querySelectorAll('.ui-select-selected-value')).filter(shown).map(node => trim(node.textContent)).filter(Boolean);
+      if (labels.length) return labels;
+      const input = info.combo.querySelector('input.ui-select-input');
+      return input && trim(input.value) && bossValueInput(info)?.value ? [trim(input.value)] : [];
+    }
     // 多选（#429）：一个标签一项；读不全（「+ 2」这类折起来的）时返回 null。
     if (info.multiple && !cascade && ['antd', 'element'].includes(library)) {
       const tags = multiTags(info);
@@ -239,9 +270,11 @@
       if (!text || scope.ResumeProAIHelpers?.isPlaceholderOption(text) || text === trim(el.getAttribute?.('placeholder'))) return [];
       return [text];
     }
-    if (library === 'aria' && el.tagName === 'INPUT' && (!el.readOnly || info.requireCommitSignal)) {
+    if (library === 'aria') {
       const explicit = trim(info.combo.getAttribute('aria-valuetext'));
       if (explicit) return [explicit];
+    }
+    if (library === 'aria' && el.tagName === 'INPUT' && (!el.readOnly || info.requireCommitSignal)) {
       const hidden = root.querySelectorAll('input[type="hidden"]');
       if (hidden.length === 1) return hidden[0].value ? [String(hidden[0].value)] : [];
       // aria-selected in an open popup can describe visual focus rather than a
@@ -280,6 +313,13 @@
     if (!value || scope.ResumeProAIHelpers?.isPlaceholderOption(value)) return [];
     return cascade ? value.split(/\s*(?:\/|>|→)\s*/).filter(Boolean) : [value];
   }
+  function queryInput(info) {
+    if (info.el?.tagName === 'INPUT') return info.el;
+    if (info.library !== 'aria' || !info.root) return null;
+    const inputs = Array.from(info.root.querySelectorAll('input[aria-autocomplete="list"], input[role="searchbox"], input[type="search"], .ui-select-selection input.ui-select-input'))
+      .filter(input => !input.readOnly && !input.disabled && shown(input));
+    return inputs.length === 1 ? inputs[0] : null;
+  }
   function snapshot(target) {
     const info = describe(target);
     if (!info.root?.isConnected || !info.el?.isConnected) return null;
@@ -287,13 +327,15 @@
     // 那是插件自己的操作，不能被写入前复查当成用户改了字段。
     // Element 的输入框里就是已选文字（展开时清空），已经由 selection 表示。
     return JSON.stringify({ selection: selectedTexts(info),
-      query: info.el.tagName === 'INPUT' && info.library !== 'element' ? String(info.el.value ?? '') : null });
+      ...(info.library === 'boss' && !info.cascade ? { committed: bossValueInput(info)?.value ?? null, region: bossSchoolRegion(info) } : {}),
+      query: info.library !== 'element' ? queryInput(info)?.value ?? null : null });
   }
   function hasExistingValue(target) {
     const info = describe(target), values = selectedTexts(info);
     // A query is existing user input which needs overwrite protection, not
     // evidence of a committed selection. The snapshot tracks it separately.
-    return values === null || values.length > 0 || (info.el.tagName === 'INPUT' && !info.el.readOnly && Boolean(info.el.value));
+    const query = queryInput(info);
+    return values === null || values.length > 0 || Boolean(query && !query.readOnly && query.value);
   }
   // 用户眼前显示的已选文字（#189 保存到「我的信息」用）。读不准就返回 null，不猜；没选返回空数组。
   function readSelection(target) {
@@ -314,10 +356,11 @@
   // 只按类名里的词认出的浮层，记下时里面有哪些元素（见 staleLayer）。一块里超过这么多的不记，按装着就算旧的。
   const layerNodes = new WeakMap();
   const LAYER_NODES_MAX = 5000;
-  function shownLayers(doc, visible) {
+  function shownLayers(doc, visible, structuredSelect = false) {
     const View = doc.defaultView;
     const floating = node => ['absolute', 'fixed'].includes(View?.getComputedStyle(node).position);
     const shells = new Set([...popups(doc, visible), ...Array.from(doc.querySelectorAll(antd(doc, FLOATING))).filter(visible)]);
+    if (structuredSelect || isBossCampus(doc)) doc.querySelectorAll(`${BOSS_POPUP}, ${BOSS_CALENDAR}, ${BOSS_CASCADE}`).forEach(node => { if (visible(node)) shells.add(node); });
     const worded = Array.from(doc.querySelectorAll(FLOATING_WORDS)).filter(node => !shells.has(node) && trim(node.textContent) && visible(node) && floating(node));
     // 组件库的弹层外壳一块只装一个弹层，里面重画了也还是旧的；只按类名里的词认出的可能是网页放弹层的常驻外壳，记下里面原有的元素。
     for (const layer of worded) {
@@ -325,6 +368,22 @@
       if (nodes.length <= LAYER_NODES_MAX) layerNodes.set(layer, new WeakSet(nodes));
     }
     return new Set([...shells, ...worded]);
+  }
+  function bossPopup(info, h) {
+    if (info.cascade ? info.combo.getAttribute('aria-expanded') !== 'true' : !info.root.classList.contains('ui-select-visible')) return null;
+    const selector = info.cascade ? BOSS_CASCADE : BOSS_POPUP;
+    const owner = info.cascade ? '.ui-cascader2' : '.ui-select';
+    const local = Array.from(info.root.querySelectorAll(selector))
+      .filter(node => node.closest(owner) === info.root && h.visible(node));
+    const nearby = node => {
+      const a = info.combo.getBoundingClientRect(), b = node.getBoundingClientRect();
+      return a.width > 0 && b.width > 0 && a.left < b.right && a.right > b.left
+        && Math.min(Math.abs(a.bottom - b.top), Math.abs(a.top - b.bottom)) <= 24;
+    };
+    const transferred = info.cascade ? selector : '.ui-select-dropdown-transfer[data-transfer="true"]';
+    const layers = local.length ? local : Array.from(info.el.ownerDocument.querySelectorAll(transferred))
+      .filter(node => !node.closest(owner) && h.visible(node) && !staleLayer(node, info) && nearby(node));
+    return layers.length > 1 ? { reason: 'ambiguous_popup' } : layers.length === 1 ? { popup: layers[0] } : null;
   }
   // 被点开前就开着的浮层装着、或装着它的一块不是这次点开的。装着这个控件的不算：页面上常驻的大块 listbox、tree。
   // 旧浮层装着它时：组件库的外壳算旧的；只按类名里的词认出的，只有它自己点开前就在这块里才算旧的——
@@ -357,6 +416,10 @@
   }
   function optionNodes(popup, info, level) {
     if (info.cascade) {
+      if (info.library === 'boss') {
+        const column = Array.from(popup.querySelectorAll('.ui-cascader2-menu__list'))[level];
+        return column ? Array.from(column.querySelectorAll('.ui-cascader2-node')) : [];
+      }
       if (info.library === 'aria' && popup.getAttribute('role') === 'tree') {
         const parent = level === 0 ? popup : info.pathNodes?.[level - 1];
         if (!parent?.isConnected) return [];
@@ -372,7 +435,8 @@
     const realSelector = info.library === 'antd' ? antd(popup, '.ant-select-item-option')
       : info.library === 'element' ? '.el-select-dropdown__item'
       : info.library === 'arco' ? '.arco-select-option'
-      : info.library === 'layui' ? 'dd:not(.layui-select-tips)' : '';
+      : info.library === 'layui' ? 'dd:not(.layui-select-tips)'
+      : info.library === 'boss' ? '.ui-dropdown-list .ui-select-item' : '';
     const real = realSelector ? Array.from(popup.querySelectorAll(realSelector)) : [];
     return real.length ? real : Array.from(popup.querySelectorAll('[role="option"]'));
   }
@@ -523,11 +587,12 @@
     // 这样的弹层还不是选项列表：按没有选项接着等。
     if (info.library === 'antd' && !info.cascade && antdNotFound(popup, nodes)) return [];
     return nodes.map(node => {
-      const label = node.querySelector(antd(node, '.ant-select-item-option-content, .el-cascader-node__label, .arco-cascader-list-item-label')) || node;
+      const label = node.querySelector(antd(node, '.ant-select-item-option-content, .el-cascader-node__label, .arco-cascader-list-item-label, .ui-cascader2-node__label')) || node;
       const text = info.library === 'aria' && info.cascade ? trim(node.getAttribute('aria-label') || Array.from(node.childNodes)
         .filter(child => child.nodeType !== 1 || !child.matches('[role="group"]')).map(child => child.textContent).join(' ')) : trim(label.textContent);
       return { node, text, value: node.getAttribute('data-value') ?? node.getAttribute('value') ?? text,
-        disabled: node.getAttribute('aria-disabled') === 'true' || node.matches(antd(node, '.ant-select-item-option-disabled, .ant-cascader-menu-item-disabled, .is-disabled, .arco-select-option-disabled, .arco-cascader-list-item-disabled, .layui-disabled')) || Boolean(node.disabled) };
+        disabled: node.getAttribute('aria-disabled') === 'true' || node.matches(antd(node, '.ant-select-item-option-disabled, .ant-cascader-menu-item-disabled, .is-disabled, .arco-select-option-disabled, .arco-cascader-list-item-disabled, .layui-disabled'))
+          || (info.library === 'boss' && node.classList.contains('ui-select-item-disabled')) || Boolean(node.disabled) };
     });
   }
   // #301 虚拟列表（antd 4/5/6 默认、Element Plus el-select-v2）只画出看得见的十来项，同名的一项可能还在屏外。
@@ -742,6 +807,23 @@
     const pool = exact.length ? exact : usable.filter(option => texts(option).some(text => helpers.normalizeText(text) === helpers.normalizeText(value)));
     return pool.length === 1 ? { option: pool[0] } : { reason: pool.length > 1 ? 'ambiguous_option' : 'no_option_match' };
   }
+  function bossOption(list, value, label, helpers) {
+    const exact = sameOption(list, value, helpers);
+    if (exact.reason !== 'no_option_match') return exact;
+    const normalized = helpers.bossEducationLevel(value, label);
+    if (normalized) {
+      const hits = list.filter(option => !option.disabled && helpers.bossEducationLevel(option.text, label) === normalized);
+      if (hits.length) return hits.length === 1 ? { option: hits[0] } : { reason: 'ambiguous_option' };
+    }
+    if (/^英语(?:能力)?等级$/.test(label)) {
+      const level = helpers.cetLevel(trim(value).replace(/\s*[（(]\s*\d+(?:\.\d+)?\s*分?\s*[）)]$/, ''));
+      if (level) {
+        const hits = list.filter(option => !option.disabled && helpers.cetLevel(option.text) === level);
+        if (hits.length) return hits.length === 1 ? { option: hits[0] } : { reason: 'ambiguous_option' };
+      }
+    }
+    return exact;
+  }
   // #269 日历（北森 phoenix-date-picker、Element el-date-picker 等）：认弹层里写着「2026年」「10月」的年月标题、
   // 年/月/日格子和左右翻页按钮，按 年 → 月 → 日 逐级点；日历自带能打字的日期框时先直接输入。
   // 资料只有年月、日历要选到日时选 1 号，并告诉宿主（dayDefaulted），结果里写明。
@@ -795,17 +877,18 @@
       }
       return false;
     };
-    const cells = (read, keep = () => true) => leaves.filter(el => inCell(el) && read(el.textContent) && keep(el)).map(el => ({ value: read(el.textContent), node: el }));
     const headYear = leaves.find(el => !inCell(el) && yearOf(el.textContent));
     const headMonth = leaves.find(el => !inCell(el) && monthOf(el.textContent));
     const headBoth = headYear || headMonth ? null : yearMonthOf(leaves.find(el => !inCell(el) && yearMonthOf(el.textContent))?.textContent);
     const disabledCell = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
-        if (node.getAttribute?.('aria-disabled') === 'true' || node.hasAttribute?.('disabled')) return true;
+        if (node.getAttribute?.('aria-disabled') === 'true' || node.hasAttribute?.('disabled') || node.classList.contains('disabled')) return true;
         if (node.matches?.('td, [role="gridcell"]')) return false;
       }
       return false;
     };
+    const cells = (read, keep = () => true) => leaves.filter(el => inCell(el) && read(el.textContent) && keep(el))
+      .map(el => ({ value: read(el.textContent), node: el, disabled: disabledCell(el) }));
     const pickedCell = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
         if (node.getAttribute?.('aria-selected') === 'true' || String(node.getAttribute?.('class') || '').split(/\s+/).some(token => SELECTED_TOKEN.test(token))) return true;
@@ -864,6 +947,42 @@
     });
     return near.length === 1 ? near[0] : null;
   }
+  function bossCalendar(info, h) {
+    const local = Array.from(info.root.querySelectorAll(BOSS_CALENDAR)).filter(h.visible);
+    if (local.length) return local.length === 1 ? local[0] : null;
+    // Popper 可以把面板移到 body。只接本次打开、紧贴该输入框且唯一的面板。
+    const a = info.el.getBoundingClientRect();
+    const near = Array.from(info.el.ownerDocument.querySelectorAll(BOSS_CALENDAR)).filter(node => {
+      if (!h.visible(node) || staleLayer(node, info) || node.closest('.ui-date-editor')) return false;
+      const b = node.getBoundingClientRect();
+      if (a.width <= 0 || b.width <= 0) return false;
+      const alignedX = a.left < b.right && a.right > b.left;
+      const alignedY = a.top < b.bottom && a.bottom > b.top;
+      return (alignedX && Math.min(Math.abs(a.bottom - b.top), Math.abs(a.top - b.bottom)) <= 24)
+        || (alignedY && Math.min(Math.abs(a.right - b.left), Math.abs(a.left - b.right)) <= 24);
+    });
+    return near.length === 1 ? near[0] : null;
+  }
+
+  async function pickBossDate(ctx, raw, h) {
+    const el = ctx.el;
+    const root = isBossCampus(el.ownerDocument) ? el.closest('.ui-date-editor-date, .ui-date-editor-month') : null;
+    if (!root) return { reason: 'unsupported_control' };
+    const info = { el, root, library: 'boss-date', before: ctx.popupsBeforeFocus || shownLayers(el.ownerDocument, h.visible) };
+    if (!bossCalendar(info, h)) {
+      const reason = h.click(el, ctx); if (reason) return { reason };
+      // BOSS opens the picker from its input focus event as well as click.
+      const stopped = h.stop(ctx, true); if (stopped) return { reason: stopped };
+      h.focus(el);
+    }
+    const opened = await h.waitUntil(ctx, el.ownerDocument.documentElement, () => bossCalendar(info, h), Boolean, 1500);
+    if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
+    const layer = opened.value;
+    const outcome = await pickDate(ctx, raw, h, layer, info);
+    if (outcome.reason && !h.stop(ctx)) await leaveCalendar(ctx, el, root, layer, h);
+    return outcome;
+  }
+
   async function pickPresent(ctx, h, layer, info) {
     // 日历里自带「至今」选项（勾选框或按钮）才点；没有就交还，由页面上单独的「至今」勾选题去填。
     const marks = Array.from(layer.querySelectorAll('*')).filter(el => h.visible(el) && PRESENT.test(trim(el.textContent))
@@ -871,7 +990,8 @@
     if (marks.length !== 1) return { reason: 'no_option_match' };
     const target = marks[0].closest('label') || marks[0];
     const reason = h.click(optionTarget(target), ctx, true); if (reason) return { reason };
-    const accepted = () => (selectedTexts(info) || []).some(text => PRESENT.test(trim(text))) || isChecked(target);
+    const accepted = () => info.library === 'boss-date' ? PRESENT.test(trim(info.el.value)) && (!layer.isConnected || !h.visible(layer))
+      : (selectedTexts(info) || []).some(text => PRESENT.test(trim(text))) || isChecked(target);
     const done = await h.waitUntil(ctx, info.el.ownerDocument.documentElement, accepted, Boolean);
     return done.reason ? { reason: done.reason === 'verification_timeout' ? 'selection_not_committed' : done.reason } : { accepted };
   }
@@ -881,8 +1001,8 @@
     ctx.observed = { ...ctx.observed, popupRole: 'calendar' };
     // 日历切换年/月时整块重建的：旧面板不在了就在控件旁边重新找一次。
     const current = () => {
-      if (layer.isConnected && h.visible(layer)) return layer;
-      const again = calendarNear(info, h);
+      if (info.library !== 'boss-date' && layer.isConnected && h.visible(layer)) return layer;
+      const again = info.library === 'boss-date' ? bossCalendar(info, h) : calendarNear(info, h);
       if (again) layer = again;
       return again;
     };
@@ -893,7 +1013,7 @@
     if (!target || target.y < 1900 || target.y > 2100) return { reason: 'invalid_date' };
     const modeOf = current => current.dayCells >= 28 ? 'date' : current.months.length >= 12 ? 'month' : current.years.length >= 6 ? 'year' : '';
     // 日历打开有动画（Element 从 0 放大）：格子显示出来才看得出是选日、选月还是选年。
-    const shown = await h.waitUntil(ctx, doc.documentElement, () => calendarView(layer, h), current => Boolean(modeOf(current)), 1500);
+    const shown = await h.waitUntil(ctx, doc.documentElement, () => current() && calendarView(layer, h), view => Boolean(view && modeOf(view)), 1500);
     if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'unsupported_control' : shown.reason };
     let view = shown.value;
     const mode = modeOf(view);
@@ -901,12 +1021,14 @@
     const dayDefaulted = mode === 'date' && !target.d;
     const want = { ...target, d: target.d || 1 };
     const expected = mode === 'date' ? `${want.y}-${pad2(want.m)}-${pad2(want.d)}` : mode === 'month' ? `${want.y}-${pad2(want.m)}` : String(want.y);
-    const accepted = () => (selectedTexts(info) || []).some(text => shownDate(text, mode) === expected)
-      || (info.el.tagName === 'INPUT' && shownDate(info.el.value, mode) === expected);
+    const accepted = () => info.library === 'boss-date' ? shownDate(info.el.value, mode) === expected && (!layer.isConnected || !h.visible(layer))
+      : (selectedTexts(info) || []).some(text => shownDate(text, mode) === expected)
+        || (info.el.tagName === 'INPUT' && shownDate(info.el.value, mode) === expected);
     ctx.observed = { ...ctx.observed, calendarMode: mode };
     // 没选上时框里换成了别的日子（既不是要填的，也不是点开前的）：回车交出了日历原来指着的日子（#418 是今天）。
     // 照没选上报，诊断里写明框里是别的（after=other），侧栏也不说成只是没选上。
-    const shownNow = () => [...(selectedTexts(info) || []), info.el.tagName === 'INPUT' ? info.el.value : ''].join(' ');
+    const shownNow = () => info.library === 'boss-date' ? info.el.value
+      : [...(selectedTexts(info) || []), info.el.tagName === 'INPUT' ? info.el.value : ''].join(' ');
     const original = shownDate(shownNow(), mode);
     const missed = () => {
       const now = shownDate(shownNow(), mode);
@@ -968,12 +1090,12 @@
           || view.headMonthNode || view.headYearNode;
       } else if (view.months.length >= 12) {
         if (!view.headYear || view.headYear === want.y) {
-          const hits = view.months.filter(cell => cell.value === want.m);
+          const hits = view.months.filter(cell => cell.value === want.m && (info.library !== 'boss-date' || !cell.disabled));
           node = hits.length === 1 ? hits[0].node : null; last = mode === 'month';
         } else node = view.button('year', want.y < view.headYear ? -1 : 1) || view.headYearNode;
       } else if (view.years.length >= 6) {
         const hits = view.years.filter(cell => cell.value === want.y);
-        if (hits.length === 1) { node = hits[0].node; last = mode === 'year'; }
+        if (hits.length === 1 && (info.library !== 'boss-date' || !hits[0].disabled)) { node = hits[0].node; last = mode === 'year'; }
         else if (!hits.length) node = view.button('year', want.y < Math.min(...view.years.map(cell => cell.value)) ? -1 : 1);
       }
       if (!node) return { reason: 'no_option_match' };
@@ -1142,6 +1264,15 @@
       && (ctx.kind === 'date' || DATE_VALUE.test(desired[0]) || PRESENT.test(desired[0]));
     // 通用路线：组件上显示的已经就是要填的值（整段或中文部分完全相同），不再点开。
     // 「勾选 + 确定」式弹层右侧的「已选」栏会把已选项再列一遍，点开反而分不清两个同名选项（金发民族）。
+    const bossLabel = String(ctx.entry?.binding?.label || '').trim();
+    if (info.library === 'boss' && !info.cascade && !info.root.classList.contains('ui-select-visible')) {
+      const accepted = () => {
+        const selected = selectedTexts(info);
+        return !info.root.classList.contains('ui-select-visible') && selected?.length === 1
+          && Boolean(bossOption([{ text: selected[0] }], desired[0], bossLabel, h.helpers).option);
+      };
+      if (accepted()) return { accepted };
+    }
     if (info.library === 'generic' && !dateWanted) {
       const sameAsWanted = text => {
         const full = trim(text), [first, ...rest] = full.split(/\s*\/\s*/);
@@ -1157,7 +1288,7 @@
     }
     const doc = info.el.ownerDocument;
     // 宿主在聚焦之前记下的弹层：有的下拉一聚焦就展开（#269 智联 Element UI），聚焦后再记就把它算成了原有的。
-    const before = ctx.popupsBeforeFocus || shownLayers(doc, h.visible);
+    const before = ctx.popupsBeforeFocus || shownLayers(doc, h.visible, info.library === 'boss');
     info.before = before;
     // 通用路径：从点开之前开始记下新加或改了 class/style 的元素，弹层只在这些里找。
     const touched = new Set();
@@ -1192,13 +1323,15 @@
       return list && h.visible(list) ? list : null;
     };
     const initiallyOwned = ownedPopup(info, h.visible);
-    const alreadyOpen = (info.combo.getAttribute('aria-expanded') === 'true' && initiallyOwned.popup) || layuiList();
+    const alreadyOpen = (info.combo.getAttribute('aria-expanded') === 'true' && (initiallyOwned.popup || info.library === 'boss')) || layuiList()
+      || (info.library === 'boss' && info.root.classList.contains('ui-select-visible'));
     const trigger = info.cascade ? info.el : info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector, .ant-select-content')) || info.root
       : info.library === 'element' ? info.root.querySelector('.el-select__wrapper, .el-input') || info.root
       : info.library === 'arco' ? info.root.querySelector('.arco-select-view') || info.root : info.combo;
     state.clickedAt = Date.now();
     if (!alreadyOpen) { const reason = h.click(info.library === 'generic' ? coverOf(trigger, info) || trigger : trigger, ctx); if (reason) return { reason }; }
     const findOpened = () => {
+      if (info.library === 'boss') return bossPopup(info, h);
       if (info.library === 'generic') {
         // 新出现的弹层自己带 role=listbox 一类标记时直接用它，否则按位置和条目认。
         const marked = popups(doc, h.visible).filter(node => !before.has(node) && !node.contains(info.root) && node.querySelector('[role="option"]'));
@@ -1241,7 +1374,8 @@
       else { h.write(input, query, ctx); h.input(input); }
       typedAt = Date.now();
     };
-    const typeInto = info.library === 'generic' || info.freeText ? info.el
+    const typeInto = info.library === 'boss' ? info.combo.querySelector('input.ui-select-input')
+      : info.library === 'generic' || info.freeText ? info.el
       : ['antd', 'element'].includes(info.library) && !info.cascade && !info.root.matches(antd(info.root, '.ant-select-auto-complete, .ant-select-combobox'))
         ? Array.from(info.root.querySelectorAll('input')).find(input => safeSearch(input) && h.visible(input)) : null;
     if (typeInto && !dateWanted && opened.reason === 'verification_timeout' && safeSearch(typeInto) && h.visible(typeInto)) {
@@ -1283,10 +1417,12 @@
     // 通用路径先用弹层自带的搜索框（北森），没有才在下拉自己的输入框里输入（Moka 学校、专业）。
     const candidates = info.library === 'generic' ? [...ctx.popup.querySelectorAll('input'), info.combo, ...info.root.querySelectorAll('input')]
       : [info.combo, ...info.root.querySelectorAll('input'), ...popup.querySelectorAll('input')];
-    const searchInput = candidates.find(input => safeSearch(input) && h.visible(input));
-    const searchable = !info.cascade && searchInput && (ctx.hints.searchable === true || info.library === 'generic'
+    const searchInput = candidates.find(input => safeSearch(input) && h.visible(input) && (info.library !== 'boss'
+      || input.matches('input.ui-select-input, .select-dropdown-search input')));
+    const searchable = !info.cascade && searchInput && (ctx.hints.searchable === true || info.library === 'generic' || info.library === 'boss'
       || info.combo.getAttribute('aria-autocomplete') === 'list' || searchInput.getAttribute('aria-autocomplete') === 'list'
       || searchInput.getAttribute('role') === 'searchbox' || searchInput.type === 'search'
+      || searchInput.matches('.ui-select-selection input.ui-select-input')
       || info.root.matches(antd(info.root, '.ant-select-show-search')) || Boolean(info.root.querySelector('.el-select__wrapper.is-filterable')));
     let searchDone = typedFirst;
     state.searchable = Boolean(searchable || typedFirst);
@@ -1294,6 +1430,11 @@
     const optionKey = option => option.full ?? option.text;
     const seenOptions = new Set();
     const readOptions = level => {
+      if (info.library === 'boss') {
+        const current = bossPopup(info, h)?.popup;
+        if (!current) return [];
+        popup = current; ctx.popup = current; info.popup = current;
+      }
       if (info.library === 'generic' && !popup.isConnected) {
         const again = genericOpened(searchDone ? 1 : 2);
         if (again?.popup) { popup = again.popup; ctx.popup = again.layer || popup; info.popup = popup; }
@@ -1328,7 +1469,8 @@
       && Array.from(ctx.popup.querySelectorAll('[class]')).some(node => !trim(node.textContent)
         && String(node.getAttribute('class')).split(/\s+/).some(token => LOADING_TOKEN.test(token)) && h.visible(node) && !faded(node));
     const loading = () => {
-      const now = info.combo.getAttribute('aria-busy') === 'true' || popup.getAttribute('aria-busy') === 'true' || spinnerShown();
+      const now = info.combo.getAttribute('aria-busy') === 'true' || popup.getAttribute('aria-busy') === 'true' || spinnerShown()
+        || (info.library === 'boss' && Array.from(popup.querySelectorAll('.ui-dropdown-loading')).some(h.visible));
       // #497 诊断：等选项时见过加载的样子，也算后台加载。
       if (now) state.sawLoading = true;
       return now;
@@ -1362,16 +1504,21 @@
     const noSuggestions = list => info.freeText && !list.length && collapsed() && (!popup.isConnected || !h.visible(popup))
       && Date.now() - typedAt >= FREE_TEXT_SETTLE_MS;
     const chosenLabels = [], chosenValues = [];
+    const bossBefore = info.library === 'boss' && !info.cascade ? bossValueInput(info)?.value : null;
     // 联想框（#299、#404 51job）不标出选中状态：点了建议（只会是同名的一项，见 pick）、框里换成这一项、建议框也收起了就算选上。
     // 之后的核对只看框里的字：插件打字引起的建议晚到时建议框会再弹出来。失焦后留不留得住由宿主核对，页面没收下的失焦时会还原。
     const accepted = (picking = true) => {
+      if (info.library === 'boss' && info.cascade && info.combo.getAttribute('aria-expanded') === 'true') return false;
+      if (info.library === 'boss' && (info.root.classList.contains('ui-select-visible')
+        || (state.searchInput && info.combo.contains(state.searchInput)
+          && (!bossValueInput(info)?.value || bossValueInput(info).value === bossBefore)))) return false;
       const values = selectedTexts(info);
       if (values === null && info.freeText && info.library === 'aria') {
         return chosenLabels.length === 1 && (!picking || collapsed()) && h.helpers.normalizeText(info.el.value) === h.helpers.normalizeText(chosenLabels[0]);
       }
       // #429 通用路径的地区：组件上可能只显示最后一级，也可能显示整条路径（分隔符各家不同）。去掉分隔符后对得上点过的几级、
       // 或路径走到的这几级（带不带「市辖区」这类占位的一级），或最后一级的别的写法，都算。
-      if (region && info.library === 'generic') {
+      if (region && ['generic', 'boss'].includes(info.library) && (info.cascade || info.library === 'generic')) {
         if (!values?.length || !chosenLabels.length) return false;
         const flat = text => h.helpers.normalizeText(String(text ?? '').replace(PATH_SEPARATORS, ''));
         const shown = flat(values.join(''));
@@ -1593,7 +1740,10 @@
       const pick = items => {
         if (info.freeText) return sameOption(items, desired[level], h.helpers);
         const value = wanted(items);
-        return value ? match(items, value, h.helpers, preferOriginal() || partial(items), englishLevel) : { reason: 'ambiguous_option' };
+        if (!value) return { reason: 'ambiguous_option' };
+        if (info.library === 'boss') return preferOriginal()
+          ? sameOption(items, value, h.helpers) : bossOption(items, value, bossLabel, h.helpers);
+        return match(items, value, h.helpers, preferOriginal() || partial(items), englishLevel);
       };
       const listReady = list => (!loading() && list.length > 0 && (!generic || Date.now() - steadySince >= 300) && (!typedAntd || sameName(list) || typedSettled(steadySince)))
         || (eagerSearch && list.length === 0) || (typedAntd && noSuggestions(list));
@@ -2159,14 +2309,14 @@
         // YUI 联想框没选成：失焦时它自己收起建议框；窗口不在前台时 blur() 不派发事件，就补一个 blur 给它。
         // 不按 Esc：会冒泡到外层对话框（#395）。
         if (info?.library === 'yui' && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) info.el.dispatchEvent(new info.el.ownerDocument.defaultView.FocusEvent('blur'));
-        if ((['generic', 'element'].includes(info?.library) || outcome.reason === 'cascade_unsupported') && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) {
+        if ((['generic', 'element', 'boss'].includes(info?.library) || outcome.reason === 'cascade_unsupported') && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) {
           const doc = info.el.ownerDocument, View = doc.defaultView, layer = ctx.popup;
           const dialog = dialogOf(info.root);
           if (dialog) {
             const spot = pressSpot(info.root, dialog);
             if (spot) press(spot);
           } else {
-            info.el.dispatchEvent(new View.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+            (info.library === 'boss' ? info.combo : info.el).dispatchEvent(new View.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
             const left = await h.waitUntil(ctx, doc.documentElement, () => !layer.isConnected || !h.visible(layer), Boolean, ESC_LEAVE_MS);
             if (left.reason === 'verification_timeout' && layer.isConnected && h.visible(layer) && !h.stop(ctx)) press(doc.body);
           }
@@ -2176,14 +2326,16 @@
       // 一边改 class 一边淡出，下一个相邻的下拉会把它也当成新出现的弹层，报「无法确定控件弹层」（#301 北森）。
       // 看装着选项的那一块：它不见了，外壳就算还在页面上也不会再被认成弹层。
       // AntD、Element 的下拉失败时也等：AntD 失焦后过一会儿才开始收（#301 hotjob），收起还有动画。
-      const own = state.info?.library === 'generic' || (outcome?.reason && ['antd', 'element'].includes(state.info?.library)) ? state.info.popup : null;
+      const own = ['generic', 'boss'].includes(state.info?.library)
+        || (outcome?.reason && ['antd', 'element'].includes(state.info?.library)) ? state.info.popup : null;
       const gone = () => !own.isConnected || !h.visible(own);
       if (own && !gone()) await h.waitUntil(ctx, state.info.el.ownerDocument.documentElement, gone, Boolean, POPUP_LEAVE_MS);
     }
   }
   function visiblePopups(target, visible) {
-    const doc = describe(target).el?.ownerDocument;
-    return doc?.querySelectorAll ? shownLayers(doc, visible) : null;
+    const info = describe(target);
+    const doc = info.el?.ownerDocument;
+    return doc?.querySelectorAll ? shownLayers(doc, visible, info.library === 'boss') : null;
   }
   // 自制单选（#269 北森 phoenix-radio）和通用路线共用：选项怎么点、选中了没有。
   const CHECKED_TOKEN = /(?:^|[-_])checked$/i;
@@ -2194,5 +2346,5 @@
       || String(el.getAttribute('class') || '').split(/\s+/).some(token => CHECKED_TOKEN.test(token)));
   }
   scope.ResumeProCustomControls = { describe, acceptsFreeText, snapshot, hasExistingValue, readSelection, visiblePopups, optionTarget, isChecked, run, suggest, libraryVersion,
-    openLayers, dismissOpened, pickRange, leaveRange };
+    openLayers, dismissOpened, pickRange, leaveRange, pickBossDate };
 })(typeof self !== 'undefined' ? self : globalThis);

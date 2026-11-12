@@ -94,6 +94,13 @@
     region_level_missing: "资料里没有这一级地区",
     too_long: "超出字数上限",
     range_incomplete: "起止日期缺一头",
+    education_school_unconfirmed: "未确认本行学校",
+    education_record_unconfirmed: "无法确定本行对应哪段教育经历",
+    work_record_unconfirmed: "无法确定本行对应哪段工作或实习经历",
+    work_company_unconfirmed: "未确认本行公司",
+    english_level_unconfirmed: "未确认英语考试等级",
+    english_score_missing: "简历中缺少对应等级的英语分数",
+    english_score_conflict: "简历中同一等级有多个英语分数",
     format_mismatch: "只能填数字",
     readonly_picker: "网页自己的选择框",
     operation_failed: "控件操作失败",
@@ -1742,9 +1749,14 @@
       setRepeat(run, "failed", "未识别到可安全新增的分组，请先手动新增条目，再一键填写。");
       return;
     }
-    setRepeat(run, "planning", "AI 正在规划需要新增的条目…");
+    const campus = run.snapshot.candidates.filter(candidate => run.snapshot.refs.get(candidate.id)?.existing);
+    const remaining = run.snapshot.candidates.filter(candidate => !campus.includes(candidate));
+    const local = campus.map(({ id, target, current }) => ({ id, count: target - current }));
     // Only the local candidate summary goes out: id, domain, label, current, target.
-    const reply = await self.ResumeProAIClient.send({ type: "AI_PLAN_REPEAT", requestId: run.requestId, candidates: run.snapshot.candidates });
+    if (remaining.length) setRepeat(run, "planning", "AI 正在规划需要新增的条目…");
+    const reply = remaining.length
+      ? await self.ResumeProAIClient.send({ type: "AI_PLAN_REPEAT", requestId: run.requestId, candidates: remaining })
+      : { success: true, plan: [] };
     // A stop, cancel, tab switch or newer run already answered the user; this reply is late.
     if (repeatStopped(run)) { abandonRepeat(run); return; }
     if (!reply?.success) {
@@ -1757,7 +1769,7 @@
     }
     let plan;
     try {
-      plan = agent.validatePlan(reply.plan, run.snapshot.candidates);
+      plan = agent.validatePlan([...local, ...agent.validatePlan(reply.plan, remaining)], run.snapshot.candidates);
     } catch (error) {
       setRepeat(run, "failed", `${error.message || "AI 计划无效。"}未执行新增。`);
       return;
@@ -2047,7 +2059,30 @@
         type: "AI_ANALYZE_PAGE", requestId, outline: text, part, parts
       }).catch(() => ({ success: false, error: "无法连接 AI 请求进程，请重新加载扩展后再试。", errorCode: "unavailable" })),
       cancelRequest: requestId => { self.ResumeProAIClient.cancel(requestId).catch(() => {}); },
-      toFillInput: (fields, nodes) => withScanBindings(api.toFillInput(fields, nodes, { optionText: getRadioOptionLabel, pickerInputType: inferPickerInputType })),
+      toFillInput: (fields, nodes) => {
+        const prepared = api.toFillInput(fields, nodes, { optionText: getRadioOptionLabel, pickerInputType: inferPickerInputType });
+        if (location.hostname !== "xiaoyuan.zhipin.com") return fields.length ? withScanBindings(prepared) : prepared;
+        let scanned;
+        try {
+          scanned = scanFillableFields();
+        } catch {
+          // 没有本地记录绑定时，只保留可以独立填写的题目。
+          const independent = prepared.fields.filter(field => {
+            const entry = prepared.fieldMap.get(field.fieldId);
+            const element = entry?.element || entry?.elements?.[0];
+            const label = nodes.get(entry?.deepRef)?.control?.label || field.label;
+            return element && !BOSS_CET_SCORE_LABEL.test(label)
+              && !element.closest('.group-part-item[data-group-id="EDUCATION"]')
+              && !self.ResumeProFormAgent?.campusWorkScope?.(element);
+          });
+          return { ...prepared, fields: independent, fieldMap: new Map(independent.map(field =>
+            [field.fieldId, prepared.fieldMap.get(field.fieldId)])), scanUnavailable: true };
+        }
+        const bound = withScanBindings(prepared, scanned);
+        const known = scanned.fields.filter(field => isBossScanField(field, scanned.fieldMap.get(field.fieldId)));
+        return known.length ? { ...bound, ...mergeRecipeScan(bound, { ...scanned, fields: known }) } : bound;
+      },
+      hasLocalSections: () => Boolean(self.ResumeProFormAgent?.campusGroups(document).length),
       planActions: self.ResumeProPageActions && self.ResumeProFormAgent ? planDeepActions : null,
       // #226 站点配方：保存（深度分析效果更好时）、配方模式下找按钮和字段。
       baseline: deepBaseline,
@@ -2104,6 +2139,12 @@
   // 普通扫描也认识的控件：沿用它的题目对应关系。填写前的复查、「加到我的信息」的询问都和普通填写一致；
   // 只有深度分析才找到的控件（框架、Shadow DOM 里的）没有这份对应关系，不询问，免得用模型起的题目名存档。
   // scanned：已经扫过的结果（#226 配方补漏时复用同一次扫描）。
+  function isBossScanField(field, entry) {
+    return Boolean(field && (field.bossEducation || field.educationRange || field.bossWork || field.bossCet
+      || entry?.pickerType === "boss" || (entry?.root?.matches?.(".ui-cascader2")
+        && entry.root.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com")));
+  }
+
   function withScanBindings(prepared, scanned = null) {
     if (!scanned) {
       try {
@@ -2113,14 +2154,24 @@
       }
     }
     const byElement = new Map();
-    for (const entry of scanned.fieldMap.values()) {
+    const descriptors = new Map(scanned.fields.map(field => [field.fieldId, field]));
+    for (const [id, entry] of scanned.fieldMap) {
       const key = entry.kind === "radio" ? entry.elements?.[0] : entry.element;
-      if (key) byElement.set(key, entry);
+      if (key) byElement.set(key, { entry, field: descriptors.get(id) });
     }
-    for (const entry of prepared.fieldMap.values()) {
-      const known = byElement.get(entry.kind === "radio" ? entry.elements?.[0] : entry.element);
+    for (const field of prepared.fields) {
+      const entry = prepared.fieldMap.get(field.fieldId);
+      if (!entry) continue;
+      const scannedControl = byElement.get(entry.kind === "radio" ? entry.elements?.[0] : entry.element);
+      const known = scannedControl?.entry;
       if (!known?.binding) continue;
       Object.assign(entry, { binding: known.binding, offerable: known.offerable, offerLabel: known.offerLabel });
+      const descriptor = scannedControl.field;
+      // 深度分析的文字推测不能覆盖 BOSS 已识别的级联或日历。
+      if (isBossScanField(descriptor, known)) {
+        Object.assign(entry, { root: known.root, controlKind: known.controlKind, pickerType: known.pickerType, pickerInputType: known.pickerInputType });
+        Object.assign(field, descriptor, { fieldId: field.fieldId });
+      }
     }
     return prepared;
   }
@@ -3501,8 +3552,9 @@
     return { ok: true, recipe: recipeStatus() };
   }
 
-  function isAssistedTextField(entry) {
+  function isAssistedField(entry, field) {
     const el = entry.element;
+    if (field?.bossWork && entry.pickerType === "boss") return !el.disabled;
     if (["custom-select", "cascader"].includes(entry.controlKind)) return false;
     return !el.disabled && !el.readOnly && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && ["text", "email", "tel", "url", "search"].includes(el.type)));
   }
@@ -3650,6 +3702,7 @@
     let genericLocked = 0;
     // #226 本站配方这次用没用上：只有固定状态码和计数。
     let recipeUse = deep?.mode === "recipe" ? deep.report?.recipe || null : null;
+    let missingWorkRows = 0;
     // 猎聘这类查看状态的页面：页头搜索框之类会被扫描到，但一个都没填上，照样提示先点「编辑」。
     // 只在什么都没匹配上、AI 也没出错时这样说：AI 超时、匹配到了却写不上（#299）都不是查看状态。
     // 从同源框架里扫到了一张表单那么多的字段（#400）：表单已经显示出来，不是查看状态。只有一两个（留言框）照样提示。
@@ -3690,7 +3743,7 @@
       let fieldMap = scanned.fieldMap;
       let fields = assisted ? scanned.fields.filter(field => {
         const entry = fieldMap.get(field.fieldId);
-        return entry?.kind === "element" && isAssistedTextField(entry) && assisted.scopes.some(scope => scope.contains(entry.element)) && !hasExistingValue(entry);
+        return entry?.kind === "element" && isAssistedField(entry, field) && assisted.scopes.some(scope => scope.contains(entry.element)) && !hasExistingValue(entry);
       }) : scanned.fields;
       timing.scanMs = performance.now() - phaseStart;
       phase = null;
@@ -3766,6 +3819,18 @@
 
       const fieldMetaMap = new Map(fields.map((f) => [f.fieldId, f]));
       const domOrderMap = new Map(fields.map((field, index) => [field.fieldId, index]));
+      const recordOrder = new Map();
+      const recordKey = field => field?.bossEducation ? `education:${field.bossEducation.row}`
+        : field?.bossWork ? `work:${field.bossWork.row}` : field?.bossCet ? `cet:${field.bossCet.row}` : "";
+      for (const field of fields) {
+        const row = recordKey(field);
+        if (row && !recordOrder.has(row)) recordOrder.set(row, domOrderMap.get(field.fieldId));
+      }
+      const orderOf = field => {
+        const index = domOrderMap.get(field?.fieldId) ?? 0;
+        const anchor = field?.bossEducation?.role === "school" || field?.bossWork?.role === "company" || field?.bossCet?.role === "level";
+        return anchor ? (recordOrder.get(recordKey(field)) ?? index) - 0.5 : index;
+      };
       const byOrder = (a, b) => {
         const ma = fieldMetaMap.get(a.fieldId);
         const mb = fieldMetaMap.get(b.fieldId);
@@ -3773,7 +3838,7 @@
           return (ma.cascadeLevel ?? 0) - (mb.cascadeLevel ?? 0);
         }
         // 其余按页面顺序从上往下填：没被识别成联动组的省/市/县也能等上一级先选好。
-        return (domOrderMap.get(a.fieldId) ?? 0) - (domOrderMap.get(b.fieldId) ?? 0);
+        return orderOf(ma) - orderOf(mb);
       };
 
       // 等 AI 时字段所在的同源框架换了页或被删掉（#400）：和顶层换页一样算页面变了，不往旧文档里写。
@@ -3913,7 +3978,7 @@
       let waitingAi = false;
       let awaiting = [];
       const pageFilled = new Set();
-      const pickUpNewFields = async (position, doc) => {
+      const pickUpNewFields = async (position, doc, cetRow = null) => {
         await waitForPageSettle(doc);
         if (!isCurrent()) return;
         // 同名题目的序号会因为新字段插进来而变（两段教育经历都有「专业」）：原来就扫到过的元素不算新字段。
@@ -3929,6 +3994,7 @@
         }
         const added = fresh.fields.filter(field => {
           const entry = fresh.fieldMap.get(field.fieldId);
+          if (cetRow && (field.bossCet?.role !== "score" || !cetRow.contains(entry?.element))) return false;
           const key = fieldBindingKey(entry?.binding);
           return key && !known.has(key) && !knownNodes.has(nodeOf(entry)) && isFieldBindingCurrent(entry) && !hasExistingValue(entry);
         });
@@ -3965,6 +4031,7 @@
         const customGroup = self.ResumeProProfile?.CUSTOM_GROUP;
         const siteGroup = self.ResumeProProfile?.SITE_GROUP;
         for (const field of added) {
+          if (field.bossEducation || field.educationRange || field.bossWork) continue;
           if (local.some(match => match.fieldId === field.fieldId)) continue;
           const same = resumeFields.filter(item => item?.value && (!customGroup || item.group !== customGroup) && (!siteGroup || item.group !== siteGroup)
             && normalize(item.key) === normalize(field.label));
@@ -4024,6 +4091,8 @@
           // 还没有选项的原生下拉多半在等上一级选好：不先填。
           const ready = new Set(local.filter(match => {
             const entry = fieldMap.get(match.fieldId);
+            const meta = fieldMetaMap.get(match.fieldId);
+            if (meta?.bossEducation || meta?.bossWork || meta?.bossCet) return false;
             // #429 第 4 项：传完简历后网站解析填上的不算已有内容，照样先填。
             return entry && isFieldBindingCurrent(entry) && (!hasExistingValue(entry) || parsedBySite(entry))
               && !(entry.kind === "element" && isSelectElement(entry.element) && !hasRealSelectOptions(entry.element));
@@ -4352,8 +4421,22 @@
           }
           continue;
         }
-        if (assisted && (!isAssistedTextField(element) || hasExistingValue(element) || !assisted.scopes.some(scope => scope.isConnected && scope.contains(element.element)))) continue;
-
+        const fieldMeta = fieldMetaMap.get(match.fieldId);
+        if (assisted && (!isAssistedField(element, fieldMeta) || hasExistingValue(element) || !assisted.scopes.some(scope => scope.isConnected && scope.contains(element.element)))) continue;
+        const recordFailure = () => {
+          if (match.bossSchool && !bossEducationSchoolMatches(element.element, match.bossSchool)) return "education_school_unconfirmed";
+          if (match.bossCompany && !bossWorkCompanyMatches(element.element, match.bossCompany)) return "work_company_unconfirmed";
+          if (!match.blocked && fieldMeta?.bossCet?.role === "score") {
+            const selected = bossCetSelection(element.element.closest(".group-part-item")).selected;
+            if (!match.cetScoreLevel || selected !== match.cetScoreLevel) return "english_level_unconfirmed";
+          }
+          return "";
+        };
+        const mismatch = recordFailure();
+        if (mismatch) {
+          noteControlFailure(element, fieldMeta, match.value, mismatch);
+          continue;
+        }
         // 控件内部也会异步等待；实际写入及重试前复查，不能仅在进入控件时检查。
         const beforeWrite = assisted ? undefined : (userEdited = false) => {
           if (overwriteDeclined || !isCurrent()) return false;
@@ -4365,7 +4448,6 @@
           showStatus(`填写期间检测到字段内容变化，已停止后续填写，保留该字段的现有内容。此前已填写 ${filledCount} 项，请核对网页。`, "error", true);
           return false;
         };
-        const fieldMeta = fieldMetaMap.get(match.fieldId);
         if (fieldMeta?.cascadeGroup !== undefined && failedCascadeGroups.has(fieldMeta.cascadeGroup)) {
           noteControlFailure(element, fieldMeta, match.value, 'cascade_parent_failed');
           continue;
@@ -4378,7 +4460,7 @@
         // skipped, while an interrupted attempted write remains unconfirmed.
         let writeAttempted = false;
         const onWrite = () => { writeAttempted = true; };
-        const controlCurrent = () => isCurrent() && isFieldBindingCurrent(element);
+        const controlCurrent = () => isCurrent() && isFieldBindingCurrent(element) && !recordFailure();
         const stopInterruptedControl = () => {
           if (!overwriteDeclined && isCurrent()) return;
           cancelRequested = true;
@@ -4509,8 +4591,9 @@
           }
         }
 
-        if (filled && !assisted && !deep && CHOICE_CONTROL_KINDS.has(element.kind === "radio" ? "radio" : element.controlKind)) {
-          await pickUpNewFields(position, entryDocument(element));
+        const cetRow = deep && fieldMeta?.bossCet?.role === "level" ? element.element.closest(".group-part-item") : null;
+        if (filled && !assisted && (!deep || cetRow) && CHOICE_CONTROL_KINDS.has(element.kind === "radio" ? "radio" : element.controlKind)) {
+          await pickUpNewFields(position, entryDocument(element), cetRow);
           const partnerNow = partner ? fillValueSnapshot(partner) : null;
           if (partnerNow !== null && partnerNow !== partnerBefore) {
             approvedValues.set(partner, partnerNow);
@@ -4536,7 +4619,12 @@
         const entry = fieldMap.get(field.fieldId);
         return isFieldBindingCurrent(entry) || Boolean(rebindFieldEntry(entry));
       });
-      outcome = response.warning || unconfirmedCount || unfilledLabels.length || grownLeft.length || kept.length ? "partial" : "success";
+      const agent = self.ResumeProFormAgent;
+      if (plain && location.hostname === "xiaoyuan.zhipin.com" && agent?.campusGroups) {
+        const { candidates } = agent.collectSpec(agent.campusGroups(document), templateFields, { isVisible: isVisibleInOwnDocument });
+        missingWorkRows = candidates.reduce((sum, candidate) => sum + candidate.target - candidate.current, 0);
+      }
+      outcome = response.warning || unconfirmedCount || unfilledLabels.length || grownLeft.length || kept.length || missingWorkRows ? "partial" : "success";
       const supplementNote = (supplemented ? `（其中新出现的字段补填 ${supplemented} 项）` : "")
         + (dayDefaulted ? `（${dayDefaulted} 项日期资料里只有年月，已按 1 日填写）` : "");
       const unfilledNote = (unfilledLabels.length
@@ -4544,7 +4632,8 @@
         + (unconfirmedCount ? `${unconfirmedCount} 项未确认，请核对网页。` : '')
         + (grownLeft.length ? `新出现的 ${grownLeft.length} 项没有补填：${summarizeLabels(grownLeft.map(field => field.label))}，请手动补上。`
           + (grownWarning !== response.warning ? grownWarning : '') : '')
-        + (kept.length ? `等 AI 时有改动的 ${kept.length} 项没有覆盖：${summarizeLabels(kept)}，请核对。` : '');
+        + (kept.length ? `等 AI 时有改动的 ${kept.length} 项没有覆盖：${summarizeLabels(kept)}，请核对。` : '')
+        + (missingWorkRows ? `工作/实习经历还差 ${missingWorkRows} 条，可点「AI 辅助新增条目」预览并添加。` : "");
       const emptyHint = viewModeHint();
       const recipeLead = !deep && recipeUse?.status === "hit" ? "已按本站配方定位字段。" : "";
       const recipeTail = !deep && recipeUse?.status === "stale" ? "本站配方可能已过期，可以重新深度分析。" : "";
@@ -4665,7 +4754,7 @@
       const summaryInput = { ...timing, totalMs,
         fieldCount: totalFields, filledCount, unfilledCount: unfilledLabels.length, outcome, diagnostics, probe, unfilledControls,
         path: scanPath, pageType, readyAtScan, stats, matched: totalMatched, requested, unconfirmedCount, ...verdict, grown,
-        entry, pageFocused, genericCustom, genericLocked, scanFault, earlyFilled, keptCount: kept.length,
+        entry, pageFocused, genericCustom, genericLocked, scanFault, earlyFilled, keptCount: kept.length, missingWorkRows,
         // #497 公开报告只用类别和「资料里有没有」，题目留在私有诊断。
         aiMissed: aiMisses.map(item => ({ kind: item.kind, inResume: item.inResume })),
         // 「深度分析本页」入口判断用（#224）；只有计数和标记。
@@ -4944,7 +5033,7 @@
       `结果：${({ success: "完成", partial: "部分完成", failed: "失败" })[outcome] || "未知"}；错误类别：${category}；失败阶段：${stage}`,
       ...(fault ? [`扫描出错：${fault.name}${fault.stack ? `（${fault.stack.split("\n")[0]}）` : ""}`] : []),
       `页面类型：${pageType}；扫描时已加载完：${result.readyAtScan === true ? "是" : result.readyAtScan === false ? "否" : "未取得"}`,
-      `输入框：页面共 ${count(stats.domInputs)} → 可见可填 ${count(stats.visible)} → 进入匹配 ${count(result.fieldCount)}`
+      `输入控件：页面共 ${count(stats.domInputs)} → 可见可填 ${count(stats.visible)} → 进入匹配 ${count(result.fieldCount)}`
         + ` → 匹配 ${count(result.matched)} → 填入 ${count(result.filledCount)}`,
       ...(drops.length ? [`丢弃原因：${drops.map(([key, value]) => `${dropLabels[key] || key} ${value}`).join("、")}`] : []),
       ...formatScanStats(result.stats, feedback),
@@ -4964,6 +5053,7 @@
       `填写：${seconds(result.fillMs)}；总计：${seconds(result.totalMs)}`,
       // #402 AI 返回前先填上的项数；只在本机显示。
       ...(Number.isInteger(result.earlyFilled) && result.earlyFilled > 0 ? [`AI 返回前先填：${result.earlyFilled} 项`] : []),
+      ...(result.missingWorkRows > 0 ? [`工作/实习经历还需新增 ${count(result.missingWorkRows)} 条`] : []),
       ...(result.deep ? formatDeepDiagnostics(result.deep) : []),
       ...(result.recipe ? [formatRecipeDiagnostics(result.recipe, d)] : []),
       // #429 第 4 项：这次一键填写前后的上传，只有计数和原因码。
@@ -5016,6 +5106,7 @@
     return [
       `深度分析：大纲 ${count(report.outlineChars)} 字，分 ${count(report.parts)} 次分析${report.truncated ? "（页面过长，后面的部分没有分析）" : ""}`,
       `页面说明书：字段 ${count(report.specFields)}，可填写 ${count(report.usedFields)}${report.overridden ? `，控件类型按网页改正 ${count(report.overridden)}` : ""}；校验：${validation}`,
+      ...(report.scanUnavailable ? ["BOSS 补充扫描失败，已跳过需要核对记录的字段。"] : []),
       ...(report.controlKinds && Object.keys(report.controlKinds).length ? [`说明书控件类型：${Object.entries(report.controlKinds)
         .filter(([kind]) => self.ResumeProDeepAnalysis?.CONTROLS?.has(kind)).map(([kind, n]) => `${kind} ${count(n)}`).join("、")}`] : []),
       `深度分析模型调用：${count(report.calls)}/${count(report.limit)}${report.budgetExhausted ? "（已达上限）" : ""}；分析档位：${tier}`,
@@ -5152,7 +5243,78 @@
       unreadable: scans.some(({ scan }) => scan.unreadable) };
   }
 
+  function bossEducationSchoolMatches(element, expected) {
+    const row = element.closest('.group-part-item[data-group-id="EDUCATION"]');
+    const schools = row?.querySelectorAll(".combo-input-container > .content > .ui-select") || [];
+    if (schools.length !== 1) return false;
+    const root = schools[0];
+    const selected = self.ResumeProCustomControls?.readSelection?.({ element: root.querySelector(".ui-select-input") || root, root });
+    return selected?.texts.length === 1 && self.ResumeProAIHelpers.normalizeText(selected.texts[0]) === self.ResumeProAIHelpers.normalizeText(expected);
+  }
+
+  function bossWorkCompanyInput(row) {
+    if (!row) return null;
+    const inputs = Array.from(row.querySelectorAll(".form-item")).flatMap(item => {
+      const label = item.querySelector(".item-label .label-text")?.textContent?.trim();
+      if (self.ResumeProAIHelpers?.workRole?.(label) !== "company") return [];
+      return Array.from(item.querySelectorAll('input[type="text"], input:not([type])')).filter(isVisible);
+    });
+    return inputs.length === 1 ? inputs[0] : null;
+  }
+
+  function bossWorkCompanyMatches(element, expected) {
+    const input = bossWorkCompanyInput(element.closest(".group-part-item"));
+    const normalize = self.ResumeProAIHelpers.normalizeText;
+    return Boolean(input && normalize(input.value) === normalize(expected));
+  }
+
+  const BOSS_CET_LEVEL_LABEL = /^英语(?:能力)?等级$/;
+  const BOSS_CET_SCORE_LABEL = /^英语(?:考试)?(?:分数|成绩|得分)$/;
+
+  function bossCetSelection(row) {
+    const roots = Array.from(row?.querySelectorAll(".form-item") || []).flatMap(item => {
+      const label = item.querySelector(".item-label .label-text")?.textContent?.trim();
+      return BOSS_CET_LEVEL_LABEL.test(label) ? Array.from(item.querySelectorAll(".ui-select")).filter(isVisible) : [];
+    });
+    if (roots.length !== 1) return { root: null, selected: "", otherSelected: false };
+    const root = roots[0];
+    const selection = self.ResumeProCustomControls?.readSelection?.({ element: root, root });
+    const labels = selection?.texts || [];
+    const selected = labels.length === 1 ? self.ResumeProAIHelpers.cetLevel(labels[0]) : "";
+    return { root, selected, otherSelected: Boolean(labels.length && !selected) };
+  }
+
   function addScannedControls(scan, fields, fieldMap, prefix) {
+    const educationPairs = new Map();
+    const educationRows = new Map();
+    const educationRow = el => el.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com"
+      && el.closest('.group-part-item[data-group-id="EDUCATION"]');
+    const schools = new Map();
+    const workGroups = new Map();
+    const cetRows = new Map();
+    const agent = self.ResumeProFormAgent;
+    for (const control of scan.controls) {
+      const el = control.element;
+      const workScope = agent?.campusWorkScope?.(el);
+      if (workScope && !workGroups.has(workScope)) {
+        const rows = agent.campusRows(workScope);
+        const inputs = rows.map(bossWorkCompanyInput);
+        workGroups.set(workScope, { rows, inputs, companies: inputs.map(input => input?.value?.trim() || ""),
+          kind: agent.campusWorkKind?.(workScope), id: workGroups.size });
+      }
+      if (el.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com"
+        && (BOSS_CET_LEVEL_LABEL.test(control.label) || BOSS_CET_SCORE_LABEL.test(control.label))) {
+        const row = el.closest(".group-part-item");
+        if (row && !cetRows.has(row)) cetRows.set(row, { ...bossCetSelection(row), index: cetRows.size });
+      }
+      const row = educationRow(control.element);
+      if (!row) continue;
+      if (!educationRows.has(row)) educationRows.set(row, educationRows.size);
+      if (control.label === "学校名称" && control.controlKind === "custom-select") {
+        const selected = self.ResumeProCustomControls?.readSelection?.(control);
+        if (selected?.texts.length === 1) schools.set(row, selected.texts[0]);
+      }
+    }
     scan.controls.forEach((control) => {
       const element = control.element;
       // 扫描时的对应关系原样留着，填写和「加到我的信息」用之前拿它复查。
@@ -5161,12 +5323,30 @@
         : control.controlKind === 'date-picker' ? 'date' : control.controlKind;
       const common = { controlKind, root: control.root, binding,
         offerable: control.offerable, offerLabel: control.offerLabel };
+      const row = educationRow(element);
+      const educationRole = row && (control.rangePart ? (control.rangePart === "开始" ? "start" : "end")
+        : ({ "学校名称": "school", "学历": "level", "学位": "degree", "受教育类型": "study", "专业名称": "major", "专业": "major" })[control.label]);
+      const rowElement = element.closest?.(".group-part-item");
+      const work = workGroups.get(agent?.campusWorkScope?.(element));
+      const workIndex = work?.rows.indexOf(rowElement) ?? -1;
+      const workRole = workIndex >= 0 && self.ResumeProAIHelpers?.workRole?.(control.label.replace(/（(?:开始|结束)）$/, ""));
+      const workPart = workRole === "range" && control.rangePart ? (control.rangePart === "开始" ? "start" : "end") : workRole;
+      const cet = cetRows.get(rowElement);
+      const cetRole = cet && (cet.root === control.root ? "level"
+        : control.controlKind === "text" && BOSS_CET_SCORE_LABEL.test(control.label) ? "score" : "");
       const base = {
         controlKind,
         label: control.label,
         placeholder: control.placeholder,
         ariaLabel: element.getAttribute("aria-label") || "",
-        group: control.group
+        group: control.group,
+        ...(workPart && workPart !== "range" ? { bossWork: { role: workPart, row: `${prefix}${work.id}:${workIndex}`,
+          index: workIndex, companies: work.companies, companyReady: work.inputs.every(Boolean), kind: work.kind } } : {}),
+        ...(cetRole ? { bossCet: { role: cetRole, row: `${prefix}${cet.index}`, selected: cet.selected, otherSelected: cet.otherSelected } } : {}),
+        ...(educationRole ? { bossEducation: { role: educationRole, row: `${prefix}${educationRows.get(row)}`,
+          index: educationRows.get(row), school: schools.get(row) || "",
+          highestFirst: /从最高学历填起/.test(row.closest?.(".group-part-container")
+            ?.querySelector(":scope > .group-part-title")?.textContent || "") } } : {})
       };
 
       if (control.kind === "radio") {
@@ -5184,10 +5364,16 @@
       if (control.controlKind === "date-picker") {
         const pickerType = control.pickerType || "generic";
         const pickerInputType = inferPickerInputType(control.root, element);
-        fieldMap.set(fieldId, { kind: "element", element, pickerType, pickerInputType, ...common });
+        const root = pickerType === "boss" ? element.closest(".ui-date-editor-date, .ui-date-editor-month") || control.root : control.root;
+        fieldMap.set(fieldId, { kind: "element", element, pickerType, pickerInputType, ...common, root });
+        const educationRange = pickerType === "boss" && control.rangePart
+          && element.closest('.group-part-item[data-group-id="EDUCATION"]')
+          ? (control.rangePart === "开始" ? "start" : "end") : "";
+        if (educationRange && !educationPairs.has(control.root)) educationPairs.set(control.root, fieldId);
         fields.push({
           fieldId, ...base, name: element.getAttribute("name") || "", idAttr: element.id || "",
-          tagName: "input", inputType: "date-picker", pickerType, pickerInputType, options: []
+          tagName: "input", inputType: "date-picker", pickerType, pickerInputType, options: [],
+          ...(educationRange ? { educationRange, educationRangePair: educationPairs.get(control.root), educationRangeUnique: control.repeatCount === 1 } : {})
         });
         return;
       }
@@ -5229,7 +5415,7 @@
   // 页头页脚的不算）。都只给侧栏诊断、零字段提示和深度分析入口用，不进上报。
   function scanStats(scans, fields) {
     const list = scans || fillDocuments().map(({ doc }) => ({ doc, scan: null, before: 0 }));
-    const all = list.flatMap(({ doc }) => Array.from(doc.querySelectorAll("input, select, textarea")))
+    const all = list.flatMap(({ doc, scan }) => [...doc.querySelectorAll("input, select, textarea"), ...(scan?.bossRoots || [])])
       .filter((element) => !element.closest?.(`#${SIDEBAR_ID}`));
     let typeHidden = 0;
     let nonFillable = 0;
@@ -5239,7 +5425,8 @@
       const type = isInputElement(element) ? String(element.type || "").toLowerCase() : "";
       if (type === "hidden") typeHidden += 1;
       else if (["file", "button", "submit", "reset", "image"].includes(type)) nonFillable += 1;
-      else if (element.disabled) disabled += 1;
+      else if (element.disabled || (element.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com"
+        && (element.closest?.("form.ui-form .form-item.lock") || element.matches?.(".ui-select.ui-select-disabled, .ui-select[aria-disabled='true']")))) disabled += 1;
       else if (isVisible(element)) visible += 1;
     }
     const count = (value) => Number.isInteger(value) && value > 0 ? value : 0;
@@ -5271,7 +5458,7 @@
 
   // #429 区间日期的另一头：同一个日期组件（root 相同）里另一个框的字段 id。
   function rangePartnerId(fieldMap, entry) {
-    if (entry?.kind !== "element" || !entry.binding?.rangePart) return "";
+    if (entry?.kind !== "element" || !entry.binding?.rangePart || entry.pickerType === "boss") return "";
     for (const [fieldId, other] of fieldMap) {
       if (other !== entry && other?.kind === "element" && other.root === entry.root
         && other.binding?.rangePart && other.binding.rangePart !== entry.binding.rangePart) return fieldId;
@@ -5477,7 +5664,13 @@
     const fresh = { ...entry, binding: control, root: control.root };
     if (entry.kind === "radio") fresh.elements = control.elements;
     else fresh.element = control.element;
-    if (entry.pickerType) fresh.pickerInputType = inferPickerInputType(control.root, control.element);
+    if (entry.pickerType) {
+      if (entry.pickerType === "boss") {
+        if (control.pickerType !== "boss") return null;
+        fresh.root = control.element.closest(".ui-date-editor-date, .ui-date-editor-month") || control.root;
+      }
+      fresh.pickerInputType = inferPickerInputType(control.root, control.element);
+    }
     return isFieldBindingCurrent(fresh) ? fresh : null;
   }
 
@@ -7581,6 +7774,10 @@
   }
 
   function inferPickerInputType(container, inner) {
+    if (inner.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com") {
+      if (inner.closest(".ui-date-editor-month")) return "month";
+      if (inner.closest(".ui-date-editor-date")) return "date";
+    }
     // 简道云日期框的类名都带 datetime（x-datetime），说明不了格式，只看占位文字。
     const cls = container.matches?.(".fx-form-datetime .x-datetime") ? "" : container.className || "";
     const placeholder = (inner.getAttribute("placeholder") || "").toLowerCase();

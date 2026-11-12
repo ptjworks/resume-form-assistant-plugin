@@ -310,14 +310,18 @@
       add(el, { type: "button", element: el, ...describeButton(el), frame: ctx.frame });
     }
 
-    for (const el of Array.from(root.querySelectorAll(TEXT_CLUE_SELECTOR))) {
+    const campusTitle = (root.ownerDocument || root).location?.hostname === "xiaoyuan.zhipin.com"
+      ? "form.ui-form .render-map-container > .group-part-container > .group-part-title > .text-part .label-text" : "";
+    const clueSelector = campusTitle ? `${TEXT_CLUE_SELECTOR}, ${campusTitle}` : TEXT_CLUE_SELECTOR;
+    for (const el of Array.from(root.querySelectorAll(clueSelector))) {
       if (ctx.exclude(el) || !ctx.isVisible(el)) continue;
       // 和控件连着的 label 已经是那个控件的题目，不再单列。
       if (el.querySelector?.("input, select, textarea, [role='combobox']") || (el.tagName === "LABEL" && el.htmlFor)) continue;
       if (insideClaimed(el) || editableHere(el) || el.matches(EDITABLE_SELECTOR)) continue;
       const text = squash(el.textContent);
       if (!text || chars(text).length > MAX_SEGMENT * 2) continue;
-      add(el, { type: el.matches(HEADING_SELECTOR) ? "heading" : "text", element: el, text });
+      const heading = el.matches(HEADING_SELECTOR) || Boolean(campusTitle && el.matches(campusTitle));
+      add(el, { type: heading ? "heading" : "text", element: el, text });
     }
 
     // 文档顺序：querySelectorAll("*") 本身就按顺序；宿主元素后面接着展开它的 Shadow root 或框架。

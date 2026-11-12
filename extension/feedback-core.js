@@ -188,7 +188,7 @@
     + "baoming onboard onboarding entry m h5 mobile pc web wap app wx wechat mp en zh cn us api s p c u hr ats cms open public "
     + "static html htm shtml php jsp aspx asp do action").split(" "));
   // `generic`: custom selects the fill handled on its generic path (北森), which carry no library class.
-  const LIBRARY_NAMES = ["antd", "element", "arco", "iview", "semi", "vant", "layui", "mui", "yui", "ui5", "generic", "other"];
+  const LIBRARY_NAMES = ["antd", "element", "arco", "iview", "semi", "vant", "layui", "mui", "yui", "ui5", "generic", "boss", "other"];
   // How a fill was started (#301): the side panel's 一键填写, 深度分析本页, a 本站配方 run, AI 辅助新增条目.
   const ENTRIES = ["panel", "deep", "recipe", "assist", "other"];
   // What an unfilled select's popup showed: a list (by role) and whether it had any option, a calendar, or nothing opened at all.
@@ -202,7 +202,7 @@
     "in_flight", "internal", "other"];
   // Where the desktop's AI request timed out (#299): connecting, waiting for the headers, or reading the body.
   const TIMEOUT_STAGES = ["connect", "first_byte", "body"];
-  const FILL_REASONS = ["value_not_committed", "value_reverted", "element_disconnected", "validation_not_cleared", "framework_state_unsynced", "value_changed", "verification_timeout", "unsupported_control", "no_option_match", "options_not_rendered", "options_timeout", "ambiguous_option", "ambiguous_popup", "cascade_timeout", "cascade_parent_failed", "cascade_unsupported", "selection_not_committed", "control_disabled", "invalid_date", "range_incomplete", "too_long", "format_mismatch", "readonly_picker", "operation_failed", "cancelled", "id_type_mismatch", "ai_conflict", "too_many_items", "region_unavailable", "region_too_coarse", "region_level_missing"];
+  const FILL_REASONS = ["value_not_committed", "value_reverted", "element_disconnected", "validation_not_cleared", "framework_state_unsynced", "value_changed", "verification_timeout", "unsupported_control", "no_option_match", "options_not_rendered", "options_timeout", "ambiguous_option", "ambiguous_popup", "cascade_timeout", "cascade_parent_failed", "cascade_unsupported", "selection_not_committed", "control_disabled", "invalid_date", "range_incomplete", "education_school_unconfirmed", "education_record_unconfirmed", "work_record_unconfirmed", "work_company_unconfirmed", "english_level_unconfirmed", "english_score_missing", "english_score_conflict", "too_long", "format_mismatch", "readonly_picker", "operation_failed", "cancelled", "id_type_mismatch", "ai_conflict", "too_many_items", "region_unavailable", "region_too_coarse", "region_level_missing"];
   // A text the page did not keep (#399 #405): what the box held after it lost focus (empty, what it held before
   // the fill, or something else; never the text itself), and whether a suggestion list or another popup came
   // up within a second of writing. The box's inputmode is part of its structure.
@@ -252,7 +252,7 @@
   const VERSIONS = ["antd3", "antd4", "antd5", "antd6", "element-ui", "element-plus"];
   const CONTROL_TOKEN = new RegExp("^(?:(?:input|textarea|select|button|div|span)(?:\\[(?:text|date|month|number|radio|checkbox|email|tel|search)\\])?"
     + "|role=(?:textbox|combobox|listbox|button|radio|checkbox)|popup=(?:listbox|dialog|true)|readonly"
-    + `|(?:picker|lib)=(?:antd|element|arco|iview|semi|vant|layui|generic|mui|jiandaoyun|yui|ui5)|opened=(?:${OPENED.join("|")})|options=(?:0|1\\+)`
+    + `|(?:picker|lib)=(?:antd|element|arco|iview|semi|vant|layui|generic|mui|jiandaoyun|yui|ui5|boss)|opened=(?:${OPENED.join("|")})|options=(?:0|1\\+)`
     + `|inputmode=(?:${INPUT_MODES.join("|")})|after=(?:${AFTER.join("|")})|overlay=(?:${OVERLAYS.join("|")})`
     + `|form=(?:${FORMS.join("|")})|(?:search|remote|multi|spinner)=(?:yes|no)|ver=(?:${VERSIONS.join("|")})|(?:open_ms|wait_ms)=\\d{1,6}`
     + `|reason=(?:${FILL_REASONS.join("|")}))$`);
@@ -562,8 +562,8 @@
       }
       if (skipping) continue;
       // Every value has its own closed pattern; the length cap only bounds the regex work.
-      // The longest reachable value is reasons with every code at six digits (773 chars).
-      const entry = /^([a-z_]{1,32}): (.{1,800})$/.exec(line);
+      // Leave room for the longest tally, with every reason at six digits.
+      const entry = /^([a-z_]{1,32}): (.{1,1100})$/.exec(line);
       if (entry) {
         const known = Object.prototype.hasOwnProperty.call(VALUES, entry[1]) && VALUES[entry[1]].test(entry[2])
           && (manual || !JOB_KEYS.test(entry[1])) && !(legacy && NEW_KEYS.has(entry[1]));
