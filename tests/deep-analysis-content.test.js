@@ -169,6 +169,22 @@ test("BOSS deep analysis supplies locally recognized dates and cascaders even wh
   }
 });
 
+test("a failed BOSS supplement scan leaves independent fields available and withholds the unbound English score", async () => {
+  const scanner = fakeFieldScan();
+  const page = deepPage({
+    url: "https://xiaoyuan.zhipin.com/volunteer/index",
+    fieldScan: { ...scanner, scanPage() { throw new Error("page scan failed"); } },
+    analyze: () => ({ success: true, spec: { pageState: "editing", fields: [
+      { ref: "e1", label: "姓名", control: "text" }, { ref: "e2", label: "英语分数", control: "text" }
+    ] } })
+  });
+  await page.ask({ action: "start" });
+  const done = await page.settle(finished);
+  assert.equal(done.phase, "completed");
+  assert.deepEqual(page.inputs.map(input => input.value), ["AI-姓名", ""]);
+  assert.match(page.diagnosticsText.value, /BOSS 补充扫描失败/);
+});
+
 test("the deep fill's diagnostics carry outline size, validation, calls and tier, never field values or labels from the model", async () => {
   const page = deepPage();
   await page.ask({ action: "start" });

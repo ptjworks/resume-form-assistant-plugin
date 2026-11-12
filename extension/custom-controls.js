@@ -158,8 +158,10 @@
     const cascadeRoot = isBossCampus(el?.ownerDocument) ? el.closest?.('form.ui-form .form-item .ui-cascader2') : null;
     if (cascadeRoot) return { el, root: cascadeRoot, combo: el, library: 'boss', cascade: true,
       multiple: Boolean(cascadeRoot.querySelector('.ui-cascader2__tags')) };
-    const boss = isBossCampus(el?.ownerDocument) ? el.closest?.('form.ui-form .form-item .ui-select') : null;
-    const bossTrigger = boss?.querySelector(':scope > .ui-select-selection');
+    const rootCandidate = target?.root || el?.closest?.('.ui-select');
+    const boss = rootCandidate?.matches?.('.ui-select') && rootCandidate.contains(el) ? rootCandidate : null;
+    const triggers = boss?.querySelectorAll(':scope > .ui-select-selection');
+    const bossTrigger = triggers?.length === 1 ? triggers[0] : null;
     if (bossTrigger) return { el, root: boss, combo: bossTrigger, library: 'boss', cascade: false,
       multiple: boss.classList.contains('ui-select-multiple') };
     const root = el?.closest?.(antd(el, ROOTS)) || target?.root || el;
@@ -268,9 +270,11 @@
       if (!text || scope.ResumeProAIHelpers?.isPlaceholderOption(text) || text === trim(el.getAttribute?.('placeholder'))) return [];
       return [text];
     }
-    if (library === 'aria' && el.tagName === 'INPUT' && (!el.readOnly || info.requireCommitSignal)) {
+    if (library === 'aria') {
       const explicit = trim(info.combo.getAttribute('aria-valuetext'));
       if (explicit) return [explicit];
+    }
+    if (library === 'aria' && el.tagName === 'INPUT' && (!el.readOnly || info.requireCommitSignal)) {
       const hidden = root.querySelectorAll('input[type="hidden"]');
       if (hidden.length === 1) return hidden[0].value ? [String(hidden[0].value)] : [];
       // aria-selected in an open popup can describe visual focus rather than a
@@ -309,6 +313,13 @@
     if (!value || scope.ResumeProAIHelpers?.isPlaceholderOption(value)) return [];
     return cascade ? value.split(/\s*(?:\/|>|→)\s*/).filter(Boolean) : [value];
   }
+  function queryInput(info) {
+    if (info.el?.tagName === 'INPUT') return info.el;
+    if (info.library !== 'aria' || !info.root) return null;
+    const inputs = Array.from(info.root.querySelectorAll('input[aria-autocomplete="list"], input[role="searchbox"], input[type="search"], .ui-select-selection input.ui-select-input'))
+      .filter(input => !input.readOnly && !input.disabled && shown(input));
+    return inputs.length === 1 ? inputs[0] : null;
+  }
   function snapshot(target) {
     const info = describe(target);
     if (!info.root?.isConnected || !info.el?.isConnected) return null;
@@ -317,13 +328,14 @@
     // Element 的输入框里就是已选文字（展开时清空），已经由 selection 表示。
     return JSON.stringify({ selection: selectedTexts(info),
       ...(info.library === 'boss' && !info.cascade ? { committed: bossValueInput(info)?.value ?? null, region: bossSchoolRegion(info) } : {}),
-      query: info.el.tagName === 'INPUT' && info.library !== 'element' ? String(info.el.value ?? '') : null });
+      query: info.library !== 'element' ? queryInput(info)?.value ?? null : null });
   }
   function hasExistingValue(target) {
     const info = describe(target), values = selectedTexts(info);
     // A query is existing user input which needs overwrite protection, not
     // evidence of a committed selection. The snapshot tracks it separately.
-    return values === null || values.length > 0 || (info.el.tagName === 'INPUT' && !info.el.readOnly && Boolean(info.el.value));
+    const query = queryInput(info);
+    return values === null || values.length > 0 || Boolean(query && !query.readOnly && query.value);
   }
   // 用户眼前显示的已选文字（#189 保存到「我的信息」用）。读不准就返回 null，不猜；没选返回空数组。
   function readSelection(target) {
@@ -344,11 +356,11 @@
   // 只按类名里的词认出的浮层，记下时里面有哪些元素（见 staleLayer）。一块里超过这么多的不记，按装着就算旧的。
   const layerNodes = new WeakMap();
   const LAYER_NODES_MAX = 5000;
-  function shownLayers(doc, visible) {
+  function shownLayers(doc, visible, structuredSelect = false) {
     const View = doc.defaultView;
     const floating = node => ['absolute', 'fixed'].includes(View?.getComputedStyle(node).position);
     const shells = new Set([...popups(doc, visible), ...Array.from(doc.querySelectorAll(antd(doc, FLOATING))).filter(visible)]);
-    if (isBossCampus(doc)) doc.querySelectorAll(`${BOSS_POPUP}, ${BOSS_CALENDAR}, ${BOSS_CASCADE}`).forEach(node => { if (visible(node)) shells.add(node); });
+    if (structuredSelect || isBossCampus(doc)) doc.querySelectorAll(`${BOSS_POPUP}, ${BOSS_CALENDAR}, ${BOSS_CASCADE}`).forEach(node => { if (visible(node)) shells.add(node); });
     const worded = Array.from(doc.querySelectorAll(FLOATING_WORDS)).filter(node => !shells.has(node) && trim(node.textContent) && visible(node) && floating(node));
     // 组件库的弹层外壳一块只装一个弹层，里面重画了也还是旧的；只按类名里的词认出的可能是网页放弹层的常驻外壳，记下里面原有的元素。
     for (const layer of worded) {
@@ -1261,7 +1273,7 @@
     }
     const doc = info.el.ownerDocument;
     // 宿主在聚焦之前记下的弹层：有的下拉一聚焦就展开（#269 智联 Element UI），聚焦后再记就把它算成了原有的。
-    const before = ctx.popupsBeforeFocus || shownLayers(doc, h.visible);
+    const before = ctx.popupsBeforeFocus || shownLayers(doc, h.visible, info.library === 'boss');
     info.before = before;
     // 通用路径：从点开之前开始记下新加或改了 class/style 的元素，弹层只在这些里找。
     const touched = new Set();
@@ -1384,6 +1396,7 @@
     const searchable = !info.cascade && searchInput && (ctx.hints.searchable === true || info.library === 'generic' || info.library === 'boss'
       || info.combo.getAttribute('aria-autocomplete') === 'list' || searchInput.getAttribute('aria-autocomplete') === 'list'
       || searchInput.getAttribute('role') === 'searchbox' || searchInput.type === 'search'
+      || searchInput.matches('.ui-select-selection input.ui-select-input')
       || info.root.matches(antd(info.root, '.ant-select-show-search')) || Boolean(info.root.querySelector('.el-select__wrapper.is-filterable')));
     let searchDone = typedFirst;
     state.searchable = Boolean(searchable || typedFirst);
@@ -2250,8 +2263,9 @@
     }
   }
   function visiblePopups(target, visible) {
-    const doc = describe(target).el?.ownerDocument;
-    return doc?.querySelectorAll ? shownLayers(doc, visible) : null;
+    const info = describe(target);
+    const doc = info.el?.ownerDocument;
+    return doc?.querySelectorAll ? shownLayers(doc, visible, info.library === 'boss') : null;
   }
   // 自制单选（#269 北森 phoenix-radio）和通用路线共用：选项怎么点、选中了没有。
   const CHECKED_TOKEN = /(?:^|[-_])checked$/i;

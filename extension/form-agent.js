@@ -5,6 +5,7 @@
     { id: "work", label: "工作经历", buttons: "工作经历", group: /^工作经历$/, prefix: /^(?:工作经历|工作|实习经历|实习)(\d+)/ },
     { id: "projects", label: "项目经历", buttons: "项目经历", group: /^项目经历$/, prefix: /^(?:项目经历|项目)(\d+)/ }
   ];
+  const internshipDomain = { id: "internship", label: "实习经历" };
   const editable = "input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=file]),textarea,select";
   const visible = el => el.isConnected && el.getClientRects().length > 0;
   const text = el => (el.textContent || "").trim().replace(/\s+/g, " ");
@@ -71,7 +72,7 @@
     return { candidates: candidates.filter(c => candidates.filter(x => x.domain === c.domain).length === 1), refs, problems: campusPlan.problems };
   }
   function validatePlan(plan, candidates) {
-    if (!Array.isArray(plan) || plan.length > 4) throw new Error("AI 新增计划格式无效。");
+    if (!Array.isArray(plan) || plan.length > 5) throw new Error("AI 新增计划格式无效。");
     const used = new Set();
     let total = 0;
     return plan.map(action => {
@@ -149,7 +150,8 @@
       const button = scope.querySelector(CAMPUS_ADD);
       const title = campusTitle(scope);
       const workKind = campusWorkKind(scope);
-      return button && title && workKind ? [{ domain: "work", button, scope, title, workKind }] : [];
+      const domain = workKind === "internship" ? "internship" : "work";
+      return button && title && workKind ? [{ domain, button, scope, title, workKind }] : [];
     });
   }
   function locateCampusGroup(group, isVisible) {
@@ -161,7 +163,7 @@
       || new Set(existing.map(row => row.dataset.groupId)).size > 1
       || scope.querySelectorAll(".group-part-item").length !== existing.length
       || initial.some(el => !existing.some(row => row.contains(el)))) return { reason: "uncountable" };
-    return { scope, current: existing.length, initial, existing, title, titleText: bare(title.textContent) };
+    return { scope, current: existing.length, initial, existing, titleText: bare(title.textContent) };
   }
   function shapeOf(el, isVisible) {
     return Array.from(el.querySelectorAll(editable)).filter(isVisible).map(c => `${c.tagName}:${c.getAttribute("type") || ""}`).join(",");
@@ -272,10 +274,12 @@
     const candidates = [];
     const refs = new Map();
     const problems = [];
-    for (const domain of domains) {
+    const overlappingWorkGroups = groups.some(group => group.workKind === "combined")
+      && groups.some(group => group.workKind === "internship");
+    for (const domain of [...domains, internshipDomain]) {
       const mine = groups.filter(group => group.domain === domain.id);
       if (!mine.length) continue;
-      if (mine.length > 1) {
+      if (mine.length > 1 || (overlappingWorkGroups && mine.some(group => ["combined", "internship"].includes(group.workKind)))) {
         if (mine.some(group => targetFor(group))) problems.push({ domain: domain.id, reason: "ambiguous" });
         continue;
       }
@@ -296,7 +300,7 @@
     const button = ref.button;
     return button.isConnected && ref.scope.isConnected && ref.scope.contains(button) && ref.visible(button) && !button.disabled &&
       button.getAttribute?.("aria-disabled") !== "true" && (!ref.allowed || ref.allowed(button) === true)
-      && (!ref.existing || (campusTitle(ref.scope) === ref.title && bare(ref.title.textContent) === ref.titleText && isCampusAdd(button, ref.scope)));
+      && (!ref.existing || (bare(campusTitle(ref.scope)?.textContent) === ref.titleText && isCampusAdd(button, ref.scope)));
   }
   // 本次已经点过「添加」后，原按钮被网页重画或挪进了新的最后一条（北森真机）：在同一分组范围里找结构和文字
   // 都相同、看得见的唯一一个按钮接着用；找不到或不止一个就不点。第一次点击永远只点预览时确认的那个按钮。
@@ -476,7 +480,7 @@
     }
     return { added, scopes };
   }
-  const labels = Object.fromEntries(domains.map(domain => [domain.id, domain.label]));
+  const labels = Object.fromEntries([...domains, internshipDomain].map(domain => [domain.id, domain.label]));
   const api = { targetCounts, collect, collectSpec, campusGroups, campusRows, campusWorkScope, campusWorkKind, validatePlan, execute, labels };
   root.ResumeProFormAgent = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }

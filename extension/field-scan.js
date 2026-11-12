@@ -3,8 +3,10 @@
 // 再找每个控件所在的最小表单项，题目只从明确关联或这一项里取，不跨到别的题目借字。
 // 占位文字、字数计数器、帮助说明、校验错误都不能当字段名；对不上题目的控件直接跳过。
 (function attachResumeProFieldScan(globalScope) {
-  const BOSS_SELECT = ".ui-select";
-  const CONTROL_SELECTOR = `input, textarea, select, [role='combobox'], button[aria-haspopup='listbox'], ${BOSS_SELECT}`;
+  const COMBO_TRIGGER = "[role='combobox'], button[aria-haspopup='listbox']";
+  const STANDARD_CONTROL = `input, textarea, select, ${COMBO_TRIGGER}`;
+  const STRUCTURED_SELECT = ".ui-select:has(> .ui-select-selection)";
+  const CONTROL_SELECTOR = `${STANDARD_CONTROL}, ${STRUCTURED_SELECT}`;
   const NON_CONTROL_TYPES = new Set(["hidden", "button", "submit", "reset", "image"]);
   const DATE_TYPES = new Set(["date", "month", "time", "datetime-local", "week"]);
   // 这几类控件的自带文字是选项本身，不能当题目。
@@ -86,24 +88,38 @@
     return ctx.bossCampus ? el.closest("form.ui-form .form-item") : null;
   }
 
-  function bossSelect(el, ctx) {
-    const root = ctx.bossCampus && el.closest(BOSS_SELECT);
-    return root && bossItem(root, ctx) && root.querySelector(":scope > .ui-select-selection") ? root : null;
+  function structuredSelect(el) {
+    const root = el.closest(STRUCTURED_SELECT);
+    return root?.querySelectorAll(":scope > .ui-select-selection").length === 1 ? root : null;
+  }
+
+  // 外层有明确的下拉触发器，且没有别的题目，就沿用外层。
+  function outerCombo(root, ctx) {
+    const outer = root.parentElement?.closest(COMBO_TRIGGER);
+    if (!outer || !ctx.isVisible(outer) || ctx.excluded(outer)) return null;
+    const otherControl = Array.from(outer.querySelectorAll(CONTROL_SELECTOR)).some(child =>
+      !root.contains(child) && ctx.isVisible(child) && !ctx.excluded(child)
+      && !NON_CONTROL_TYPES.has(inputType(child)));
+    return otherControl ? null : outer;
   }
 
   function isControlElement(el, ctx) {
     if (!el) return false;
     if (bossItem(el, ctx) && el.closest(".combo-input-container > .ui-dropmenu")) return false;
-    const boss = bossSelect(el, ctx);
-    if (boss?.matches(".phone-combine .area-code-select")) return false;
-    if (boss === el) {
-      const trigger = boss.querySelector(":scope > .ui-select-selection");
+    const select = structuredSelect(el);
+    if (!select && el.matches(STRUCTURED_SELECT) && !el.matches(STANDARD_CONTROL)) return false;
+    if (ctx.bossCampus && select?.matches(".phone-combine .area-code-select")) return false;
+    if (select === el) {
+      if (outerCombo(select, ctx)) return false;
+      const trigger = select.querySelector(":scope > .ui-select-selection");
       // 可搜索版用真实输入框，普通版只有 div；两个形态只保留一个扫描入口。
       return !Array.from(trigger.querySelectorAll("input.ui-select-input")).some(input => ctx.isVisible(input) && !ctx.excluded(input));
     }
     if (!["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) {
-      return hasComboSignal(el) && !Array.from(el.querySelectorAll(CONTROL_SELECTOR)).some(child => {
+      return hasComboSignal(el) && !Array.from(el.querySelectorAll(STANDARD_CONTROL)).some(child => {
         if (ctx && !ctx.isVisible(child)) return false;
+        const inner = structuredSelect(child);
+        if (inner && el.contains(inner) && outerCombo(inner, ctx) === el) return false;
         if (["INPUT", "TEXTAREA", "SELECT"].includes(child.tagName)) return !NON_CONTROL_TYPES.has(inputType(child));
         return hasComboSignal(child);
       });
@@ -356,8 +372,8 @@
   function customSelectRoot(el, ctx) {
     const cascader = bossItem(el, ctx) && el.closest(".ui-cascader2");
     if (cascader && el.matches("input:not(.ui-cascader2__search-input)")) return cascader;
-    const boss = bossSelect(el, ctx);
-    if (boss === el || (boss && el.matches("input.ui-select-input"))) return boss;
+    const select = structuredSelect(el);
+    if (select === el || (select && el.matches("input.ui-select-input"))) return outerCombo(select, ctx) || select;
     const ownSignal = hasComboSignal(el);
     let best = attr(el, 'role') === 'combobox' ? el : null;
     let node = el.parentElement;
@@ -1170,7 +1186,7 @@
 
     skipped.ambiguous = ambiguousSkipped;
     const idCounts = new Map();
-    const bossRoots = ctx.bossCampus ? allControls.filter(el => bossSelect(el, ctx) === el) : [];
+    const bossRoots = ctx.bossCampus ? allControls.filter(el => structuredSelect(el) === el) : [];
     return {
       controls: kept.map((control) => publicControl(control, idCounts)),
       skipped,
@@ -1184,7 +1200,7 @@
   function isDisabledControl(control, ctx) {
     return control.elements.every((el) => el.disabled)
       || bossItem(control.root, ctx)?.classList.contains("lock")
-      || (bossSelect(control.root, ctx) === control.root && control.root.matches(".ui-select-disabled, [aria-disabled='true']"));
+      || (structuredSelect(control.root) === control.root && control.root.matches(".ui-select-disabled, [aria-disabled='true']"));
   }
 
   // 重画后找回字段用的 id 锚点（#479）：只认扫描时在所在文档里只出现一次的 id。
@@ -1255,7 +1271,7 @@
     if (!control?.root?.isConnected) return [];
     const ctx = makeContext(control.root.ownerDocument, options);
     // BOSS 下拉的标题、图标和选项都可能在根里，已选值和搜索词由控件适配器单独读。
-    if (bossSelect(control.root, ctx) === control.root) return [];
+    if (structuredSelect(control.root) === control.root) return [];
     const placeholders = placeholdersOf(control);
     const skip = new Set();
     const segments = [];
@@ -1298,7 +1314,7 @@
       control = { kind: "radio", controlKind: "radio", element, elements: [element], root: element.closest("[role='radiogroup']") || element };
     } else {
       const picker = element.tagName === "INPUT" && !DATE_TYPES.has(type) && !CHOICE_TYPES.has(type) ? datePickerRoot(element, ctx) : null;
-      const selectRoot = !picker && (element.tagName === "INPUT" || bossSelect(element, ctx) === element)
+      const selectRoot = !picker && (element.tagName === "INPUT" || structuredSelect(element) === element)
         && !DATE_TYPES.has(type) && !CHOICE_TYPES.has(type) ? customSelectRoot(element, ctx) : null;
       const controlKind = element.tagName === "SELECT" ? "select" : element.tagName === "TEXTAREA" ? "textarea"
         : CHOICE_TYPES.has(type) ? type : picker ? "date-picker" : selectRoot ? "custom-select" : "text";

@@ -747,6 +747,10 @@
       const report = state.report;
       const canSupplement = merged.pageState.some(state => state === "editing" || state === "mixed");
       const prepared = merged.fields.length || canSupplement ? deps.toFillInput(merged.fields, outline.nodes) : null;
+      if (prepared?.scanUnavailable) {
+        report.scanUnavailable = true;
+        state.notes.push("网页补充扫描失败，需要核对所属记录的字段已跳过，请检查填写结果。");
+      }
       if (!merged.fields.length && !prepared?.fields.length) {
         if (after) {
           set(run, "failed", `${after}重新分析后仍没有找到可以填写的字段，请手动核对网页。`);

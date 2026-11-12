@@ -103,6 +103,62 @@ function operator(doc) {
   return w.ResumeProControls.create({ timeoutMs: 550, settleMs: 35, isVisible: visible });
 }
 
+test("an explicit outer combobox opens the menu while its nested search input supplies the query", async t => {
+  const doc = load(t, `<div class="form-item">
+    <div id="office" role="combobox" aria-label="办公地点" tabindex="0" aria-controls="locations" aria-expanded="false">
+      ${select("inner", { search: true }).replace('placeholder="请选择"', 'aria-autocomplete="list"')}
+    </div>
+  </div><div id="locations" role="listbox" hidden><div role="option">其他城市</div></div>`, "https://jobs.example.test/apply");
+  const outer = doc.getElementById("office");
+  const inner = doc.getElementById("inner");
+  const input = inner.querySelector("input.ui-select-input");
+  const list = doc.getElementById("locations");
+  const seen = [];
+  outer.addEventListener("click", event => {
+    if (event.target !== outer) return;
+    seen.push("outer");
+    outer.setAttribute("aria-expanded", "true");
+    list.hidden = false;
+  });
+  inner.querySelector(".ui-select-selection").addEventListener("click", () => seen.push("inner"));
+  input.addEventListener("input", () => {
+    if (input.value !== "杭州") return;
+    seen.push("query");
+    list.innerHTML = '<div role="option">杭州</div>';
+    list.firstElementChild.addEventListener("click", () => {
+      outer.setAttribute("aria-valuetext", "杭州");
+      outer.setAttribute("aria-expanded", "false");
+      list.hidden = true;
+    });
+  });
+  const { controls } = scanner.scanPage(doc, { isVisible: visible });
+  assert.equal(controls.length, 1);
+  assert.equal(controls[0].root, outer);
+  assert.equal(controls[0].element, outer);
+  const result = await operator(doc).operate(controls[0], "杭州");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(seen, ["outer", "query"]);
+});
+
+test("a structured select can be filled on another site when no explicit outer combobox exists", async t => {
+  const doc = load(t, select("level").replace('id="level"', 'id="level" aria-label="学历"'), "https://jobs.example.test/apply");
+  const selectRoot = doc.getElementById("level");
+  const dropdown = simulateDropdown(selectRoot);
+  const { controls } = scanner.scanPage(doc, { isVisible: visible });
+  assert.equal(controls.length, 1);
+  assert.equal(controls[0].root, selectRoot);
+  const result = await operator(doc).operate(controls[0], "本科");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(dropdown.picked, ["本科"]);
+});
+
+test("an unrelated ui-select class does not displace the existing outer control", t => {
+  const doc = load(t, '<div role="combobox" id="office" aria-label="办公地点"><span class="ui-select" aria-autocomplete="list"></span></div>',
+    "https://jobs.example.test/apply");
+  const { controls } = scanner.scanPage(doc, { isVisible: visible });
+  assert.deepEqual(controls.map(control => control.element.id), ["office"]);
+});
+
 test("BOSS custom selects write through the matching popup and verify committed values", async t => {
   const doc = load(t, row("最高学历", select("level")) + row("学校名称", school()));
   const plain = simulateDropdown(doc.querySelector("#level"));

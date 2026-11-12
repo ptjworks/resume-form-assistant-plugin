@@ -2062,7 +2062,22 @@
       toFillInput: (fields, nodes) => {
         const prepared = api.toFillInput(fields, nodes, { optionText: getRadioOptionLabel, pickerInputType: inferPickerInputType });
         if (location.hostname !== "xiaoyuan.zhipin.com") return fields.length ? withScanBindings(prepared) : prepared;
-        const scanned = scanFillableFields();
+        let scanned;
+        try {
+          scanned = scanFillableFields();
+        } catch {
+          // 没有本地记录绑定时，只保留可以独立填写的题目。
+          const independent = prepared.fields.filter(field => {
+            const entry = prepared.fieldMap.get(field.fieldId);
+            const element = entry?.element || entry?.elements?.[0];
+            const label = nodes.get(entry?.deepRef)?.control?.label || field.label;
+            return element && !BOSS_CET_SCORE_LABEL.test(label)
+              && !element.closest('.group-part-item[data-group-id="EDUCATION"]')
+              && !self.ResumeProFormAgent?.campusWorkScope?.(element);
+          });
+          return { ...prepared, fields: independent, fieldMap: new Map(independent.map(field =>
+            [field.fieldId, prepared.fieldMap.get(field.fieldId)])), scanUnavailable: true };
+        }
         const bound = withScanBindings(prepared, scanned);
         const known = scanned.fields.filter(field => isBossScanField(field, scanned.fieldMap.get(field.fieldId)));
         return known.length ? { ...bound, ...mergeRecipeScan(bound, { ...scanned, fields: known }) } : bound;
@@ -4607,8 +4622,7 @@
       const agent = self.ResumeProFormAgent;
       if (plain && location.hostname === "xiaoyuan.zhipin.com" && agent?.campusGroups) {
         const { candidates } = agent.collectSpec(agent.campusGroups(document), templateFields, { isVisible: isVisibleInOwnDocument });
-        const work = candidates.find(candidate => candidate.domain === "work");
-        if (work) missingWorkRows = work.target - work.current;
+        missingWorkRows = candidates.reduce((sum, candidate) => sum + candidate.target - candidate.current, 0);
       }
       outcome = response.warning || unconfirmedCount || unfilledLabels.length || grownLeft.length || kept.length || missingWorkRows ? "partial" : "success";
       const supplementNote = (supplemented ? `（其中新出现的字段补填 ${supplemented} 项）` : "")
@@ -5092,6 +5106,7 @@
     return [
       `深度分析：大纲 ${count(report.outlineChars)} 字，分 ${count(report.parts)} 次分析${report.truncated ? "（页面过长，后面的部分没有分析）" : ""}`,
       `页面说明书：字段 ${count(report.specFields)}，可填写 ${count(report.usedFields)}${report.overridden ? `，控件类型按网页改正 ${count(report.overridden)}` : ""}；校验：${validation}`,
+      ...(report.scanUnavailable ? ["BOSS 补充扫描失败，已跳过需要核对记录的字段。"] : []),
       ...(report.controlKinds && Object.keys(report.controlKinds).length ? [`说明书控件类型：${Object.entries(report.controlKinds)
         .filter(([kind]) => self.ResumeProDeepAnalysis?.CONTROLS?.has(kind)).map(([kind, n]) => `${kind} ${count(n)}`).join("、")}`] : []),
       `深度分析模型调用：${count(report.calls)}/${count(report.limit)}${report.budgetExhausted ? "（已达上限）" : ""}；分析档位：${tier}`,

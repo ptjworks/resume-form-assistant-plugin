@@ -237,7 +237,7 @@
   const REPEAT_PHASES = ["idle", "scanning", "planning", "preview", "executing", "filling", "completed", "stopped", "failed"];
   const REPEAT_ACTIVE = ["scanning", "planning", "preview", "executing", "filling"];
   const REPEAT_STOPPABLE = ["scanning", "planning", "executing", "filling"];
-  const REPEAT_LABELS = { papers: "论文", education: "教育经历", work: "工作经历", projects: "项目经历" };
+  const REPEAT_LABELS = { papers: "论文", education: "教育经历", work: "工作经历", internship: "实习经历", projects: "项目经历" };
   // #224 深度分析本页：页面上报、经过 normalizeDeep 的状态；首次说明在侧栏自己显示，确认后记住。
   let deepView = null;
   let deepOffer = "none";
@@ -653,7 +653,7 @@
   // rather than displayed; group names come from the table above, never from the page.
   function normalizeRepeat(raw) {
     if (!raw || typeof raw !== "object" || !REPEAT_PHASES.includes(raw.phase)) return null;
-    let plan = raw.phase === "preview" && Array.isArray(raw.plan) && raw.plan.length <= 4
+    let plan = raw.phase === "preview" && Array.isArray(raw.plan) && raw.plan.length <= 5
       ? raw.plan.filter((item) => Object.prototype.hasOwnProperty.call(REPEAT_LABELS, item?.domain)
         && Number.isInteger(item.count) && item.count >= 1 && item.count <= 5)
         .map((item) => ({ domain: item.domain, count: item.count }))
