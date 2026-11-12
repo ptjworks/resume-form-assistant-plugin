@@ -677,7 +677,7 @@
         break;
       }
       const list = seen.sort((a, b) => a.at - b.at);
-      const matched = match(list, value, h.helpers, true, englishLevel);
+      const matched = match(list, value, h.helpers, true, englishLevel, true);
       if (!matched.option) return { reason: matched.reason };
       const wanted = matched.option;
       const locate = list => placed(list).find(({ option, at }) => keyOf(option) === wanted.key && Math.abs(at - wanted.at) < row / 2)?.option || null;
@@ -705,10 +705,11 @@
   }
   // partial：列表不全（见 partialList），或滚着看过、说不准看全了没有（见 scanList）。只认完全相同、归一化相同或同一个意思的
   // 另一种写法（#429，ai-helpers.js 的 OPTION_SYNONYMS）的一项，不靠「包含」去猜，几项都沾边也按没有匹配，好去搜索或滚着往下找。
-  // 联想框的建议不走这里，见 sameOption。
-  function match(list, value, helpers, partial = false, englishLevel = false) {
+  // 英语等级的同义项要读完当前列表或滚到底再核对，免得第一屏看不到另一个同义项。联想框见 sameOption。
+  function match(list, value, helpers, partial = false, englishLevel = false, scanned = false) {
+    const allowEnglishSynonyms = englishLevel && (!partial || scanned);
     const same = option => [option.value, option.text].some(text => trim(text) === trim(value)
-      || (helpers.isSameOptionText ? helpers.isSameOptionText(text, value, englishLevel) : helpers.normalizeText(text) === helpers.normalizeText(value)));
+      || (helpers.isSameOptionText ? helpers.isSameOptionText(text, value, allowEnglishSynonyms) : helpers.normalizeText(text) === helpers.normalizeText(value)));
     const index = helpers.findSelectOptionIndex(list, value, englishLevel);
     if (partial && index >= 0 && !same(list[index])) return { reason: 'no_option_match' };
     if (index < 0) {
@@ -716,7 +717,7 @@
         const text = helpers.normalizeText(option.text), target = helpers.normalizeText(value);
         return text.includes(target) || target.includes(text);
       });
-      if (englishLevel && list.filter(option => !helpers.isPlaceholderOption(option) && same(option)).length > 1) {
+      if (allowEnglishSynonyms && list.filter(option => !helpers.isPlaceholderOption(option) && same(option)).length > 1) {
         return { reason: 'ambiguous_option' };
       }
       return { reason: !partial && possible.length > 1 ? 'ambiguous_option' : 'no_option_match' };
