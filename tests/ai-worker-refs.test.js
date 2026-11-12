@@ -784,6 +784,17 @@ test("with resume values sent, an open question still takes only a resume item o
   assert.equal(result.diagnostics.openUnanswered, 2);
 });
 
+test("#481 a model-proposed education option cannot discard the resume's unfinished status", async () => {
+  const env = worker(() => [{ fieldId: "degree", ref: "r1", option: "本科" }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "degree", label: "最高已取得学历", inputType: "select", options: ["本科"] }],
+    resumeFields: [{ group: "教育经历", key: "学历", value: "本科（未毕业）" }],
+    sendValues: true
+  });
+  assert.equal(env.calls.length, 1);
+  assert.equal(valueOf(result, "degree"), undefined);
+});
+
 test("with resume values sent, a select takes the option the AI copies for a resume item; with the switch off it does not", async () => {
   const resume = [{ group: "补充字段", key: "了解渠道", value: "学校就业网" }, { group: "技能", key: "专业技能", value: "SQL、Python" }];
   const form = [

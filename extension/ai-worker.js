@@ -834,7 +834,7 @@ function refMatches(payload, fields, catalog, allowed, withValues = false) {
     if (!field || !list.length) return [];
     // 多选最多 20 项，别的题最多 8 项：再多的不填，报原因。
     if (list.length > (field.multiple === true ? 20 : 8)) return [{ fieldId: field.fieldId, value: "", blocked: "too_many_items" }];
-    const option = withValues && !field.fits ? optionMatch(item, field, list, allowed) : null;
+    const option = withValues && !field.fits ? optionMatch(item, field, list, catalog, allowed) : null;
     if (option) return [option];
     // 日期控件要整个日期：AI 多给了年、月、日也按整项填，一段起止由页面按题目取开始或结束。
     const whole = isDateControl(field);
@@ -890,10 +890,12 @@ function refMatches(payload, fields, catalog, allowed, withValues = false) {
 // 编号都是本批目录里的（目录本来就没有像密码、验证码的资料）。对得上就填这个选项；多选的几项用「、」拼。
 // 带 fits 的字段不走这条（refMatches 里分开）：本地有资料填得进选项时，只认 fits 里的编号。
 // 级联、联动下拉的选项要等页面加载，读不到，不走这条；对不上给 null，照只回编号处理。
-function optionMatch(item, field, refs, allowed) {
+function optionMatch(item, field, refs, catalog, allowed) {
   const helpers = ResumeProAIHelpers;
   const choice = (field.inputType === "select" || field.inputType === "radio") && field.cascadeGroup === undefined && field.cascade !== true;
   if (!choice || !helpers.hasRealOptions(field)) return null;
+  // 有附加说明的学历按原资料走本地匹配，不能让模型直接改成一个不含说明的选项。
+  if (refs.some(ref => helpers.hasQualifiedEducationValue(field, catalog.values.get(REF_TOKEN.exec(String(ref).trim())?.[1])))) return null;
   const picked = field.multiple === true && Array.isArray(item.options) ? item.options : item.option === undefined ? [] : [item.option];
   if (!picked.length || (field.multiple !== true && picked.length !== 1)) return null;
   const offered = new Set(field.options.filter(option => !helpers.isPlaceholderOption(option))

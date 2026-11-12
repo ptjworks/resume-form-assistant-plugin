@@ -268,7 +268,11 @@ test("#481 an education level keeps an offered program-specific choice and separ
   assert.equal(helpers.choiceValue({ ...field, options: ["大学本科"] }, "本科（全日制、统招）"), "本科");
   assert.equal(helpers.choiceValue({ ...field, options: ["专科"] }, "大专（自考）"), "大专");
   assert.equal(helpers.isValueValidForField({ ...field, options: ["本科", "大学本科"] }, "本科（全日制）"), false);
-  assert.equal(helpers.choiceValue({ ...field, options: ["本科"] }, "本科（未毕业）"), "本科（未毕业）");
+  for (const [annotated, plain] of [["本科（未毕业）", "本科"], ["大专（肄业）", "大专"], ["硕士在读", "硕士"]]) {
+    assert.equal(helpers.isValueValidForField({ ...field, options: [plain] }, annotated), false);
+    assert.equal(helpers.isValueValidForField({ ...field, options: [annotated] }, plain), false);
+    assert.equal(helpers.isValueValidForField({ ...field, options: [plain, annotated] }, annotated), true);
+  }
 });
 
 test("findSelectOptionIndex: synonyms stay inside their own meaning", () => {

@@ -213,6 +213,7 @@
     hasRealOptions,
     choiceValue,
     controlChoiceValue,
+    hasQualifiedEducationValue,
     spanSide,
     questionHint,
     valueShape,
@@ -532,12 +533,17 @@
 
     // 「全日制」不能落到「非全日制」，反过来也一样。
     const negatedBefore = (text, at) => /(非|不|无|未)$/.test(text.slice(0, at));
+    const targetEducation = isEducationValue(normalizedTarget);
+    const targetQualified = targetEducation && isQualifiedEducationValue(normalizedTarget);
     const candidates = usable.flatMap(({ option, index: optionIndex }) => {
       const text = normalizeText(optionText(option));
 
       if (text.length < 2) {
         return [];
       }
+      // 学历的附加说明可能是未毕业、肄业等状态，不能用包含匹配把它丢掉。
+      // 可省略的培养方式由有题目上下文的 choiceValue 处理。
+      if (targetEducation && isEducationValue(text) && (targetQualified || isQualifiedEducationValue(text))) return [];
 
       const inOption = text.indexOf(normalizedTarget);
       if (inOption >= 0) {
@@ -831,14 +837,35 @@
   // 不放进 OPTION_SYNONYMS：「T 恤尺码」这类下拉也有 M，全局认了会把性别算成能填进去。
   const GENDER_LETTERS = [["M", ["男", "男性", "male"]], ["F", ["女", "女性", "female"]]];
   const EDUCATION_LEVEL = "博士研究生|硕士研究生|大学本科|本科|大学专科|大专|专科|中专|高中";
+  const EDUCATION_LEVEL_WORD = new RegExp(EDUCATION_LEVEL);
+  const PLAIN_EDUCATION_LEVEL = new RegExp(`^(?:${EDUCATION_LEVEL}|硕士|博士|研究生)$`);
+  const SHORT_EDUCATION_LEVEL_WORD = /硕士|博士|研究生/;
+  const EDUCATION_COMPLETION_NOTE = /在读|未毕业|未完成|未取得|肄业|结业|预计毕业/;
   const EDUCATION_QUALIFIER = "非全日制|全日制|统招|直博|普博|硕博连读|专升本|自考|成人教育";
   const QUALIFIED_EDUCATION = new RegExp(
     `^(?:(?:${EDUCATION_QUALIFIER})[,，、]?)*(${EDUCATION_LEVEL})(?:[,，、]?(?:${EDUCATION_QUALIFIER}))*$`
   );
 
+  function isEducationLevelLabel(label) {
+    return /^(?:最高|当前|在读|教育)?学历(?:层次)?$/.test(normalizeText(label));
+  }
+
+  function isEducationValue(text) {
+    return PLAIN_EDUCATION_LEVEL.test(text) || EDUCATION_LEVEL_WORD.test(text)
+      || (SHORT_EDUCATION_LEVEL_WORD.test(text) && EDUCATION_COMPLETION_NOTE.test(text));
+  }
+
+  function isQualifiedEducationValue(text) {
+    return isEducationValue(text) && !PLAIN_EDUCATION_LEVEL.test(text);
+  }
+
+  function hasQualifiedEducationValue(field, value) {
+    return inferFieldSemantic(field) === "degree" && isQualifiedEducationValue(normalizeText(value));
+  }
+
   // 题目只问学历时，才从「全日制硕士研究生」这类写法里提取层次。
   function educationLevelWithoutQualifier(label, value) {
-    if (!/^(?:最高|当前|在读|教育)?学历(?:层次)?$/.test(normalizeText(label))) return "";
+    if (!isEducationLevelLabel(label)) return "";
     const full = normalizeText(String(value ?? "").normalize("NFKC"));
     const level = QUALIFIED_EDUCATION.exec(full)?.[1];
     return level && level !== full ? level : "";

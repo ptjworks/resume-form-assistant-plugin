@@ -191,6 +191,17 @@ test('a gender select whose M and F options appear only when opened takes 男 as
   assert.deepEqual(size.picked, []);
 });
 
+test('#481 an education select preserves an unfinished degree status', async (t) => {
+  const value = '本科（未毕业）';
+  for (const choices of [['本科'], ['本科', value]]) {
+    const h = antd3(choices, { label: '学历' });
+    t.after(() => h.w.close());
+    const result = await h.api.operate({ ...h.target, binding: h.found }, value);
+    assert.equal(result.ok, choices.includes(value), result.reason);
+    assert.deepEqual(h.picked, choices.includes(value) ? [value] : []);
+  }
+});
+
 test('#481 a searchable education-level select falls back to the level if the original query has no result', async (t) => {
   const h = antd4(['硕士研究生', '博士研究生'], { label: '学历', remote: true });
   t.after(() => h.w.close());
