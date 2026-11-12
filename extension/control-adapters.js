@@ -36,6 +36,9 @@
     // #429 问性别的题，英文表单的选项只写 M、F：选项要等页面加载、点开才看得到时，worker 拿不到选项，给的是「男」「女」。
     // 按这时读到的选项再换一次（ai-helpers.js 的 controlChoiceValue：题目上下文取扫描时的对应关系 binding，只在问性别的字段上换）。
     const choiceIn = (ctx, options, value) => helpers?.controlChoiceValue ? helpers.controlChoiceValue(ctx.entry?.binding, options, value) : value;
+    const isEnglishLevel = ctx => helpers?.isEnglishLevelLabel?.(ctx.entry?.binding?.label);
+    const choiceIndex = (ctx, options, value) =>
+      helpers?.findSelectOptionIndex?.(options, choiceIn(ctx, options, value), isEnglishLevel(ctx)) ?? -1;
     const now = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
     const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     const settleMs = () => deps.getSettleMs ? deps.getSettleMs() : deps.settleMs ?? 250;
@@ -301,16 +304,20 @@
       // #405 inputmode 是数字的框照原样写了，页面没收下：改写能放心取出的数字（175cm → 175）；
       // 取不出的（10k-15k）只在页面滤掉了数字以外的字时不留滤剩的字（1015），恢复原值，报只能填数字。
       // 页面没有滤字、是别的原因不收的（自己改了格式、整段清空），照原来的原因报，框里的不动。
-      if (!verdict.ok && rejected(verdict.reason) && 'numeric' in prepared && guard()
-        && (prepared.numeric !== null || droppedNonDigits(left, typed))) {
-        if (prepared.numeric === null) {
+      const mobile = !shown && ctx.options.prepare && verdict.reason === 'validation_not_cleared'
+        ? deps.retryMobile?.(ctx.el, typed) : '';
+      const retryNumeric = rejected(verdict.reason) && 'numeric' in prepared
+        && (prepared.numeric !== null || droppedNonDigits(left, typed));
+      const retryValue = mobile || prepared.numeric;
+      if (!verdict.ok && (mobile || retryNumeric) && guard()) {
+        if (retryValue === null) {
           if (String(ctx.el.value ?? '') !== previous) {
             write(ctx.el, previous); deps.dispatchTextInput(ctx.el, previous);
             ctx.el.dispatchEvent(new Event('change', { bubbles: true }));
           }
           return result(false, 'format_mismatch', ctx);
         }
-        typed = prepared.numeric;
+        typed = retryValue;
         expected = deps.normalizeText(ctx.el, typed);
         if (!await deps.runTextLifecycle(ctx.el, typed, false, guard, didWrite)) return result(false, stop(ctx) || 'value_changed', ctx);
         const committed = shows(ctx.el, expected);
@@ -439,7 +446,7 @@
           const disabled = node => node.getAttribute('aria-disabled') === 'true' || /(?:^|[-_])disabled$/i.test(String(node.className || ''))
             || Boolean(node.querySelector('[aria-disabled="true"]'));
           const list = nodes.map(node => ({ value: text(node), text: text(node), disabled: disabled(node) }));
-          const index = helpers?.findSelectOptionIndex?.(list, choiceIn(ctx, list, desiredValue)) ?? -1;
+          const index = choiceIndex(ctx, list, desiredValue);
           const chosen = nodes[index];
           if (!chosen) return result(false, 'no_option_match', ctx);
           if (!custom.isChecked(chosen)) { const reason = click(custom.optionTarget(chosen), ctx, true); if (reason) return result(false, reason, ctx); }
@@ -447,7 +454,7 @@
           accepted = () => chosen.isConnected && custom.isChecked(chosen) && nodes.every(node => node === chosen || !custom.isChecked(node));
         } else if (ctx.kind === 'radio') {
           const list = nodes.map(node => ({value:node.value,text:deps.radioLabel?.(node) || node.value,disabled:node.disabled}));
-          const index = helpers?.findSelectOptionIndex?.(list, choiceIn(ctx, list, desiredValue)) ?? -1;
+          const index = choiceIndex(ctx, list, desiredValue);
           const chosen = nodes[index];
           if (!chosen) return result(false, 'no_option_match', ctx);
           const reason = click(chosen, ctx, true); if (reason) return result(false, reason, ctx);
@@ -464,7 +471,7 @@
           // #429 原生多选：要选的几项（splitMultipleValues，整段正好是一个选项时不拆）各对一项，有一项对不上就都不动；选中的正好是这几项。
           const options = Array.from(ctx.el.options).map(option => ({ value: option.value, text: option.text, disabled: option.disabled }));
           const parts = helpers?.splitMultipleValues?.(desiredValue, options) ?? [String(desiredValue ?? '').trim()].filter(Boolean);
-          const indexes = parts.map(part => helpers?.findSelectOptionIndex?.(options, part) ?? -1);
+          const indexes = parts.map(part => helpers?.findSelectOptionIndex?.(options, part, isEnglishLevel(ctx)) ?? -1);
           if (!parts.length || indexes.some(index => index < 0)) return result(false, 'no_option_match', ctx);
           const wanted = new Set(indexes);
           markWrite(ctx);
@@ -475,7 +482,7 @@
             && Array.from(wanted).every((index, at) => ctx.el.options[index]?.text === texts[at]);
         } else if (ctx.kind === 'native-select') {
           const list = Array.from(ctx.el.options).map(option => ({value:option.value,text:option.text,disabled:option.disabled}));
-          const index = helpers?.findSelectOptionIndex?.(list, choiceIn(ctx, list, desiredValue)) ?? -1;
+          const index = choiceIndex(ctx, list, desiredValue);
           if (index < 0) return result(false, 'no_option_match', ctx);
           const chosenValue = ctx.el.options[index].value;
           const chosenText = ctx.el.options[index].text;

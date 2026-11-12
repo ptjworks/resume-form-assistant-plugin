@@ -95,6 +95,24 @@ test('search waits for the updated live options rather than treating the query a
   assert.equal((await h.api.operate(h.target, '北京大学')).ok, true);
   assert.equal(h.el.getAttribute('aria-expanded'), 'false');
 });
+test('#481 English level search tries the alternate spelling once and restores the query on failure', async (t) => {
+  const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="list" value="原搜索词">');
+  t.after(() => h.w.close());
+  const list = h.w.document.createElement('div');
+  list.id = 'choices';
+  list.setAttribute('role', 'listbox');
+  h.w.document.body.append(list);
+  const searches = [];
+  h.el.oninput = () => {
+    searches.push(h.el.value);
+    list.innerHTML = h.el.value === '六级' ? '<div class="empty">无匹配数据</div>' : '';
+  };
+  const target = { ...h.target, binding: { label: '英语等级' } };
+  assert.equal((await h.api.operate(target, 'CET6')).reason, 'no_option_match');
+  assert.deepEqual(searches, ['CET6', '六级', '原搜索词']);
+  assert.equal(h.el.value, '原搜索词');
+});
+
 test('a rejected searchable option is not accepted merely because the query matches', async () => {
   const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="list" aria-expanded="false">', { timeoutMs: 250 });
   const list = h.w.document.createElement('div'); list.id = 'choices'; list.setAttribute('role', 'listbox'); list.hidden = true; h.w.document.body.append(list);
