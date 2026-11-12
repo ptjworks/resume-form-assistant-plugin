@@ -244,7 +244,7 @@ test("a date picker whose question names no side takes the start or end the AI n
 });
 
 test("#481 independent education dates use the same annotated period ref and keep month precision", async () => {
-  const span = "2021.09 - 2026.06（预计毕业）";
+  const span = "2021.09 - 2026.06 预计毕业";
   const env = worker((message, catalog) => {
     const entry = catalog.find(item => item.key === "教育经历1-时间");
     return [
@@ -454,13 +454,13 @@ test("#481 same-employer experience descriptions use the matched period to ident
     item("工作经历1-岗位职责1", "撰写旧系统手册。"),
     item("工作经历2-任职公司", "虚构技术公司"),
     item("工作经历2-时间", "2022.05 - 2023.06"),
-    item("工作经历2-主要职责1", "接手新版测试。"),
+    item("工作经历2-主要工作职责1", "接手新版测试。"),
     item("工作经历2-工作内容2", "维护测试数据。")
   ];
   const formFields = [
     { fieldId: "company", label: "公司名称", group, inputType: "text" },
     { fieldId: "start", label: "开始时间", group, inputType: "text" },
-    { fieldId: "description", label: "岗位职责", group, inputType: "textarea" },
+    { fieldId: "description", label: "主要工作职责", group, inputType: "textarea" },
     { fieldId: "opinion", label: "这段工作的收获", group, inputType: "textarea" }
   ];
   const env = worker(() => [

@@ -847,7 +847,7 @@
   );
 
   function isEducationLevelLabel(label) {
-    return /^(?:最高|当前|在读|教育)?学历(?:层次)?$/.test(normalizeText(label));
+    return /^(?:最高|当前|在读|教育|(?:最高)?已(?:取得|获得|完成))?学历(?:层次)?$/.test(normalizeText(label));
   }
 
   function isEducationValue(text) {
@@ -1098,7 +1098,7 @@
   function rangeDateParts(rawValue) {
     const raw = String(rawValue ?? "").trim();
     // #481 预计毕业只是结束年月的备注。仅在两个日期的区间里忽略这一种明确尾注。
-    const span = raw.replace(/\s*(?:（\s*预计毕业\s*）|\(\s*预计毕业\s*\))$/, "");
+    const span = raw.replace(/\s*(?:（\s*预计毕业\s*）|\(\s*预计毕业\s*\)|预计毕业)$/, "");
     const dates = span.match(SPAN_DATE) || [];
     if (dates.length === 2 && !span.replace(SPAN_DATE, "").replace(/[\s\-~～—–至到]/g, "")) return [dates[0].trim(), dates[1].trim()];
     const open = dates.length === 1 && raw.startsWith(dates[0]) ? SPAN_OPEN_END.exec(raw.slice(dates[0].length)) : null;

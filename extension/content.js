@@ -6369,7 +6369,9 @@
     const wantsEleven = hint => /11\s*位\s*(?:的\s*)?(?:中国大陆\s*)?(?:手机(?:号(?:码)?)?|数字)/.test(hint);
     if (checkErrors) return describedErrorVisible(element, wantsEleven) || containerErrorVisible(element, wantsEleven) ? digits : "";
     const pattern = (element.getAttribute("pattern") || "").replace(/^\^|\$$/g, "");
-    const digitsPattern = ["[0-9]{11}", "\\d{11}", "1[3-9]\\d{9}", "1[3-9][0-9]{9}"];
+    const digitsPattern = [
+      "[0-9]{11}", "\\d{11}", "1[0-9]{10}", "1\\d{10}", "1[3-9][0-9]{9}", "1[3-9]\\d{9}"
+    ];
     const hint = `${getFieldLabel(element)} ${element.getAttribute("placeholder") || ""} ${element.getAttribute("aria-label") || ""}`;
     return wantsEleven(hint) || digitsPattern.includes(pattern) ? digits : "";
   }

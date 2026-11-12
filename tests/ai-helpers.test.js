@@ -265,6 +265,9 @@ test("#481 an education level keeps an offered program-specific choice and separ
   assert.equal(helpers.isValueValidForField(field, "理学学士"), false);
   assert.equal(helpers.choiceValue({ ...field, label: "学位" }, value), value);
   assert.equal(helpers.choiceValue({ ...field, options: ["硕士研究生"] }, "非全日制硕士研究生"), "硕士研究生");
+  const attained = { ...field, label: "最高已取得学历", options: ["硕士研究生"] };
+  assert.equal(helpers.isValueValidForField(attained, "全日制硕士研究生"), true);
+  assert.equal(helpers.isValueValidForField(attained, "硕士研究生（未毕业）"), false);
   assert.equal(helpers.choiceValue({ ...field, options: ["大学本科"] }, "本科（全日制、统招）"), "本科");
   assert.equal(helpers.choiceValue({ ...field, options: ["专科"] }, "大专（自考）"), "大专");
   assert.equal(helpers.isValueValidForField({ ...field, options: ["本科", "大学本科"] }, "本科（全日制）"), false);

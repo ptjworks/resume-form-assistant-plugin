@@ -594,7 +594,7 @@ const EXPERIENCE_SECTIONS = [
   [/^(?:工作(?:经历|经验)?|employment|workexperience)\d*$/, "employment"],
   [/^(?:项目(?:经历|经验)?|projects?|projectexperience)\d*$/, "project"]
 ];
-const EXPERIENCE_DESCRIPTION = /^(?:(?:实习|工作|项目)?(?:内容|描述|职责)|主要(?:工作|工作内容|职责)|岗位职责|responsibilities|description)(\d*)$/;
+const EXPERIENCE_DESCRIPTION = /^(?:(?:实习|工作|项目)?(?:内容|描述|职责)|主要(?:工作(?:内容|职责)?|职责)|岗位职责|responsibilities|description)(\d*)$/;
 function experienceSection(label) {
   const key = ResumeProAIHelpers.normalizeText(label);
   return EXPERIENCE_SECTIONS.find(([pattern]) => pattern.test(key))?.[1];

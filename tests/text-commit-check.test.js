@@ -547,15 +547,17 @@ test("#481 one-click fill uses one CET certificate for the separate level and sc
 });
 
 test("#481 one-click fill removes phone spacing when the field declares an 11-digit pattern", async (t) => {
-  const p = page(t, item("phone", "手机号", 'pattern="\\d{11}"') + item("intl", "国际联系电话"), [
-    ["手机号", "138 0000 0000"], ["国际联系电话", "+44 7700 900123"]
-  ]);
-  const writes = [];
-  p.input("phone").addEventListener("input", () => writes.push(p.input("phone").value));
-  await p.run();
-  assert.equal(p.input("phone").value, "13800000000");
-  assert.ok(writes.length > 0 && writes.every(value => value === "13800000000"));
-  assert.equal(p.input("intl").value, "+44 7700 900123");
+  for (const pattern of ["\\d{11}", "^1\\d{10}$"]) {
+    const p = page(t, item("phone", "手机号", 'pattern="' + pattern + '"') + item("intl", "国际联系电话"), [
+      ["手机号", "138 0000 0000"], ["国际联系电话", "+44 7700 900123"]
+    ]);
+    const writes = [];
+    p.input("phone").addEventListener("input", () => writes.push(p.input("phone").value));
+    await p.run();
+    assert.equal(p.input("phone").value, "13800000000", pattern);
+    assert.ok(writes.length > 0 && writes.every(value => value === "13800000000"));
+    assert.equal(p.input("intl").value, "+44 7700 900123");
+  }
 });
 
 test("#481 an explicit 11-digit phone error triggers one correction through the text lifecycle", async (t) => {
