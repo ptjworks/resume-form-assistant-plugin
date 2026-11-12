@@ -435,6 +435,31 @@ test("a date picker whose question names no side takes the start or end the AI n
   assert.equal(valueOf(result, "month"), "2026-07");
 });
 
+test("#481 independent education dates use the same annotated period ref and keep month precision", async () => {
+  const span = "2021.09 - 2026.06 预计毕业";
+  const env = worker((message, catalog) => {
+    const entry = catalog.find(item => item.key === "教育经历1-时间");
+    return [
+      { fieldId: "start", ref: entry.ref, part: "start" },
+      { fieldId: "end", ref: entry.ref, part: "end" }
+    ];
+  });
+  const result = await env.run({
+    formFields: [
+      { fieldId: "start", group: "教育经历", label: "开始时间", inputType: "select", dynamicOptions: true, options: [] },
+      { fieldId: "end", group: "教育经历", label: "结束时间", inputType: "select", dynamicOptions: true, options: [] }
+    ],
+    resumeFields: [
+      { group: "教育经历", key: "教育经历1-时间", value: span },
+      { group: "教育经历", key: "教育经历2-时间", value: "2017.09 - 2021.06" }
+    ]
+  });
+  assert.equal(catalogOf(env.calls[0].user).find(entry => entry.key === "教育经历1-时间").shape, "起止日期，本组最近一段");
+  assert.ok(!env.calls[0].user.includes(span));
+  assert.equal(valueOf(result, "start"), "2021.09");
+  assert.equal(valueOf(result, "end"), "2026.06");
+});
+
 test("a start or end named in the answer takes that side of a span, written either way", async () => {
   const env = worker((message, catalog) => [
     { fieldId: "start", ref: catalog[0].ref, part: "start" }, { fieldId: "end", ref: `${catalog[0].ref}.end` },
@@ -561,6 +586,99 @@ test("every long answer box checks that the item is about the same thing, whatev
   // 英文题和中文字段名对不上，「家庭住址」答不了「自我评价」；分组、同义词（获奖=奖励、简介=评价）对得上的照填。
   assert.deepEqual(result.matches.map((match) => match.fieldId).sort(), ["awards", "intro", "work"]);
   assert.equal(result.diagnostics.openUnanswered, 3);
+});
+
+test("#481 an internship description joins only the saved content for the matched employer", async () => {
+  const employer = { group: "实习经历", key: "虚构甲单位实习经历-公司", value: "虚构甲单位" };
+  const resumeFields = [employer,
+    { group: "实习经历", key: "虚构甲单位实习经历-内容3", value: "整理交接文档。" },
+    { group: "实习经历", key: "虚构甲单位实习经历-内容1", value: "整理调研资料。" },
+    { group: "实习经历", key: "虚构甲单位实习经历-内容2", value: "复核项目记录。" },
+    { group: "实习经历", key: "虚构乙单位实习经历-公司", value: "虚构乙单位" },
+    { group: "实习经历", key: "虚构乙单位实习经历-内容1", value: "维护培训资料。" }
+  ];
+  const formFields = [
+    { fieldId: "company", label: "单位名称", group: "实习经历", inputType: "text" },
+    { fieldId: "description", label: "实习内容", group: "实习经历", inputType: "textarea" },
+    { fieldId: "other", label: "实习内容", group: "实习经历 2", inputType: "textarea" },
+    { fieldId: "takeaways", label: "实习收获", group: "实习经历", inputType: "textarea" }
+  ];
+  const env = worker(() => [{ fieldId: "company", ref: "r1" }]);
+  const result = await env.run({ formFields, resumeFields });
+  assert.equal(valueOf(result, "description"), "整理调研资料。\n复核项目记录。\n整理交接文档。");
+  assert.equal(valueOf(result, "other"), undefined);
+  assert.equal(valueOf(result, "takeaways"), undefined);
+  assert.ok(!env.calls[0].user.includes("整理调研资料"));
+  const ambiguous = await env.run({ formFields, resumeFields: [...resumeFields, { ...employer, key: employer.key + " (2)" }] });
+  assert.equal(valueOf(ambiguous, "description"), undefined);
+});
+
+test("#481 experience completion leaves a description blank after conflicting AI answers", async () => {
+  const group = "实习经历";
+  const env = worker(() => [
+    { fieldId: "company", ref: "r1" },
+    { fieldId: "description", ref: "r2" },
+    { fieldId: "description", ref: "r4" }
+  ]);
+  const result = await env.run({
+    formFields: [
+      { fieldId: "company", label: "单位名称", group, inputType: "text" },
+      { fieldId: "description", label: "实习内容", group, inputType: "textarea" }
+    ],
+    resumeFields: [
+      { group, key: "实习经历1-公司", value: "虚构甲单位" },
+      { group, key: "实习经历1-内容1", value: "整理项目资料。" },
+      { group, key: "实习经历2-公司", value: "虚构乙单位" },
+      { group, key: "实习经历2-内容1", value: "复核测试记录。" }
+    ]
+  });
+  assert.equal(valueOf(result, "company"), "虚构甲单位");
+  assert.equal(valueOf(result, "description"), undefined);
+  assert.equal(result.diagnostics.openUnanswered, 1);
+});
+
+test("#481 same-employer experience descriptions use the matched period to identify the right record", async () => {
+  const group = "工作经历";
+  const item = (key, value) => ({ group, key, value });
+  const resumeFields = [
+    item("工作经历1-任职公司", "虚构技术公司"),
+    item("工作经历1-起止时间", "2019.01 - 2020.04"),
+    item("工作经历1-岗位职责1", "撰写旧系统手册。"),
+    item("工作经历2-任职公司", "虚构技术公司"),
+    item("工作经历2-时间", "2022.05 - 2023.06"),
+    item("工作经历2-主要工作职责1", "接手新版测试。"),
+    item("工作经历2-工作内容2", "维护测试数据。")
+  ];
+  const formFields = [
+    { fieldId: "company", label: "公司名称", group, inputType: "text" },
+    { fieldId: "start", label: "开始时间", group, inputType: "text" },
+    { fieldId: "description", label: "主要工作职责", group, inputType: "textarea" },
+    { fieldId: "opinion", label: "这段工作的收获", group, inputType: "textarea" }
+  ];
+  const env = worker(() => [
+    { fieldId: "company", ref: "r4" }, { fieldId: "start", ref: "r5.start" },
+    { fieldId: "description", ref: "r3" }
+  ]);
+  const result = await env.run({ formFields, resumeFields });
+  assert.equal(valueOf(result, "description"), "接手新版测试。\n维护测试数据。");
+  assert.equal(valueOf(result, "opinion"), undefined);
+  const noPeriod = worker(() => [{ fieldId: "company", ref: "r4" }]);
+  assert.equal(valueOf(await noPeriod.run({ formFields, resumeFields }), "description"), undefined);
+});
+
+test("#481 project descriptions can use separately grouped resume fields with no numbered field names", async () => {
+  const resumeFields = [
+    { group: "项目经历 1", key: "项目名称", value: "虚构日报" },
+    { group: "项目经历 1", key: "项目描述", value: "为团队整理日报。" },
+    { group: "项目经历 2", key: "项目名称", value: "虚构月报" },
+    { group: "项目经历 2", key: "项目描述", value: "为团队整理月报。" }
+  ];
+  const formFields = [
+    { fieldId: "name", label: "项目名称", group: "项目经历", inputType: "text" },
+    { fieldId: "description", label: "项目内容", group: "项目经历", inputType: "textarea" }
+  ];
+  const env = worker(() => [{ fieldId: "name", ref: "r3" }]);
+  assert.equal(valueOf(await env.run({ formFields, resumeFields }), "description"), "为团队整理月报。");
 });
 
 test("a view question takes no item that shares only a common word like 工作 with it", async () => {
@@ -856,6 +974,17 @@ test("with resume values sent, an open question still takes only a resume item o
   assert.equal(valueOf(result, "self"), "踏实认真");
   assert.equal(valueOf(result, "city"), "虚构城");
   assert.equal(result.diagnostics.openUnanswered, 2);
+});
+
+test("#481 a model-proposed education option cannot discard the resume's unfinished status", async () => {
+  const env = worker(() => [{ fieldId: "degree", ref: "r1", option: "本科" }]);
+  const result = await env.run({
+    formFields: [{ fieldId: "degree", label: "最高已取得学历", inputType: "select", options: ["本科"] }],
+    resumeFields: [{ group: "教育经历", key: "学历", value: "本科（未毕业）" }],
+    sendValues: true
+  });
+  assert.equal(env.calls.length, 1);
+  assert.equal(valueOf(result, "degree"), undefined);
 });
 
 test("with resume values sent, a select takes the option the AI copies for a resume item; with the switch off it does not", async () => {

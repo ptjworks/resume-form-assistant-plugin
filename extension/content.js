@@ -5469,8 +5469,10 @@
   // 页面重画后找回的字段显示的是不是刚填的值（只读，不写）：下拉看组件显示的文字，单选看选中项，其余看框里的值。
   function showsFilledValue(entry, value) {
     const helpers = self.ResumeProAIHelpers;
+    const englishLevel = entry.controlKind !== "cascader" && helpers?.isEnglishLevelLabel?.(entry.binding?.label);
+    const expectedChoice = englishLevel ? helpers.controlChoiceValue(entry.binding, [], value) : value;
     const matches = texts => texts.some(text => text && (helpers?.findSelectOptionIndex
-      ? helpers.findSelectOptionIndex([{ value: text, text }], value) >= 0 : String(text).trim() === String(value).trim()));
+      ? helpers.findSelectOptionIndex([{ value: text, text }], expectedChoice, englishLevel) >= 0 : String(text).trim() === String(value).trim()));
     try {
       if (entry.kind === "radio") {
         const checked = entry.elements.find(radioChecked);
@@ -6497,18 +6499,18 @@
     return element.parentElement;
   }
 
-  function describedErrorVisible(element) {
+  function describedErrorVisible(element, matches = Boolean) {
     const ids = `${element.getAttribute?.("aria-describedby") || ""} ${element.getAttribute?.("aria-errormessage") || ""}`
       .split(/\s+/)
       .filter(Boolean);
     return ids.some((id) => {
       const node = docOf(element).getElementById?.(id);
-      return node && node !== element && isShown(node) && String(node.textContent || "").trim()
+      return node && node !== element && isShown(node) && matches(String(node.textContent || "").trim())
         && (looksLikeFieldError(node) || node.getAttribute?.("role") === "alert");
     });
   }
 
-  function containerErrorVisible(element) {
+  function containerErrorVisible(element, matches = Boolean) {
     const container = associatedContainer(element);
     if (!container) {
       return false;
@@ -6519,7 +6521,7 @@
       if (node === element) {
         continue;
       }
-      if (looksLikeFieldError(node) && isShown(node) && String(node.textContent || "").trim()) {
+      if (looksLikeFieldError(node) && isShown(node) && matches(String(node.textContent || "").trim())) {
         return true;
       }
       if (node?.children?.length) {
@@ -6551,6 +6553,20 @@
       return true;
     }
     return PHONE_HINT.test(`${controlHintText(element)} ${getFieldLabel(element)}`);
+  }
+
+  // #481 普通手机号框可能只在校验失败后才提示要连续 11 位。
+  function compactMobileForField(element, text, checkErrors = false) {
+    const digits = text.replace(/\s/g, "");
+    if (digits === text || !/^1[3-9]\d{9}$/.test(digits) || !isPhoneInput(element)) return "";
+    const wantsEleven = hint => /11\s*位\s*(?:的\s*)?(?:中国大陆\s*)?(?:手机(?:号(?:码)?)?|数字)/.test(hint);
+    if (checkErrors) return describedErrorVisible(element, wantsEleven) || containerErrorVisible(element, wantsEleven) ? digits : "";
+    const pattern = (element.getAttribute("pattern") || "").replace(/^\^|\$$/g, "");
+    const digitsPattern = [
+      "[0-9]{11}", "\\d{11}", "1[0-9]{10}", "1\\d{10}", "1[3-9][0-9]{9}", "1[3-9]\\d{9}"
+    ];
+    const hint = `${getFieldLabel(element)} ${element.getAttribute("placeholder") || ""} ${element.getAttribute("aria-label") || ""}`;
+    return wantsEleven(hint) || digitsPattern.includes(pattern) ? digits : "";
   }
 
   function sameTextValue(element, current, expected) {
@@ -6747,6 +6763,8 @@
     if (!isInputElement(element)) {
       return { value: text };
     }
+    const mobile = compactMobileForField(element, text);
+    if (mobile) return { value: mobile };
     const format = datePlaceholderFormat(element);
     const prepared = (format && formatDateText(text, format)) || { value: text };
     const numeric = numericInputKind(element);
@@ -6830,6 +6848,7 @@
       isVisible, writeValue: writeControlValue, focus: focusControl, blur: blurControl,
       normalizeText: normalizeExpectedTextValue, prepareText: prepareTextValue, runTextLifecycle, sameTextValue,
       inspectText: inspectTextCommit, waitTextCommit: waitForTextCommit,
+      retryMobile: (element, value) => compactMobileForField(element, value, true),
       replayFocusBlur, prefersSequential: prefersSequentialInput, dispatchTextInput,
       getSettleMs: () => textCommitWaitMs <= 0 ? 0 : 250
     });

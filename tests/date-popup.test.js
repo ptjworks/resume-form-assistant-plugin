@@ -436,12 +436,12 @@ test("a failed Element UI el-cascader inside a dialog keeps the dialog open and 
 // ---- 日期写法 ----
 
 // 北森日期题：phoenix-select 当触发框，点开日历，按年 → 月 → 日点。
-function beisenDate(label) {
+function beisenDate(label, mode = "date") {
   const h = load(`<div class="form-item"><label class="form-item__text">${label}</label><div class="form-item__control">
     <div class="phoenix-select phoenix-select--editable"><ul class="phoenix-select__content"><li class="phoenix-select__selected"></li><li class="phoenix-select__inputWrapper"><input class="phoenix-select__input"></li></ul></div></div></div>`);
   const { doc } = h;
   const root = doc.querySelector(".phoenix-select"), shown = root.querySelector(".phoenix-select__selected");
-  let layer = null, year = 2026, month = 10, panel = "date";
+  let layer = null, year = 2026, month = 10, panel = mode;
   const draw = () => {
     const days = new Date(year, month, 0).getDate();
     const body = panel === "date" ? `<table><tbody><tr>${Array.from({ length: days }, (_, i) => `<td class="phoenix-calendar-cell" data-day="${i + 1}"><div class="phoenix-calendar-date">${i + 1}</div></td>`).join("")}</tr></tbody></table>`
@@ -459,7 +459,11 @@ function beisenDate(label) {
       else if (/year-select/.test(cls)) panel = "year";
       else if (/month-select/.test(cls)) panel = "month";
       else if (el.closest("td[data-year]")) { year = Number(el.closest("td").dataset.year); panel = "month"; }
-      else if (el.closest("td[data-month]")) { month = Number(el.closest("td").dataset.month); panel = "date"; }
+      else if (el.closest("td[data-month]")) {
+        month = Number(el.closest("td").dataset.month);
+        if (mode === "month") { shown.textContent = `${year}-${pad(month)}`; layer.remove(); layer = null; return; }
+        panel = "date";
+      }
       else if (el.closest("td[data-day]")) { shown.textContent = `${year}-${pad(month)}-${pad(el.closest("td").dataset.day)}`; layer.remove(); layer = null; return; }
       else return;
       draw();
@@ -531,6 +535,17 @@ test("a span of two dates gives the start or the end only when the question says
   assert.equal(pick("2019.09-2023.06（全日制）", "开始时间"), "2019.09-2023.06（全日制）");
   assert.equal(pick("2019.09-2021.06-2023.06", "开始时间"), "2019.09-2021.06-2023.06");
   assert.equal(pick("", "开始时间"), "");
+});
+
+test("#481 Beisen education month pickers take the right end of an annotated span", async (t) => {
+  const span = "2021.09 - 2026.06（预计毕业）";
+  for (const [label, expected] of [["开始时间", "2021-09"], ["结束时间", "2026-06"]]) {
+    const h = beisenDate(label, "month");
+    t.after(() => h.w.close());
+    const result = await h.api.operate(h.target, span);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(h.shown.textContent, expected);
+  }
 });
 
 test("a Beisen start or end date given a span takes the start or the end; an unnamed one stays invalid", async () => {

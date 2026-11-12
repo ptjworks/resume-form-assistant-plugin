@@ -615,6 +615,34 @@ function fakeClock(h) {
   return h;
 }
 
+test("#481 a CET synonym on the first screen is only chosen after checking for options off screen", async (t) => {
+  const choices = ["四级", "六级", ...Array.from({ length: 20 }, (_, i) => "其他等级 " + i)];
+  for (const [last, expected, multiple] of [
+    ["专业英语四级", ["四级"], false],
+    ["大学英语四级", [], false],
+    ["CET-4", ["CET-4"], false],
+    ["大学英语四级", [], true]
+  ]) {
+    const h = fakeClock(scrollingAntd([...choices, last], { multiple }));
+    t.after(() => h.w.close());
+    const result = await h.api.operate({ ...h.target, binding: { label: "英语等级" } }, "CET-4");
+    assert.equal(result.ok, expected.length > 0, JSON.stringify({ last, multiple, result }));
+    if (!expected.length) assert.equal(result.reason, "ambiguous_option");
+    assert.deepEqual(h.picked, expected);
+    assert.ok(Math.max(...h.scrolls) >= (choices.length + 1) * 32 - 256);
+  }
+});
+
+test("#481 searching a partial CET list can reveal a second synonym before selection", async (t) => {
+  const h = antd(["四级", "六级", ...Array.from({ length: 20 }, (_, i) => "其他等级 " + i), "大学英语四级"],
+    { search: true, layout: true });
+  t.after(() => h.w.close());
+  const result = await h.api.operate({ ...h.target, binding: { label: "英语等级" } }, "CET-4");
+  assert.equal(result.reason, "ambiguous_option");
+  assert.deepEqual(h.searches.slice(0, 2), ["CET-4", "四级"]);
+  assert.deepEqual(h.picked, []);
+});
+
 // #429 懒加载的列表：滚到最后一屏以后过 200ms 才接上下一页。比等列表停住的 80ms 晚：扫描等最后两屏停住以后，
 // 是在到底以后再等的 500ms 里看到列表变长的。这几条按假时钟跑（见 fakeClock）。
 const LAZY = Array.from({ length: 30 }, (_, i) => i === 20 ? "北京大学医学部" : i === 25 ? "人工智能与大数据" : `示例大学${String(i).padStart(3, "0")}`);
