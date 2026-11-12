@@ -79,7 +79,7 @@ test("BOSS empty work section shares the deep and assisted plan without relying 
   doc.querySelector("#language .edit-part").addEventListener("click", () => assert.fail("must not add a language row"));
   const template = [
     { group: "工作经历", key: "工作1公司", value: "甲公司" },
-    { group: "实习经历", key: "实习1公司", value: "乙公司" }
+    { group: "实习经历", key: "实习１－公司", value: "乙公司" }
   ];
   const { built, checked } = analyse(doc, { pageState: "editing" });
   assert.equal(checked.ok, true, checked.reason);
@@ -110,6 +110,11 @@ test("BOSS empty work section shares the deep and assisted plan without relying 
   assert.equal(again.added, 1);
   assert.equal(first.querySelector("input").value, "已填的工作单位");
   assert.equal(agent.collect(doc, template).candidates.length, 0);
+  work.querySelector(".label-text").textContent = "工作经历";
+  work.querySelectorAll(".group-part-item").forEach(row => row.remove());
+  const internshipOnly = template.slice(1);
+  assert.equal(agent.collect(doc, internshipOnly).candidates.length, 0);
+  assert.equal(plan(doc, built, checked.spec, internshipOnly).items.length, 0);
 });
 
 test("the preview names each target as 区块：按钮 and clicks nothing; cross-page edits are only offered as manual steps", () => {

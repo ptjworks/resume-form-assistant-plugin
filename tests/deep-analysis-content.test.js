@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 
 const deep = require("../extension/deep-analysis.js");
 const outlineApi = require("../extension/page-outline.js");
-const { loadHighlightHelpers } = require("./helpers/content-harness.js");
+const { loadHighlightHelpers, fakeFieldScan } = require("./helpers/content-harness.js");
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => {
@@ -22,8 +22,8 @@ const store = () => ({
 });
 
 function deepPage({ consent = true, analyze, fill, confirm = () => true, existing = ["", ""], staleButton = false, labels = [], fillProbe,
-  buttons = [], pageActions, formAgent } = {}) {
-  const location = { href: "https://jobs.example.test/apply", pathname: "/apply" };
+  buttons = [], pageActions, formAgent, fieldScan, url = "https://jobs.example.test/apply" } = {}) {
+  const location = new URL(url);
   const inputs = [];
   const sent = [];
   const storageData = consent ? { deepAnalysisConsent: { version: 1 } } : {};
@@ -39,6 +39,7 @@ function deepPage({ consent = true, analyze, fill, confirm = () => true, existin
     randomUUID: (() => { let n = 0; return () => `req-${++n}`; })(),
     confirm: (message) => { confirms++; return confirm(message, inputs); },
     deepAnalysis: deep,
+    fieldScan,
     fillProbe,
     pageActions,
     formAgent,
@@ -69,6 +70,7 @@ function deepPage({ consent = true, analyze, fill, confirm = () => true, existin
       return { status: "ok" };
     }
   });
+  if (fieldScan) harness.document.location = location;
   const { helpers, HTMLInputElement, timers } = harness;
   existing.forEach((value) => {
     const input = new HTMLInputElement();
@@ -138,6 +140,33 @@ test("analyse → strong-tier fill through the normal flow: spec fields go out w
   // The resume values were handed to the outline for redaction, not sent anywhere.
   assert.ok(page.outlineCalls[0].resumeValues.includes("测试用户"));
   assert.ok(!JSON.stringify(analysis).includes("测试用户"));
+});
+
+test("BOSS deep analysis supplies locally recognized dates and cascaders even when the model omits them", async () => {
+  const scanner = fakeFieldScan();
+  const fieldScan = { ...scanner, scanPage(doc, options) {
+    const scanned = scanner.scanPage(doc, options);
+    const [date, city] = scanned.controls;
+    for (const control of [date, city]) control.element.ownerDocument = doc;
+    Object.assign(date, { controlKind: "date-picker", pickerType: "boss" });
+    city.controlKind = "cascader";
+    city.root.matches = selector => selector === ".ui-cascader2";
+    return scanned;
+  } };
+  for (const fields of [[], [{ ref: "e1", label: "毕业时间", control: "text" }]]) {
+    const page = deepPage({
+      url: "https://xiaoyuan.zhipin.com/volunteer/index",
+      fieldScan, labels: ["最高学历毕业时间", "现居住城市"],
+      analyze: () => ({ success: true, spec: { pageState: "editing", fields } }),
+      fill: () => ({ success: true, matches: [] })
+    });
+    await page.ask({ action: "start" });
+    await page.settle(finished);
+    const [request] = page.aiCalls("AI_FILL");
+    assert.ok(request);
+    assert.deepEqual(Array.from(request.formFields, field => [field.label, field.controlKind, field.pickerType]),
+      [["最高学历毕业时间", "date", "boss"], ["现居住城市", "cascader", undefined]]);
+  }
 });
 
 test("the deep fill's diagnostics carry outline size, validation, calls and tier, never field values or labels from the model", async () => {

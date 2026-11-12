@@ -444,13 +444,12 @@
       const key = String(field.key ?? "").normalize("NFKC").trim();
       const named = /^(.{2,60}(?:大学|学院|学校|中学|研究院|研究所))(?:教育经历|教育背景|学习经历)\s*[-_:：]\s*(.+)$/.exec(key);
       const numbered = /^(?:教育经历|教育背景|学习经历|教育)\s*(\d+)\s*[-_:：]?\s*(.+)$/.exec(key);
-      const id = named ? `school:${normalizeText(named[1])}` : `${group[1]}:${group[2] || numbered?.[1] || ""}`;
-      if (!records.has(id)) records.set(id, {});
-      // 保留这一段的编号供行数判断，冲突字段本身不能归到任何一段。
       if (group[2] && numbered && group[2] !== numbered[1]) continue;
-      const record = records.get(id);
+      const id = named ? `school:${normalizeText(named[1])}` : `${group[1]}:${group[2] || numbered?.[1] || ""}`;
       const add = (role, value) => {
         if (!value) return;
+        if (!records.has(id)) records.set(id, {});
+        const record = records.get(id);
         if (!record[role]) record[role] = new Set();
         record[role].add(value);
       };
@@ -608,6 +607,7 @@
       const level = cetScoreKey(field.label) || pair?.selected || (levels.size === 1 && !pair?.otherSelected ? [...levels][0] : "");
       if (pair?.role === "level" && level) return [{ fieldId: field.fieldId, value: level }];
       const found = scores.get(level);
+      if (!pair && !found?.size) return [];
       const blocked = !level ? "english_level_unconfirmed" : !found?.size ? "english_score_missing"
         : found.size > 1 ? "english_score_conflict" : "";
       return [{ fieldId: field.fieldId, value: blocked ? "" : [...found][0],
@@ -638,21 +638,20 @@
       const group = /^(工作经历|实习经历)\s*(\d*)$/.exec(String(field.group ?? "").normalize("NFKC").trim());
       return group && String(field.value ?? "").trim() ? [{ field, category: group[1], groupIndex: group[2] }] : [];
     });
-    const hasWork = grouped.some(record => record.category === "工作经历");
-    const onlyCategory = kind === "combined" ? "" : kind === "internship" || !hasWork ? "实习经历" : "工作经历";
+    const onlyCategory = kind === "combined" ? "" : kind === "internship" ? "实习经历" : "工作经历";
     const records = new Map();
     for (const { field, category, groupIndex } of grouped) {
       if (onlyCategory && category !== onlyCategory) continue;
-      const key = String(field.key ?? "").trim();
+      const key = String(field.key ?? "").normalize("NFKC").trim();
       const named = /^(.+?)(?:工作经历|实习经历)\s*[-_:：]\s*(.+?)(?: \((\d+)\))?$/.exec(key);
       const numbered = /^(?:工作经历|实习经历|工作|实习)\s*(\d+)\s*[-_:：]?\s*(.+)$/.exec(key);
       const suffix = /^(.+?)(\d+)$/.exec(key);
-      const suffixRole = suffix && workRole(suffix[1]);
+      const suffixRole = suffix && workRole(suffix[1].trim());
       const fieldIndex = numbered?.[1] || (suffixRole ? suffix[2] : "");
       if (groupIndex && fieldIndex && groupIndex !== fieldIndex) continue;
       const index = groupIndex || fieldIndex || "1";
       const detail = named?.[2] || numbered?.[2] || (suffixRole ? suffix[1] : key);
-      const role = workRole(detail);
+      const role = workRole(detail.trim());
       if (!role) continue;
       const id = named ? `${category}:name:${normalizeText(named[1])}:${named[3] || "1"}` : `${category}:number:${index}`;
       if (!records.has(id)) records.set(id, new Map());

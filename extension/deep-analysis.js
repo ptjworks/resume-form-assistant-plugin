@@ -745,7 +745,9 @@
 
     async function fillWith(run, merged, outline, { addNote = false, after = "" } = {}) {
       const report = state.report;
-      if (!merged.fields.length) {
+      const canSupplement = merged.pageState.some(state => state === "editing" || state === "mixed");
+      const prepared = merged.fields.length || canSupplement ? deps.toFillInput(merged.fields, outline.nodes) : null;
+      if (!merged.fields.length && !prepared?.fields.length) {
         if (after) {
           set(run, "failed", `${after}重新分析后仍没有找到可以填写的字段，请手动核对网页。`);
         } else if (merged.pageState.every(item => item === "not_form")) {
@@ -757,7 +759,6 @@
         }
         return;
       }
-      const prepared = deps.toFillInput(merged.fields, outline.nodes);
       report.usedFields = prepared.fields.length;
       if (!prepared.fields.length) {
         set(run, "failed", `${after}AI 找到的字段在网页上已经不可用（页面可能已经变化），请重新分析。`);

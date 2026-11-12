@@ -80,6 +80,16 @@ test("an unpaired BOSS English score never uses a saved answer or an AI match", 
   assert.equal(env.calls.length, 0);
 });
 
+test("an explicit CET score on another site can still use a saved answer with a date annotation", async () => {
+  const env = worker();
+  const result = await env.run({
+    formFields: [{ fieldId: "score", label: "英语六级成绩", inputType: "text" }],
+    resumeFields: [{ group: "补充字段", key: "英语六级成绩", value: "587 分（2024 年 6 月）" }]
+  });
+  assert.equal(valueOf(result, "score"), "587 分（2024 年 6 月）");
+  assert.equal(env.calls.length, 0);
+});
+
 test("BOSS internship fields follow the company record after one existing row is already occupied", async () => {
   const env = worker();
   const resumeFields = [
@@ -92,7 +102,7 @@ test("BOSS internship fields follow the company record after one existing row is
   ];
   const row = (companies, index) => [["company", "工作单位"], ["position", "职务"], ["start", "时间段（开始）"], ["end", "时间段（结束）"]]
     .map(([role, label]) => ({ fieldId: `${index}-${role}`, label, inputType: "text",
-      bossWork: { role, companies, index, companyReady: true } }));
+      bossWork: { role, companies, index, companyReady: true, kind: "combined" } }));
   const fresh = await env.run({ formFields: [...row(["", ""], 0), ...row(["", ""], 1)], resumeFields });
   assert.equal(valueOf(fresh, "0-company"), "虚构甲公司");
   assert.equal(valueOf(fresh, "1-position"), "研发实习生");
@@ -111,8 +121,8 @@ test("a combined BOSS work section keeps work and internship records with the sa
   const resumeFields = [
     { group: "工作经历", key: "工作1公司", value: "甲公司" },
     { group: "工作经历", key: "工作1职位", value: "工程师" },
-    { group: "实习经历", key: "实习1公司", value: "乙公司" },
-    { group: "实习经历", key: "实习1职位", value: "研发实习生" }
+    { group: "实习经历", key: "实习１－公司", value: "乙公司" },
+    { group: "实习经历", key: "实习１：职位", value: "研发实习生" }
   ];
   const formFields = [["company", "工作单位"], ["position", "职位"]].map(([role, label]) => ({
     fieldId: role, label, inputType: "text",
@@ -122,6 +132,10 @@ test("a combined BOSS work section keeps work and internship records with the sa
   assert.equal(valueOf(result, "company"), "乙公司");
   assert.deepEqual(result.matches.find(match => match.fieldId === "position"),
     { fieldId: "position", value: "研发实习生", bossCompany: "乙公司" });
+  const workOnly = formFields.map(field => ({ ...field,
+    bossWork: { ...field.bossWork, kind: "work", companies: [""], index: 0 } }));
+  const internshipOnly = await env.run({ formFields: workOnly, resumeFields: resumeFields.slice(2) });
+  assert.deepEqual(internshipOnly.matches, []);
   assert.equal(env.calls.length, 0);
 });
 
@@ -191,6 +205,11 @@ test("BOSS education range uses one local education record and never asks the mo
   const result = await env.run({ formFields, resumeFields });
   assert.deepEqual(result.matches, [{ fieldId: "start", value: "2020-09" }, { fieldId: "end", value: "2024-06" }]);
   assert.equal(env.calls.length, 0);
+
+  const withIgnoredField = await env.run({ formFields, resumeFields: [
+    ...resumeFields, { group: "教育经历2", key: "教育经历3-学历", value: "博士" }
+  ] });
+  assert.deepEqual(withIgnoredField.matches, result.matches);
 
   const separate = await env.run({ formFields, resumeFields: [
     { group: "教育经历", key: "教育经历1-入学时间", value: "2020/09" },

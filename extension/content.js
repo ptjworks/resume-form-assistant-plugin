@@ -2061,10 +2061,10 @@
       cancelRequest: requestId => { self.ResumeProAIClient.cancel(requestId).catch(() => {}); },
       toFillInput: (fields, nodes) => {
         const prepared = api.toFillInput(fields, nodes, { optionText: getRadioOptionLabel, pickerInputType: inferPickerInputType });
-        if (location.hostname !== "xiaoyuan.zhipin.com") return withScanBindings(prepared);
+        if (location.hostname !== "xiaoyuan.zhipin.com") return fields.length ? withScanBindings(prepared) : prepared;
         const scanned = scanFillableFields();
         const bound = withScanBindings(prepared, scanned);
-        const known = scanned.fields.filter(field => field.bossWork || field.bossCet);
+        const known = scanned.fields.filter(field => isBossScanField(field, scanned.fieldMap.get(field.fieldId)));
         return known.length ? { ...bound, ...mergeRecipeScan(bound, { ...scanned, fields: known }) } : bound;
       },
       hasLocalSections: () => Boolean(self.ResumeProFormAgent?.campusGroups(document).length),
@@ -2124,6 +2124,12 @@
   // 普通扫描也认识的控件：沿用它的题目对应关系。填写前的复查、「加到我的信息」的询问都和普通填写一致；
   // 只有深度分析才找到的控件（框架、Shadow DOM 里的）没有这份对应关系，不询问，免得用模型起的题目名存档。
   // scanned：已经扫过的结果（#226 配方补漏时复用同一次扫描）。
+  function isBossScanField(field, entry) {
+    return Boolean(field && (field.bossEducation || field.educationRange || field.bossWork || field.bossCet
+      || entry?.pickerType === "boss" || (entry?.root?.matches?.(".ui-cascader2")
+        && entry.root.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com")));
+  }
+
   function withScanBindings(prepared, scanned = null) {
     if (!scanned) {
       try {
@@ -2147,8 +2153,7 @@
       Object.assign(entry, { binding: known.binding, offerable: known.offerable, offerLabel: known.offerLabel });
       const descriptor = scannedControl.field;
       // 深度分析的文字推测不能覆盖 BOSS 已识别的级联或日历。
-      if (descriptor && (descriptor.bossEducation || descriptor.bossWork || descriptor.bossCet || known.pickerType === "boss" || known.root?.matches?.(".ui-cascader2")
-        && known.root.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com")) {
+      if (isBossScanField(descriptor, known)) {
         Object.assign(entry, { root: known.root, controlKind: known.controlKind, pickerType: known.pickerType, pickerInputType: known.pickerInputType });
         Object.assign(field, descriptor, { fieldId: field.fieldId });
       }
