@@ -411,7 +411,7 @@
         const bossControl = ctx.entry?.pickerType === 'boss' || (custom && scope.ResumeProCustomControls.describe(ctx.entry).library === 'boss');
         if (bossControl) {
           const rect = ctx.el.getBoundingClientRect(), view = ctx.el.ownerDocument.defaultView;
-          if (rect.top < 0 || rect.bottom > view.innerHeight || rect.left < 0 || rect.right > view.innerWidth) {
+          if (view && (rect.top < 0 || rect.bottom > view.innerHeight || rect.left < 0 || rect.right > view.innerWidth)) {
             ctx.el.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
             await delay(0);
           }

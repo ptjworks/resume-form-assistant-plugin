@@ -42,12 +42,13 @@
   function controls(scope) { return Array.from(scope.querySelectorAll(editable)).filter(visible); }
   function collect(document, fields) {
     const targets = targetCounts(fields);
+    const campus = campusGroups(document);
     const refs = new Map();
     const candidates = [];
     for (const button of document.querySelectorAll('button[type="button"]')) {
       if (button.closest("#resume-pro-sidebar, #resume-pro-manager")) continue;
       const domain = domains.find(item => isSafeButton(button, item));
-      if (!domain || !targets[domain.id]) continue;
+      if (!domain || !targets[domain.id] || campus.some(group => group.domain === domain.id)) continue;
       const scope = button.closest("section,[role=group]");
       const heading = scope?.querySelector("h1,h2,h3,h4,legend");
       if (!scope || !heading || !domain.group.test(text(heading))) continue;
@@ -60,14 +61,14 @@
       candidates.push({ id, domain: domain.id, label: text(button), current, target: targets[domain.id] });
       refs.set(id, { button, scope, domain, current, target: targets[domain.id], heading, headingText: text(heading) });
     }
-    const campus = collectSpec(campusGroups(document), fields);
-    for (const candidate of campus.candidates) {
+    const campusPlan = collectSpec(campus, fields);
+    for (const candidate of campusPlan.candidates) {
       const id = `add-${candidates.length}`;
       candidates.push({ ...candidate, id });
-      refs.set(id, campus.refs.get(candidate.id));
+      refs.set(id, campusPlan.refs.get(candidate.id));
     }
     // Multiple indistinguishable sections of one type need human disambiguation.
-    return { candidates: candidates.filter(c => candidates.filter(x => x.domain === c.domain).length === 1), refs, problems: campus.problems };
+    return { candidates: candidates.filter(c => candidates.filter(x => x.domain === c.domain).length === 1), refs, problems: campusPlan.problems };
   }
   function validatePlan(plan, candidates) {
     if (!Array.isArray(plan) || plan.length > 4) throw new Error("AI 新增计划格式无效。");
@@ -121,27 +122,34 @@
   const bare = value => String(value ?? "").replace(/[\s\p{P}\p{S}]/gu, "");
   const containsAny = (node, list) => list.some(el => el !== node && node.contains(el));
   function specControls(ref) { return Array.from(ref.scope.querySelectorAll(editable)).filter(ref.visible); }
-  const CAMPUS_WORK_TITLE = /^(?:工作实习经历|工作与实习经历|工作及实习经历|实习经历|工作经历)$/;
   const CAMPUS_SCOPE = "form.ui-form .render-map-container > .group-part-container";
   const CAMPUS_ADD = ":scope > .group-part-title > .op-text-wrapper > .edit-part";
   const campusRows = scope => Array.from(scope.querySelectorAll(":scope > .group-part-item[data-group-id][data-part-id]"));
   const campusTitle = scope => scope.querySelector(":scope > .group-part-title > .text-part .label-text");
+  function campusWorkKind(scope) {
+    const title = bare(campusTitle(scope)?.textContent);
+    if (/^工作(?:与|及)?实习经历$/.test(title)) return "combined";
+    if (title === "工作经历") return "work";
+    if (title === "实习经历") return "internship";
+    return "";
+  }
   function campusWorkScope(element) {
     if (element.ownerDocument?.location?.hostname !== "xiaoyuan.zhipin.com") return null;
     const scope = element.closest(CAMPUS_SCOPE);
-    return scope && CAMPUS_WORK_TITLE.test(bare(campusTitle(scope)?.textContent)) ? scope : null;
+    return scope && campusWorkKind(scope) ? scope : null;
   }
   function isCampusAdd(button, scope) {
     return button === scope.querySelector(CAMPUS_ADD) && scope.querySelectorAll(CAMPUS_ADD).length === 1
       && !button.matches(".readonly, .disabled") && !button.closest("a[href], button, [aria-disabled='true']")
-      && bare(button.textContent) === "添加" && CAMPUS_WORK_TITLE.test(bare(campusTitle(scope)?.textContent));
+      && bare(button.textContent) === "添加" && Boolean(campusWorkKind(scope));
   }
   function campusGroups(doc) {
     if (doc.location?.hostname !== "xiaoyuan.zhipin.com") return [];
     return Array.from(doc.querySelectorAll(CAMPUS_SCOPE)).flatMap(scope => {
       const button = scope.querySelector(CAMPUS_ADD);
       const title = campusTitle(scope);
-      return button && title && CAMPUS_WORK_TITLE.test(bare(title.textContent)) ? [{ domain: "work", button, scope, title }] : [];
+      const workKind = campusWorkKind(scope);
+      return button && title && workKind ? [{ domain: "work", button, scope, title, workKind }] : [];
     });
   }
   function locateCampusGroup(group, isVisible) {
@@ -257,21 +265,30 @@
   function collectSpec(groups, fields, options = {}) {
     const isVisible = options.isVisible || visible;
     const targets = targetCounts(fields);
+    const helpers = root.ResumeProAIHelpers || (typeof require === "function" ? require("./ai-helpers.js") : null);
+    // BOSS uses the same source records for planning rows and filling them.
+    const targetFor = group => group.workKind && helpers?.workRecords
+      ? helpers.workRecords(fields, group.workKind).length : targets[group.domain];
     const candidates = [];
     const refs = new Map();
     const problems = [];
     for (const domain of domains) {
       const mine = groups.filter(group => group.domain === domain.id);
-      if (!mine.length || !targets[domain.id]) continue;
-      if (mine.length > 1) { problems.push({ domain: domain.id, reason: "ambiguous" }); continue; }
+      if (!mine.length) continue;
+      if (mine.length > 1) {
+        if (mine.some(group => targetFor(group))) problems.push({ domain: domain.id, reason: "ambiguous" });
+        continue;
+      }
+      const target = targetFor(mine[0]);
+      if (!target) continue;
       const located = mine[0].scope ? locateCampusGroup(mine[0], isVisible) : locateGroup(mine[0], isVisible, options.labelOf);
       if (located.reason) { problems.push({ domain: domain.id, reason: located.reason }); continue; }
-      if (located.current >= targets[domain.id]) continue;
-      if (targets[domain.id] - located.current > 5) { problems.push({ domain: domain.id, reason: "over_limit", needed: targets[domain.id] - located.current }); continue; }
+      if (located.current >= target) continue;
+      if (target - located.current > 5) { problems.push({ domain: domain.id, reason: "over_limit", needed: target - located.current }); continue; }
       const id = `add-${candidates.length}`;
-      candidates.push({ id, domain: domain.id, label: domain.label, current: located.current, target: targets[domain.id] });
+      candidates.push({ id, domain: domain.id, label: domain.label, current: located.current, target });
       refs.set(id, { spec: true, button: mine[0].button, buttonKey: buttonKey(mine[0].button), domain, visible: isVisible, labelOf: options.labelOf,
-        allowed: options.allowed, press: options.press, timing: options.timing, target: targets[domain.id], ...located });
+        allowed: options.allowed, press: options.press, timing: options.timing, target, ...located });
     }
     return { candidates, refs, problems };
   }
@@ -460,7 +477,7 @@
     return { added, scopes };
   }
   const labels = Object.fromEntries(domains.map(domain => [domain.id, domain.label]));
-  const api = { targetCounts, collect, collectSpec, campusGroups, campusRows, campusWorkScope, validatePlan, execute, labels };
+  const api = { targetCounts, collect, collectSpec, campusGroups, campusRows, campusWorkScope, campusWorkKind, validatePlan, execute, labels };
   root.ResumeProFormAgent = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);

@@ -4406,8 +4406,9 @@
         const recordFailure = () => {
           if (match.bossSchool && !bossEducationSchoolMatches(element.element, match.bossSchool)) return "education_school_unconfirmed";
           if (match.bossCompany && !bossWorkCompanyMatches(element.element, match.bossCompany)) return "work_company_unconfirmed";
-          if (match.cetScoreLevel && bossCetSelection(element.element.closest(".group-part-item")).selected !== match.cetScoreLevel) {
-            return "english_level_unconfirmed";
+          if (!match.blocked && fieldMeta?.bossCet?.role === "score") {
+            const selected = bossCetSelection(element.element.closest(".group-part-item")).selected;
+            if (!match.cetScoreLevel || selected !== match.cetScoreLevel) return "english_level_unconfirmed";
           }
           return "";
         };
@@ -5247,10 +5248,13 @@
     return Boolean(input && normalize(input.value) === normalize(expected));
   }
 
+  const BOSS_CET_LEVEL_LABEL = /^英语(?:能力)?等级$/;
+  const BOSS_CET_SCORE_LABEL = /^英语(?:考试)?(?:分数|成绩|得分)$/;
+
   function bossCetSelection(row) {
     const roots = Array.from(row?.querySelectorAll(".form-item") || []).flatMap(item => {
       const label = item.querySelector(".item-label .label-text")?.textContent?.trim();
-      return /^英语(?:能力)?等级$/.test(label) ? Array.from(item.querySelectorAll(".ui-select")).filter(isVisible) : [];
+      return BOSS_CET_LEVEL_LABEL.test(label) ? Array.from(item.querySelectorAll(".ui-select")).filter(isVisible) : [];
     });
     if (roots.length !== 1) return { root: null, selected: "", otherSelected: false };
     const root = roots[0];
@@ -5275,9 +5279,11 @@
       if (workScope && !workGroups.has(workScope)) {
         const rows = agent.campusRows(workScope);
         const inputs = rows.map(bossWorkCompanyInput);
-        workGroups.set(workScope, { rows, inputs, companies: inputs.map(input => input?.value?.trim() || ""), id: workGroups.size });
+        workGroups.set(workScope, { rows, inputs, companies: inputs.map(input => input?.value?.trim() || ""),
+          kind: agent.campusWorkKind?.(workScope), id: workGroups.size });
       }
-      if (el.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com" && /^英语(?:能力)?等级$/.test(control.label)) {
+      if (el.ownerDocument?.location?.hostname === "xiaoyuan.zhipin.com"
+        && (BOSS_CET_LEVEL_LABEL.test(control.label) || BOSS_CET_SCORE_LABEL.test(control.label))) {
         const row = el.closest(".group-part-item");
         if (row && !cetRows.has(row)) cetRows.set(row, { ...bossCetSelection(row), index: cetRows.size });
       }
@@ -5306,8 +5312,8 @@
       const workRole = workIndex >= 0 && self.ResumeProAIHelpers?.workRole?.(control.label.replace(/（(?:开始|结束)）$/, ""));
       const workPart = workRole === "range" && control.rangePart ? (control.rangePart === "开始" ? "start" : "end") : workRole;
       const cet = cetRows.get(rowElement);
-      const cetRole = cet?.root && (control.root === cet.root ? "level"
-        : control.controlKind === "text" && /^英语(?:考试)?(?:分数|成绩|得分)$/.test(control.label) ? "score" : "");
+      const cetRole = cet && (cet.root === control.root ? "level"
+        : control.controlKind === "text" && BOSS_CET_SCORE_LABEL.test(control.label) ? "score" : "");
       const base = {
         controlKind,
         label: control.label,
@@ -5315,7 +5321,7 @@
         ariaLabel: element.getAttribute("aria-label") || "",
         group: control.group,
         ...(workPart && workPart !== "range" ? { bossWork: { role: workPart, row: `${prefix}${work.id}:${workIndex}`,
-          index: workIndex, companies: work.companies, companyReady: work.inputs.every(Boolean) } } : {}),
+          index: workIndex, companies: work.companies, companyReady: work.inputs.every(Boolean), kind: work.kind } } : {}),
         ...(cetRole ? { bossCet: { role: cetRole, row: `${prefix}${cet.index}`, selected: cet.selected, otherSelected: cet.otherSelected } } : {}),
         ...(educationRole ? { bossEducation: { role: educationRole, row: `${prefix}${educationRows.get(row)}`,
           index: educationRows.get(row), school: schools.get(row) || "",

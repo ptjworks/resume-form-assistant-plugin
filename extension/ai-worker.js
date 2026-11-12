@@ -667,7 +667,7 @@ function promptFields(fields, catalog, withValues = false) {
   let noFit = 0;
   for (const field of fields) {
     // #466 无法唯一确认同一条教育记录时，两端都留空，不能分别让模型挑两条资料。
-    if (field.educationRange || field.bossEducation || field.bossWork) { noFit += 1; continue; }
+    if (field.educationRange || field.bossEducation || field.bossWork || field.bossCet?.role === "score") { noFit += 1; continue; }
     const choice = (field.inputType === "select" || field.inputType === "radio") && field.cascadeGroup === undefined
       && field.cascade !== true && helpers.hasRealOptions(field);
     if (!choice) { sent.push(field); continue; }

@@ -64,7 +64,8 @@ test("BOSS empty work section shares the deep and assisted plan without relying 
     <div class="op-text-wrapper"><div class="edit-part" style="cursor:pointer"><span>添加</span></div></div></div>
     </div>`;
   const dom = new JSDOM(`<form class="ui-form"><div class="render-map-container">
-    ${group("work", "工作/实习经历")}${group("language", "语言能力")}</div></form>`,
+    ${group("work", "工作/实习经历")}${group("language", "语言能力")}</div>
+    <section><h2>工作经历</h2><button type="button" id="other-work">新增工作经历</button></section></form>`,
   { url: "https://xiaoyuan.zhipin.com/volunteer/index" });
   t.after(() => dom.window.close());
   dom.window.HTMLElement.prototype.getClientRects = function () { return this.hidden ? [] : [{}]; };
@@ -76,7 +77,10 @@ test("BOSS empty work section shares the deep and assisted plan without relying 
     work.insertAdjacentHTML("beforeend", `<div class="group-part-item" data-group-id="WORK" data-part-id="${clicks}"><input></div>`);
   });
   doc.querySelector("#language .edit-part").addEventListener("click", () => assert.fail("must not add a language row"));
-  const template = ["甲公司", "乙公司"].map(value => ({ group: "实习经历", key: `${value}实习经历-公司`, value }));
+  const template = [
+    { group: "工作经历", key: "工作1公司", value: "甲公司" },
+    { group: "实习经历", key: "实习1公司", value: "乙公司" }
+  ];
   const { built, checked } = analyse(doc, { pageState: "editing" });
   assert.equal(checked.ok, true, checked.reason);
   assert.match(built.parts[0].text, /\[区块\] 工作\/实习经历\s+e\d+ button "添加"/);
@@ -85,7 +89,11 @@ test("BOSS empty work section shares the deep and assisted plan without relying 
   assert.equal(planned.items[0].element, work.querySelector(".edit-part"));
   assert.equal(planned.items[0].count, 2);
   assert.equal(clicks, 0);
-  assert.equal(agent.collect(doc, template).candidates[0].current, 0);
+  const initial = agent.collect(doc, template);
+  assert.equal(initial.candidates.length, 1);
+  assert.equal(initial.candidates[0].current, 0);
+  assert.equal(initial.candidates[0].target, 2);
+  assert.equal(initial.refs.get(initial.candidates[0].id).button, work.querySelector(".edit-part"));
   const result = await run(doc, built, planned);
   assert.equal(result.ok, true, result.message);
   assert.equal(result.done.add, 2);
