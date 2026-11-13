@@ -254,7 +254,7 @@ export function describeDigest(count: number, more: number): Message | null {
   const tail = more > 0 ? "，还有更多" : "";
   return {
     tone: "warn",
-    text: `有 ${count} 条待办已经过了时间${tail}。处理完点一下完成，它就不再出现在这里。`,
+    text: `${count} 条已逾期${tail}`,
   };
 }
 

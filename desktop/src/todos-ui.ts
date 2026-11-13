@@ -24,7 +24,6 @@ import {
   EMPTY_TODOS,
   FILTER_OPTIONS,
   NEEDS_APPLICATION,
-  PRECISION_LABEL,
   STATUS_LABEL,
   bucketOf,
   describeCapability,
@@ -72,7 +71,6 @@ function localTimeZone(): string {
 
 // 线条图标，只是装饰，读屏跳过。
 const ICON = {
-  plus: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   check: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
   close: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   edit: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>',
@@ -80,6 +78,7 @@ const ICON = {
   bell: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>',
   building: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V5l8-2v18M12 8h8v13M8 8v.01M8 12v.01M8 16v.01M16 12v.01M16 16v.01M2 21h20"/></svg>',
   calendar: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="m9 15 2 2 4-4"/></svg>',
+  more: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>',
 };
 
 /** 宿主注入的事：没有申请时把人领去新增申请。测试里可以不给。 */
@@ -107,6 +106,7 @@ export function mountTodos(
   const datetimeInput = input("todo-datetime");
   const dialog = must<HTMLDialogElement>("todo-dialog");
   const formStatus = must("todo-form-status");
+  const formOptions = must<HTMLDetailsElement>("todo-form-options");
 
   let capability: ReminderCapability = { available: false, reason: null };
   let applications: ApplicationSummary[] = [];
@@ -192,7 +192,7 @@ export function mountTodos(
           <strong>${escapeHtml(todo.title)}</strong>
           <span class="todo-where">${ICON.building}<span>${where || "未关联申请信息"}</span>${round}</span>
         </button>
-        <span class="due-badge" data-tone="${due.tone}">${escapeHtml(due.text)}</span>
+        ${due.tone === "none" ? "" : `<span class="due-badge" data-tone="${due.tone}">${escapeHtml(due.text.replace(/^已逾期 · /, ""))}</span>`}
       </li>`;
   }
 
@@ -209,15 +209,8 @@ export function mountTodos(
         <div class="workspace-empty">
           <span class="workspace-empty-icon">${ICON.calendar}</span>
           <h2>还没有待办</h2>
-          <p>${escapeHtml(EMPTY_TODOS)}</p>
-          ${blocked ? `<p class="workspace-empty-warn">${escapeHtml(NEEDS_APPLICATION)}</p>` : ""}
-          <div class="workspace-empty-actions">
-            ${
-              blocked
-                ? '<button type="button" class="primary" data-empty-act="application">去新增申请</button>'
-                : `<button type="button" class="primary" data-empty-act="todo">${ICON.plus}新增待办</button>`
-            }
-          </div>
+          <p>${escapeHtml(blocked ? NEEDS_APPLICATION : EMPTY_TODOS)}</p>
+          ${blocked ? '<div class="workspace-empty-actions"><button type="button" data-empty-act="application">去新增申请</button></div>' : ""}
         </div>`;
       return;
     }
@@ -238,10 +231,6 @@ export function mountTodos(
       .join("");
   }
 
-  function fact(label: string, value: string, extra = "") {
-    return `<div${extra}><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
-  }
-
   function renderDetail() {
     const todo = todos.find((entry) => entry.id === selectedId);
     if (!todo) {
@@ -252,38 +241,37 @@ export function mountTodos(
     }
     const id = escapeHtml(todo.id);
     const reminder = describeReminder(todo, capability);
+    const reminderTime = describeRemindAt(todo);
     const bucket = bucketOf(todo, now());
     const where = [todo.company, todo.position].filter(Boolean).map(escapeHtml).join(" · ");
-    const actions =
-      todo.status === "open"
-        ? `<button type="button" class="primary" data-todo="${id}" data-act="done">${ICON.check}标记为已完成</button>
-           <button type="button" data-todo="${id}" data-act="edit">${ICON.edit}编辑 / 改期</button>
-           <button type="button" class="todo-cancel-action" data-todo="${id}" data-act="cancelled">${ICON.close}取消待办</button>`
-        : `<button type="button" class="primary" data-todo="${id}" data-act="open">${ICON.reopen}重新打开</button>`;
+    const isOpen = todo.status === "open";
     const timing =
-      todo.status === "open" && (bucket === "overdue" || bucket === "today")
+      isOpen && (bucket === "overdue" || bucket === "today")
         ? `<span class="due-badge" data-tone="${bucket}">${BUCKET_LABEL[bucket]}</span>`
         : "";
-    const zone = todo.timeZone
-      ? escapeHtml(todo.timeZone)
-      : `本机时区${localTimeZone() ? `（${escapeHtml(localTimeZone())}）` : ""}`;
     detail.innerHTML = `
       <article class="todo-detail" data-status="${escapeHtml(todo.status)}">
-        <div class="todo-detail-actions">${actions}${writeNote && todo.status !== "cancelled"
-          ? `<button type="button" data-todo="${id}" data-act="write-note">写心得</button>` : ""}</div>
         <div class="todo-detail-head">
-          <p class="todo-detail-kicker"><span class="todo-status-chip" data-status="${escapeHtml(todo.status)}">${todo.status === "open" ? "未完成" : STATUS_LABEL[todo.status]}</span>${timing}</p>
-          <h2>${escapeHtml(todo.title)}</h2>
+          <div class="todo-detail-title">
+            <h2>${escapeHtml(todo.title)}</h2>
+            ${!isOpen ? `<span class="todo-status-chip" data-status="${escapeHtml(todo.status)}">${STATUS_LABEL[todo.status]}</span>` : ""}
+            ${isOpen ? `<details class="todo-detail-menu"><summary aria-label="更多待办操作" title="更多待办操作">${ICON.more}</summary>
+              <button type="button" class="todo-cancel-action" data-todo="${id}" data-act="cancelled">${ICON.close}取消待办</button></details>` : ""}
+          </div>
+          <p class="todo-detail-application">${ICON.building}<span>${where || "未关联申请信息"}${todo.interviewRound ? ` · 第 ${todo.interviewRound} 轮` : ""}</span></p>
         </div>
-        <dl class="detail-facts todo-facts">
-          ${fact("关联申请", where || "未关联申请信息", ' class="is-wide"')}
-          ${fact("到期", escapeHtml(describeDue(todo)), ' class="is-wide"')}
-          ${fact("到期方式", escapeHtml(PRECISION_LABEL[todo.duePrecision] ?? todo.duePrecision))}
-          ${fact("时区", zone)}
-          ${fact("提醒时刻", escapeHtml(describeRemindAt(todo)))}
-          ${fact("面试轮次", todo.interviewRound ? `第 ${todo.interviewRound} 轮` : "未设")}
-        </dl>
-        <div class="todo-reminder" data-tone="${reminder.tone}">${ICON.bell}<div><strong>系统提醒</strong><p>${escapeHtml(reminder.text)}</p></div></div>
+        <div class="todo-schedule">
+          <div class="todo-detail-row">${ICON.calendar}<div><span>截止时间</span><strong>${escapeHtml(describeDue(todo))}</strong></div>${timing}</div>
+          <div class="todo-detail-row todo-reminder" data-tone="${reminder.tone}">${ICON.bell}<div><span>提醒</span>
+            <strong>${escapeHtml(reminder.tone === "success" ? reminder.text : reminderTime)}</strong>
+            ${reminder.tone === "success" ? "" : `<p>${escapeHtml(reminder.text)}</p>`}</div></div>
+        </div>
+        <div class="todo-detail-actions">
+          ${isOpen ? `<button type="button" class="primary" data-todo="${id}" data-act="done">${ICON.check}标记为已完成</button>
+            <button type="button" data-todo="${id}" data-act="edit">${ICON.edit}编辑 / 改期</button>`
+            : `<button type="button" class="primary" data-todo="${id}" data-act="open">${ICON.reopen}重新打开</button>`}
+          ${writeNote && todo.status !== "cancelled" ? `<button type="button" data-todo="${id}" data-act="write-note">写心得</button>` : ""}
+        </div>
       </article>`;
   }
 
@@ -352,7 +340,6 @@ export function mountTodos(
       digest.hidden = !message;
       if (message) {
         digest.textContent = message.text;
-        digest.className = `note ${message.tone}`;
       }
     } catch {
       // 汇总拿不到不该挡住整个视图。
@@ -425,7 +412,7 @@ export function mountTodos(
     syncPrecision();
     sayInForm(null);
     must("todo-form-heading").textContent = "新增待办";
-    must("todo-form-intro").textContent = "关联一条申请，写清楚做什么、什么时候。";
+    formOptions.open = false;
     const noApps = applicationsLoaded && !applications.length;
     must("todo-no-apps").hidden = !noApps;
     must("todo-application-hint").hidden = true;
@@ -454,7 +441,7 @@ export function mountTodos(
     resetForm();
     openDialog();
     if (applicationsLoaded && !applications.length) maybe("todo-go-applications")?.focus();
-    else applicationSelect.focus();
+    else input("todo-title").focus();
   }
 
   async function openEdit(id: string) {
@@ -494,7 +481,7 @@ export function mountTodos(
       input("todo-round").value = todo.interviewRound ? String(todo.interviewRound) : "";
       syncPrecision();
       must("todo-form-heading").textContent = "编辑待办";
-      must("todo-form-intro").textContent = "修改标题、到期时间或提醒。";
+      formOptions.open = Boolean(todo.timeZone || todo.remindAtUtc || todo.interviewRound);
       must("todo-no-apps").hidden = true;
       must("todo-application-hint").hidden = false;
       must("todo-edit-note").hidden = false;
@@ -543,8 +530,13 @@ export function mountTodos(
     const id = button.dataset.todo ?? "";
     const act = button.dataset.act ?? "";
     if (act === "select") {
+      const restoreFocus = document.activeElement === button;
       selectedId = id;
       render();
+      if (restoreFocus) {
+        Array.from(list.querySelectorAll<HTMLButtonElement>('[data-act="select"]'))
+          .find(row => row.dataset.todo === id)?.focus({ preventScroll: true });
+      }
       return;
     }
     if (act === "write-note") {
@@ -570,7 +562,9 @@ export function mountTodos(
     const problem = formProblem(args);
     if (problem) {
       sayInForm({ tone: "warn", text: problem.text });
-      maybe(problem.field)?.focus();
+      const field = maybe(problem.field);
+      if (field?.closest?.("#todo-form-options")) formOptions.open = true;
+      field?.focus();
       return;
     }
     sayInForm(null);
@@ -617,23 +611,31 @@ export function mountTodos(
       void refresh().then((ok) => { if (ok) say({ tone: "info", text: "已刷新待办。" }); });
       return;
     }
-    const empty = (event.target as HTMLElement | null)?.closest<HTMLElement>("button[data-empty-act]");
-    if (empty) {
-      if (empty.dataset.emptyAct === "application") createApplication?.();
-      else openCreate();
+    if ((event.target as HTMLElement | null)?.closest('button[data-empty-act="application"]')) {
+      createApplication?.();
       return;
     }
     void onAction(event);
   });
   detail.addEventListener("click", (event) => void onAction(event));
+  detail.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    const menu = detail.querySelector<HTMLDetailsElement>(".todo-detail-menu[open]");
+    if (!menu) return;
+    event.preventDefault();
+    menu.open = false;
+    menu.querySelector("summary")?.focus();
+  });
   filterGroup.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement | null)?.closest<HTMLElement>("button[data-filter]");
     const next = button?.dataset.filter as TodoFilter | undefined;
     if (!next || next === filter) return;
+    const restoreFocus = document.activeElement === button;
     filter = next;
     // 切了筛选，原来选中的那条不在新列表里了就换成新列表的第一条。
     if (!visibleTodos().some((todo) => todo.id === selectedId)) selectedId = firstShown();
     render();
+    if (restoreFocus) filterGroup.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
   });
   precisionSelect.addEventListener("change", syncPrecision);
 

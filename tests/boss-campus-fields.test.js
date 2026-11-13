@@ -215,13 +215,17 @@ test("BOSS reveals an offscreen dropdown before opening, and maps only the appro
   level.scrollIntoView = () => { scrolled = true; };
   const api = operator(doc);
   const [a, b, c] = scanner.scanPage(doc, { isVisible: visible }).controls;
-  for (const [entry, value] of [[a, "博士研究生（全日制）"], [b, "CET-6（587 分）"], [c, "博士"]]) {
+  for (const [entry, value] of [[a, "博士研究生（直博）"], [b, "CET-6（587 分）"], [c, "博士"]]) {
     const result = await api.operate({ ...entry, binding: entry }, value);
     assert.equal(result.ok, true, JSON.stringify(result));
   }
   assert.equal(scrolled, true);
   assert.deepEqual([chooser.picked, english.picked, degree.picked], [["博士"], ["六级"], ["理学博士"]]);
+  assert.equal((await api.operate({ ...c, binding: c }, "理学学士")).ok, true);
+  assert.deepEqual(degree.picked, ["理学博士", "学士"]);
   assert.equal((await api.operate({ ...c, binding: c }, "本科")).reason, "no_option_match");
+  assert.equal((await api.operate({ ...c, binding: c }, "工学博士")).reason, "no_option_match");
+  assert.equal((await api.operate({ ...a, binding: a }, "博士研究生（未毕业）")).reason, "no_option_match");
 });
 
 test("BOSS city selects the committed province, city and district through the website's columns", async t => {

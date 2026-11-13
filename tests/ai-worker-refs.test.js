@@ -96,24 +96,60 @@ test("BOSS internship fields follow the company record after one existing row is
     { group: "实习经历", key: "虚构甲公司实习经历-公司", value: "虚构甲公司" },
     { group: "实习经历", key: "虚构甲公司实习经历-职位", value: "运营实习生" },
     { group: "实习经历", key: "虚构甲公司实习经历-时间", value: "2025.06—2025.09" },
+    { group: "实习经历", key: "虚构甲公司实习经历-内容２", value: "复核项目记录。" },
+    { group: "实习经历", key: "虚构甲公司实习经历-内容1", value: "整理调研资料。" },
     { group: "实习经历", key: "虚构乙公司实习经历-公司", value: "虚构乙公司" },
     { group: "实习经历", key: "虚构乙公司实习经历-职位", value: "研发实习生" },
-    { group: "实习经历", key: "虚构乙公司实习经历-时间", value: "2024.07—2024.08" }
+    { group: "实习经历", key: "虚构乙公司实习经历-时间", value: "2024.07—2024.08" },
+    { group: "实习经历", key: "虚构乙公司实习经历-工作描述", value: "维护培训资料。" }
   ];
-  const row = (companies, index) => [["company", "工作单位"], ["position", "职务"], ["start", "时间段（开始）"], ["end", "时间段（结束）"]]
-    .map(([role, label]) => ({ fieldId: `${index}-${role}`, label, inputType: "text",
+  const row = (companies, index) => [["company", "工作单位"], ["position", "职务"], ["start", "时间段（开始）"],
+    ["end", "时间段（结束）"], ["description", "工作内容"]]
+    .map(([role, label]) => ({ fieldId: `${index}-${role}`, label, inputType: role === "description" ? "textarea" : "text",
       bossWork: { role, companies, index, companyReady: true, kind: "combined" } }));
   const fresh = await env.run({ formFields: [...row(["", ""], 0), ...row(["", ""], 1)], resumeFields });
   assert.equal(valueOf(fresh, "0-company"), "虚构甲公司");
   assert.equal(valueOf(fresh, "1-position"), "研发实习生");
   assert.equal(valueOf(fresh, "1-end"), "2024-08");
+  assert.equal(valueOf(fresh, "1-description"), "维护培训资料。");
   const addition = await env.run({ formFields: row(["虚构乙公司", ""], 1), resumeFields });
   assert.equal(valueOf(addition, "1-company"), "虚构甲公司");
   assert.deepEqual(addition.matches.find(m => m.fieldId === "1-start"),
     { fieldId: "1-start", value: "2025-06", bossCompany: "虚构甲公司" });
+  assert.deepEqual(addition.matches.find(m => m.fieldId === "1-description"),
+    { fieldId: "1-description", value: "整理调研资料。\n复核项目记录。", bossCompany: "虚构甲公司" });
   const unclear = await env.run({ formFields: row(["", ""], 1), resumeFields: resumeFields.slice(0, 3) });
   assert.ok(unclear.matches.every(match => match.blocked === "work_record_unconfirmed"));
   assert.equal(env.calls.length, 0);
+});
+
+test("experience descriptions distinguish paragraph numbers from legacy record numbers", () => {
+  const resume = [
+    { group: "工作经历", key: "公司1", value: "虚构甲公司" },
+    { group: "工作经历", key: "工作内容1", value: "整理旧系统手册。" },
+    { group: "工作经历", key: "公司2", value: "虚构乙公司" },
+    { group: "工作经历", key: "工作内容2", value: "编写测试脚本。" },
+    { group: "工作经历", key: "工作经历2-主要工作职责2", value: "维护测试数据。" },
+    { group: "实习经历 2", key: "公司", value: "虚构丙公司" },
+    { group: "实习经历 2", key: "实习内容10", value: "整理交接文档。" },
+    { group: "实习经历 2", key: "内容2", value: "复核项目记录。" },
+    { group: "实习经历 2", key: "实习收获3", value: "认识了新同事。" }
+  ];
+  assert.deepEqual(helpers.workRecords(resume, "combined"), [
+    { company: "虚构甲公司", description: "整理旧系统手册。" },
+    { company: "虚构乙公司", description: "编写测试脚本。\n维护测试数据。" },
+    { company: "虚构丙公司", description: "复核项目记录。\n整理交接文档。" }
+  ]);
+  const conflict = [...resume, { group: "实习经历 2", key: "实习职责2", value: "填写另一份记录。" }];
+  assert.deepEqual(helpers.workRecords(conflict, "internship"), [{ company: "虚构丙公司" }]);
+  const namedGroups = [
+    { group: "实习经历 1", key: "虚构公司实习经历-内容1", value: "整理旧系统手册。" },
+    { group: "实习经历 2", key: "虚构公司实习经历-内容2", value: "维护测试数据。" }
+  ];
+  assert.deepEqual(helpers.workRecords(namedGroups, "internship"), [
+    { company: "虚构公司", description: "整理旧系统手册。" },
+    { company: "虚构公司", description: "维护测试数据。" }
+  ]);
 });
 
 test("a combined BOSS work section keeps work and internship records with the same index separate", async () => {
@@ -188,6 +224,54 @@ test("a contradictory education field leaves other school matches and valid date
   const blocked = result.matches.filter(match => match.fieldId.startsWith("1-"));
   assert.equal(blocked.length, 3);
   assert.ok(blocked.every(match => match.blocked === "education_record_unconfirmed"));
+  assert.equal(env.calls.length, 0);
+});
+
+test("education rows separate degree text from levels and use a corroborated highest degree only once", async () => {
+  const item = (group, key, value) => ({ group, key, value });
+  const summary = [
+    item("基本信息", "最高学历", "博士研究生（全日制）"),
+    item("基本信息", "最高学位", "理学博士")
+  ];
+  const undergraduate = item("教育背景", "虚构师范大学教育经历-学历", "理学学士");
+  const doctorate = item("教育背景", "虚构理工大学教育经历-学历", "博士研究生（直博）");
+  const row = (index, school = "") => ["school", "level", "degree"].map(role => ({
+    fieldId: `${index}-${role}`, label: { school: "学校名称", level: "学历", degree: "学位" }[role], inputType: "select",
+    bossEducation: { role, index, row: String(index), school, highestFirst: true }
+  }));
+  const env = worker();
+  const formFields = [...row(0), ...row(1)];
+  const resumeFields = [...summary, undergraduate, doctorate];
+  const result = await env.run({ formFields, resumeFields });
+  assert.deepEqual(formFields.map(field => valueOf(result, field.fieldId)),
+    ["虚构理工大学", "博士研究生(直博)", "理学博士", "虚构师范大学", "本科", "理学学士"]);
+  const bySchool = [...row(0, "虚构理工大学"), ...row(1, "虚构师范大学")];
+  for (const invalidSummary of [
+    [summary[1]],
+    [summary[0], { ...summary[1], value: "工学硕士" }],
+    [...summary, { ...summary[1], value: "工学博士" }]
+  ]) {
+    const ambiguous = await env.run({ formFields: bySchool, resumeFields: [...invalidSummary, undergraduate, doctorate] });
+    assert.equal(valueOf(ambiguous, "0-degree"), undefined);
+    assert.equal(valueOf(ambiguous, "1-degree"), "理学学士");
+  }
+  const secondDoctorate = item("教育背景", "虚构医科大学教育经历-学历", "博士研究生");
+  const tied = await env.run({ formFields: bySchool, resumeFields: [...resumeFields, secondDoctorate] });
+  assert.equal(valueOf(tied, "0-degree"), undefined);
+  const explicit = item("教育背景", "虚构理工大学教育经历-学位", "工学博士");
+  const preferred = await env.run({ formFields, resumeFields: [...resumeFields, explicit] });
+  assert.equal(valueOf(preferred, "0-degree"), "工学博士");
+  const conflicting = item("教育背景", "虚构师范大学教育经历-学位", "工学学士");
+  const conflict = await env.run({ formFields: bySchool, resumeFields: [...resumeFields, conflicting] });
+  assert.equal(valueOf(conflict, "1-degree"), undefined);
+  const conflictingLevel = { ...undergraduate, key: "虚构师范大学教育经历-学历层次", value: "硕士研究生" };
+  const mixed = await env.run({ formFields: bySchool, resumeFields: [...resumeFields, conflictingLevel] });
+  assert.equal(valueOf(mixed, "1-level"), "硕士研究生");
+  assert.equal(valueOf(mixed, "1-degree"), undefined);
+  const unfinished = await env.run({ formFields: bySchool, resumeFields: [
+    ...summary, undergraduate, { ...doctorate, value: "博士研究生（在读）" }
+  ] });
+  assert.equal(valueOf(unfinished, "0-degree"), undefined);
   assert.equal(env.calls.length, 0);
 });
 
@@ -593,7 +677,7 @@ test("#481 an internship description joins only the saved content for the matche
   const resumeFields = [employer,
     { group: "实习经历", key: "虚构甲单位实习经历-内容3", value: "整理交接文档。" },
     { group: "实习经历", key: "虚构甲单位实习经历-内容1", value: "整理调研资料。" },
-    { group: "实习经历", key: "虚构甲单位实习经历-内容2", value: "复核项目记录。" },
+    { group: "实习经历", key: "虚构甲单位实习经历-内容２", value: "复核项目记录。" },
     { group: "实习经历", key: "虚构乙单位实习经历-公司", value: "虚构乙单位" },
     { group: "实习经历", key: "虚构乙单位实习经历-内容1", value: "维护培训资料。" }
   ];

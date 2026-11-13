@@ -594,7 +594,6 @@ const EXPERIENCE_SECTIONS = [
   [/^(?:工作(?:经历|经验)?|employment|workexperience)\d*$/, "employment"],
   [/^(?:项目(?:经历|经验)?|projects?|projectexperience)\d*$/, "project"]
 ];
-const EXPERIENCE_DESCRIPTION = /^(?:(?:实习|工作|项目)?(?:内容|描述|职责)|主要(?:工作(?:内容|职责)?|职责)|岗位职责|responsibilities|description)(\d*)$/;
 function experienceSection(label) {
   const key = ResumeProAIHelpers.normalizeText(label);
   return EXPERIENCE_SECTIONS.find(([pattern]) => pattern.test(key))?.[1];
@@ -608,7 +607,7 @@ function experiencePart(label, type) {
   if (/^(?:开始时间|起始时间|入职时间|startdate)$/.test(key)) return "start";
   if (/^(?:结束时间|截止时间|离职时间|enddate)$/.test(key)) return "end";
   if (/^(?:时间|起止时间|时间段|(?:实习|工作|项目)时间|period|daterange)$/.test(key)) return "period";
-  return EXPERIENCE_DESCRIPTION.test(key) ? "description" : "";
+  return ResumeProAIHelpers.experienceDescriptionOrder(label) !== null ? "description" : "";
 }
 
 // 配对用本地的原始分组和条目编号，展示给模型的字段名可能已经脱敏或截断。
@@ -627,7 +626,7 @@ function experienceRecords(catalog) {
     if (!records.has(id)) records.set(id, { type, parts: new Map() });
     const { parts } = records.get(id);
     if (!parts.has(part)) parts.set(part, []);
-    const order = Number(/\d+$/.exec(label)?.[0] || 0);
+    const order = part === "description" ? ResumeProAIHelpers.experienceDescriptionOrder(label) : 0;
     parts.get(part).push({ order, value: String(catalog.values.get(ref)).trim() });
   });
   return [...records.values()].filter(record => record.parts.get("name")?.length === 1);
@@ -670,14 +669,14 @@ function experienceEvidence(record, row, values) {
 
 // 同一条网页经历能对应到一段资料时，按原顺序拼接该段内容；同名单位用岗位或日期消除歧义。
 function completeExperienceDescriptions(fields, matches, catalog, excludedIds) {
-  const normalize = ResumeProAIHelpers.normalizeText;
+  const { normalizeText: normalize, experienceDescriptionOrder, joinExperienceDescription } = ResumeProAIHelpers;
   const values = new Map(matches.filter(match => !match.blocked).map(match => [match.fieldId, match.value]));
   const filled = [];
   let records;
   for (const field of fields) {
     const type = experienceSection(field.group);
     if (!type || field.bossWork || !isOpenQuestion(field) || excludedIds.has(field.fieldId)
-      || !EXPERIENCE_DESCRIPTION.test(normalize(field.label))) continue;
+      || experienceDescriptionOrder(field.label) === null) continue;
     const section = normalize(field.group);
     const row = fields.filter(item => normalize(item.group) === section);
     if (row.filter(item => experiencePart(item.label, type) === "description").length !== 1) continue;
@@ -694,7 +693,7 @@ function completeExperienceDescriptions(fields, matches, catalog, excludedIds) {
     // 已有回答若是某段经历的一条原文，以已配对的经历为准；单独保存的自定义回答照旧。
     if (existing && !records.some(record => record.type === type
       && record.parts.get("description")?.some(part => part.value === existing))) continue;
-    const text = [...new Set(contents.slice().sort((a, b) => a.order - b.order).map(part => part.value))].join("\n");
+    const text = joinExperienceDescription(contents);
     if (text) filled.push({ fieldId: field.fieldId, value: text });
   }
   return filled;

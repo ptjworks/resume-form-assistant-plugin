@@ -22,6 +22,73 @@ function button(label: string, parent: ParentNode = document) {
   return found!;
 }
 
+test("folder application results are visible, and only an explicit selection is saved", async () => {
+  const applications = [
+    { id: "available", company: "示例科技", title: "工程师" },
+    { id: "linked", company: "另一家公司", title: "设计师" }
+  ];
+  const invoke = vi.fn<Invoke>().mockImplementation(async <T,>(command: string, args?: Record<string, unknown>) => {
+    if (command === "note_index_cmd") return {
+      epoch: "archive", folders: [{ ...source, applicationId: "linked" }], notes: []
+    } as T;
+    if (command === "list_applications_cmd") {
+      const { query } = args?.args as { query: string };
+      const items = applications.filter(app => app.company.includes(query));
+      return { items, total: items.length } as T;
+    }
+    if (command === "change_note_cmd") return "created" as T;
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const root = document.createElement("div");
+  document.body.append(root);
+  await mountNotes(root, invoke as Invoke, () => {}).activate();
+  root.querySelector<HTMLButtonElement>('[aria-label="新建文件夹"]')!.click();
+  const dialog = await vi.waitFor(() => {
+    const result = document.querySelector("dialog");
+    expect(result).not.toBeNull();
+    return result!;
+  });
+  const search = dialog.querySelector<HTMLInputElement>('input[type="search"]')!;
+  const results = dialog.querySelector(".notes-application-results")!;
+  const status = dialog.querySelector('[role="status"]')!;
+  const query = (value: string) => {
+    search.value = value;
+    search.dispatchEvent(new Event("input"));
+  };
+  query("另一家");
+  await vi.waitFor(() => expect(status.textContent).toBe("没有其他可关联的投递记录。"));
+  expect(results.childElementCount).toBe(0);
+  query("无结果");
+  await vi.waitFor(() => expect(status.textContent).toBe("没有找到匹配的投递记录。"));
+  query("示例");
+  const match = await vi.waitFor(() => {
+    const result = results.querySelector("button");
+    expect(result?.textContent).toContain("示例科技");
+    return result!;
+  });
+  search.focus();
+  search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  expect(document.activeElement).toBe(match);
+  expect(dialog.querySelector(".notes-application-selection")?.hasAttribute("hidden")).toBe(true);
+  match.click();
+  const selection = dialog.querySelector(".notes-application-selection")!;
+  expect(selection.textContent).toContain("示例科技");
+  expect(selection.hasAttribute("hidden")).toBe(false);
+  button("更换", selection).click();
+  expect(document.activeElement).toBe(search);
+  button("取消关联", selection).click();
+  expect(selection.hasAttribute("hidden")).toBe(true);
+  query("示例");
+  await vi.waitFor(() => expect(results.querySelector("button")).not.toBeNull());
+  results.querySelector("button")!.click();
+  expect(invoke.mock.calls.some(([command]) => command === "change_note_cmd")).toBe(false);
+  dialog.querySelector<HTMLInputElement>('input[type="text"]')!.value = "面试复盘";
+  button("创建", dialog).click();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("change_note_cmd", expect.objectContaining({
+    change: expect.objectContaining({ name: "面试复盘", applicationId: "available" })
+  })));
+});
+
 async function openNote(initialText: string | null) {
   let ocrText = initialText;
   let folders = [source, target];
