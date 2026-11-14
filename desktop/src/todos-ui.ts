@@ -242,6 +242,8 @@ export function mountTodos(
     const id = escapeHtml(todo.id);
     const reminder = describeReminder(todo, capability);
     const reminderTime = describeRemindAt(todo);
+    const reminderZone = todo.timeZone && (!todo.dueAtUtc || todo.duePrecision !== "datetime")
+      && (todo.remindAtUtc || todo.reminderScheduledForUtc) ? todo.timeZone : "";
     const bucket = bucketOf(todo, now());
     const where = [todo.company, todo.position].filter(Boolean).map(escapeHtml).join(" · ");
     const isOpen = todo.status === "open";
@@ -264,6 +266,7 @@ export function mountTodos(
           <div class="todo-detail-row">${ICON.calendar}<div><span>截止时间</span><strong>${escapeHtml(describeDue(todo))}</strong></div>${timing}</div>
           <div class="todo-detail-row todo-reminder" data-tone="${reminder.tone}">${ICON.bell}<div><span>提醒</span>
             <strong>${escapeHtml(reminder.tone === "success" ? reminder.text : reminderTime)}</strong>
+            ${reminderZone ? `<p>提醒时区：${escapeHtml(reminderZone)}</p>` : ""}
             ${reminder.tone === "success" ? "" : `<p>${escapeHtml(reminder.text)}</p>`}</div></div>
         </div>
         <div class="todo-detail-actions">

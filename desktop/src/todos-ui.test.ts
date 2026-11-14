@@ -165,6 +165,22 @@ test('只有日历日的待办在列表里不带时刻', async () => {
   assert.doesNotMatch(detail, /00:00/);
 });
 
+test("待办只有日期或仅设置提醒时，详情显示自定义提醒时区", async () => {
+  for (const duePrecision of ["date", "none"] as const) {
+    const h = harness(name => name === "list_todos_cmd" ? [todo({
+      duePrecision,
+      dueDate: duePrecision === "date" ? "2026-09-20" : null,
+      timeZone: "America/New_York",
+      remindAtUtc: "2026-09-20T14:00:00Z",
+      reminderScheduledForUtc: "2026-09-20T14:00:00Z",
+    })] : undefined);
+    await h.show();
+    const detail = h.el("todo-detail").innerHTML;
+    assert.match(detail, /将在 .* 10:00 提醒/);
+    assert.match(detail, /提醒时区：America\/New_York/);
+  }
+});
+
 test('新建待办把当地时刻换算成 UTC 再交给命令层', async () => {
   const h = harness();
   await h.show();
