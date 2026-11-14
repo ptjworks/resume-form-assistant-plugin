@@ -441,7 +441,11 @@
   function bossEducationOptionMatches(option, value, label) {
     if (isEducationLevelLabel(label)) {
       // 可以选无附注的学历。两个带附注的选项已经在前面的原文匹配中比过。
-      const kind = educationLevelKind(value);
+      // 普通学历问层级，允许把「本科（在读）」匹配到「本科」；已取得学历和未毕业等状态保持原样。
+      const asksAttained = /^(?:最高)?已(?:取得|获得|完成)/.test(normalizeText(label));
+      const raw = String(value ?? "").normalize("NFKC").trim();
+      const level = asksAttained ? raw : raw.replace(/(?:\s*\(\s*在读\s*\)|\s*在读)$/, "");
+      const kind = educationLevelKind(level);
       return Boolean(kind && kind === educationLevelKind(option) && !educationLevelWithoutQualifier(label, option));
     }
     if (!/^(?:最高)?(?:学位|所获学位|授予学位)$/.test(normalizeText(label))) return false;

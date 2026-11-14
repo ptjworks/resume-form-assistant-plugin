@@ -228,6 +228,20 @@ test("BOSS reveals an offscreen dropdown before opening, and maps only the appro
   assert.equal((await api.operate({ ...a, binding: a }, "博士研究生（未毕业）")).reason, "no_option_match");
 });
 
+test("BOSS maps ongoing study only when the field does not ask for completed education", async t => {
+  const doc = load(t, row("学历", select("level")) + row("最高已取得学历", select("attained")));
+  const current = simulateDropdown(doc.querySelector("#level"), { choices: [["硕士"], ["本科"]] });
+  const attained = simulateDropdown(doc.querySelector("#attained"), { choices: [["硕士"], ["本科"]] });
+  const [level, completed] = scanner.scanPage(doc, { isVisible: visible }).controls;
+  const api = operator(doc);
+  for (const value of ["硕士研究生（在读）", "本科在读"]) {
+    assert.equal((await api.operate({ ...level, binding: level }, value)).ok, true);
+    assert.equal((await api.operate({ ...completed, binding: completed }, value)).reason, "no_option_match");
+  }
+  assert.deepEqual(current.picked, ["硕士", "本科"]);
+  assert.deepEqual(attained.picked, []);
+});
+
 test("BOSS city selects the committed province, city and district through the website's columns", async t => {
   const doc = load(t, row("现居住城市", '<div class="ui-cascader2"><input placeholder="请选择" aria-expanded="false"></div>'));
   const root = doc.querySelector(".ui-cascader2"), input = root.querySelector("input");
