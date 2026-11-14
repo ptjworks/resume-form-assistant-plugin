@@ -1,10 +1,28 @@
-import { Editor, Node, type Content } from "@tiptap/core";
+import { Editor, Extension, Node } from "@tiptap/core";
 import { TableKit } from "@tiptap/extension-table";
-import { FontSize, TextStyle } from "@tiptap/extension-text-style";
+import { BackgroundColor, Color, FontFamily, FontSize, TextStyle } from "@tiptap/extension-text-style";
 import StarterKit from "@tiptap/starter-kit";
 import { TextSelection, type Transaction } from "@tiptap/pm/state";
+import { noteAlignments } from "./content.ts";
 
 export const attachmentType = "noteAttachment";
+
+const paragraphAlignment = Extension.create({
+  name: "noteParagraphAlignment",
+  addGlobalAttributes() {
+    return [{
+      types: ["paragraph", "heading"],
+      attributes: {
+        textAlign: {
+          default: null,
+          parseHTML: element => noteAlignments.includes(element.style.textAlign) ? element.style.textAlign : null,
+          renderHTML: attributes => noteAlignments.includes(attributes.textAlign)
+            ? { style: `text-align: ${attributes.textAlign}` } : {},
+        },
+      },
+    }];
+  },
+});
 
 interface NotesEditorOptions {
   content: string;
@@ -58,6 +76,10 @@ export function createNotesEditor(options: NotesEditorOptions) {
       StarterKit.configure({ link: false, trailingNode: { notAfter: ["paragraph"] } }),
       TextStyle,
       FontSize,
+      FontFamily,
+      Color,
+      BackgroundColor,
+      paragraphAlignment,
       TableKit,
       attachment,
     ],
@@ -68,23 +90,6 @@ export function createNotesEditor(options: NotesEditorOptions) {
     onUpdate: options.onUpdate,
     onTransaction: ({ transaction }) => options.onTransaction(transaction),
   });
-}
-
-export function insertOutline(editor: Editor, headings: string[]) {
-  const content: Content = headings.flatMap(text => [
-    { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text }] },
-    { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph" }] }] },
-  ]);
-  const { $from } = editor.state.selection;
-  const at = $from.depth ? $from.after(1) : $from.pos;
-  const replace = $from.depth === 1 && $from.parent.type.name === "paragraph" && !$from.parent.content.size;
-  const start = replace ? $from.before(1) : at;
-  const template = editor.schema.nodeFromJSON({ type: "doc", content });
-  editor.chain().focus().insertContentAt({ from: start, to: at }, content).command(({ tr }) => {
-    const firstBullet = start + template.child(0).nodeSize + 3;
-    tr.setSelection(TextSelection.create(tr.doc, firstBullet));
-    return true;
-  }).run();
 }
 
 /** Insert a separate example while keeping the current paragraph or list intact. */

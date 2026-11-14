@@ -194,10 +194,12 @@
     isSecretFormField,
     isSafeResumeField,
     localRuleMatches,
-    bossEducationLevel,
+    bossEducationOptionMatches,
     cetLevel,
     workRole,
     workRecords,
+    experienceDescriptionOrder,
+    joinExperienceDescription,
     findSelectOptionIndex,
     isSameOptionText,
     optionSearchText,
@@ -420,24 +422,43 @@
   // #429 第五项：规则认不出的字段，再看补充字段里有没有题目原样对得上的回答（profile.savedAnswerMatches）。
   // pageFields 是整张表的字段（后来冒出来的字段只传新的几个时用），不传就是 formFields。
   // #466 BOSS 的两个「时间段」框属于同一条教育经历。只在页面和资料都能唯一配对时取日期。
-  function bossEducationLevel(value, label) {
-    const raw = String(value ?? "").normalize("NFKC").trim();
-    if (/^(?:最高)?学历$/.test(label)) {
-      const text = raw.replace(/\s*\((?:全日制|非全日制|在读|预计)\)$/, "").replace(/\s+/g, "");
-      if (/^博士(?:研究生)?(?:在读)?$/.test(text)) return "博士";
-      if (/^硕士(?:研究生)?(?:在读)?$/.test(text)) return "硕士";
-      if (/^(?:大学)?本科(?:在读)?$/.test(text)) return "本科";
-      if (/^(?:大学)?(?:专科|大专)$/.test(text)) return "大专";
-    }
-    if (/^(?:最高)?学位$/.test(label)) {
-      return /^(?:哲学|经济学|法学|教育学|文学|历史学|理学|工学|农学|医学|军事学|管理学|艺术学|交叉学科|工程)?(学士|硕士|博士)(?:学位)?$/.exec(raw)?.[1] || "";
-    }
+  function educationLevelKind(value, forRanking = false) {
+    const full = normalizeText(String(value ?? "").normalize("NFKC"));
+    const level = forRanking ? full.replace(/(?:在读|未毕业|未完成|未取得|肄业|结业|预计毕业|预计)$/, "") : full;
+    const text = QUALIFIED_EDUCATION.exec(level)?.[1] || level;
+    if (/^博士(?:研究生)?$/.test(text)) return "博士";
+    if (/^硕士(?:研究生)?$/.test(text)) return "硕士";
+    if (/^(?:大学)?本科$/.test(text)) return "本科";
+    if (/^(?:大学)?(?:专科|大专)$/.test(text)) return "大专";
     return "";
   }
 
-  const BOSS_EDUCATION_KEYS = {
+  function educationDegree(value) {
+    return /^(哲学|经济学|法学|教育学|文学|历史学|理学|工学|农学|医学|军事学|管理学|艺术学|交叉学科|工程)?(学士|硕士|博士)(学位)?$/
+      .exec(normalizeText(String(value ?? "").normalize("NFKC")));
+  }
+
+  function bossEducationOptionMatches(option, value, label) {
+    if (isEducationLevelLabel(label)) {
+      // 可以选无附注的学历。两个带附注的选项已经在前面的原文匹配中比过。
+      // 普通学历问层级，允许把「本科（在读）」匹配到「本科」；已取得学历和未毕业等状态保持原样。
+      const asksAttained = /^(?:最高)?已(?:取得|获得|完成)/.test(normalizeText(label));
+      const raw = String(value ?? "").normalize("NFKC").trim();
+      const level = asksAttained ? raw : raw.replace(/(?:\s*\(\s*在读\s*\)|\s*在读)$/, "");
+      const kind = educationLevelKind(level);
+      return Boolean(kind && kind === educationLevelKind(option) && !educationLevelWithoutQualifier(label, option));
+    }
+    if (!/^(?:最高)?(?:学位|所获学位|授予学位)$/.test(normalizeText(label))) return false;
+    const requested = educationDegree(value);
+    const offered = educationDegree(option);
+    return Boolean(requested && offered && requested[2] === offered[2]
+      && (!requested[1] || !offered[1] || requested[1] === offered[1]));
+  }
+
+  const EDUCATION_KEYS = {
     "学校": "school", "学校名称": "school", "院校": "school", "学历": "level", "学位": "degree",
-    "专业": "major", "专业名称": "major", "受教育类型": "study", "学习形式": "study"
+    "专业": "major", "专业名称": "major", "受教育类型": "study", "学习形式": "study", "学历层次": "level",
+    "教育程度": "level", "所获学位": "degree", "授予学位": "degree"
   };
   function educationRecords(resume) {
     const records = new Map();
@@ -448,7 +469,7 @@
       const named = /^(.{2,60}(?:大学|学院|学校|中学|研究院|研究所))(?:教育经历|教育背景|学习经历)\s*[-_:：]\s*(.+)$/.exec(key);
       const numbered = /^(?:教育经历|教育背景|学习经历|教育)\s*(\d+)\s*[-_:：]?\s*(.+)$/.exec(key);
       if (group[2] && numbered && group[2] !== numbered[1]) continue;
-      const id = named ? `school:${normalizeText(named[1])}` : `${group[1]}:${group[2] || numbered?.[1] || ""}`;
+      const id = named ? `school:${group[2]}:${normalizeText(named[1])}` : `${group[1]}:${group[2] || numbered?.[1] || ""}`;
       const add = (role, value) => {
         if (!value) return;
         if (!records.has(id)) records.set(id, {});
@@ -460,7 +481,13 @@
       const raw = String(field.value).normalize("NFKC").trim();
       const date = raw.replace(/\s*\((?:全日制|非全日制|在读|预计)\)$/, "");
       if (named) add("school", named[1]);
-      if (Object.hasOwn(BOSS_EDUCATION_KEYS, detail)) add(BOSS_EDUCATION_KEYS[detail], raw);
+      const role = Object.hasOwn(EDUCATION_KEYS, detail) ? EDUCATION_KEYS[detail] : "";
+      if (role === "level") {
+        const degree = educationDegree(raw);
+        // 旧模板会把「理学学士」之类的学位存进学历栏。「硕士」「博士」单独出现时沿用学历栏本身的含义。
+        if (degree && (degree[1] || degree[2] === "学士" || degree[3])) add("degreeInLevel", raw);
+        else add("level", raw);
+      } else if (role) add(role, raw);
       else if (/^(?:时间|时间段|起止(?:日期|时间)|在校时间|就读时间|教育时间|学习时间)$/.test(detail)) {
         const parts = rangeDateParts(date);
         if (parts) {
@@ -471,8 +498,47 @@
       } else if (/^(?:开始|入学|入读)(?:时间|日期|年月)$/.test(detail)) add("start", educationDate(date));
       else if (/^(?:结束|毕业|离校)(?:时间|日期|年月)$/.test(detail)) add("end", educationDate(date, true));
     }
-    return [...records.values()].map(record => Object.fromEntries(Object.entries(record)
-      .filter(([, values]) => values.size === 1).map(([role, values]) => [role, [...values][0]])));
+    return [...records.values()];
+  }
+
+  const EDUCATION_RANKS = ["", "大专", "本科", "硕士", "博士"];
+  const degreeLevel = degree => degree === "学士" ? "本科" : degree;
+  const onlyValue = values => values?.size === 1 ? [...values][0] : undefined;
+
+  function educationRowsForFilling(resume) {
+    const records = educationRecords(resume).map(parts => {
+      const { degreeInLevel, ...local } = parts;
+      const record = Object.fromEntries(Object.entries(local).map(([role, values]) => [role, onlyValue(values)]));
+      const legacyDegree = onlyValue(degreeInLevel);
+      const degree = educationDegree(legacyDegree);
+      // 只在原学历栏没有其他值时还原常见的「学士」误存。研究生学位本身不能证明读过对应的学历。
+      if (!parts.level && degree?.[2] === "学士") record.level = "本科";
+      const level = educationLevelKind(record.level, true);
+      const usableLegacyDegree = !parts.level || level === degreeLevel(degree?.[2]) ? legacyDegree : undefined;
+      const explicit = educationDegree(record.degree);
+      if (!parts.degree) record.degree = usableLegacyDegree;
+      else if (degreeInLevel) {
+        const sameDegree = explicit && degree && explicit[2] === degree[2]
+          && (!explicit[1] || !degree[1] || explicit[1] === degree[1]);
+        if (!sameDegree) record.degree = undefined;
+        else if (!explicit[1] && usableLegacyDegree) record.degree = legacyDegree;
+      }
+      return { ...record, hasDegree: Boolean(parts.degree || degreeInLevel) };
+    });
+
+    const summary = key => onlyValue(new Set(resume.filter(field => /^(基本信息|教育补充)$/.test(String(field.group).trim())
+      && normalizeText(field.key) === key).map(field => String(field.value ?? "").normalize("NFKC").trim()).filter(Boolean)));
+    const highestLevel = educationLevelKind(summary("最高学历"));
+    const highestDegree = summary("最高学位");
+    const kind = educationDegree(highestDegree)?.[2];
+    if (!kind || degreeLevel(kind) !== highestLevel) return records;
+    const ranks = records.map(record => EDUCATION_RANKS.indexOf(educationLevelKind(record.level, true)));
+    const top = ranks.indexOf(Math.max(...ranks));
+    const record = records[top];
+    // 最高学历和最高学位互相印证，且简历里只有一条可确认的最高学历，才允许借用汇总学位。
+    if (record?.school && !record.hasDegree && ranks.every(rank => rank > 0) && ranks.lastIndexOf(ranks[top]) === top
+      && educationLevelKind(record.level) === highestLevel) record.degree = highestDegree;
+    return records;
   }
 
   function bossEducationMatches(fields, resume) {
@@ -484,8 +550,8 @@
       rows.get(meta.row).push(field);
     }
     if (!rows.size) return [];
-    const records = educationRecords(resume);
-    const rank = record => ["", "大专", "本科", "硕士", "博士"].indexOf(bossEducationLevel(record.level, "学历"));
+    const records = educationRowsForFilling(resume);
+    const rank = record => EDUCATION_RANKS.indexOf(educationLevelKind(record.level, true));
     const ordered = records.slice().sort((a, b) => rank(b) - rank(a));
     const unambiguousOrder = records.length > 0 && records.every(r => r.school && rank(r) > 0)
       && new Set(records.map(rank)).size === records.length;
@@ -521,7 +587,8 @@
     if (!start?.educationRangePair || start.educationRangePair !== end?.educationRangePair) return [];
     const records = educationRecords(resume);
     if (records.length !== 1) return [];
-    const { start: from, end: to } = records[0];
+    const from = onlyValue(records[0].start);
+    const to = onlyValue(records[0].end);
     if (!from || !to || (to !== "至今" && from > to && !from.startsWith(`${to}-`))) return [];
     return [{ fieldId: start.fieldId, value: from }, { fieldId: end.fieldId, value: to }];
   }
@@ -636,6 +703,16 @@
     return Object.hasOwn(WORK_ROLES, label) ? WORK_ROLES[label] : "";
   }
 
+  function experienceDescriptionOrder(label) {
+    const key = normalizeText(String(label ?? "").normalize("NFKC"));
+    const match = /^(?:(?:实习|工作|工作实习|项目)?(?:内容|描述|职责)|主要(?:工作(?:内容|职责)?|职责)|岗位职责|responsibilities|description)(\d*)$/.exec(key);
+    return match ? Number(match[1] || 0) : null;
+  }
+
+  function joinExperienceDescription(fragments) {
+    return [...new Set(fragments.slice().sort((a, b) => a.order - b.order).map(part => part.value))].join("\n");
+  }
+
   function workRecords(resume, kind = "work") {
     const grouped = resume.flatMap(field => {
       const group = /^(工作经历|实习经历)\s*(\d*)$/.exec(String(field.group ?? "").normalize("NFKC").trim());
@@ -648,37 +725,49 @@
       const key = String(field.key ?? "").normalize("NFKC").trim();
       const named = /^(.+?)(?:工作经历|实习经历)\s*[-_:：]\s*(.+?)(?: \((\d+)\))?$/.exec(key);
       const numbered = /^(?:工作经历|实习经历|工作|实习)\s*(\d+)\s*[-_:：]?\s*(.+)$/.exec(key);
-      const suffix = /^(.+?)(\d+)$/.exec(key);
+      // 有独立的经历编号时，描述末尾的数字才表示段落。旧的「工作内容2」仍可表示第二条经历。
+      const detail = named?.[2] || numbered?.[2] || key;
+      const order = experienceDescriptionOrder(detail);
+      const hasRecord = Boolean(named || numbered || groupIndex);
+      const suffix = !named && !numbered && !(groupIndex && order !== null) ? /^(.+?)(\d+)$/.exec(key) : null;
       const suffixRole = suffix && workRole(suffix[1].trim());
       const fieldIndex = numbered?.[1] || (suffixRole ? suffix[2] : "");
       if (groupIndex && fieldIndex && groupIndex !== fieldIndex) continue;
       const index = groupIndex || fieldIndex || "1";
-      const detail = named?.[2] || numbered?.[2] || (suffixRole ? suffix[1] : key);
-      const role = workRole(detail.trim());
+      // 没有明确经历归属的编号描述，不能按段落拼到第一条。
+      const role = order === 0 || (hasRecord && order !== null) ? "description" : suffixRole || workRole(detail.trim());
       if (!role) continue;
-      const id = named ? `${category}:name:${normalizeText(named[1])}:${named[3] || "1"}` : `${category}:number:${index}`;
-      if (!records.has(id)) records.set(id, new Map());
-      const record = records.get(id);
+      const id = named ? `${category}:name:${groupIndex}:${normalizeText(named[1])}:${named[3] || "1"}` : `${category}:number:${index}`;
+      if (!records.has(id)) records.set(id, { parts: new Map(), descriptions: new Map() });
+      const { parts, descriptions } = records.get(id);
       const add = (part, value) => {
         if (!value) return;
-        if (!record.has(part)) record.set(part, new Set());
-        record.get(part).add(value);
+        if (!parts.has(part)) parts.set(part, new Set());
+        parts.get(part).add(value);
       };
       const value = String(field.value).trim();
       if (named) add("companyHint", named[1].trim());
-      if (role === "range") {
-        const parts = rangeDateParts(value);
-        if (parts) {
-          add("start", educationDate(parts[0]));
-          add("end", educationDate(parts[1], true));
+      if (role === "description") {
+        const descriptionOrder = suffixRole ? 0 : order;
+        if (!descriptions.has(descriptionOrder)) descriptions.set(descriptionOrder, new Set());
+        descriptions.get(descriptionOrder).add(value);
+      } else if (role === "range") {
+        const dates = rangeDateParts(value);
+        if (dates) {
+          add("start", educationDate(dates[0]));
+          add("end", educationDate(dates[1], true));
         }
       } else add(role, role === "start" || role === "end" ? educationDate(value, role === "end") : value);
     }
-    return [...records.values()].map(record => {
-      const companies = record.get("company") || record.get("companyHint") || [];
-      record.delete("companyHint");
-      record.set("company", new Set(new Map([...companies].map(value => [normalizeText(value), value])).values()));
-      return Object.fromEntries([...record].flatMap(([role, values]) => values.size === 1 ? [[role, [...values][0]]] : []));
+    return [...records.values()].map(({ parts, descriptions }) => {
+      const companies = parts.get("company") || parts.get("companyHint") || [];
+      parts.delete("companyHint");
+      parts.set("company", new Set(new Map([...companies].map(value => [normalizeText(value), value])).values()));
+      const record = Object.fromEntries([...parts].flatMap(([role, values]) => values.size === 1 ? [[role, [...values][0]]] : []));
+      if (descriptions.size && [...descriptions.values()].every(values => values.size === 1)) {
+        record.description = joinExperienceDescription([...descriptions].map(([order, values]) => ({ order, value: [...values][0] })));
+      }
+      return record;
     });
   }
 
@@ -1145,7 +1234,7 @@
   const EDUCATION_COMPLETION_NOTE = /在读|未毕业|未完成|未取得|肄业|结业|预计毕业/;
   const EDUCATION_QUALIFIER = "非全日制|全日制|统招|直博|普博|硕博连读|专升本|自考|成人教育";
   const QUALIFIED_EDUCATION = new RegExp(
-    `^(?:(?:${EDUCATION_QUALIFIER})[,，、]?)*(${EDUCATION_LEVEL})(?:[,，、]?(?:${EDUCATION_QUALIFIER}))*$`
+    `^(?:(?:${EDUCATION_QUALIFIER})[,，、]?)*(${EDUCATION_LEVEL}|硕士|博士)(?:[,，、]?(?:${EDUCATION_QUALIFIER}))*$`
   );
 
   function isEducationLevelLabel(label) {

@@ -810,11 +810,8 @@
   function bossOption(list, value, label, helpers) {
     const exact = sameOption(list, value, helpers);
     if (exact.reason !== 'no_option_match') return exact;
-    const normalized = helpers.bossEducationLevel(value, label);
-    if (normalized) {
-      const hits = list.filter(option => !option.disabled && helpers.bossEducationLevel(option.text, label) === normalized);
-      if (hits.length) return hits.length === 1 ? { option: hits[0] } : { reason: 'ambiguous_option' };
-    }
+    const education = list.filter(option => !option.disabled && helpers.bossEducationOptionMatches(option.text, value, label));
+    if (education.length) return education.length === 1 ? { option: education[0] } : { reason: 'ambiguous_option' };
     if (/^英语(?:能力)?等级$/.test(label)) {
       const level = helpers.cetLevel(trim(value).replace(/\s*[（(]\s*\d+(?:\.\d+)?\s*分?\s*[）)]$/, ''));
       if (level) {

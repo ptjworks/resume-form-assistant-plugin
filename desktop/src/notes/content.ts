@@ -3,6 +3,27 @@ export const MAX_BATCH_BYTES = 30 * 1024 * 1024;
 export const MAX_FILES = 30;
 export const imageTypes = "image/png,image/jpeg,image/gif,image/webp";
 export const fontSizes = ["12px", "14px", "16px", "18px", "20px", "24px", "28px", "32px"];
+export const noteFonts = [
+  ["", "默认字体"], ["sans-serif", "无衬线"], ["serif", "衬线"], ["monospace", "等宽"]
+] as const;
+export const noteAlignments = ["left", "center", "right", "justify"];
+export const noteTextColors = [
+  ["#000000", "黑色"], ["#d60024", "红色"], ["#d14900", "橙色"], ["#a36600", "金黄"],
+  ["#00843d", "绿色"], ["#005bea", "蓝色"], ["#8a22c5", "紫色"], ["#c21875", "玫红"]
+] as const;
+export const noteHighlights = [
+  ["#fff2a8", "黄色"], ["#ffe0bd", "橙色"], ["#f9dce9", "粉色"], ["#e8def9", "紫色"],
+  ["#d8f0dc", "绿色"], ["#c6efec", "青色"], ["#d9eaff", "蓝色"], ["#e4e7ed", "浅灰"]
+] as const;
+
+// CSSOM stores solid colors as rgb(), even when the toolbar supplies hex.
+export function noteColor(value: string) {
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
+  const rgb = /^rgb\(\s*(\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3})\s*\)$/i.exec(value);
+  const channels = rgb?.slice(1).map(Number);
+  return channels?.every(channel => channel <= 255)
+    ? "#" + channels.map(channel => channel.toString(16).padStart(2, "0")).join("") : "";
+}
 
 const tags = new Set(["SPAN", "U", "S", "P", "DIV", "BR", "B", "STRONG", "I", "EM", "UL", "OL", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "PRE", "CODE", "HR", "TABLE", "THEAD", "TBODY", "TR", "TD", "TH"]);
 const hidden = new Set(["SCRIPT", "STYLE", "TEMPLATE", "IFRAME", "OBJECT", "SVG", "MATH"]);
@@ -59,6 +80,16 @@ function copyBody(nodes: NodeListOf<ChildNode>, fileIds: ReadonlySet<string>, im
     if (tag === "SPAN" && source instanceof HTMLElement && destination instanceof HTMLElement) {
       const size = source.style.fontSize;
       if (fontSizes.includes(size)) destination.style.fontSize = size;
+      const family = source.style.fontFamily;
+      if (noteFonts.some(([value]) => value && family === value)) destination.style.fontFamily = family;
+      const color = noteColor(source.style.color);
+      if (color) destination.style.color = color;
+      const highlight = noteColor(source.style.backgroundColor);
+      if (highlight) destination.style.backgroundColor = highlight;
+    }
+    if ((tag === "P" || /^H[1-6]$/.test(tag)) && source instanceof HTMLElement && destination instanceof HTMLElement) {
+      const alignment = source.style.textAlign;
+      if (noteAlignments.includes(alignment)) destination.style.textAlign = alignment;
     }
     for (const child of source.childNodes) copy(child, destination);
     if (destination !== parent) parent.appendChild(destination);

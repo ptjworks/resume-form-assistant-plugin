@@ -68,6 +68,42 @@ describe("Tiptap notes", () => {
     expect(saved.body).toBe('<p><span style="font-size: 24px;">大字</span><span>正文</span></p>');
     expect(saved.plainText).toBe("大字正文");
   });
+
+  it("reopens text colors, highlighting, font and alignment after saving", () => {
+    const ids = new Set<string>();
+    const options = {
+      content: "<p>面试重点</p><blockquote><p>旧引用</p></blockquote>",
+      renderAttachment: () => {},
+      onUpdate: () => {},
+      onTransaction: () => {},
+      onPaste: () => false,
+    };
+    const editor = createNotesEditor(options);
+    const host = document.body.appendChild(document.createElement("div"));
+    editor.mount(host);
+    let reopened: ReturnType<typeof createNotesEditor> | undefined;
+    try {
+      editor.chain().setTextSelection({ from: 1, to: 5 })
+        .setFontFamily("serif").setColor("#b4233a").setBackgroundColor("#fff2a8")
+        .updateAttributes("paragraph", { textAlign: "center" }).run();
+      const saved = serializeBody(editor.getHTML(), ids);
+      const clean = document.createElement("div");
+      clean.append(safeBody(saved.body, ids));
+      expect(saved.plainText).toMatch(/面试重点\n+旧引用/);
+      expect(clean.querySelector("blockquote")?.textContent).toBe("旧引用");
+      expect(clean.querySelector("p")?.style.textAlign).toBe("center");
+      expect(clean.querySelector("span")?.style.fontFamily).toBe("serif");
+      expect(clean.querySelector("span")?.style.color).toBe("rgb(180, 35, 58)");
+      expect(clean.querySelector("span")?.style.backgroundColor).toBe("rgb(255, 242, 168)");
+      reopened = createNotesEditor({ ...options, content: clean.innerHTML });
+      reopened.mount(document.body.appendChild(document.createElement("div")));
+      expect(serializeBody(reopened.getHTML(), ids)).toEqual(saved);
+    } finally {
+      reopened?.destroy();
+      editor.destroy();
+      document.body.replaceChildren();
+    }
+  });
 });
 
 it("separates missing Markdown references from selected files that won't be imported", async () => {

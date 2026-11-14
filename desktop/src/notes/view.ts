@@ -1,9 +1,10 @@
 import type { Editor } from "@tiptap/core";
-import { attachmentType, createNotesEditor, insertCodeExample, insertOutline } from "./editor.ts";
+import { attachmentType, createNotesEditor, insertCodeExample } from "./editor.ts";
 import type { Invoke } from "../api.ts";
 import { describeDialogError, openSettingsDialog } from "../settings-dialog.ts";
 import {
   dataUrl, fileMarker, fileMimeFromHeader, fontSizes, imageTypes, importNoteFiles, loadImages, safeBody, serializeBody, textFragment,
+  noteColor, noteFonts, noteHighlights, noteTextColors,
   MAX_FILES, MAX_BATCH_BYTES, MAX_FILE_BYTES,
 } from "./content.ts";
 import type { FileContents, PendingFile, StoredFile } from "./content.ts";
@@ -70,9 +71,6 @@ function suggestedFolderName(application: NotesApplication) {
   return company.slice(0, companyLimit).join("") + separator + title.slice(0, budget - companyLimit).join("");
 }
 
-const interviewOutline = ["问到的问题", "我的回答和感受", "下次想改进的地方"];
-const assessmentOutline = ["考到的内容", "我的作答情况", "下次要注意的地方"];
-
 const notesIcons = {
   book: '<path d="M5 19V6a2 2 0 0 1 2-2h12v16H7a2 2 0 0 1 0-4h12M9 8h6m-6 4h4"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
@@ -86,6 +84,12 @@ const notesIcons = {
   chevron: '<path d="m7 10 5 5 5-5"/>',
   expand: '<path d="M14 5h5v5m0-5-7 7M10 19H5v-5m0 5 7-7"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
+  undo: '<path d="m8 5-5 5 5 5m-5-5h11a5 5 0 0 1 5 5v3"/>',
+  redo: '<path d="m16 5 5 5-5 5m5-5H10a5 5 0 0 0-5 5v3"/>',
+  bullet: '<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>',
+  numbered: '<path d="M10 6h10M10 12h10M10 18h10M3 4h1v4m-1 0h2m-2 5a1.4 1.4 0 1 1 2.2 1L3 17h3"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1.3"/><path d="m3 16 5-4 4 3 4-5 5 6"/>',
+  highlight: '<path d="m6 16-2 4 4-1 11-11a2 2 0 0 0-4-4L6 16Zm6-6 4 4"/>',
 };
 
 function notesIcon(name: keyof typeof notesIcons) {
@@ -1153,8 +1157,9 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     toolbar.setAttribute("aria-label", "正文排版");
     const controls: (() => void)[] = [];
 
-    function tool(label: string, run: () => unknown, icon: string, active?: () => boolean, enabled?: () => boolean) {
-      const control = button(icon, () => { more.open = false; run(); });
+    function tool(label: string, run: () => unknown, icon: string | SVGSVGElement, active?: () => boolean, enabled?: () => boolean) {
+      const control = button("", () => { more.open = false; run(); });
+      control.append(icon);
       control.title = label;
       control.setAttribute("aria-label", label);
       // Keep the document selection while clicking a format command.
@@ -1169,9 +1174,46 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     function choose(label: string, values: [string, string][], apply: (value: string) => void) {
       const select = element("select");
       select.setAttribute("aria-label", label);
+      select.title = label;
       for (const [value, caption] of values) select.append(new Option(caption, value));
       select.addEventListener("change", () => { more.open = false; apply(select.value); });
       return select;
+    }
+
+    function palette(label: string, icon: string | SVGSVGElement, colors: readonly (readonly [string, string])[],
+      attribute: "color" | "backgroundColor", apply: (color: string) => void) {
+      const menu = element("details", undefined, "notes-menu notes-format-palette");
+      const trigger = element("summary");
+      trigger.append(icon, notesIcon("chevron"));
+      trigger.setAttribute("aria-label", label);
+      trigger.title = label;
+      const options = element("div", undefined, "notes-format-palette-options");
+      const swatches = element("div", undefined, "notes-format-swatches");
+      const current = () => noteColor(editor.getAttributes("textStyle")[attribute] || "");
+      for (const [color, name] of colors) {
+        const swatch = button("", () => {
+          menu.open = false;
+          apply(color);
+        });
+        swatch.title = name;
+        swatch.setAttribute("aria-label", name);
+        swatch.style.setProperty("--swatch", color);
+        controls.push(() => swatch.setAttribute("aria-pressed", String(current() === color)));
+        swatches.append(swatch);
+      }
+      options.append(swatches, button(attribute === "color" ? "默认颜色" : "清除高亮", () => {
+        menu.open = false;
+        apply("");
+      }));
+      menu.append(trigger, options);
+      menu.addEventListener("keydown", event => {
+        if (event.key !== "Escape" || !menu.open) return;
+        event.preventDefault();
+        menu.open = false;
+        trigger.focus();
+      });
+      controls.push(() => trigger.style.setProperty("--swatch", current() || colors[0][0]));
+      return menu;
     }
 
     type ToolbarItem = { id: string; label: string; control: HTMLElement };
@@ -1185,38 +1227,64 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     }
 
     group(
-      item("undo", "撤销", tool("撤销", () => editor.chain().focus().undo().run(), "↶", undefined, () => editor.can().undo())),
-      item("redo", "重做", tool("重做", () => editor.chain().focus().redo().run(), "↷", undefined, () => editor.can().redo())),
+      item("undo", "撤销", tool("撤销", () => editor.chain().focus().undo().run(), notesIcon("undo"), undefined, () => editor.can().undo())),
+      item("redo", "重做", tool("重做", () => editor.chain().focus().redo().run(), notesIcon("redo"), undefined, () => editor.can().redo())),
     );
-    const style = choose("段落样式", [["p", "正文"], ["h3", "小标题"]], value => {
-      if (value === "h3") editor.chain().focus().setHeading({ level: 3 }).run();
-      else editor.chain().focus().setParagraph().run();
+    const style = choose("段落样式", [["p", "正文"], ["h1", "标题 1"], ["h2", "标题 2"], ["h3", "标题 3"]], value => {
+      if (value === "h1" || value === "h2" || value === "h3") {
+        editor.chain().focus().setHeading({ level: value === "h1" ? 1 : value === "h2" ? 2 : 3 }).run();
+      } else editor.chain().focus().setParagraph().run();
+    });
+    const font = choose("字体", noteFonts.map(([value, label]) => [value, label]), value => {
+      const command = editor.chain().focus();
+      if (value) command.setFontFamily(value).run();
+      else command.unsetFontFamily().run();
     });
     const size = choose("文字字号", fontSizes.map(value => [value, value.replace("px", " px")]), value => {
       editor.chain().focus().setFontSize(value).run();
     });
     controls.push(() => {
-      style.value = editor.isActive("heading") ? "h3" : "p";
-      size.value = editor.getAttributes("textStyle").fontSize || (editor.isActive("heading") ? "18px" : "16px");
+      const level = editor.getAttributes("heading").level;
+      const textStyle = editor.getAttributes("textStyle");
+      style.value = level ? `h${level}` : "p";
+      font.value = textStyle.fontFamily || "";
+      size.value = textStyle.fontSize || (level === 1 ? "28px" : level === 2 ? "24px" : level ? "18px" : "16px");
     });
-    group(item("style", "正文 / 小标题", style), item("size", "文字字号", size));
+    group(item("style", "段落样式", style), item("font", "字体", font), item("size", "文字字号", size));
+    const color = palette("字体颜色", "A", noteTextColors, "color", value => {
+      const command = editor.chain().focus();
+      if (value) command.setColor(value).run();
+      else command.unsetColor().run();
+    });
+    const highlight = palette("文字高亮", notesIcon("highlight"), noteHighlights, "backgroundColor", value => {
+      const command = editor.chain().focus();
+      if (value) command.setBackgroundColor(value).run();
+      else command.unsetBackgroundColor().run();
+    });
     group(
       item("bold", "加粗", tool("加粗", () => editor.chain().focus().toggleBold().run(), "B", () => editor.isActive("bold"))),
       item("italic", "斜体", tool("斜体", () => editor.chain().focus().toggleItalic().run(), "I", () => editor.isActive("italic"))),
-      item("underline", "下划线", tool("下划线", () => editor.chain().focus().toggleUnderline().run(), "下划线", () => editor.isActive("underline"))),
-      item("strike", "删除线", tool("删除线", () => editor.chain().focus().toggleStrike().run(), "删除线", () => editor.isActive("strike"))),
-      item("bullet", "项目列表", tool("项目列表", () => editor.chain().focus().toggleBulletList().run(), "• 列表", () => editor.isActive("bulletList"))),
-      item("ordered", "编号列表", tool("编号列表", () => editor.chain().focus().toggleOrderedList().run(), "1. 列表", () => editor.isActive("orderedList"))),
+      item("underline", "下划线", tool("下划线", () => editor.chain().focus().toggleUnderline().run(), "U", () => editor.isActive("underline"))),
+      item("strike", "删除线", tool("删除线", () => editor.chain().focus().toggleStrike().run(), "S", () => editor.isActive("strike"))),
+      item("color", "字体颜色", color),
+      item("highlight", "文字高亮", highlight),
     );
-    const imagePicker = fileInput(imageTypes, files => queueFiles(session, () => loadImages(files)));
-    const outline = choose("插入提纲", [["", "提纲"], ["interview", "面试心得"], ["assessment", "笔试心得"]], value => {
-      if (value) insertOutline(editor, value === "interview" ? interviewOutline : assessmentOutline);
-      outline.value = "";
+    const align = choose("段落对齐", [["left", "左对齐"], ["center", "居中"], ["right", "右对齐"], ["justify", "两端对齐"]], value => {
+      const command = editor.chain().focus();
+      for (const type of ["paragraph", "heading"]) command.updateAttributes(type, { textAlign: value === "left" ? null : value });
+      command.run();
+    });
+    controls.push(() => {
+      align.value = editor.getAttributes(editor.isActive("heading") ? "heading" : "paragraph").textAlign || "left";
     });
     group(
-      item("image", "插入图片", tool("插入图片", () => imagePicker.click(), "＋ 图片")),
-      item("outline", "插入提纲", outline),
-      item("quote", "引用", tool("引用", () => editor.chain().focus().toggleBlockquote().run(), "引用", () => editor.isActive("blockquote"))),
+      item("align", "段落对齐", align),
+      item("bullet", "项目列表", tool("项目列表", () => editor.chain().focus().toggleBulletList().run(), notesIcon("bullet"), () => editor.isActive("bulletList"))),
+      item("ordered", "编号列表", tool("编号列表", () => editor.chain().focus().toggleOrderedList().run(), notesIcon("numbered"), () => editor.isActive("orderedList"))),
+    );
+    const imagePicker = fileInput(imageTypes, files => queueFiles(session, () => loadImages(files)));
+    group(
+      item("image", "插入图片", tool("插入图片", () => imagePicker.click(), notesIcon("image"))),
       item("code", "插入代码示例", tool("插入代码示例", () => {
         if (!insertCodeExample(editor)) notify("无法插入代码示例，请换一个位置重试。", true);
       }, "代码示例")),
@@ -1230,9 +1298,11 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     chooser.append(element("strong", "编辑工具"), element("p", "勾选要显示在工具栏里的功能。", "muted"));
     const checks = element("div", undefined, "notes-tool-checks");
     chooser.append(checks);
-    const defaults = ["undo", "redo", "style", "size", "bold", "italic", "bullet", "ordered", "image", "outline"];
-    const prefKey = "notes:toolbar";
-    const stored = readHistory<unknown>(prefKey, defaults);
+    const newTools = ["font", "underline", "color", "highlight", "align"];
+    const defaults = ["undo", "redo", "style", "size", "bold", "italic", "bullet", "ordered", "image", ...newTools];
+    const prefKey = "notes:toolbar:v2";
+    const previous = readHistory<unknown>("notes:toolbar", defaults);
+    const stored = readHistory<unknown>(prefKey, Array.isArray(previous) ? [...previous, ...newTools] : defaults);
     let pinned = new Set(Array.isArray(stored) ? stored : defaults);
     const checkboxes = new Map<string, HTMLInputElement>();
     function updatePinned() {
@@ -1264,6 +1334,12 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       updatePinned();
     }, "notes-tool-reset"));
     more.append(summary, chooser);
+    toolbar.addEventListener("toggle", event => {
+      if (!(event.target instanceof HTMLDetailsElement) || !event.target.open) return;
+      for (const menu of toolbar.querySelectorAll("details[open]")) {
+        if (menu !== event.target) (menu as HTMLDetailsElement).open = false;
+      }
+    }, true);
     more.addEventListener("toggle", () => {
       if (!more.open) return;
       const bottom = Math.min(detail.getBoundingClientRect().bottom, window.innerHeight);
@@ -1295,7 +1371,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     pasteNotice.setAttribute("role", "status");
     const title = textInput("text", item?.title ?? Array.from(suggested).slice(0, MAX_NOTE_NAME).join(""));
     title.maxLength = MAX_NOTE_NAME;
-    title.placeholder = "可选，留空时显示正文摘要";
+    title.placeholder = "心得标题（可选）";
     const date = textInput("date", item?.recordDate ?? today());
     const files = new Map((item?.files ?? []).map(file => [file.id, file]));
     for (const file of initial) files.set(file.id, { id: file.id, name: file.name, mime: file.mime, ocrText: null });
@@ -1359,19 +1435,21 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     actions.append(status, favorite, more, done);
     const header = element("div", undefined, "notes-edit-header");
     const heading = element("div", undefined, "notes-heading");
-    const context = element("div");
+    const context = element("div", undefined, "notes-edit-context");
     title.className = "notes-title-input";
     title.setAttribute("aria-label", "标题");
     date.setAttribute("aria-label", "记录日期");
     const metadata = element("div", undefined, "notes-meta");
-    metadata.append(notesIcon("calendar"), date);
+    metadata.append(notesBreadcrumb(parent), notesIcon("calendar"), date);
     appendApplication(metadata, parent);
-    context.append(notesBreadcrumb(parent), title, metadata);
+    context.append(title, metadata);
     heading.append(context, actions);
     header.append(heading, editorToolbar(session));
     const footer = element("p", "正文自动保存 · 可粘贴或把截图拖入正文", "notes-document-footer");
     footer.append(pasteNotice);
-    detail.replaceChildren(header, notesDocument(host), footer);
+    const paper = notesDocument(host);
+    paper.classList.add("notes-edit-surface");
+    detail.replaceChildren(header, paper, footer);
     editor.mount(host);
     title.addEventListener("input", () => changed(session));
     date.addEventListener("input", () => changed(session));
@@ -1596,71 +1674,134 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     const name = textInput("text", existing?.name ?? (application ? suggestedFolderName(application) : ""));
     name.maxLength = MAX_NOTE_NAME;
     const appSearch = textInput("search");
-    appSearch.placeholder = "按公司或岗位搜索";
-    const apps = element("select");
-    const include = (candidate: NotesApplication) => {
-      const option = element("option", [candidate.company, candidate.title, candidate.location, candidate.created_at?.slice(0, 10)]
-        .filter(Boolean).join(" · ") + ` · ${candidate.id.slice(-6)}`);
-      option.value = candidate.id;
-      return option;
-    };
-    const previous = application?.id ?? existing?.applicationId ?? "";
-    const kept: NotesApplication | undefined = application ?? (existing?.applicationId ? {
+    appSearch.placeholder = "搜索公司、岗位或地点";
+    const association = element("section", undefined, "notes-application-picker");
+    const selection = element("div", undefined, "notes-application-selection");
+    const searchArea = element("div", undefined, "notes-application-search");
+    const results = element("ul", undefined, "notes-application-results");
+    const status = element("p", undefined, "muted");
+    status.setAttribute("role", "status");
+    appSearch.setAttribute("aria-label", "查找投递记录");
+    searchArea.append(appSearch, status, results);
+    association.append(element("h3", application ? "关联到投递记录" : "关联到投递记录（可选）"), selection, searchArea);
+    let selected = application ?? (existing?.applicationId ? {
       id: existing.applicationId, company: existing.company ?? "已关联申请", title: existing.position ?? "",
     } : undefined);
-    let selected = kept ? include(kept) : undefined;
-    let selectedValue = previous;
-    if (selected) apps.append(selected);
-    apps.addEventListener("change", () => {
-      selectedValue = apps.value;
-      selected = apps.value ? apps.selectedOptions[0].cloneNode(true) as HTMLOptionElement : undefined;
-    });
-    const hint = element("p", "同一申请对应一个活动文件夹。", "muted");
     let request = 0;
-    async function searchApplications() {
+
+    function applicationDetails(candidate: NotesApplication, disambiguator = "") {
+      const text = element("span", undefined, "notes-application-details");
+      text.append(element("strong", candidate.company || candidate.title || "未命名投递"));
+      const detail = [candidate.company && candidate.title, candidate.location, candidate.created_at?.slice(0, 10), disambiguator]
+        .filter(Boolean).join(" · ");
+      if (detail) text.append(element("span", detail, "muted"));
+      return text;
+    }
+
+    function applicationLabel(candidate: NotesApplication) {
+      return [candidate.company, candidate.title, candidate.location, candidate.created_at?.slice(0, 10)]
+        .filter(Boolean).join(" · ");
+    }
+
+    function showSearch() {
+      searchArea.hidden = false;
+      appSearch.focus();
+      void searchApplications();
+    }
+
+    function renderSelection(focusChange = false) {
+      selection.replaceChildren();
+      selection.hidden = !selected;
+      searchArea.hidden = Boolean(selected);
+      if (!selected) return;
+      selection.append(notesIcon("check"), applicationDetails(selected));
+      if (application) return;
+      const changeApplication = button("更换", showSearch);
+      const removeApplication = button("取消关联", () => {
+        selected = undefined;
+        appSearch.value = "";
+        renderSelection();
+        showSearch();
+      });
+      selection.append(changeApplication, removeApplication);
+      if (focusChange) changeApplication.focus();
+    }
+
+    async function searchApplications(focusResults = false) {
       const token = ++request;
+      const query = appSearch.value.trim();
+      results.replaceChildren();
+      status.textContent = query ? "正在搜索投递记录…" : "正在读取投递记录…";
       try {
         const page = await invoke<{ items: NotesApplication[]; total: number }>("list_applications_cmd", {
-          args: { limit: 100, offset: 0, query: appSearch.value.trim() },
+          args: { limit: 100, offset: 0, query },
         });
         if (token !== request) return;
-        const value = selectedValue;
-        apps.replaceChildren(element("option", "暂不关联"));
-        apps.options[0].value = "";
         const available = page.items.filter(candidate => !index.folders.some(item =>
-          !item.recycled && item.id !== existing?.id && item.applicationId === candidate.id));
-        for (const candidate of available) apps.append(include(candidate));
-        if (selected && !Array.from(apps.options).some(option => option.value === selected?.value)) apps.append(selected);
-        apps.value = value;
-        if (apps.selectedIndex < 0) apps.selectedIndex = 0;
-        hint.textContent = page.total > page.items.length ? "仅显示前 100 条，输入公司或岗位缩小范围。" : "同一申请对应一个活动文件夹。";
+          !item.recycled && item.id !== existing?.id && item.applicationId === candidate.id)
+          && candidate.id !== selected?.id);
+        const truncated = page.total > page.items.length;
+        if (available.length) {
+          const counts = new Map<string, number>();
+          for (const candidate of available) {
+            const key = applicationLabel(candidate);
+            counts.set(key, (counts.get(key) ?? 0) + 1);
+          }
+          for (const candidate of available) {
+            const item = element("li");
+            const choose = button("", () => {
+              selected = candidate;
+              appSearch.value = "";
+              renderSelection(true);
+            }, "notes-application-result");
+            choose.append(applicationDetails(candidate, counts.get(applicationLabel(candidate)) === 1 ? "" : candidate.id.slice(-6)));
+            item.append(choose);
+            results.append(item);
+          }
+          status.textContent = truncated ? "显示前 100 条中的可关联记录，可继续缩小范围。" : "";
+          if (focusResults && document.activeElement === appSearch) results.querySelector("button")?.focus();
+        } else if (truncated) {
+          status.textContent = "前 100 条中没有可选记录，请缩小搜索范围。";
+        } else {
+          status.textContent = page.total ? "没有其他可关联的投递记录。"
+            : query ? "没有找到匹配的投递记录。" : "暂无可关联的投递记录。";
+        }
       } catch (error) {
-        hint.textContent = `申请列表读取失败：${describeDialogError(error)}`;
+        if (token !== request) return;
+        status.textContent = `投递记录读取失败：${describeDialogError(error)}`;
       }
     }
-    if (!selected) {
-      const empty = element("option", "暂不关联");
-      empty.value = "";
-      apps.append(empty);
-    } else {
-      const empty = element("option", "暂不关联");
-      empty.value = "";
-      apps.prepend(empty);
-      apps.value = selected.value;
-    }
-    if (application) apps.disabled = true;
+
     appSearch.addEventListener("input", () => void searchApplications());
-    form.append(field("文件夹名称", name));
-    if (!application) form.append(field("搜索申请", appSearch));
-    form.append(field("关联申请", apps), hint);
-    if (!application) void searchApplications();
+    appSearch.addEventListener("keydown", event => {
+      if (!["Enter", "ArrowDown"].includes(event.key) || event.isComposing) return;
+      event.preventDefault();
+      const firstResult = results.querySelector("button");
+      if (firstResult) firstResult.focus();
+      else if (event.key === "Enter") void searchApplications(true);
+    });
+    results.addEventListener("keydown", event => {
+      if (!(event.target instanceof HTMLButtonElement)) return;
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        event.target.parentElement?.nextElementSibling?.querySelector("button")?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        (event.target.parentElement?.previousElementSibling?.querySelector("button") ?? appSearch).focus();
+      }
+    });
+    form.append(field("文件夹名称", name), association);
+    renderSelection();
+    if (!selected) void searchApplications();
     let id: string | null = null;
-    const ok = await openSettingsDialog({
+    const dialog = openSettingsDialog({
       title: existing ? "编辑心得文件夹" : "新建心得文件夹", body: form, confirmLabel: existing ? "保存" : "创建",
       action: async () => {
-        id = await change({ kind: "folder", id: existing?.id ?? null, name: name.value, applicationId: apps.value || null });
+        id = await change({ kind: "folder", id: existing?.id ?? null, name: name.value, applicationId: selected?.id ?? null });
       },
     });
+    name.focus();
+    const ok = await dialog;
     if (!ok) {
       if (!edit && selectedNote) await readNote(selectedNote);
       return;
