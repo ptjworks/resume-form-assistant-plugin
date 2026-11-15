@@ -1669,3 +1669,26 @@ test("a value over 100 characters is matched against long options, and skipped o
   assert.deepEqual(fields.find((field) => field.fieldId === "pledge").fits, [refOf(env.calls[0].user, "诚信承诺")]);
   assert.equal(fields.some((field) => field.fieldId === "short"), false, "a long value lands on no short option");
 });
+
+test("#518 local rule matches block a month-only birth date on a native date input, or pick a full date when both exist", async () => {
+  const profile = require("../extension/profile-fields.js");
+  const formFields = [{ fieldId: "birth", label: "生日", inputType: "date", options: [] }];
+  const monthOnly = [{ group: "基本信息", key: "出生年月", value: "2001.05" }];
+  assert.deepEqual(helpers.localRuleMatches(formFields, monthOnly, profile), [
+    { fieldId: "birth", value: "", blocked: "invalid_date" }
+  ]);
+  const env = worker();
+  const blocked = await env.run({ formFields, resumeFields: monthOnly });
+  assert.equal(env.calls.length, 0, "blocked local date is not sent to AI");
+  assert.deepEqual(JSON.parse(JSON.stringify(blocked.matches)), [
+    { fieldId: "birth", value: "", blocked: "invalid_date" }
+  ]);
+
+  const withFullDate = [
+    { group: "基本信息", key: "出生年月", value: "2001.05" },
+    { group: "基本信息", key: "出生日期", value: "2001.05.12" }
+  ];
+  assert.deepEqual(helpers.localRuleMatches(formFields, withFullDate, profile), [
+    { fieldId: "birth", value: "2001-05-12" }
+  ]);
+});

@@ -4646,7 +4646,7 @@
         if (outcome === "success") outcome = "failed";
         showStatus(`${recipeLead}已填写 0 个字段。${unfilledNote}${response.warning || ""}${emptyHint}${recipeTail}`, "error", true);
       } else if (response.warning) {
-        showStatus(`${recipeLead}本地已填写 ${filledCount} 项${supplementNote}；${unfilledNote}${response.warning}${recipeTail}`, "error", Boolean(unfilledNote || recipeTail));
+        showStatus(`${recipeLead}本地已填写 ${filledCount} 项${supplementNote}；${unfilledNote}${response.warning}${recipeTail}`, "error", true);
       } else if (unfilledNote) {
         // 没填上的字段要用户自己去补，提示不自动消失。
         showStatus(`${recipeLead}已填写 ${filledCount} 个字段${supplementNote}。${unfilledNote}${recipeTail}`, "error", true);

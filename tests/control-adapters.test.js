@@ -286,3 +286,27 @@ test('guard callbacks are evaluated once at each stop point', async () => {
   assert.equal(result.reason, 'value_changed'); assert.equal(guardCalls, 2);
   assert.equal(input.value, '');
 });
+
+test('#518 native date, month and datetime-local inputs reject month-only, present and impossible calendar dates before writing', async () => {
+  const h = harness();
+  for (const [type, bad] of [
+    ['date', '2001.05'],
+    ['date', '至今'],
+    ['date', '2021-02-31'],
+    ['month', '至今'],
+    ['month', '2021-13'],
+    ['datetime-local', '2001.05'],
+    ['datetime-local', '2021-02-29T10:00'],
+    ['time', '25:00'],
+    ['week', '2026-W54']
+  ]) {
+    const input = new h.Input();
+    input.type = type;
+    let writes = 0;
+    const result = await h.operate(input, bad, { onWrite: () => writes++ });
+    assert.equal(result.ok, false, `${type}: ${bad}`);
+    assert.equal(result.reason, 'invalid_date', `${type}: ${bad}`);
+    assert.equal(writes, 0, `${type}: ${bad} should not write`);
+    assert.equal(input.value, '');
+  }
+});

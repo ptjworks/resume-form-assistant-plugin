@@ -211,6 +211,7 @@
     semanticizeParsedFields,
     normalizeParsedFields,
     normalizeDateValue,
+    pickerDate,
     rangeDateValue,
     rangeDateParts,
     isPresentDate,
@@ -336,16 +337,29 @@
         composed.indexes.forEach((index) => usedResumeIndexes.add(index));
         return;
       }
+      const dateControl = ["date", "datetime-local", "month", "date-picker"].includes(field?.inputType);
       const matchIndex = resumeFields.findIndex((resumeField, index) => {
-        return !usedResumeIndexes.has(index) && fitsResumeField(semantic, field, resumeField, formScope, () => keyTypeOf(index));
+        return !usedResumeIndexes.has(index) && fitsResumeField(semantic, field, resumeField, formScope, () => keyTypeOf(index))
+          && (!dateControl || Boolean(pickerDate(field, choiceValue(field, resumeField.value))));
       });
 
       if (matchIndex >= 0) {
+        const chosen = choiceValue(field, resumeFields[matchIndex].value);
         matches.push({
           fieldId: field.fieldId,
-          value: choiceValue(field, resumeFields[matchIndex].value)
+          value: dateControl ? pickerDate(field, chosen) : chosen
         });
         usedResumeIndexes.add(matchIndex);
+        return;
+      }
+      if (dateControl) {
+        const invalidIndex = resumeFields.findIndex((resumeField, index) => {
+          return !usedResumeIndexes.has(index) && fitsResumeField(semantic, field, resumeField, formScope, () => keyTypeOf(index));
+        });
+        if (invalidIndex >= 0) {
+          matches.push({ fieldId: field.fieldId, value: "", blocked: "invalid_date" });
+          usedResumeIndexes.add(invalidIndex);
+        }
       }
     });
 
@@ -807,12 +821,20 @@
     const cetIds = new Set(cet.map(match => match.fieldId));
     const forms = safe.filter(field => !field.educationRange && !field.bossEducation && !field.bossWork
       && !cetIds.has(field.fieldId));
-    const rules = [...filterValidMatches(forms, buildRuleBasedMatches(forms, resume)),
+    const fieldById = new Map(safe.map((field) => [field.fieldId, field]));
+    const dateChecked = (list) => list.map((match) => {
+      if (match.blocked) return match;
+      const field = fieldById.get(match.fieldId);
+      if (!["date", "datetime-local", "month", "date-picker"].includes(field?.inputType)) return match;
+      const value = pickerDate(field, match.value);
+      return value ? { ...match, value } : { fieldId: match.fieldId, value: "", blocked: "invalid_date" };
+    });
+    const rules = dateChecked([...filterValidMatches(forms, buildRuleBasedMatches(forms, resume)),
       ...educationRangeMatches(safe, resume), ...bossEducationMatches(safe, resume), ...bossWorkMatches(safe, resume),
-      ...cet];
+      ...cet]);
     const taken = new Set(rules.map((match) => match.fieldId));
     const saved = typeof profile.savedAnswerMatches === "function"
-      ? filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields)) : [];
+      ? dateChecked(filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields))) : [];
     const occupied = new Set([...taken, ...saved.map((match) => match.fieldId)]);
     return [...rules, ...saved, ...englishResultMatches(forms, resume, pageFields, occupied)];
   }
@@ -1450,6 +1472,43 @@
       default:
         return raw;
     }
+  }
+
+  function validCalendarDate(value) {
+    const hit = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(String(value ?? ""));
+    if (!hit) return false;
+    const y = Number(hit[1]), m = Number(hit[2]), d = Number(hit[3] || 1);
+    const date = new Date(y, m - 1, d);
+    return y >= 1900 && y <= 2100 && date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  }
+
+  // 日期控件：一段起止先按题目取开始或结束，再写成「2019-09」「2000-03-17」。资料原文的「2019.09」有的控件不认（Element 的月份框）。
+  // 题目看不出取哪一头的一段起止、不是日期的值给空串：页面上也填不进去（评测里「参加工作时间」被给过一段实习时间）。
+  function pickerDate(field, value) {
+    const picked = rangeDateValue(value, questionHint(field));
+    if (rangeDateParts(picked)) return "";
+    // 原生的 date、month、datetime-local 框写不进「至今」。
+    if (isPresentDate(picked)) return ["date", "month", "datetime-local"].includes(field?.inputType) ? "" : picked;
+    // 原生 datetime-local 框和认出是选日期时间的控件：资料里有时分就带上（「2026-07-15T14:30」）；没有时分的只给日期，由填写层补 00:00。
+    if (field?.inputType === "datetime-local" || field?.pickerInputType === "datetime-local") {
+      const full = normalizeDateValue(picked, "datetime-local");
+      if (/\d{1,2}\s*[:：]\s*\d{2}/.test(picked)) {
+        return /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(full) && validCalendarDate(full.slice(0, 10)) ? full : "";
+      }
+    }
+    // 原生 month 框和认出是选月的日期控件只给年月。
+    const wantsMonth = field?.pickerInputType === "month" || field?.inputType === "month";
+    const parsed = parseDateParts(picked);
+    if (!wantsMonth && parsed?.day) {
+      const day = normalizeDateValue(picked, "date");
+      return validCalendarDate(day) ? day : "";
+    }
+    // 原生的 date、datetime-local 框只收到日的（datetime-local 由填写层补上 00:00），只到月的浏览器不收，不交给它。
+    // 日期控件（Element、antd 这类）收到年月时由填写层补成 1 日。
+    if (field?.inputType === "date" || field?.inputType === "datetime-local") return "";
+    if (wantsMonth && parsed?.day && !validCalendarDate(normalizeDateValue(picked, "date"))) return "";
+    const month = normalizeDateValue(picked, "month");
+    return validCalendarDate(month) ? month : "";
   }
 
   // 日期题收到一段起止（「2019.09-2023.06」，#301 北森）：题目或占位提示写明开始还是结束，就取前一个或后一个日期。

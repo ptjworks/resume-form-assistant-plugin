@@ -550,7 +550,12 @@
       raw = helpers?.rangeDateValue?.(raw, dateHint(ctx)) ?? raw;
       if (['date', 'month', 'datetime-local', 'time', 'week'].includes(ctx.el.type)) {
         const expected = helpers?.normalizeDateValue?.(raw, ctx.el.type) ?? String(raw ?? '');
-        if (!expected) return { reason: 'invalid_date' };
+        const ok = ctx.el.type === 'date' ? /^\d{4}-\d{2}-\d{2}$/.test(expected) && Boolean(dateParts(expected)?.d)
+          : ctx.el.type === 'month' ? /^\d{4}-\d{2}$/.test(expected) && Boolean(dateParts(expected))
+          : ctx.el.type === 'datetime-local' ? /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(expected) && Boolean(dateParts(expected.slice(0, 10))?.d)
+          : ctx.el.type === 'time' ? /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(expected)
+          : /^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/.test(expected);
+        if (!ok) return { reason: 'invalid_date' };
         write(ctx.el, expected, ctx); input(ctx.el); return { expected };
       }
       // An AntD picker often starts readonly, then opens an editable input. Writing
@@ -688,8 +693,8 @@
     // 拆成年、月、日，只到月的 d 是 0。认不出、年份不在 1900～2100、没有这一天的给 null。
     function dateParts(value) {
       const text = String(value ?? '').trim();
-      const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(helpers?.normalizeDateValue?.(text, 'date') || '');
-      const hit = day || /^(\d{4})-(\d{2})$/.exec(helpers?.normalizeDateValue?.(text, 'month') || '');
+      const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(helpers?.normalizeDateValue?.(text, 'date') ?? text);
+      const hit = day || /^(\d{4})-(\d{2})$/.exec(helpers?.normalizeDateValue?.(text, 'month') ?? text);
       if (!hit) return null;
       const parts = { y: Number(hit[1]), m: Number(hit[2]), d: day ? Number(day[3]) : 0 };
       const real = new Date(parts.y, parts.m - 1, parts.d || 1);

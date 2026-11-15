@@ -483,3 +483,56 @@ test('#475 selected values outside the viewport are not treated as parked hidden
   h.root.style.cssText = 'position:fixed;left:-10000px;opacity:0';
   assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ['本科']);
 });
+
+test('#495 Element UI 2 filterable select whose dropdown opens empty on click is searched via its unlocked input', async (t) => {
+  const h = load('专业名称', '<div class="el-select"><div class="el-input"><input class="el-input__inner" placeholder="请选择" readonly></div></div>'
+    + '<div class="el-select-dropdown" hidden><ul class="el-select-dropdown__list"></ul></div>');
+  t.after(() => h.w.close());
+  const input = h.doc.querySelector('input');
+  const popup = h.doc.querySelector('.el-select-dropdown');
+  const list = popup.querySelector('ul');
+  const searches = [];
+  h.doc.querySelector('.el-input').addEventListener('click', () => {
+    input.readOnly = false;
+    popup.hidden = false;
+  });
+  input.addEventListener('input', () => {
+    searches.push(input.value);
+    list.innerHTML = input.value === '计算机科学与技术'
+      ? '<li class="el-select-dropdown__item"><span>计算机科学与技术</span></li>' : '';
+    list.querySelector('li')?.addEventListener('click', (e) => {
+      e.currentTarget.classList.add('selected');
+      input.value = '计算机科学与技术';
+      input.readOnly = true;
+      popup.hidden = true;
+    });
+  });
+  const result = await h.api.operate(h.target, '计算机科学与技术');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(searches, ['计算机科学与技术']);
+  assert.equal(input.value, '计算机科学与技术');
+});
+
+test('#495 Element UI 2 automatic-dropdown select that opens on focus is not toggled closed by a duplicate trigger click', async (t) => {
+  const h = load('学历', '<div class="el-select"><div class="el-input"><input class="el-input__inner" placeholder="请选择" readonly></div></div>'
+    + '<div class="el-select-dropdown" hidden><ul class="el-select-dropdown__list">'
+    + '<li class="el-select-dropdown__item"><span>本科</span></li><li class="el-select-dropdown__item"><span>硕士研究生</span></li></ul></div>');
+  t.after(() => h.w.close());
+  const input = h.doc.querySelector('input');
+  const popup = h.doc.querySelector('.el-select-dropdown');
+  let open = false;
+  const sync = () => { popup.hidden = !open; };
+  input.addEventListener('focus', () => { open = true; sync(); });
+  h.doc.querySelector('.el-input').addEventListener('click', () => { open = !open; sync(); });
+  for (const li of popup.querySelectorAll('li')) {
+    li.addEventListener('click', () => {
+      li.classList.add('selected');
+      input.value = li.textContent.trim();
+      open = false;
+      sync();
+    });
+  }
+  const result = await h.api.operate(h.target, '硕士');
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(input.value, '硕士研究生');
+});

@@ -999,24 +999,7 @@ function topicWords(text) {
 // 日期控件：一段起止先按题目取开始或结束，再写成「2019-09」「2000-03-17」。资料原文的「2019.09」有的控件不认（Element 的月份框）。
 // 题目看不出取哪一头的一段起止、不是日期的值给空串：页面上也填不进去（评测里「参加工作时间」被给过一段实习时间）。
 function pickerDate(field, value) {
-  const helpers = ResumeProAIHelpers;
-  const picked = helpers.rangeDateValue(value, helpers.questionHint(field));
-  if (helpers.rangeDateParts(picked)) return "";
-  // 原生的 date、month、datetime-local 框写不进「至今」。
-  if (helpers.isPresentDate(picked)) return ["date", "month", "datetime-local"].includes(field.inputType) ? "" : picked;
-  // 原生 datetime-local 框和认出是选日期时间的控件：资料里有时分就带上（「2026-07-15T14:30」）；没有时分的只给日期，由填写层补 00:00。
-  if (field.inputType === "datetime-local" || field.pickerInputType === "datetime-local") {
-    const full = helpers.normalizeDateValue(picked, "datetime-local");
-    if (/\d{1,2}\s*[:：]\s*\d{2}/.test(picked) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(full)) return full;
-  }
-  // 原生 month 框和认出是选月的日期控件只给年月。
-  const day = field.pickerInputType === "month" || field.inputType === "month" ? "" : helpers.normalizeDateValue(picked, "date");
-  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
-  // 原生的 date、datetime-local 框只收到日的（datetime-local 由填写层补上 00:00），只到月的浏览器不收，不交给它。
-  // 日期控件（Element、antd 这类）收到年月时由填写层补成 1 日。
-  if (field.inputType === "date" || field.inputType === "datetime-local") return "";
-  const month = helpers.normalizeDateValue(picked, "month");
-  return /^\d{4}-\d{2}$/.test(month) ? month : "";
+  return ResumeProAIHelpers.pickerDate(field, value);
 }
 
 // 级联题和联动下拉的各级拿到一整段地址（「广东省深圳市南山区科苑路 8 号」）时，只留前面认得出的地区（至少到市）：
