@@ -196,6 +196,7 @@
   const UPDATE_READY_KEY = "extensionUpdateReady";
   let aiUnconfigured = false;
   let aiUnconfiguredChanged = false;
+  let aiHintDismissed = false;
   const AI_UNCONFIGURED_KEY = "desktopAiUnconfigured";
   let selectedView = "fill";
   let storeSnapshot = "";
@@ -2420,6 +2421,7 @@
       setUploadView(connected ? normalizeUpload(response.upload) : null, polledTabId);
       if (!connected) deepConsentOpen = false;
       if (connected && response.openView === "settings-ai" && prevOpenView !== "settings-ai") {
+        aiHintDismissed = false;
         aiUnconfigured = true;
       }
       if (connected && response.status) {
@@ -2493,7 +2495,8 @@
     storeLoaded = true;
     desktopVersion = result?.status === "ok" && typeof result.desktopVersion === "string" ? result.desktopVersion : "";
     if (result?.status === "ok" && "aiUnconfigured" in result) {
-      aiUnconfigured = result.aiUnconfigured === true;
+      if (result.aiUnconfigured === false) aiHintDismissed = false;
+      aiUnconfigured = result.aiUnconfigured === true && !aiHintDismissed;
     }
     renderUpdateReminder();
     renderAiConfigHint();
@@ -2936,9 +2939,9 @@
     if (result?.status !== "ok") toast("桌面程序暂时无法打开，请检查连接。");
     else {
       if (kind === "settings-ai") {
+        aiHintDismissed = true;
         aiUnconfigured = false;
         aiUnconfiguredChanged = true;
-        Promise.resolve(chrome.storage.session?.set?.({ [AI_UNCONFIGURED_KEY]: { unconfigured: false } })).catch(() => {});
         renderAiConfigHint();
       }
       await loadStore();
@@ -3042,7 +3045,9 @@
     }
     if (area === "session" && changes[AI_UNCONFIGURED_KEY]) {
       aiUnconfiguredChanged = true;
-      aiUnconfigured = changes[AI_UNCONFIGURED_KEY].newValue?.unconfigured === true;
+      const nextUnconfigured = changes[AI_UNCONFIGURED_KEY].newValue?.unconfigured === true;
+      if (!nextUnconfigured) aiHintDismissed = false;
+      aiUnconfigured = nextUnconfigured && !aiHintDismissed;
       renderAiConfigHint();
     }
     if (area === "local" && changes.legacyImport) renderLegacyHint().catch(() => {});

@@ -66,13 +66,14 @@ export function createAi({ session, store, port, uuid, now, onConfigState }) {
       ...(payload.firstByteMs == null ? {} : { firstByteMs: payload.firstByteMs }),
       ...(payload.timeoutStage == null ? {} : { timeoutStage: payload.timeoutStage })
     };
+    const isDefaultTier = tier !== 'strong' && payload.tier !== 'strong';
     if (payload.status === 'ok') {
-      onConfigState?.(true);
+      if (isDefaultTier) onConfigState?.(true);
       return { ok: true, text: payload.text, ...used };
     }
-    if (payload.reason === 'not_configured' && payload.tier !== 'strong') {
+    if (isDefaultTier && payload.reason === 'not_configured') {
       onConfigState?.(false);
-    } else if (payload.reason && !NON_CONFIGURED_REASONS.has(payload.reason)) {
+    } else if (isDefaultTier && payload.reason && !NON_CONFIGURED_REASONS.has(payload.reason)) {
       onConfigState?.(true);
     }
     return {

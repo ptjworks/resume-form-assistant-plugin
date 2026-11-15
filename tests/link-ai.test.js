@@ -193,8 +193,11 @@ test('onConfigState tracks whether the default AI provider is configured', async
   await ai.complete({ purpose: 'fill', system: 's', user: 'u' });
   assert.deepEqual(states, [false]);
 
-  // Strong-tier not_configured does not mark the default provider as unconfigured.
+  // Strong-tier not_configured or strong-tier success does not alter the default provider's config state.
   nextPayload = { status: 'failed', reason: 'not_configured', tier: 'strong' };
+  await ai.complete({ purpose: 'fill', tier: 'strong', system: 's', user: 'u' });
+  assert.deepEqual(states, [false]);
+  nextPayload = { status: 'ok', text: '[]', tier: 'strong' };
   await ai.complete({ purpose: 'fill', tier: 'strong', system: 's', user: 'u' });
   assert.deepEqual(states, [false]);
 

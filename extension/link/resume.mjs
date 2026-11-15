@@ -23,9 +23,11 @@ export function createResume({ session, store, sendNative, sleep, uuid, now, sen
       await validateRequest(envelope);
       const result = await send(envelope, { sendNative, sleep, retry: messageType !== 'ui.open' });
       if (result.status === 'ok') {
-        // 侧栏拿它判断桌面是不是太旧，要不要提示更新；已知桌面尚未配置 AI 时一并带回提醒标记。
+        // 侧栏拿它判断桌面是不是太旧，要不要提示更新；已知桌面 AI 配置状态时一并带回布尔标记。
         const desktopVersion = messageType === 'resume.read' && typeof probe.appVersion === 'string' ? { desktopVersion: probe.appVersion } : {};
-        const aiHint = messageType === 'resume.read' && isAiUnconfigured?.() === true ? { aiUnconfigured: true } : {};
+        const aiHint = messageType === 'resume.read' && typeof isAiUnconfigured === 'function'
+          ? { aiUnconfigured: isAiUnconfigured() === true }
+          : {};
         return { status: 'ok', data: result.response.payload, ...desktopVersion, ...aiHint };
       }
       if (result.status === 'fatal') return { status: result.code === 'payload_too_large' ? 'input_too_large'

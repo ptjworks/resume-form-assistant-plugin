@@ -144,7 +144,7 @@ test('resume.read includes aiUnconfigured when flagged', async () => {
   assert.deepEqual(await resume.openView('settings-ai'), { status: 'ok', opened: true });
   assert.deepEqual(await resume.read(), { status: 'ok', data, aiUnconfigured: true });
   unconfigured = false;
-  assert.deepEqual(await resume.read(), { status: 'ok', data });
+  assert.deepEqual(await resume.read(), { status: 'ok', data, aiUnconfigured: false });
 });
 
 test('an unavailable manual open is not replayed after the user might have quit again', async () => {

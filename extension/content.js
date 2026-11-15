@@ -845,6 +845,7 @@
     openManagerButton?.addEventListener("click", () => state.desktopMode === "ready" ? openManager("home") : openDesktopAction(state.desktopMode));
     sidebar.querySelector("#resume-pro-open-ai")?.addEventListener("click", () => {
       state.aiUnconfigured = false;
+      if (state.suggestedView === "settings-ai") state.suggestedView = null;
       renderSidebar();
       openManager("settings-ai");
     });
@@ -870,6 +871,14 @@
 
   function bindStorageSync() {
     chrome.storage.onChanged.addListener(async (changes, areaName) => {
+      if (areaName === "session" && changes.desktopAiUnconfigured) {
+        state.aiUnconfigured = changes.desktopAiUnconfigured.newValue?.unconfigured === true;
+        if (!state.aiUnconfigured && state.suggestedView === "settings-ai") {
+          state.suggestedView = null;
+        }
+        syncAiConfigHint();
+        return;
+      }
       if (areaName !== "local") {
         return;
       }
