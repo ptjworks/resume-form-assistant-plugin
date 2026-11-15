@@ -742,8 +742,9 @@ function showUpdate(message: { tone: string; text: string; available: boolean; c
   const downloadBtn = document.getElementById("update-download") as HTMLButtonElement | null;
   if (downloadBtn) downloadBtn.hidden = !allowDownload;
   const noticeDownloadBtn = document.getElementById("update-notice-download") as HTMLButtonElement | null;
-  if (noticeDownloadBtn && message.canDownload === false) noticeDownloadBtn.hidden = true;
-  else if (noticeDownloadBtn && message.available) noticeDownloadBtn.hidden = false;
+  if (noticeDownloadBtn) {
+    noticeDownloadBtn.hidden = !shownNotice || message.canDownload === false;
+  }
   syncDownloadButtons();
 }
 

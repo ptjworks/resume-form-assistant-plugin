@@ -1729,7 +1729,8 @@ async fn download_update_cmd(
 ///
 /// 信任边界说明：本应用的前端是同源打包的内置桌面界面，用户确认弹窗由前端 `openSettingsDialog`
 /// 承载；后端在此命令中要求前端显式传入期望的 `version` 与 `sha256`，并在后台线程中打开只读文件
-/// 句柄、复核磁盘字节数与 SHA-256，持有句柄直至调用系统 opener 打开，防止下载后至启动前文件被篡改。
+/// 句柄（Windows 下设置 `FILE_SHARE_READ` 阻止写入/删除，Unix/macOS 下使用 `O_NOFOLLOW` 并缩短复核至打开窗口）、
+/// 复核磁盘字节数与 SHA-256，持有句柄并在调用系统 opener 前再次校验目标非符号链接且字节大小未变。
 #[tauri::command]
 async fn open_downloaded_update_cmd(
     state: State<'_, AppState>,
@@ -1776,6 +1777,23 @@ async fn open_downloaded_update_cmd(
             return Err(err);
         }
     };
+
+    let pre_open_meta = std::fs::symlink_metadata(&path).map_err(|_| CommandError {
+        code: "UPDATE_NOT_DOWNLOADED".into(),
+        message: "本地安装包不存在或无法读取，请重新下载。".into(),
+    })?;
+    if pre_open_meta.file_type().is_symlink()
+        || !pre_open_meta.is_file()
+        || pre_open_meta.len() != verified.info.size_bytes
+    {
+        if let Ok(mut slot) = state.downloaded_update.lock() {
+            *slot = None;
+        }
+        return Err(CommandError {
+            code: "UPDATE_HASH_MISMATCH".into(),
+            message: "本地安装包在打开前发生变化，已拒绝启动，请重新下载。".into(),
+        });
+    }
 
     tauri_plugin_opener::OpenerExt::opener(&app)
         .open_path(path.to_string_lossy(), None::<&str>)

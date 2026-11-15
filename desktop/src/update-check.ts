@@ -193,6 +193,27 @@ export function describeDownloadFailure(error: unknown): UpdateMessage {
         available: true,
         canDownload: false,
       };
+    case "UPDATE_VERSION_CHANGED":
+      return {
+        tone: "warn",
+        text: detail.message || "待更新版本已变更，请先重新点击「立即检查」后再下载。",
+        available: false,
+        canDownload: false,
+      };
+    case "UPDATE_DOWNLOAD_BUSY":
+      return {
+        tone: "warn",
+        text: detail.message || "正在下载更新安装包，请稍候。",
+        available: true,
+        canDownload: true,
+      };
+    case "UPDATE_WRITE_FAILED":
+      return {
+        tone: "error",
+        text: detail.message || "无法将安装包写入本地缓存目录，请检查磁盘空间与权限，或点「去下载页」手动下载。",
+        available: true,
+        canDownload: true,
+      };
     case "UPDATE_HASH_MISMATCH":
       return {
         tone: "error",

@@ -466,10 +466,13 @@ pub fn release_asset_urls(
     info: &UpdateInfo,
     installer_name: &str,
 ) -> Result<(String, String), CommandError> {
-    if parse_version(&info.version).is_none() || !is_release_page(&info.url) {
+    if parse_version(&info.version).is_none()
+        || !is_release_page(&info.url)
+        || !is_safe_installer_filename(&info.version, installer_name)
+    {
         return Err(CommandError {
             code: "UPDATE_BAD_URL".into(),
-            message: "更新版本或下载地址不合规，已拒绝下载。".into(),
+            message: "更新版本、文件名或下载地址不合规，已拒绝下载。".into(),
         });
     }
     let parsed = Url::parse(&info.url).map_err(|_| CommandError {
@@ -543,6 +546,11 @@ fn sha256_reader(mut file: &std::fs::File) -> Result<(String, u64), std::io::Err
 }
 
 /// 打开本地普通文件并计算其 SHA-256 与字节数（拒绝符号链接或目录），同时返回持有的只读文件句柄。
+///
+/// - 在 Windows 上显式设置 `share_mode(FILE_SHARE_READ)`（`0x00000001`，不含 `FILE_SHARE_WRITE` 与 `FILE_SHARE_DELETE`）
+///   并加 `FILE_FLAG_OPEN_REPARSE_POINT`（`0x00200000`），使得既不跟随重解析点/符号链接，又在句柄存活期间阻止其他进程写入或删除该文件。
+/// - 在 Unix/macOS 上使用 `O_NOFOLLOW` 打开，防止打开时跟随末端符号链接（注：Unix 下按路径调用系统 opener 仍无法完全消除按路径替换的竞态，
+///   仅能防符号链接跟随并在打开前再次复核文件元数据）。
 pub fn open_and_sha256_file(path: &Path) -> Result<(std::fs::File, String, u64), std::io::Error> {
     let symlink_meta = std::fs::symlink_metadata(path)?;
     if symlink_meta.file_type().is_symlink() || !symlink_meta.is_file() {
@@ -551,9 +559,22 @@ pub fn open_and_sha256_file(path: &Path) -> Result<(std::fs::File, String, u64),
             "not a regular file",
         ));
     }
-    let file = std::fs::File::open(path)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_SHARE_READ (0x1) only; FILE_FLAG_OPEN_REPARSE_POINT (0x00200000) to avoid following symlinks.
+        opts.share_mode(0x0000_0001).custom_flags(0x0020_0000);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = opts.open(path)?;
     let file_meta = file.metadata()?;
-    if !file_meta.is_file() {
+    if file_meta.file_type().is_symlink() || !file_meta.is_file() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "not a regular file",
@@ -913,25 +934,30 @@ where
     let mut last_reported_bytes = 0u64;
 
     loop {
-        let next = tokio::time::timeout(
+        let next = match tokio::time::timeout(
             Duration::from_secs(CHUNK_IDLE_TIMEOUT_SECONDS),
             response.chunk(),
         )
         .await
-        .map_err(|_| {
-            let _ = std::fs::remove_file(&part_path);
-            CommandError {
-                code: "UPDATE_OFFLINE".into(),
-                message: "安装包下载超时（超过 30 秒无数据响应），请重试。".into(),
+        {
+            Ok(Ok(chunk)) => chunk,
+            Ok(Err(_)) => {
+                drop(part_file);
+                let _ = std::fs::remove_file(&part_path);
+                return Err(CommandError {
+                    code: "UPDATE_OFFLINE".into(),
+                    message: "安装包下载途中连接中断，请重试。".into(),
+                });
             }
-        })?
-        .map_err(|_| {
-            let _ = std::fs::remove_file(&part_path);
-            CommandError {
-                code: "UPDATE_OFFLINE".into(),
-                message: "安装包下载途中连接中断，请重试。".into(),
+            Err(_) => {
+                drop(part_file);
+                let _ = std::fs::remove_file(&part_path);
+                return Err(CommandError {
+                    code: "UPDATE_OFFLINE".into(),
+                    message: "安装包下载超时（超过 30 秒无数据响应），请重试。".into(),
+                });
             }
-        })?;
+        };
         let Some(chunk) = next else {
             break;
         };
@@ -1040,7 +1066,8 @@ where
 }
 
 /// 用户点击「确认并打开安装程序」时，再次核对版本、哈希与磁盘上的安装包文件一致性，
-/// 并返回持有的只读文件句柄（在 Windows 上持有只读句柄期间会阻止其他进程以写入/删除方式篡改该文件）。
+/// 并返回持有的只读文件句柄（Windows 上通过显式 `share_mode(FILE_SHARE_READ)` 阻止写入与删除；
+/// Unix/macOS 上通过 `O_NOFOLLOW` 拒绝符号链接并缩短校验到按路径打开的时间窗口，但受限于系统按路径启动机制，Unix 下不构成内核级原子执行保证）。
 pub fn open_and_verify_ready_installer(
     verified: &VerifiedInstaller,
     version: &str,
@@ -1068,7 +1095,7 @@ pub fn open_and_verify_ready_installer(
     Ok((verified.path.clone(), file))
 }
 
-/// 用户点击「确认并打开安装程序」时，再次核对版本、哈希与磁盘上的安装包文件一致性。
+#[cfg(test)]
 pub fn verify_ready_installer(
     verified: &VerifiedInstaller,
     version: &str,
