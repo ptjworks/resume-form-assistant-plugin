@@ -924,3 +924,33 @@ test("a contradicted ID type that already has a value asks no overwrite question
   assert.deepEqual(["idType", "idNo", "school"].map(p.value), ["1", "11010519491231002X", "示例大学"]);
   assert.equal(result.unfilledCount, 1);
 });
+
+test("#518 a native date input with a month-only local birth date reports invalid_date without writing, and AI warnings persist past 2.4s", async (t) => {
+  const resume = [
+    ["基本信息", "姓名", "测试用户"],
+    ["基本信息", "出生年月", "2001.05"],
+    ["教育背景", "学校", "示例大学"]
+  ];
+  const p = page(t, input("name", "姓名") + input("birth", "生日", { type: "date" }) + input("school", "毕业院校"), { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("name") && p.worker.calls.length === 1));
+  assert.deepEqual(p.worker.calls[0].labels, ["毕业院校"]);
+  p.worker.calls[0].fail({ reason: "not_configured" });
+  const result = await running;
+  assert.equal(p.value("birth"), "");
+  assert.equal(result.filledCount, 1);
+  assert.match(p.ui.status.textContent, /生日（日期格式或范围不符）/);
+  assert.match(p.ui.status.textContent, /桌面还没有配置 AI 服务商/);
+  const report = (await p.report()).diagnosticsReport;
+  assert.match(report, /^- 出生日期: input\[date\].* reason=invalid_date$/m);
+
+  // Even when all local fields succeed and unfilledNote is empty, a response.warning must stay visible past 2400ms.
+  const p2 = page(t, input("name", "姓名") + input("school", "毕业院校"), { resume });
+  const run2 = p2.run();
+  assert.ok(await p2.until(() => p2.value("name") && p2.worker.calls.length === 1));
+  p2.worker.calls[0].fail({ reason: "not_configured" });
+  await run2;
+  await new Promise((resolve) => setTimeout(resolve, 2550));
+  assert.equal(p2.ui.status.classList.contains("is-visible"), true, "warning status stays visible after 2.4s");
+  assert.match(p2.ui.status.textContent, /桌面还没有配置 AI 服务商/);
+});
