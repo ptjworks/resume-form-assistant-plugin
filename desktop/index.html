@@ -41,8 +41,12 @@
         </div>
       </header>
       <div id="update-notice" class="update-notice" role="status" hidden>
-        <p id="update-notice-text"></p>
-        <button type="button" id="update-notice-open" class="primary">去下载页</button>
+        <div class="update-notice-body">
+          <p id="update-notice-text"></p>
+          <progress id="update-notice-progress" class="update-progress" max="100" hidden></progress>
+        </div>
+        <button type="button" id="update-notice-download" class="primary">下载更新</button>
+        <button type="button" id="update-notice-open">去下载页</button>
         <button type="button" id="update-notice-close" class="update-notice-close" aria-label="收起，下次打开还会提示" title="收起，下次打开还会提示"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
       <main>
@@ -668,10 +672,10 @@
                   <div class="about-head">
                     <img class="about-mark" src="./src-tauri/icons/64x64.png" alt="" width="48" height="48" />
                     <div class="about-title"><h2>网申快填 <span id="settings-version-tag" class="settings-chip" hidden></span></h2><p id="settings-version">正在读取版本…</p></div>
-                    <div class="settings-actions"><button type="button" id="update-check" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>检查更新</button><button type="button" id="update-open" class="primary" hidden>去下载页</button></div>
+                    <div class="settings-actions"><button type="button" id="update-check" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>检查更新</button><button type="button" id="update-download" class="primary" hidden>下载更新</button><button type="button" id="update-open" hidden>去下载页</button></div>
                   </div>
-                  <div id="update-msg" class="settings-callout" data-tone="info" role="status" hidden><div><p id="update-msg-text"></p></div></div>
-                  <p class="settings-caption">更新需要手动下载安装。安装包尚未签名，请确认下载来源。<span id="update-checked-at" class="update-checked-at" hidden></span></p>
+                  <div id="update-msg" class="settings-callout" data-tone="info" role="status" hidden><div><p id="update-msg-text"></p><progress id="update-progress" class="update-progress" max="100" hidden></progress></div></div>
+                  <p class="settings-caption">可在应用内直接下载安装包并自动校验 SHA-256 哈希；校验通过后需由你确认才会打开安装程序。<span id="update-checked-at" class="update-checked-at" hidden></span></p>
                 </div>
                 <div class="settings-card settings-card-row">
                   <div><h2>导出诊断</h2><p>遇到问题时，导出一份运行状态与排查信息（JSON 文件，存到本机日志目录；路径已脱敏，不含简历内容和 API Key）。</p></div>

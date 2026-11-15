@@ -726,6 +726,8 @@ fn wiring_state(root: &std::path::Path, store: archive_store::ArchiveStore) -> A
         ai_inflight: crate::ai_commands::InflightRegistry::default(),
         native_messaging: Mutex::new(vec![]),
         latest_update: Mutex::new(None),
+        downloaded_update: Mutex::new(None),
+        downloading_update: std::sync::atomic::AtomicBool::new(false),
     }
 }
 
