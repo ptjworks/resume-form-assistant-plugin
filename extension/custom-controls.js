@@ -143,7 +143,7 @@
   // 联想框打字后等它自己的建议框出来的上限。Element 防抖后取建议时就先弹出加载中的建议框。
   const FREE_TEXT_TYPED_MS = 1500;
   // 普通文本框写不进时再打一次字，等建议的上限（见 suggest）。
-  const SUGGEST_MS = 2500;
+  const SUGGEST_MS = 2000;
   // #377 YUI 2 AutoComplete（SuccessFactors 的 juic.SFLegacyAutoComplete 改自它）：输入框带 yui-ac-input，
   // 外层 div.yui-ac 里的 .yui-ac-container 是建议框，正好一个才认。
   // 原版 YUI 不带 ARIA，扫描时仍是文本框（默认允许直接输入）；开了 forceSelection 写不进的，由 suggest 从建议里选。
@@ -1481,10 +1481,6 @@
       const text = trim(node.textContent);
       return GENERIC_EMPTY.test(text) && !GENERIC_LOADING.test(text) && !Array.from(node.children).some(child => trim(child.textContent)) && h.visible(node);
     }));
-    const loadingTextShown = () => [popup, ctx.popup].some(layer => layer?.isConnected && Array.from(layer.querySelectorAll('*')).some(node => {
-      const text = trim(node.textContent);
-      return GENERIC_LOADING.test(text) && !Array.from(node.children).some(child => trim(child.textContent)) && h.visible(node);
-    }));
     // 两级选择（省 → 市，#301）：点了一项后弹层还开着，里面冒出了之前没见过的选项（换成下一级，或多出一列）。
     // 不再往下点，按失败收起弹层，报两级选择不支持。至少多出两项才算，免得把选中后出现的勾、计数当成下一级；
     // 和见过的选项同在一个列表里的不算（搜索框清空后列表回到第一屏或整张列表，「已选」栏的标题和删除）。
@@ -1806,8 +1802,8 @@
         }, current => !loading() && lastSignature !== signature && current.length > 0
           && (info.freeText ? sameName(current) || typedSettled(stableSince) : Date.now() - stableSince >= 80) || noSuggestions(current));
         // 列表空了或显示「暂无数据」就是没有这一项。有另一种写法时，空列表也可以再搜一次。
-        if (updated.reason === 'verification_timeout' && !loading() && !loadingTextShown() && !readOptions(level).length
-          && (signature || emptyShown() || info.library === 'boss' || canTryAlternate && query !== alternateQuery)) {
+        if (updated.reason === 'verification_timeout' && !loading() && !readOptions(level).length
+          && (signature || emptyShown() || canTryAlternate && query !== alternateQuery)) {
           list = [];
           found = { reason: 'no_option_match' };
           continue;
@@ -2146,11 +2142,11 @@
   // 贴着这个框的一块（认法同通用下拉，见 genericPopupFrom；校验提示不算），只点和要填的字相同的一项。
   // 点了返回 accepted；没有这样的一块（有的框要有按键才收下）、点不成或点了没换成这一项返回 typed。宿主都随后失焦、按文本框核对。
   // 有建议框但没有这一项报没有匹配的选项：恢复打字前的字，失焦收起建议框。不按 Esc：会冒泡到外层对话框（#395）。
-  async function suggest(ctx, raw, h, beforeLayers = null) {
+  async function suggest(ctx, raw, h) {
     const el = ctx.el, doc = el?.ownerDocument, View = doc?.defaultView;
     const wanted = trim(raw);
     if (el?.tagName !== 'INPUT' || el.readOnly || el.disabled || !['text', 'search'].includes(el.type) || !wanted || !View?.MutationObserver) return {};
-    const info = { el, root: el, combo: el, library: 'generic', cascade: false, multiple: false, before: beforeLayers || shownLayers(doc, h.visible) };
+    const info = { el, root: el, combo: el, library: 'generic', cascade: false, multiple: false, before: shownLayers(doc, h.visible) };
     const touched = new Set();
     const watch = new View.MutationObserver(records => {
       for (const record of records) {
@@ -2163,7 +2159,6 @@
     let layer = null, undo = false;
     try {
       h.focus(el);
-      h.click(el, ctx);
       await new Promise(resolve => setTimeout(resolve, 0));
       const reason = h.stop(ctx, true); if (reason) return { reason };
       h.type(el, wanted, ctx);
@@ -2184,16 +2179,8 @@
         return { popup: outer[0], layer: layers.get(outer[0]), list };
       };
       const sameIn = list => Boolean(sameOption(list, wanted, h.helpers).option);
-      const ready = seen => Boolean(seen?.popup && seen.list.length && (sameIn(seen.list) || Date.now() - steadySince >= 300));
-      const waitMs = h.timeoutMs && h.timeoutMs < 1500 ? h.timeoutMs : SUGGEST_MS;
-      const loadingNear = () => Array.from(touched).some(node => node.isConnected && !hintLayer(node, el) && !staleLayer(node, info) && h.visible(node)
-        && (GENERIC_LOADING.test(trim(node.textContent))
-          || [node, ...node.querySelectorAll('[class]')].some(item => !trim(item.textContent)
-            && String(item.getAttribute('class') || '').split(/\s+/).some(token => LOADING_TOKEN.test(token)) && h.visible(item))));
-      let settled = await h.waitUntil(ctx, doc.documentElement, look, ready, waitMs);
-      if (settled.reason === 'verification_timeout' && loadingNear()) {
-        settled = await h.waitUntil(ctx, doc.documentElement, look, ready, waitMs);
-      }
+      const settled = await h.waitUntil(ctx, doc.documentElement, look,
+        seen => Boolean(seen?.popup && seen.list.length && (sameIn(seen.list) || Date.now() - steadySince >= 300)), Math.min(SUGGEST_MS, h.timeoutMs ?? SUGGEST_MS));
       if (settled.reason && settled.reason !== 'verification_timeout') return { reason: settled.reason };
       const seen = settled.value || look();
       if (!seen) return { typed: true };

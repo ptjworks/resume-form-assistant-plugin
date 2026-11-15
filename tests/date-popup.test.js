@@ -642,7 +642,7 @@ test("the fill report and the side panel say a date picker left another date in 
 });
 
 test("#366 Beisen calendar whose input only previews on Enter or reverts on blur falls back to clicking year, month and day", async () => {
-  for (const mode of ["preview- stays-open", "reverts-on-blur"]) {
+  for (const mode of ["preview-stays-open", "reverts-on-blur"]) {
     const h = load(`<div class="form-item"><label class="form-item__text">出生日期</label><div class="form-item__control">
       <div class="phoenix-select phoenix-select--editable"><ul class="phoenix-select__content"><li class="phoenix-select__selected"></li><li class="phoenix-select__inputWrapper"><input class="phoenix-select__input"></li></ul></div></div></div>`);
     const { doc } = h;

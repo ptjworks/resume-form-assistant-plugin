@@ -251,7 +251,6 @@
       // #301 #417 只读的框：聚焦之前记下看得见的对话框、浮层，写不上时收起聚焦后网页打开的那一块（见末尾）。
       const readonly = !shown && ctx.el.readOnly === true;
       const layersBefore = readonly ? scope.ResumeProCustomControls?.openLayers?.(ctx.el.ownerDocument, visible) || null : null;
-      const suggestBefore = !shown && !readonly && ctx.kind === 'text' ? scope.ResumeProCustomControls?.visiblePopups?.({ element: ctx.el }, visible) || null : null;
       if (!shown && !await deps.runTextLifecycle(ctx.el, typed, false, guard, didWrite)) return result(false, stop(ctx) || 'value_changed', ctx);
       ctx.acceptedOnce = shows(ctx.el, expected);
       await deps.waitTextCommit();
@@ -272,7 +271,7 @@
       // 只在框里换回了写之前的字时再试：这类框没选就还原。改成别的字的（页面改了格式）不再等建议，免得每个框白等。
       if (!verdict.ok && !shown && verdict.reason === 'value_not_committed' && ctx.kind === 'text' && !deps.prefersSequential(ctx.el)
         && String(ctx.el.value ?? '') === previous && scope.ResumeProCustomControls?.suggest) {
-        const picked = await scope.ResumeProCustomControls.suggest(ctx, typed, host, suggestBefore);
+        const picked = await scope.ResumeProCustomControls.suggest(ctx, typed, host);
         stopped = stop(ctx);
         if (stopped) return result(false, stopped, ctx);
         if (picked.accepted || picked.typed) {
@@ -532,15 +531,21 @@
         if (typedDate && verified.reason === 'value_reverted' && ctx.observed?.popupRole === 'calendar'
           && !ctx.noCalendarTyping && !stop(ctx, true)) {
           ctx.noCalendarTyping = true;
+          ctx.popupsBeforeFocus = scope.ResumeProCustomControls?.visiblePopups?.(ctx.entry, visible) || null;
           focus(ctx.el);
+          await delay(0);
+          const stopped = stop(ctx, true);
+          if (stopped) return result(false, stopped, ctx);
           const retry = await scope.ResumeProCustomControls.run(ctx, desiredValue, host);
-          if (!retry.reason) {
-            accepted = retry.accepted;
-            if (retry.dayDefaulted) ctx.observed = { ...ctx.observed, dayDefaulted: true };
-            ctx.acceptedOnce = accepted();
-            if (!direct) blur(ctx.el);
-            verified = await verify(ctx, accepted, inspect);
+          if (retry.reason) {
+            const afterRetry = stop(ctx);
+            return afterRetry ? result(false, afterRetry, ctx) : verified;
           }
+          accepted = retry.accepted;
+          if (retry.dayDefaulted) ctx.observed = { ...ctx.observed, dayDefaulted: true };
+          ctx.acceptedOnce = accepted();
+          if (!direct) blur(ctx.el);
+          verified = await verify(ctx, accepted, inspect);
         }
         if (verified.ok || verified.reason === 'validation_not_cleared') checks.set(ctx.el, { ctx, accepted, inspect });
         return verified;

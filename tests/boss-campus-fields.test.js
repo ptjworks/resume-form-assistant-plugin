@@ -378,13 +378,14 @@ test("BOSS day calendars commit the requested day and keep date precision in the
   assert.equal(api.check(entry).ok, true);
 });
 
-test("#466 BOSS searchable select that returns an empty list reports no_option_match instead of options_timeout", async t => {
+test("#466 BOSS searchable select that renders an empty state reports no_option_match and clears the search input", async t => {
   const doc = load(t, row("学校名称", school()));
   const root = doc.querySelector("#school");
   simulateDropdown(root, { transferred: true });
   const input = root.querySelector(".ui-select-input");
   input.addEventListener("input", () => {
-    doc.querySelector(".ui-dropdown-list")?.replaceChildren();
+    const list = doc.querySelector(".ui-dropdown-list");
+    if (list) list.innerHTML = '<li class="ui-dropdown-not-found">无匹配数据</li>';
   });
   const api = operator(doc);
   const [college] = scanner.scanPage(doc, { isVisible: visible }).controls;
