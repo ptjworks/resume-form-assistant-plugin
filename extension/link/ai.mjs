@@ -8,8 +8,12 @@ const wireReason = code => ({
   protocol_incompatible: 'incompatible'
 }[code] ?? 'unavailable');
 
+const NON_CONFIGURED_REASONS = new Set([
+  'not_configured', 'unavailable', 'not_installed', 'not_paired', 'never_paired', 'incompatible', 'cancelled'
+]);
+
 /** AI prompts stay in the worker; this module only asks the desktop to send them. */
-export function createAi({ session, store, port, uuid, now }) {
+export function createAi({ session, store, port, uuid, now, onConfigState }) {
   async function complete({ purpose, tier, system, user, signal }) {
     if (signal?.aborted) return { ok: false, reason: 'cancelled' };
     let probe;
@@ -62,7 +66,16 @@ export function createAi({ session, store, port, uuid, now }) {
       ...(payload.firstByteMs == null ? {} : { firstByteMs: payload.firstByteMs }),
       ...(payload.timeoutStage == null ? {} : { timeoutStage: payload.timeoutStage })
     };
-    if (payload.status === 'ok') return { ok: true, text: payload.text, ...used };
+    const isDefaultTier = tier !== 'strong' && payload.tier !== 'strong';
+    if (payload.status === 'ok') {
+      if (isDefaultTier) onConfigState?.(true);
+      return { ok: true, text: payload.text, ...used };
+    }
+    if (isDefaultTier && payload.reason === 'not_configured') {
+      onConfigState?.(false);
+    } else if (isDefaultTier && payload.reason && !NON_CONFIGURED_REASONS.has(payload.reason)) {
+      onConfigState?.(true);
+    }
     return {
       ok: false, reason: payload.reason,
       ...(payload.httpStatus == null ? {} : { httpStatus: payload.httpStatus }),

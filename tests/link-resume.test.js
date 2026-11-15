@@ -118,6 +118,35 @@ test('an explicit open reaches the host even when background probes cannot reach
   assert.equal(sent[0].payload.view, 'resume');
 });
 
+test('resume.read includes aiUnconfigured when flagged', async () => {
+  const { createResume } = await import('../extension/link/resume.mjs');
+  let unconfigured = true;
+  const data = { templates: [], activeTemplate: null, profile: PROFILE, profileRevision: 0 };
+  const resume = createResume({
+    session: { probe: async () => ({ mode: 'ready', identity: { archiveId: ARCHIVE, restoreEpoch: EPOCH } }) },
+    store: { clientInstanceId: async () => '11111111-1111-4111-8111-111111111111' },
+    sendNative: async (_host, request) => ({
+      response: {
+        protocolVersion: request.protocolVersion,
+        correlationId: request.messageId,
+        ok: true,
+        payload: request.messageType === 'ui.open' ? { opened: true } : data
+      }
+    }),
+    sleep: async () => {},
+    uuid: () => '33333333-3333-4333-8333-333333333333',
+    now: () => new Date('2026-09-24T00:00:00.000Z'),
+    isAiUnconfigured: () => unconfigured
+  });
+
+  assert.deepEqual(await resume.read(), { status: 'ok', data, aiUnconfigured: true });
+  // Automatic openView('settings-ai') during fill must not clear unconfigured state prematurely.
+  assert.deepEqual(await resume.openView('settings-ai'), { status: 'ok', opened: true });
+  assert.deepEqual(await resume.read(), { status: 'ok', data, aiUnconfigured: true });
+  unconfigured = false;
+  assert.deepEqual(await resume.read(), { status: 'ok', data, aiUnconfigured: false });
+});
+
 test('an unavailable manual open is not replayed after the user might have quit again', async () => {
   const { resume, sent } = await harness({ answer: () => ({ ok: false, payload: {}, error: { code: 'unavailable', retryable: true, message: 'stopped' } }) });
   assert.deepEqual(await resume.openView('home'), { status: 'unavailable' });

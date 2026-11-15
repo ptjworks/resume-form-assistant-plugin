@@ -125,11 +125,12 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME,
   const gender = w.document.getElementById("gender");
   if (gender && onGender) gender.addEventListener("change", () => onGender(w.document));
   const ui = { status: { textContent: "", className: "" }, diag: { value: "" }, cancel: { hidden: true, disabled: false, onclick: null },
-    hint: { hidden: true, textContent: "" }, fill: { disabled: false, textContent: "" } };
+    hint: { hidden: true, textContent: "" }, fill: { disabled: false, textContent: "" }, aiConfigHint: { hidden: true } };
   ui.status.classList = { contains: (name) => String(ui.status.className).split(/\s+/).includes(name) };
   const diagnostics = { hidden: true, open: false, querySelector: (selector) => (selector === "#resume-pro-diagnostics-text" ? ui.diag : null) };
   const parts = { "#resume-pro-status": ui.status, "#resume-pro-diagnostics": diagnostics,
-    "#resume-pro-diagnostics-text": ui.diag, "#resume-pro-cancel-fill": ui.cancel, "#resume-pro-wait-hint": ui.hint, "#resume-pro-ai-fill": ui.fill };
+    "#resume-pro-diagnostics-text": ui.diag, "#resume-pro-cancel-fill": ui.cancel, "#resume-pro-wait-hint": ui.hint,
+    "#resume-pro-ai-fill": ui.fill, "#resume-pro-ai-config-hint": ui.aiConfigHint };
   const helpers = w.ResumeProHighlightTest;
   helpers.setShadowRoot({ querySelectorAll: () => [], querySelector: (selector) => parts[selector] || null });
   const value = (id) => w.document.getElementById(id).value;
@@ -953,4 +954,7 @@ test("#518 a native date input with a month-only local birth date reports invali
   await new Promise((resolve) => setTimeout(resolve, 2550));
   assert.equal(p2.ui.status.classList.contains("is-visible"), true, "warning status stays visible after 2.4s");
   assert.match(p2.ui.status.textContent, /桌面还没有配置 AI 服务商/);
+  assert.match(p2.ui.status.textContent, /未配置时仅能按本地规则填写姓名、电话等少量基础项（本次其余 1 个字段需配置 AI 后才能识别填写），会大幅影响填写成功率/);
+  assert.equal(p2.ui.aiConfigHint.hidden, false);
+  assert.equal((await p2.report()).aiUnconfigured, true);
 });

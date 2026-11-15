@@ -51,7 +51,34 @@ export function installDesktopLink(api) {
   const uploads = createUploads({ ...deps, staging });
   const usage = createUsage(deps);
   const session = createSession({ ...deps, onProbe: probe => usage.observe(probe) });
-  const resume = createResume({ ...deps, session });
+  const AI_UNCONFIGURED_KEY = 'desktopAiUnconfigured';
+  let aiUnconfigured = false;
+  let aiStateUpdated = false;
+  Promise.resolve(api.storage?.session?.get?.(AI_UNCONFIGURED_KEY))
+    .then(stored => {
+      if (!aiStateUpdated && stored?.[AI_UNCONFIGURED_KEY]?.unconfigured === true) {
+        aiUnconfigured = true;
+      }
+    })
+    .catch(() => {});
+  const setAiUnconfigured = unconfigured => {
+    aiStateUpdated = true;
+    const next = Boolean(unconfigured);
+    if (aiUnconfigured === next) return;
+    aiUnconfigured = next;
+    Promise.resolve(api.storage?.session?.set?.({ [AI_UNCONFIGURED_KEY]: { unconfigured: next } })).catch(() => {});
+  };
+  api.storage?.onChanged?.addListener?.((changes, area) => {
+    if (area === 'session' && changes?.[AI_UNCONFIGURED_KEY]) {
+      aiStateUpdated = true;
+      aiUnconfigured = changes[AI_UNCONFIGURED_KEY].newValue?.unconfigured === true;
+    }
+  });
+  const resume = createResume({
+    ...deps,
+    session,
+    isAiUnconfigured: () => aiUnconfigured
+  });
   const mail = createMail({ ...deps, session });
   const siteAnswers = createSiteAnswers({ ...deps, session });
   // #429 item 4: files kept on the desktop for upload; one port per file read, see resume-files.mjs.
@@ -60,7 +87,12 @@ export function installDesktopLink(api) {
   const uploadGrants = createUploadGrants();
   revokeOnNavigation(api, uploadGrants);
   const exportQQ = createQQExporter(api);
-  const ai = createAi({ ...deps, session, port: nativePort(api) });
+  const ai = createAi({
+    ...deps,
+    session,
+    port: nativePort(api),
+    onConfigState: configured => setAiUnconfigured(!configured)
+  });
   const legacy = createLegacy({
     ...deps, session, storage: storageAdapter(api), alarms: api.alarms,
     profileApi: globalThis.ResumeProProfile

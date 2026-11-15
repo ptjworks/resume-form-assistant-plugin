@@ -151,6 +151,8 @@
     fillProgressPhase: document.getElementById("fill-progress-phase"),
     fillProgressHint: document.getElementById("fill-progress-hint"),
     fillReason: document.getElementById("fill-reason"),
+    aiConfigHint: document.getElementById("ai-config-hint"),
+    aiConfigHintAction: document.getElementById("ai-config-hint-action"),
     targetState: document.getElementById("target-state"),
     desktopPill: document.getElementById("desktop-pill"),
     pageDomain: document.getElementById("page-domain"),
@@ -192,6 +194,10 @@
   // 启动时那次读取比变化通知晚回来时，不能拿旧值盖掉通知里的新值。
   let readyVersionChanged = false;
   const UPDATE_READY_KEY = "extensionUpdateReady";
+  let aiUnconfigured = false;
+  let aiUnconfiguredChanged = false;
+  let aiHintDismissed = false;
+  const AI_UNCONFIGURED_KEY = "desktopAiUnconfigured";
   let selectedView = "fill";
   let storeSnapshot = "";
   let storeLoaded = false;
@@ -423,6 +429,12 @@
     elements.fieldSearch.disabled = Boolean(copy);
     elements.desktopConnectionAction.dataset.kind = connectionCopy?.kind || "";
     document.getElementById("open-manager").textContent = connectionCopy?.action || "打开桌面";
+    renderAiConfigHint();
+  }
+
+  function renderAiConfigHint() {
+    if (!elements.aiConfigHint) return;
+    elements.aiConfigHint.hidden = desktopMode !== "ready" || !aiUnconfigured;
   }
 
   // A line icon by what the group is about; decoration only.
@@ -2386,6 +2398,7 @@
       pageConnected = connected;
       renderPageCard();
       renderJobSummary();
+      const prevOpenView = lastPageStatus?.openView;
       if (!connected) currentTabId = null;
       lastPageStatus = connected ? response : null;
       updateFillAvailability(lastPageStatus);
@@ -2407,6 +2420,10 @@
       recipeView = connected ? normalizeRecipe(response.recipe) : null;
       setUploadView(connected ? normalizeUpload(response.upload) : null, polledTabId);
       if (!connected) deepConsentOpen = false;
+      if (connected && response.openView === "settings-ai" && prevOpenView !== "settings-ai") {
+        aiHintDismissed = false;
+        aiUnconfigured = true;
+      }
       if (connected && response.status) {
         elements.fillResult.hidden = false;
         elements.fillResult.textContent = response.status;
@@ -2418,6 +2435,7 @@
           elements.desktopConnectionAction.dataset.kind = "settings-ai";
         }
       }
+      renderAiConfigHint();
       renderDeep();
       // The AI-settings hint belongs to the fill that raised it. Once the page stops
       // reporting it (a new fill started, or another tab), go back to the desktop state.
@@ -2476,7 +2494,12 @@
     storeSnapshot = nextSnapshot;
     storeLoaded = true;
     desktopVersion = result?.status === "ok" && typeof result.desktopVersion === "string" ? result.desktopVersion : "";
+    if (result?.status === "ok" && "aiUnconfigured" in result) {
+      if (result.aiUnconfigured === false) aiHintDismissed = false;
+      aiUnconfigured = result.aiUnconfigured === true && !aiHintDismissed;
+    }
     renderUpdateReminder();
+    renderAiConfigHint();
     if (changed) renderFromStore();
     if (nextStore) templateEditor?.observe(nextStore).catch(() => {});
   }
@@ -2914,9 +2937,18 @@
     if (kind === "retry") { await loadStore(); return; }
     const result = await chrome.runtime.sendMessage({ type: "DESKTOP_OPEN_VIEW", view: kind === "resume" ? "resume" : kind === "settings-ai" ? "settings-ai" : "home" });
     if (result?.status !== "ok") toast("桌面程序暂时无法打开，请检查连接。");
-    else await loadStore();
+    else {
+      if (kind === "settings-ai") {
+        aiHintDismissed = true;
+        aiUnconfigured = false;
+        aiUnconfiguredChanged = true;
+        renderAiConfigHint();
+      }
+      await loadStore();
+    }
   }
   elements.desktopConnectionAction.addEventListener("click", () => desktopAction(elements.desktopConnectionAction.dataset.kind).catch(() => toast("当前操作不可用。")));
+  elements.aiConfigHintAction?.addEventListener("click", () => desktopAction("settings-ai").catch(() => toast("当前操作不可用。")));
   elements.updateReminderAction.addEventListener("click", async () => {
     const kind = elements.updateReminderAction.dataset.kind;
     try {
@@ -2988,6 +3020,15 @@
       renderUpdateReminder();
     })
     .catch(() => {});
+  Promise.resolve(chrome.storage.session?.get?.(AI_UNCONFIGURED_KEY))
+    .then((stored) => {
+      if (aiUnconfiguredChanged) return;
+      if (stored?.[AI_UNCONFIGURED_KEY]?.unconfigured === true) {
+        aiUnconfigured = true;
+        renderAiConfigHint();
+      }
+    })
+    .catch(() => {});
   document.getElementById("legacy-hint-open").addEventListener("click", async () => {
     const result = await chrome.runtime.sendMessage({ type: "DESKTOP_OPEN_VIEW", view: "resume" }).catch(() => null);
     if (result?.status !== "ok") toast("桌面程序暂时无法打开，请检查连接。");
@@ -3001,6 +3042,13 @@
       readyVersionChanged = true;
       readyVersion = String(changes[UPDATE_READY_KEY].newValue?.version || "");
       renderUpdateReminder();
+    }
+    if (area === "session" && changes[AI_UNCONFIGURED_KEY]) {
+      aiUnconfiguredChanged = true;
+      const nextUnconfigured = changes[AI_UNCONFIGURED_KEY].newValue?.unconfigured === true;
+      if (!nextUnconfigured) aiHintDismissed = false;
+      aiUnconfigured = nextUnconfigured && !aiHintDismissed;
+      renderAiConfigHint();
     }
     if (area === "local" && changes.legacyImport) renderLegacyHint().catch(() => {});
     if (area === "local" && QUEUE_KEYS.some((key) => changes[key])) refreshQueue().catch(() => {});

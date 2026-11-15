@@ -87,9 +87,11 @@ test('a strong provider without a key is named as the problem, not the current p
   assert.match(result.warning, /强模型那条服务商还没有 Key/);
   assert.doesNotMatch(result.warning, /当前服务商没有 Key/);
   assert.equal(result.openView, 'settings-ai');
-  // Nothing configured at all is still the general message.
+  // Nothing configured at all is still the general message, naming how many AI fields were skipped and the success-rate impact.
   const none = worker(() => ({ ok: false, reason: 'not_configured' }));
-  assert.match((await none.run({ ...BASE, tier: 'strong' })).warning, /桌面还没有配置 AI 服务商/);
+  const unconfigured = await none.run({ ...BASE, tier: 'strong' });
+  assert.match(unconfigured.warning, /桌面还没有配置 AI 服务商/);
+  assert.match(unconfigured.warning, /未配置时仅能按本地规则填写姓名、电话等少量基础项（本次其余 1 个字段需配置 AI 后才能识别填写），会大幅影响填写成功率/);
 });
 
 test('oversized form prompts are split beneath the UTF-8 user budget', async () => {
