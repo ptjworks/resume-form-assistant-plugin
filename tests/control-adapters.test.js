@@ -298,6 +298,7 @@ test('#518 native date, month and datetime-local inputs reject month-only, prese
     ['datetime-local', '2001.05'],
     ['datetime-local', '2021-02-29T10:00'],
     ['time', '25:00'],
+    ['week', '2021-W53'],
     ['week', '2026-W54']
   ]) {
     const input = new h.Input();

@@ -535,4 +535,23 @@ test('#495 Element UI 2 automatic-dropdown select that opens on focus is not tog
   const result = await h.api.operate(h.target, '硕士');
   assert.equal(result.ok, true, result.reason);
   assert.equal(input.value, '硕士研究生');
+
+  // If focus only opened an unrelated non-Element listbox, the Element select still clicks its trigger to open its own dropdown.
+  const h2 = load('学历', '<div class="el-select"><div class="el-input"><input class="el-input__inner" placeholder="请选择" readonly></div></div>'
+    + '<div class="el-select-dropdown" hidden><ul class="el-select-dropdown__list">'
+    + '<li class="el-select-dropdown__item"><span>本科</span></li></ul></div><div id="unrelated-listbox" role="listbox" hidden></div>');
+  t.after(() => h2.w.close());
+  const input2 = h2.doc.querySelector('input');
+  const popup2 = h2.doc.querySelector('.el-select-dropdown');
+  const unrelated = h2.doc.getElementById('unrelated-listbox');
+  input2.addEventListener('focus', () => { unrelated.hidden = false; });
+  h2.doc.querySelector('.el-input').addEventListener('click', () => { unrelated.hidden = true; popup2.hidden = false; });
+  popup2.querySelector('li').addEventListener('click', (e) => {
+    e.currentTarget.classList.add('selected');
+    input2.value = '本科';
+    popup2.hidden = true;
+  });
+  const result2 = await h2.api.operate(h2.target, '本科');
+  assert.equal(result2.ok, true, result2.reason);
+  assert.equal(input2.value, '本科');
 });

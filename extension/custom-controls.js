@@ -1320,9 +1320,10 @@
       return list && h.visible(list) ? list : null;
     };
     const initiallyOwned = ownedPopup(info, h.visible);
+    const focusAdded = info.library === 'element' && Boolean(ctx.popupsBeforeFocus) ? popups(doc, h.visible).filter(node => !before.has(node)) : [];
     const alreadyOpen = (info.combo.getAttribute('aria-expanded') === 'true' && (initiallyOwned.popup || info.library === 'boss')) || layuiList()
       || (info.library === 'boss' && info.root.classList.contains('ui-select-visible'))
-      || (info.library === 'element' && Boolean(ctx.popupsBeforeFocus) && popups(doc, h.visible).filter(node => !before.has(node)).length === 1);
+      || (focusAdded.length === 1 && focusAdded[0].matches('.el-select__popper, .el-select-dropdown, .el-cascader__dropdown'));
     const trigger = info.cascade ? info.el : info.library === 'antd' ? info.root.querySelector(antd(info.root, '.ant-select-selector, .ant-select-content')) || info.root
       : info.library === 'element' ? info.root.querySelector('.el-select__wrapper, .el-input') || info.root
       : info.library === 'arco' ? info.root.querySelector('.arco-select-view') || info.root : info.combo;
@@ -1418,7 +1419,7 @@
     const searchInput = candidates.find(input => safeSearch(input) && h.visible(input) && (info.library !== 'boss'
       || input.matches('input.ui-select-input, .select-dropdown-search input')));
     const searchable = !info.cascade && searchInput && (ctx.hints.searchable === true || info.library === 'generic' || info.library === 'boss'
-      || info.library === 'element'
+      || (info.library === 'element' && info.root.contains(searchInput) && safeSearch(searchInput))
       || info.combo.getAttribute('aria-autocomplete') === 'list' || searchInput.getAttribute('aria-autocomplete') === 'list'
       || searchInput.getAttribute('role') === 'searchbox' || searchInput.type === 'search'
       || searchInput.matches('.ui-select-selection input.ui-select-input')

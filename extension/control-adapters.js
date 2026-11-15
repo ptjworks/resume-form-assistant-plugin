@@ -554,7 +554,7 @@
           : ctx.el.type === 'month' ? /^\d{4}-\d{2}$/.test(expected) && Boolean(dateParts(expected))
           : ctx.el.type === 'datetime-local' ? /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(expected) && Boolean(dateParts(expected.slice(0, 10))?.d)
           : ctx.el.type === 'time' ? /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(expected)
-          : /^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/.test(expected);
+          : validIsoWeek(expected);
         if (!ok) return { reason: 'invalid_date' };
         write(ctx.el, expected, ctx); input(ctx.el); return { expected };
       }
@@ -699,6 +699,12 @@
       const parts = { y: Number(hit[1]), m: Number(hit[2]), d: day ? Number(day[3]) : 0 };
       const real = new Date(parts.y, parts.m - 1, parts.d || 1);
       return parts.y >= 1900 && parts.y <= 2100 && real.getMonth() === parts.m - 1 && real.getDate() === (parts.d || 1) ? parts : null;
+    }
+    function validIsoWeek(value) {
+      const hit = /^(\d{4})-W(0[1-9]|[1-4]\d|5[0-3])$/.exec(String(value ?? ''));
+      if (!hit) return false;
+      const y = Number(hit[1]), w = Number(hit[2]);
+      return y >= 1900 && y <= 2100 && (w < 53 || new Date(y, 0, 1).getDay() === 4 || new Date(y, 11, 31).getDay() === 4);
     }
     // 框里显示的是不是这一天：只到月的不看日子，月份框显示的没有日子也算。
     function showsDate(box, want) {
