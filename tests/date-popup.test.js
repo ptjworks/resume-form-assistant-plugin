@@ -640,3 +640,90 @@ test("the fill report and the side panel say a date picker left another date in 
   assert.equal(core.diagnostics(reports.at(-1)), reports.at(-1));
   assert.match(`${ui.status.textContent}\n${ui.diag.value}`, /毕业时间（选成了别的日期）/);
 });
+
+test("#366 Beisen calendar whose input only previews on Enter or reverts on blur falls back to clicking year, month and day", async () => {
+  for (const mode of ["preview- stays-open", "reverts-on-blur"]) {
+    const h = load(`<div class="form-item"><label class="form-item__text">出生日期</label><div class="form-item__control">
+      <div class="phoenix-select phoenix-select--editable"><ul class="phoenix-select__content"><li class="phoenix-select__selected"></li><li class="phoenix-select__inputWrapper"><input class="phoenix-select__input"></li></ul></div></div></div>`);
+    const { doc } = h;
+    const root = doc.querySelector(".phoenix-select"), shown = root.querySelector(".phoenix-select__selected"), triggerInput = root.querySelector(".phoenix-select__input");
+    let layer = null, year = 2026, month = 10, panel = "date", cellCommitted = false;
+    const draw = () => {
+      const days = new Date(year, month, 0).getDate();
+      const body = panel === "date" ? `<table><tbody><tr>${Array.from({ length: days }, (_, i) => `<td class="phoenix-calendar-cell" data-day="${i + 1}"><div class="phoenix-calendar-date">${i + 1}</div></td>`).join("")}</tr></tbody></table>`
+        : panel === "month" ? `<table><tbody><tr>${Array.from({ length: 12 }, (_, i) => `<td data-month="${i + 1}"><a>${i + 1}月</a></td>`).join("")}</tr></tbody></table>`
+        : `<table><tbody><tr>${Array.from({ length: 10 }, (_, i) => `<td data-year="${Math.floor(year / 10) * 10 + i}"><a>${Math.floor(year / 10) * 10 + i}</a></td>`).join("")}</tr></tbody></table>`;
+      layer.innerHTML = `<div class="phoenix-date-picker"><input class="phoenix-calendar-input" value="${year}-${pad(month)}-01"><div class="phoenix-calendar-header"><a class="phoenix-calendar-prev-year-btn"></a><span class="phoenix-calendar-year-select">${year}年</span>${panel === "date" ? `<span class="phoenix-calendar-month-select">${month}月</span>` : ""}<a class="phoenix-calendar-next-year-btn"></a></div>${body}</div>`;
+    };
+    root.addEventListener("click", () => {
+      if (layer) return;
+      panel = "date";
+      layer = doc.createElement("div"); layer.className = "common-unmodeled-layer";
+      layer.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        const val = layer.querySelector(".phoenix-calendar-input")?.value || "";
+        shown.textContent = val;
+        if (mode === "reverts-on-blur") { layer.remove(); layer = null; }
+      });
+      layer.addEventListener("click", (event) => {
+        const el = event.target, cls = String(el.className || "");
+        if (/prev-year/.test(cls)) year -= panel === "year" ? 10 : 1;
+        else if (/next-year/.test(cls)) year += panel === "year" ? 10 : 1;
+        else if (/year-select/.test(cls)) panel = "year";
+        else if (/month-select/.test(cls)) panel = "month";
+        else if (el.closest("td[data-year]")) { year = Number(el.closest("td").dataset.year); panel = "month"; }
+        else if (el.closest("td[data-month]")) { month = Number(el.closest("td").dataset.month); panel = "date"; }
+        else if (el.closest("td[data-day]")) {
+          cellCommitted = true;
+          shown.textContent = `${year}-${pad(month)}-${pad(el.closest("td").dataset.day)}`;
+          layer.remove(); layer = null; return;
+        } else return;
+        draw();
+      });
+      doc.body.append(layer); draw();
+    });
+    triggerInput.addEventListener("blur", () => {
+      if (!cellCommitted) { shown.textContent = ""; layer?.remove(); layer = null; }
+    });
+    const result = await h.api.operate(scanned(doc, "出生日期"), "2001-05-12");
+    assert.equal(result.ok, true, `${mode}: ${JSON.stringify(result)}`);
+    assert.equal(shown.textContent, "2001-05-12", mode);
+    assert.equal(cellCommitted, true, mode);
+  }
+});
+
+test("#407 hotjob slow suggestions (>1.5s) are waited for and picked without premature timeout", async () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const h = load(`<div class="ant-form-item"><div class="ant-form-item-label"><label title="专业">专业</label></div>
+    <div class="ant-form-item-control"><input class="ant-input" type="text"></div></div>`, {
+    timeoutMs: 2000,
+    normalizeText: (el, value) => String(value ?? ""),
+    runTextLifecycle: async (el, value, sequential, guard, didWrite) => {
+      el.focus(); await tick(); if (!guard()) return false;
+      didWrite(); el.value = value; el.dispatchEvent(new h.w.Event("input", { bubbles: true })); await tick();
+      el.blur(); return true;
+    },
+    waitTextCommit: () => new Promise((resolve) => setTimeout(resolve, 10)),
+    inspectText: (el, expected, committed) => el.value === expected ? { ok: true, reason: "" } : { ok: false, reason: committed ? "value_reverted" : "value_not_committed" },
+    replayFocusBlur: async () => {}, prefersSequential: () => false, dispatchTextInput: () => {}
+  });
+  const { doc } = h;
+  const input = doc.querySelector("input");
+  let model = "", box = null, timer = null;
+  input.addEventListener("input", () => {
+    const query = input.value;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      box?.remove(); box = null;
+      if (!query || doc.activeElement !== input) return;
+      box = doc.createElement("div"); box.className = "major-suggest";
+      box.innerHTML = `<div class="row"><span>计算机科学与技术</span></div><div class="row"><span>软件工程</span></div>`;
+      box.querySelectorAll(".row").forEach((row) => row.addEventListener("click", () => { model = row.textContent; input.value = model; box.remove(); box = null; }));
+      doc.body.append(box);
+    }, 1700);
+  });
+  input.addEventListener("blur", () => { clearTimeout(timer); box?.remove(); box = null; input.value = model; });
+  const result = await h.api.operate(scanned(doc, "专业"), "计算机科学与技术");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(input.value, "计算机科学与技术");
+});

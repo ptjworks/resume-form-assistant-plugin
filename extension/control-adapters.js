@@ -251,6 +251,7 @@
       // #301 #417 只读的框：聚焦之前记下看得见的对话框、浮层，写不上时收起聚焦后网页打开的那一块（见末尾）。
       const readonly = !shown && ctx.el.readOnly === true;
       const layersBefore = readonly ? scope.ResumeProCustomControls?.openLayers?.(ctx.el.ownerDocument, visible) || null : null;
+      const suggestBefore = !shown && !readonly && ctx.kind === 'text' ? scope.ResumeProCustomControls?.visiblePopups?.({ element: ctx.el }, visible) || null : null;
       if (!shown && !await deps.runTextLifecycle(ctx.el, typed, false, guard, didWrite)) return result(false, stop(ctx) || 'value_changed', ctx);
       ctx.acceptedOnce = shows(ctx.el, expected);
       await deps.waitTextCommit();
@@ -271,7 +272,7 @@
       // 只在框里换回了写之前的字时再试：这类框没选就还原。改成别的字的（页面改了格式）不再等建议，免得每个框白等。
       if (!verdict.ok && !shown && verdict.reason === 'value_not_committed' && ctx.kind === 'text' && !deps.prefersSequential(ctx.el)
         && String(ctx.el.value ?? '') === previous && scope.ResumeProCustomControls?.suggest) {
-        const picked = await scope.ResumeProCustomControls.suggest(ctx, typed, host);
+        const picked = await scope.ResumeProCustomControls.suggest(ctx, typed, host, suggestBefore);
         stopped = stop(ctx);
         if (stopped) return result(false, stopped, ctx);
         if (picked.accepted || picked.typed) {
@@ -438,7 +439,7 @@
         await delay(0);
         const afterFocus = stop(ctx, true);
         if (afterFocus) return result(false, afterFocus, ctx);
-        let accepted;
+        let accepted, typedDate = false;
         if (custom) {
           const outcome = await scope.ResumeProCustomControls.run(ctx, desiredValue, host);
           // #269 联想输入框（智联学校名称 el-autocomplete）：本来就允许直接输入，建议里没有时按文本框填写并核对。
@@ -450,6 +451,7 @@
           }
           if (outcome.reason) return result(false, outcome.reason, ctx);
           accepted = outcome.accepted;
+          typedDate = Boolean(outcome.typedDate);
           // 联想框里打过字：随后才到的建议会再弹出来挡住后面的字段，发一个 Tab 收起（Element 收到后不再显示建议）。
           if (outcome.closeSuggestions) pressTab(ctx.el);
           if (outcome.dayDefaulted) ctx.observed = { ...ctx.observed, dayDefaulted: true };
@@ -525,7 +527,21 @@
         if (!direct) blur(ctx.el);
         const inspect = ['date', 'custom-select', 'cascader'].includes(ctx.kind) && !direct && deps.inspectText
           ? () => deps.inspectText(ctx.el, String(ctx.el.value ?? ''), true) : null;
-        const verified = await verify(ctx, accepted, inspect);
+        let verified = await verify(ctx, accepted, inspect);
+        // 日历自带输入框回车后失焦又把值改回（#366 北森）：改按逐级点选年、月、日再试一次。
+        if (typedDate && verified.reason === 'value_reverted' && ctx.observed?.popupRole === 'calendar'
+          && !ctx.noCalendarTyping && !stop(ctx, true)) {
+          ctx.noCalendarTyping = true;
+          focus(ctx.el);
+          const retry = await scope.ResumeProCustomControls.run(ctx, desiredValue, host);
+          if (!retry.reason) {
+            accepted = retry.accepted;
+            if (retry.dayDefaulted) ctx.observed = { ...ctx.observed, dayDefaulted: true };
+            ctx.acceptedOnce = accepted();
+            if (!direct) blur(ctx.el);
+            verified = await verify(ctx, accepted, inspect);
+          }
+        }
         if (verified.ok || verified.reason === 'validation_not_cleared') checks.set(ctx.el, { ctx, accepted, inspect });
         return verified;
       } catch {
