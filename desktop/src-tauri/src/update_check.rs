@@ -31,7 +31,7 @@ const RELEASES_PER_PAGE: usize = 100;
 const RELAY_MAX_PAGE: u32 = 10;
 const TAG_PREFIX: &str = "desktop-v";
 const TIMEOUT_SECONDS: u64 = 10;
-const DOWNLOAD_TIMEOUT_SECONDS: u64 = 300;
+const CHUNK_IDLE_TIMEOUT_SECONDS: u64 = 30;
 const FILE_NAME: &str = "update-check.json";
 const INSTALLER_ASSET_PREFIX: &str = "wangshen-kuaitian";
 const UPDATES_DIR_NAME: &str = "updates";
@@ -433,18 +433,32 @@ pub struct VerifiedInstaller {
     pub path: PathBuf,
 }
 
-/// 当前平台在 GitHub Release 里对应的安装包文件名（与 `check-desktop-release.js` 的规则一致）。
-pub fn installer_filename_for(version: &str, os: &str) -> Option<String> {
+/// 当前平台与架构在 GitHub Release 里对应的安装包文件名（与 `check-desktop-release.js` 的规则一致）。
+pub fn installer_filename_for(version: &str, os: &str, arch: &str) -> Option<String> {
     parse_version(version)?;
-    match os {
-        "windows" => Some(format!("{INSTALLER_ASSET_PREFIX}_{version}_x64-setup.exe")),
-        "macos" => Some(format!("{INSTALLER_ASSET_PREFIX}_{version}_aarch64.dmg")),
+    match (os, arch) {
+        ("windows", "x86_64") => Some(format!("{INSTALLER_ASSET_PREFIX}_{version}_x64-setup.exe")),
+        ("macos", "aarch64") => Some(format!("{INSTALLER_ASSET_PREFIX}_{version}_aarch64.dmg")),
         _ => None,
     }
 }
 
 pub fn current_installer_filename(version: &str) -> Option<String> {
-    installer_filename_for(version, std::env::consts::OS)
+    installer_filename_for(version, std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// 校验安装包文件名是否为受支持的单层文件名（不含任何路径分隔符或 `..`）。
+pub fn is_safe_installer_filename(version: &str, installer_name: &str) -> bool {
+    if installer_name.is_empty()
+        || installer_name.contains('/')
+        || installer_name.contains('\\')
+        || installer_name.contains("..")
+        || Path::new(installer_name).file_name() != Some(std::ffi::OsStr::new(installer_name))
+    {
+        return false;
+    }
+    installer_filename_for(version, "windows", "x86_64").as_deref() == Some(installer_name)
+        || installer_filename_for(version, "macos", "aarch64").as_deref() == Some(installer_name)
 }
 
 /// 从已校验过的 `UpdateInfo` 推导出本仓库对应版本的安装包下载地址与 `.sha256` 校验文件地址。
@@ -512,16 +526,8 @@ pub fn parse_checksum_file(text: &str, expected_filename: &str) -> Result<String
     Ok(digest.to_ascii_lowercase())
 }
 
-/// 计算本地普通文件的 SHA-256 与字节数（拒绝符号链接或目录）。
-pub fn sha256_file(path: &Path) -> Result<(String, u64), std::io::Error> {
-    let metadata = std::fs::symlink_metadata(path)?;
-    if !metadata.is_file() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "not a regular file",
-        ));
-    }
-    let mut file = std::fs::File::open(path)?;
+/// 计算已打开文件句柄的 SHA-256 与字节数。
+fn sha256_reader(mut file: &std::fs::File) -> Result<(String, u64), std::io::Error> {
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     let mut total = 0u64;
@@ -534,6 +540,33 @@ pub fn sha256_file(path: &Path) -> Result<(String, u64), std::io::Error> {
         total += n as u64;
     }
     Ok((format!("{:x}", hasher.finalize()), total))
+}
+
+/// 打开本地普通文件并计算其 SHA-256 与字节数（拒绝符号链接或目录），同时返回持有的只读文件句柄。
+pub fn open_and_sha256_file(path: &Path) -> Result<(std::fs::File, String, u64), std::io::Error> {
+    let symlink_meta = std::fs::symlink_metadata(path)?;
+    if symlink_meta.file_type().is_symlink() || !symlink_meta.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let file = std::fs::File::open(path)?;
+    let file_meta = file.metadata()?;
+    if !file_meta.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let (digest, total) = sha256_reader(&file)?;
+    Ok((file, digest, total))
+}
+
+/// 计算本地普通文件的 SHA-256 与字节数（拒绝符号链接或目录）。
+pub fn sha256_file(path: &Path) -> Result<(String, u64), std::io::Error> {
+    let (_file, digest, total) = open_and_sha256_file(path)?;
+    Ok((digest, total))
 }
 
 /// 下载安装包到 `<cache_dir>/updates/`，流式汇报进度并严格校验 SHA-256。
@@ -574,6 +607,29 @@ fn ensure_not_symlink(path: &Path) -> Result<(), CommandError> {
     Ok(())
 }
 
+fn is_allowed_initial_download_url(installer_url: &str, checksum_url: &str) -> bool {
+    if is_release_page(installer_url)
+        && is_release_page(checksum_url)
+        && checksum_url == format!("{installer_url}.sha256")
+    {
+        return true;
+    }
+    #[cfg(test)]
+    {
+        if let (Ok(inst), Ok(chk)) = (Url::parse(installer_url), Url::parse(checksum_url)) {
+            if inst.scheme() == "http"
+                && chk.scheme() == "http"
+                && chk.path().ends_with(".sha256")
+                && matches!(inst.host_str(), Some("127.0.0.1") | Some("localhost"))
+                && matches!(chk.host_str(), Some("127.0.0.1") | Some("localhost"))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn is_allowed_download_redirect(url: &Url) -> bool {
     match url.scheme() {
         "https" => matches!(
@@ -588,6 +644,26 @@ fn is_allowed_download_redirect(url: &Url) -> bool {
     }
 }
 
+/// 清理 `updates/` 目录下旧版本的安装包和遗留 `.part` 文件，避免长期占用磁盘。
+fn cleanup_old_installers(updates_dir: &Path, keep_installer_name: &str) {
+    let keep_part = format!("{keep_installer_name}.part");
+    let Ok(entries) = std::fs::read_dir(updates_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if name_str == keep_installer_name || name_str == keep_part {
+            continue;
+        }
+        if name_str.starts_with(INSTALLER_ASSET_PREFIX) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 pub async fn download_installer_from<F>(
     cache_dir: &Path,
     version: &str,
@@ -599,6 +675,20 @@ pub async fn download_installer_from<F>(
 where
     F: FnMut(UpdateDownloadProgress),
 {
+    if !is_safe_installer_filename(version, installer_name) {
+        return Err(CommandError {
+            code: "UPDATE_BAD_URL".into(),
+            message: "安装包文件名不合法，已拒绝下载。".into(),
+        });
+    }
+    if !is_allowed_initial_download_url(installer_url, checksum_url) {
+        return Err(CommandError {
+            code: "UPDATE_BAD_URL".into(),
+            message: "安装包或校验文件下载地址不在允许的白名单内，已拒绝下载。".into(),
+        });
+    }
+
+    ensure_not_symlink(cache_dir)?;
     let updates_dir = cache_dir.join(UPDATES_DIR_NAME);
     ensure_not_symlink(&updates_dir)?;
     std::fs::create_dir_all(&updates_dir).map_err(|e| CommandError {
@@ -606,6 +696,10 @@ where
         message: format!("创建更新缓存目录失败：{e}"),
     })?;
     ensure_not_symlink(&updates_dir)?;
+    let canonical_updates_dir = std::fs::canonicalize(&updates_dir).map_err(|e| CommandError {
+        code: "UPDATE_WRITE_FAILED".into(),
+        message: format!("解析更新缓存目录失败：{e}"),
+    })?;
 
     on_progress(UpdateDownloadProgress {
         version: version.to_string(),
@@ -625,25 +719,33 @@ where
         }
     });
 
+    // 不在 Client 上设置整包总时长上限（避免慢速网络下大安装包超过固定秒数被误杀），
+    // 改为连接超时 + 每次分块读取的空闲超时（CHUNK_IDLE_TIMEOUT_SECONDS）。
     let client = reqwest::Client::builder()
         .redirect(redirect_policy)
         .connect_timeout(Duration::from_secs(TIMEOUT_SECONDS))
-        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECONDS))
         .build()
         .map_err(|_| CommandError {
             code: "UPDATE_OFFLINE".into(),
             message: "下载更新的客户端初始化失败。".into(),
         })?;
 
-    let checksum_resp = client
-        .get(checksum_url)
-        .header("user-agent", "resume-pro-desktop")
-        .send()
-        .await
-        .map_err(|_| CommandError {
-            code: "UPDATE_OFFLINE".into(),
-            message: "连不上更新服务器，无法获取 SHA-256 校验文件。".into(),
-        })?;
+    let mut checksum_resp = tokio::time::timeout(
+        Duration::from_secs(CHUNK_IDLE_TIMEOUT_SECONDS),
+        client
+            .get(checksum_url)
+            .header("user-agent", "resume-pro-desktop")
+            .send(),
+    )
+    .await
+    .map_err(|_| CommandError {
+        code: "UPDATE_OFFLINE".into(),
+        message: "获取 SHA-256 校验文件超时，请检查网络后重试。".into(),
+    })?
+    .map_err(|_| CommandError {
+        code: "UPDATE_OFFLINE".into(),
+        message: "连不上更新服务器，无法获取 SHA-256 校验文件。".into(),
+    })?;
     let checksum_status = checksum_resp.status();
     if checksum_status.as_u16() == 403 || checksum_status.as_u16() == 429 {
         return Err(CommandError {
@@ -660,15 +762,40 @@ where
             ),
         });
     }
-    let checksum_bytes = checksum_resp.bytes().await.map_err(|_| CommandError {
-        code: "UPDATE_OFFLINE".into(),
-        message: "读取 SHA-256 校验文件时连接中断。".into(),
-    })?;
-    if checksum_bytes.len() > MAX_CHECKSUM_BYTES {
+    if checksum_resp
+        .content_length()
+        .is_some_and(|len| len == 0 || len > MAX_CHECKSUM_BYTES as u64)
+    {
         return Err(CommandError {
             code: "UPDATE_BAD_CHECKSUM".into(),
             message: "SHA-256 校验文件大小异常，已停止下载。".into(),
         });
+    }
+    let mut checksum_bytes = Vec::with_capacity(128);
+    loop {
+        let next = tokio::time::timeout(
+            Duration::from_secs(CHUNK_IDLE_TIMEOUT_SECONDS),
+            checksum_resp.chunk(),
+        )
+        .await
+        .map_err(|_| CommandError {
+            code: "UPDATE_OFFLINE".into(),
+            message: "读取 SHA-256 校验文件超时。".into(),
+        })?
+        .map_err(|_| CommandError {
+            code: "UPDATE_OFFLINE".into(),
+            message: "读取 SHA-256 校验文件时连接中断。".into(),
+        })?;
+        let Some(chunk) = next else {
+            break;
+        };
+        if checksum_bytes.len().saturating_add(chunk.len()) > MAX_CHECKSUM_BYTES {
+            return Err(CommandError {
+                code: "UPDATE_BAD_CHECKSUM".into(),
+                message: "SHA-256 校验文件大小异常，已停止下载。".into(),
+            });
+        }
+        checksum_bytes.extend_from_slice(&chunk);
     }
     let checksum_text = std::str::from_utf8(&checksum_bytes).map_err(|_| CommandError {
         code: "UPDATE_BAD_CHECKSUM".into(),
@@ -677,8 +804,12 @@ where
     let expected_sha256 = parse_checksum_file(checksum_text, installer_name)?;
 
     let final_path = updates_dir.join(installer_name);
-    // 如果本地缓存里已经有同名安装包，且磁盘 SHA-256 与服务器 `.sha256` 完全一致，直接复用。
-    if let Ok((existing_sha, existing_size)) = sha256_file(&final_path) {
+    ensure_not_symlink(&final_path)?;
+    // 如果本地缓存里已经有同名安装包，在后台阻塞线程池里核对磁盘 SHA-256；若与服务器 `.sha256` 完全一致，直接复用。
+    let cached_check_path = final_path.clone();
+    if let Ok(Ok((existing_sha, existing_size))) =
+        tokio::task::spawn_blocking(move || sha256_file(&cached_check_path)).await
+    {
         if existing_size > 0 && existing_sha == expected_sha256 {
             on_progress(UpdateDownloadProgress {
                 version: version.to_string(),
@@ -706,15 +837,22 @@ where
         }
     }
 
-    let mut response = client
-        .get(installer_url)
-        .header("user-agent", "resume-pro-desktop")
-        .send()
-        .await
-        .map_err(|_| CommandError {
-            code: "UPDATE_OFFLINE".into(),
-            message: "连不上更新服务器，安装包下载失败。".into(),
-        })?;
+    let mut response = tokio::time::timeout(
+        Duration::from_secs(CHUNK_IDLE_TIMEOUT_SECONDS),
+        client
+            .get(installer_url)
+            .header("user-agent", "resume-pro-desktop")
+            .send(),
+    )
+    .await
+    .map_err(|_| CommandError {
+        code: "UPDATE_OFFLINE".into(),
+        message: "连接安装包下载服务器超时，请稍后重试。".into(),
+    })?
+    .map_err(|_| CommandError {
+        code: "UPDATE_OFFLINE".into(),
+        message: "连不上更新服务器，安装包下载失败。".into(),
+    })?;
     let status = response.status();
     if status.as_u16() == 403 || status.as_u16() == 429 {
         return Err(CommandError {
@@ -743,10 +881,24 @@ where
     ensure_not_symlink(&part_path)?;
     ensure_not_symlink(&final_path)?;
     let _ = std::fs::remove_file(&part_path);
-    let mut part_file = std::fs::File::create(&part_path).map_err(|e| CommandError {
-        code: "UPDATE_WRITE_FAILED".into(),
-        message: format!("创建临时安装包文件失败：{e}"),
-    })?;
+    let mut part_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&part_path)
+        .map_err(|e| CommandError {
+            code: "UPDATE_WRITE_FAILED".into(),
+            message: format!("创建临时安装包文件失败：{e}"),
+        })?;
+    if let Ok(canonical_part) = std::fs::canonicalize(&part_path) {
+        if canonical_part.parent() != Some(canonical_updates_dir.as_path()) {
+            drop(part_file);
+            let _ = std::fs::remove_file(&part_path);
+            return Err(CommandError {
+                code: "UPDATE_WRITE_FAILED".into(),
+                message: "临时安装包路径不在更新缓存目录内，已拒绝写入。".into(),
+            });
+        }
+    }
 
     on_progress(UpdateDownloadProgress {
         version: version.to_string(),
@@ -761,7 +913,19 @@ where
     let mut last_reported_bytes = 0u64;
 
     loop {
-        let next = response.chunk().await.map_err(|_| {
+        let next = tokio::time::timeout(
+            Duration::from_secs(CHUNK_IDLE_TIMEOUT_SECONDS),
+            response.chunk(),
+        )
+        .await
+        .map_err(|_| {
+            let _ = std::fs::remove_file(&part_path);
+            CommandError {
+                code: "UPDATE_OFFLINE".into(),
+                message: "安装包下载超时（超过 30 秒无数据响应），请重试。".into(),
+            }
+        })?
+        .map_err(|_| {
             let _ = std::fs::remove_file(&part_path);
             CommandError {
                 code: "UPDATE_OFFLINE".into(),
@@ -845,6 +1009,8 @@ where
         });
     }
 
+    ensure_not_symlink(&final_path)?;
+    let _ = std::fs::remove_file(&final_path);
     std::fs::rename(&part_path, &final_path).map_err(|e| {
         let _ = std::fs::remove_file(&part_path);
         CommandError {
@@ -852,6 +1018,7 @@ where
             message: format!("保存已校验的安装包失败：{e}"),
         }
     })?;
+    cleanup_old_installers(&updates_dir, installer_name);
 
     on_progress(UpdateDownloadProgress {
         version: version.to_string(),
@@ -872,30 +1039,43 @@ where
     })
 }
 
-/// 用户点击「确认并打开安装程序」时，再次核对版本、哈希与磁盘上的安装包文件一致性。
-pub fn verify_ready_installer(
+/// 用户点击「确认并打开安装程序」时，再次核对版本、哈希与磁盘上的安装包文件一致性，
+/// 并返回持有的只读文件句柄（在 Windows 上持有只读句柄期间会阻止其他进程以写入/删除方式篡改该文件）。
+pub fn open_and_verify_ready_installer(
     verified: &VerifiedInstaller,
     version: &str,
     sha256: &str,
-) -> Result<PathBuf, CommandError> {
+) -> Result<(PathBuf, std::fs::File), CommandError> {
     if verified.info.version != version || !verified.info.sha256.eq_ignore_ascii_case(sha256) {
         return Err(CommandError {
             code: "UPDATE_NOT_DOWNLOADED".into(),
             message: "未找到对应版本的已校验安装包，请先下载更新。".into(),
         });
     }
-    let (disk_sha, disk_size) = sha256_file(&verified.path).map_err(|_| CommandError {
-        code: "UPDATE_NOT_DOWNLOADED".into(),
-        message: "本地安装包不存在或无法读取，请重新下载。".into(),
-    })?;
+    let (file, disk_sha, disk_size) =
+        open_and_sha256_file(&verified.path).map_err(|_| CommandError {
+            code: "UPDATE_NOT_DOWNLOADED".into(),
+            message: "本地安装包不存在或无法读取，请重新下载。".into(),
+        })?;
     if disk_size != verified.info.size_bytes || disk_sha != verified.info.sha256 {
+        drop(file);
         let _ = std::fs::remove_file(&verified.path);
         return Err(CommandError {
             code: "UPDATE_HASH_MISMATCH".into(),
             message: "本地安装包已被修改或损坏，SHA-256 校验未通过，请重新下载。".into(),
         });
     }
-    Ok(verified.path.clone())
+    Ok((verified.path.clone(), file))
+}
+
+/// 用户点击「确认并打开安装程序」时，再次核对版本、哈希与磁盘上的安装包文件一致性。
+pub fn verify_ready_installer(
+    verified: &VerifiedInstaller,
+    version: &str,
+    sha256: &str,
+) -> Result<PathBuf, CommandError> {
+    let (path, _file) = open_and_verify_ready_installer(verified, version, sha256)?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -1581,16 +1761,26 @@ mod tests {
     #[test]
     fn installer_filename_and_asset_urls_match_release_workflow_conventions() {
         assert_eq!(
-            installer_filename_for("0.5.1", "windows").as_deref(),
+            installer_filename_for("0.5.1", "windows", "x86_64").as_deref(),
             Some("wangshen-kuaitian_0.5.1_x64-setup.exe")
         );
         assert_eq!(
-            installer_filename_for("0.5.1", "macos").as_deref(),
+            installer_filename_for("0.5.1", "macos", "aarch64").as_deref(),
             Some("wangshen-kuaitian_0.5.1_aarch64.dmg")
         );
-        assert_eq!(installer_filename_for("0.5.1-beta.1", "windows"), None);
-        assert_eq!(installer_filename_for("../0.5.1", "windows"), None);
-        assert_eq!(installer_filename_for("0.5.1", "linux"), None);
+        assert_eq!(installer_filename_for("0.5.1", "macos", "x86_64"), None);
+        assert_eq!(installer_filename_for("0.5.1", "windows", "aarch64"), None);
+        assert_eq!(installer_filename_for("0.5.1-beta.1", "windows", "x86_64"), None);
+        assert_eq!(installer_filename_for("../0.5.1", "windows", "x86_64"), None);
+        assert_eq!(installer_filename_for("0.5.1", "linux", "x86_64"), None);
+        assert!(is_safe_installer_filename(
+            "0.5.1",
+            "wangshen-kuaitian_0.5.1_x64-setup.exe"
+        ));
+        assert!(!is_safe_installer_filename(
+            "0.5.1",
+            "../wangshen-kuaitian_0.5.1_x64-setup.exe"
+        ));
 
         for owner in ["ptjworks", "TshyGO"] {
             let info = UpdateInfo {

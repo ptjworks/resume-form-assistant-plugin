@@ -732,14 +732,18 @@ function setUpdateProgress(percent: number | null | undefined, visible: boolean)
   }
 }
 
-function showUpdate(message: { tone: string; text: string; available: boolean }) {
+function showUpdate(message: { tone: string; text: string; available: boolean; canDownload?: boolean }) {
   const box = must("update-msg");
   must("update-msg-text").textContent = message.text;
   box.dataset.tone = message.tone;
   box.hidden = false;
   (must("update-open") as HTMLButtonElement).hidden = !message.available;
+  const allowDownload = message.available && message.canDownload !== false;
   const downloadBtn = document.getElementById("update-download") as HTMLButtonElement | null;
-  if (downloadBtn) downloadBtn.hidden = !message.available;
+  if (downloadBtn) downloadBtn.hidden = !allowDownload;
+  const noticeDownloadBtn = document.getElementById("update-notice-download") as HTMLButtonElement | null;
+  if (noticeDownloadBtn && message.canDownload === false) noticeDownloadBtn.hidden = true;
+  else if (noticeDownloadBtn && message.available) noticeDownloadBtn.hidden = false;
   syncDownloadButtons();
 }
 
@@ -830,13 +834,13 @@ async function confirmAndOpenInstaller(downloaded: DownloadedUpdate) {
   if (!invoke) return;
   await openSettingsDialog({
     title: `确认打开 v${downloaded.version} 安装程序？`,
-    intro: "安装包已下载到本地并通过 SHA-256 完整性校验。确认后将打开安装程序，安装前无需卸载旧版。",
+    intro: "安装包已下载到本地，且与同发布页的 .sha256 文件比对一致（仅校验下载完整性，不代表代码签名或来源认证）。确认后将打开安装程序，安装前无需卸载旧版。",
     body: fragment(
       factList([
         ["新版本", `v${downloaded.version}`],
         ["安装包文件", downloaded.fileName],
         ["文件大小", formatBytes(downloaded.sizeBytes)],
-        ["SHA-256 校验", `${downloaded.sha256}（已通过）`],
+        ["完整性校验 (SHA-256)", `${downloaded.sha256}（仅校验下载完整性）`],
       ]),
       paragraph("安装包尚未做代码签名，系统若弹出安全提示，请核对上方文件名后再继续。", "muted"),
     ),
@@ -886,7 +890,7 @@ async function downloadOrConfirmUpdate() {
     try {
       unlisten = await listen("update-download-progress", (event) => {
         const payload = event.payload as UpdateDownloadProgress | undefined;
-        if (!payload) return;
+        if (!payload || payload.version !== target.version) return;
         const progress = describeDownloadProgress(payload);
         setUpdateProgress(progress.percent, true);
         must("update-msg-text").textContent = progress.text;
@@ -897,18 +901,37 @@ async function downloadOrConfirmUpdate() {
     }
   }
 
+  let verifiedToConfirm: DownloadedUpdate | null = null;
   try {
-    const verified = await invoke<DownloadedUpdate>("download_update_cmd");
+    const verified = await invoke<DownloadedUpdate>("download_update_cmd", {
+      expectedVersion: target.version,
+    });
+    if (verified.version !== target.version) {
+      throw {
+        code: "UPDATE_VERSION_CHANGED",
+        message: `下载返回的版本（v${verified.version}）与当前请求的版本（v${target.version}）不一致，请重新检查更新。`,
+      };
+    }
     downloadedUpdate = verified;
+    verifiedToConfirm = verified;
     isDownloadingUpdate = false;
     setUpdateProgress(100, false);
     const readyMsg = describeDownloadedUpdate(verified);
     showUpdate(readyMsg);
     if (shownNotice) must("update-notice-text").textContent = readyMsg.text;
-    // 下载与哈希校验完成后，不直接自动安装，而是弹窗请用户确认。
-    await confirmAndOpenInstaller(verified);
   } catch (error) {
-    downloadedUpdate = null;
+    const detail = error as { code?: string } | null;
+    if (
+      detail?.code === "UPDATE_HASH_MISMATCH" ||
+      detail?.code === "UPDATE_NOT_DOWNLOADED" ||
+      detail?.code === "UPDATE_BAD_CHECKSUM" ||
+      detail?.code === "UPDATE_BAD_URL" ||
+      detail?.code === "UPDATE_UNSUPPORTED_PLATFORM" ||
+      detail?.code === "UPDATE_VERSION_CHANGED" ||
+      (downloadedUpdate && downloadedUpdate.version !== target.version)
+    ) {
+      downloadedUpdate = null;
+    }
     isDownloadingUpdate = false;
     setUpdateProgress(null, false);
     const failure = describeDownloadFailure(error);
@@ -919,6 +942,11 @@ async function downloadOrConfirmUpdate() {
     isDownloadingUpdate = false;
     checkBtn.disabled = currentAppVersion.length === 0;
     syncDownloadButtons();
+  }
+
+  // 下载与哈希校验完成后，在下载 try/catch 之外弹窗请用户确认，绝不自动安装。
+  if (verifiedToConfirm) {
+    await confirmAndOpenInstaller(verifiedToConfirm);
   }
 }
 

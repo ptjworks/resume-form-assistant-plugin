@@ -149,5 +149,11 @@ test("软件内下载进度、SHA-256 校验与错误提示文案", () => {
 
   const mismatch = describeDownloadFailure({ code: "UPDATE_HASH_MISMATCH", message: "SHA-256 不一致" });
   assert.equal(mismatch.tone, "error");
+  assert.equal(mismatch.canDownload, true);
   assert.match(mismatch.text, /SHA-256 不一致/);
+
+  const unsupported = describeDownloadFailure({ code: "UPDATE_UNSUPPORTED_PLATFORM" });
+  assert.equal(unsupported.available, true);
+  assert.equal(unsupported.canDownload, false);
+  assert.match(unsupported.text, /去下载页/);
 });

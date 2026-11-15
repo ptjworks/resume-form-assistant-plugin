@@ -88,8 +88,10 @@ export function updateNotice(pref: UpdatePreference, current: string, closedThis
 export interface UpdateMessage {
   tone: "ok" | "warn" | "error";
   text: string;
-  /** 有没有新版本可下载。界面照它决定要不要显示「去下载」。 */
+  /** 有没有新版本可下载。界面照它决定要不要显示「去下载页」。 */
   available: boolean;
+  /** 是否允许在软件内直接下载安装包（默认与 `available` 一致；平台不支持应用内下载时为 `false`，仅保留「去下载页」）。 */
+  canDownload?: boolean;
 }
 
 /** 查完之后说什么。 */
@@ -174,43 +176,57 @@ export function describeDownloadProgress(progress: UpdateDownloadProgress): {
 export function describeDownloadedUpdate(downloaded: DownloadedUpdate): UpdateMessage {
   return {
     tone: "ok",
-    text: `新版本 ${downloaded.version} 安装包已下载并通过 SHA-256 校验（${downloaded.sha256.slice(0, 12)}…）。请确认后打开安装程序，装之前不用卸载旧版。`,
+    text: `新版本 ${downloaded.version} 安装包已下载并与同发布页的 SHA-256 校验一致（${downloaded.sha256.slice(0, 12)}…，仅校验下载完整性，未做代码签名）。请确认后打开安装程序，装之前不用卸载旧版。`,
     available: true,
+    canDownload: true,
   };
 }
 
 export function describeDownloadFailure(error: unknown): UpdateMessage {
   const detail = error as { code?: string; message?: string } | null;
   switch (detail?.code) {
+    case "UPDATE_UNSUPPORTED_PLATFORM":
+    case "UPDATE_BAD_URL":
+      return {
+        tone: "warn",
+        text: detail.message || "当前系统暂不支持应用内直接下载安装包，请点「去下载页」手动下载。",
+        available: true,
+        canDownload: false,
+      };
     case "UPDATE_HASH_MISMATCH":
       return {
         tone: "error",
         text: detail.message || "安装包 SHA-256 校验未通过，已删除损坏文件，请重新下载。",
         available: true,
+        canDownload: true,
       };
     case "UPDATE_BAD_CHECKSUM":
       return {
         tone: "error",
         text: detail.message || "更新服务器上的 SHA-256 校验文件格式异常，已停止下载。",
         available: true,
+        canDownload: true,
       };
     case "UPDATE_OFFLINE":
       return {
         tone: "warn",
         text: detail.message || "连不上更新服务器，安装包下载中断，可重试或点「去下载页」手动下载。",
         available: true,
+        canDownload: true,
       };
     case "UPDATE_RATE_LIMITED":
       return {
         tone: "warn",
         text: detail.message || "更新服务器暂时限流了，可稍后重试或点「去下载页」手动下载。",
         available: true,
+        canDownload: true,
       };
     default:
       return {
         tone: "error",
         text: `下载失败：${detail?.message ?? "原因不明"}`,
         available: true,
+        canDownload: true,
       };
   }
 }

@@ -1671,6 +1671,7 @@ impl Drop for DownloadBusyGuard<'_> {
 async fn download_update_cmd(
     state: State<'_, AppState>,
     app: AppHandle,
+    expected_version: Option<String>,
 ) -> Result<update_check::DownloadedUpdate, CommandError> {
     if state
         .downloading_update
@@ -1690,6 +1691,17 @@ async fn download_update_cmd(
     let _busy = DownloadBusyGuard(&state.downloading_update);
 
     let info = current_update_offer(&state, &app)?;
+    if let Some(expected) = expected_version.as_deref() {
+        if info.version != expected {
+            return Err(CommandError {
+                code: "UPDATE_VERSION_CHANGED".into(),
+                message: format!(
+                    "待更新版本已变更为 v{}，请先重新检查更新后再下载。",
+                    info.version
+                ),
+            });
+        }
+    }
     let cache_dir = state
         .paths
         .lock()
@@ -1714,6 +1726,10 @@ async fn download_update_cmd(
 }
 
 /// 用户显式确认安装后，复核磁盘上的安装包 SHA-256 并打开安装程序。
+///
+/// 信任边界说明：本应用的前端是同源打包的内置桌面界面，用户确认弹窗由前端 `openSettingsDialog`
+/// 承载；后端在此命令中要求前端显式传入期望的 `version` 与 `sha256`，并在后台线程中打开只读文件
+/// 句柄、复核磁盘字节数与 SHA-256，持有句柄直至调用系统 opener 打开，防止下载后至启动前文件被篡改。
 #[tauri::command]
 async fn open_downloaded_update_cmd(
     state: State<'_, AppState>,
@@ -1735,7 +1751,11 @@ async fn open_downloaded_update_cmd(
     let version_for_check = version.clone();
     let sha256_for_check = sha256.clone();
     let check_result = tokio::task::spawn_blocking(move || {
-        update_check::verify_ready_installer(&verified_for_check, &version_for_check, &sha256_for_check)
+        update_check::open_and_verify_ready_installer(
+            &verified_for_check,
+            &version_for_check,
+            &sha256_for_check,
+        )
     })
     .await
     .map_err(|e| CommandError {
@@ -1743,8 +1763,8 @@ async fn open_downloaded_update_cmd(
         message: format!("校验安装包任务异常：{e}"),
     })?;
 
-    let path = match check_result {
-        Ok(path) => path,
+    let (path, _locked_file) = match check_result {
+        Ok(pair) => pair,
         Err(err) => {
             if err.code == "UPDATE_HASH_MISMATCH"
                 || (err.code == "UPDATE_NOT_DOWNLOADED" && verified.info.version == version)
