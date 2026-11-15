@@ -586,6 +586,21 @@ pub fn open_and_sha256_file(path: &Path) -> Result<(std::fs::File, String, u64),
         }
     }
     let (digest, total) = sha256_reader(&file)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let post_meta = std::fs::symlink_metadata(path)?;
+        if post_meta.file_type().is_symlink()
+            || !post_meta.is_file()
+            || post_meta.dev() != file_meta.dev()
+            || post_meta.ino() != file_meta.ino()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "file replaced during hash check",
+            ));
+        }
+    }
     Ok((file, digest, total))
 }
 
@@ -670,13 +685,36 @@ fn is_allowed_download_redirect(url: &Url) -> bool {
     }
 }
 
-/// 清理 `updates/` 目录下旧版本的安装包和遗留 `.part` 文件，避免长期占用磁盘。
+/// 判断文件名是否属于本模块管理的安装包或临时 `.part` 文件（仅匹配合法的 `wangshen-kuaitian_<semver>_...` 格式）。
+fn is_managed_installer_artifact(file_name: &str) -> bool {
+    let base = file_name.strip_suffix(".part").unwrap_or(file_name);
+    let Some(rest) = base.strip_prefix(&format!("{INSTALLER_ASSET_PREFIX}_")) else {
+        return false;
+    };
+    let version = rest
+        .strip_suffix("_x64-setup.exe")
+        .or_else(|| rest.strip_suffix("_aarch64.dmg"));
+    let Some(ver) = version else {
+        return false;
+    };
+    is_safe_installer_filename(ver, base)
+        && (installer_filename_for(ver, "windows", "x86_64").as_deref() == Some(base)
+            || installer_filename_for(ver, "macos", "aarch64").as_deref() == Some(base))
+}
+
+/// 清理 `updates/` 目录下旧版本的受管安装包和遗留 `.part` 文件，避免长期占用磁盘或误删无关文件。
 fn cleanup_old_installers(updates_dir: &Path, keep_installer_name: &str) {
     let keep_part = format!("{keep_installer_name}.part");
     let Ok(entries) = std::fs::read_dir(updates_dir) else {
         return;
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() || file_type.is_symlink() {
+            continue;
+        }
         let name = entry.file_name();
         let Some(name_str) = name.to_str() else {
             continue;
@@ -684,7 +722,7 @@ fn cleanup_old_installers(updates_dir: &Path, keep_installer_name: &str) {
         if name_str == keep_installer_name || name_str == keep_part {
             continue;
         }
-        if name_str.starts_with(INSTALLER_ASSET_PREFIX) {
+        if is_managed_installer_artifact(name_str) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
@@ -715,7 +753,16 @@ where
     }
 
     ensure_not_symlink(cache_dir)?;
-    let updates_dir = cache_dir.join(UPDATES_DIR_NAME);
+    std::fs::create_dir_all(cache_dir).map_err(|e| CommandError {
+        code: "UPDATE_WRITE_FAILED".into(),
+        message: format!("创建应用缓存目录失败：{e}"),
+    })?;
+    ensure_not_symlink(cache_dir)?;
+    let canonical_cache_dir = std::fs::canonicalize(cache_dir).map_err(|e| CommandError {
+        code: "UPDATE_WRITE_FAILED".into(),
+        message: format!("解析应用缓存目录失败：{e}"),
+    })?;
+    let updates_dir = canonical_cache_dir.join(UPDATES_DIR_NAME);
     ensure_not_symlink(&updates_dir)?;
     std::fs::create_dir_all(&updates_dir).map_err(|e| CommandError {
         code: "UPDATE_WRITE_FAILED".into(),
@@ -726,6 +773,14 @@ where
         code: "UPDATE_WRITE_FAILED".into(),
         message: format!("解析更新缓存目录失败：{e}"),
     })?;
+    if !canonical_updates_dir.starts_with(&canonical_cache_dir)
+        || canonical_updates_dir.parent() != Some(canonical_cache_dir.as_path())
+    {
+        return Err(CommandError {
+            code: "UPDATE_WRITE_FAILED".into(),
+            message: "更新缓存目录不在受管缓存目录内，已拒绝写入。".into(),
+        });
+    }
 
     on_progress(UpdateDownloadProgress {
         version: version.to_string(),
@@ -907,14 +962,48 @@ where
     ensure_not_symlink(&part_path)?;
     ensure_not_symlink(&final_path)?;
     let _ = std::fs::remove_file(&part_path);
-    let mut part_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&part_path)
-        .map_err(|e| CommandError {
-            code: "UPDATE_WRITE_FAILED".into(),
-            message: format!("创建临时安装包文件失败：{e}"),
+    let mut part_opts = std::fs::OpenOptions::new();
+    part_opts.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT (0x00200000) to avoid following symlinks/reparse points.
+        part_opts.custom_flags(0x0020_0000);
+    }
+    let mut part_file = part_opts.open(&part_path).map_err(|e| CommandError {
+        code: "UPDATE_WRITE_FAILED".into(),
+        message: format!("创建临时安装包文件失败：{e}"),
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let sym = std::fs::symlink_metadata(&part_path).map_err(|e| {
+            let _ = std::fs::remove_file(&part_path);
+            CommandError {
+                code: "UPDATE_WRITE_FAILED".into(),
+                message: format!("核对临时安装包元数据失败：{e}"),
+            }
         })?;
+        let fmeta = part_file.metadata().map_err(|e| {
+            let _ = std::fs::remove_file(&part_path);
+            CommandError {
+                code: "UPDATE_WRITE_FAILED".into(),
+                message: format!("读取临时安装包句柄元数据失败：{e}"),
+            }
+        })?;
+        if sym.file_type().is_symlink()
+            || !sym.is_file()
+            || sym.dev() != fmeta.dev()
+            || sym.ino() != fmeta.ino()
+        {
+            drop(part_file);
+            let _ = std::fs::remove_file(&part_path);
+            return Err(CommandError {
+                code: "UPDATE_WRITE_FAILED".into(),
+                message: "临时安装包文件在创建时被替换，已拒绝写入。".into(),
+            });
+        }
+    }
     let canonical_part = match std::fs::canonicalize(&part_path) {
         Ok(path) => path,
         Err(e) => {
@@ -926,7 +1015,9 @@ where
             });
         }
     };
-    if canonical_part.parent() != Some(canonical_updates_dir.as_path()) {
+    if canonical_part.parent() != Some(canonical_updates_dir.as_path())
+        || !canonical_part.starts_with(&canonical_cache_dir)
+    {
         drop(part_file);
         let _ = std::fs::remove_file(&part_path);
         return Err(CommandError {
@@ -1081,7 +1172,7 @@ where
 
 /// 用户点击「确认并打开安装程序」时，再次核对版本、哈希与磁盘上的安装包文件一致性，
 /// 并返回持有的只读文件句柄（Windows 上通过显式 `share_mode(FILE_SHARE_READ)` 阻止写入与删除；
-/// Unix/macOS 上通过 `O_NOFOLLOW` 拒绝符号链接并缩短校验到按路径打开的时间窗口，但受限于系统按路径启动机制，Unix 下不构成内核级原子执行保证）。
+/// Unix/macOS 上通过核对 `symlink_metadata` 与已打开文件句柄的 `(dev, ino)` 拒绝符号链接或文件替换，但受限于系统按路径启动机制，Unix 下不构成内核级原子执行保证）。
 pub fn open_and_verify_ready_installer(
     verified: &VerifiedInstaller,
     version: &str,

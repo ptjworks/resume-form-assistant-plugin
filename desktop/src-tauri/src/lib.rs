@@ -1740,13 +1740,12 @@ async fn download_update_cmd(
 ///
 /// 信任边界与平台残余风险说明：
 /// - 本应用的前端是同源打包的内置桌面界面，用户确认弹窗由前端 `openSettingsDialog` 承载；
-/// - 后端在此命令中要求前端显式传入期望的 `version` 与 `sha256`，并在后台线程中打开只读文件句柄、
-///   复核磁盘字节数与 SHA-256；
-/// - Windows 下句柄设置 `FILE_SHARE_READ`（不含 `FILE_SHARE_WRITE` / `FILE_SHARE_DELETE`），
+/// - 后端在此命令中与 `download_update_cmd` 共享 `downloading_update` 互斥守卫（避免下载重命名与打开复核并发竞争），
+///   要求前端显式传入期望的 `version` 与 `sha256`，并在 `spawn_blocking` 后台线程中打开只读文件句柄、复核磁盘字节数与 SHA-256；
+/// - Windows 下句柄设置 `FILE_SHARE_READ`（不含 `FILE_SHARE_WRITE` / `FILE_SHARE_DELETE`）与 `FILE_FLAG_OPEN_REPARSE_POINT`，
 ///   在句柄存活至 `open_path` 期间由操作系统阻止其他进程写入或删除该文件；
-/// - Unix/macOS 下受限于系统 opener 按路径启动的机制，无法由内核保证路径到启动的绝对原子性，
-///   因此在调用 `open_path` 前会再次同步执行一次 `open_and_verify_ready_installer` 复核 SHA-256 与 inode，
-///   将替换窗口缩减至紧邻 `open_path` 调用前。
+/// - Unix/macOS 下在 `open_and_sha256_file` 中前后两次核对 `symlink_metadata` 与已打开文件句柄的 `(dev, ino)`，
+///   并保持文件句柄存活至 `open_path` 调用完成（受限于系统 opener 按路径启动的机制，Unix 下无法由内核保证路径到启动的绝对原子性）。
 #[tauri::command]
 async fn open_downloaded_update_cmd(
     state: State<'_, AppState>,
@@ -1754,6 +1753,23 @@ async fn open_downloaded_update_cmd(
     version: String,
     sha256: String,
 ) -> Result<(), CommandError> {
+    if state
+        .downloading_update
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return Err(CommandError {
+            code: "UPDATE_DOWNLOAD_BUSY".into(),
+            message: "正在下载更新安装包，请等待下载完成后再打开。".into(),
+        });
+    }
+    let _busy = DownloadBusyGuard(&state.downloading_update);
+
     let verified = state
         .downloaded_update
         .lock()
@@ -1793,18 +1809,6 @@ async fn open_downloaded_update_cmd(
             return Err(err);
         }
     };
-
-    #[cfg(unix)]
-    let (_unix_final_path, _unix_final_lock) =
-        match update_check::open_and_verify_ready_installer(&verified, &version, &sha256) {
-            Ok(pair) => pair,
-            Err(err) => {
-                if let Ok(mut slot) = state.downloaded_update.lock() {
-                    *slot = None;
-                }
-                return Err(err);
-            }
-        };
 
     tauri_plugin_opener::OpenerExt::opener(&app)
         .open_path(path.to_string_lossy(), None::<&str>)

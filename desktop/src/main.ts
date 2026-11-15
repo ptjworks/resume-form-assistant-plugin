@@ -29,6 +29,7 @@ import {
   outstandingUpdate,
   parseCheckedAt,
   shouldCheck,
+  supportsInAppUpdateDownload,
   updateNotice,
 } from "./update-check.ts";
 import type { DownloadedUpdate, UpdateDownloadProgress, UpdateInfo, UpdatePreference } from "./update-check.ts";
@@ -704,6 +705,7 @@ setInterval(() => {
 let pendingUpdate: UpdateInfo | null = null;
 let downloadedUpdate: DownloadedUpdate | null = null;
 let isDownloadingUpdate = false;
+let canDownloadInApp = true;
 
 function syncDownloadButtons() {
   const targetVersion = (pendingUpdate ?? shownNotice)?.version ?? null;
@@ -738,7 +740,7 @@ function showUpdate(message: { tone: string; text: string; available: boolean; c
   box.dataset.tone = message.tone;
   box.hidden = false;
   (must("update-open") as HTMLButtonElement).hidden = !message.available;
-  const allowDownload = message.available && message.canDownload !== false;
+  const allowDownload = message.available && canDownloadInApp && message.canDownload !== false;
   const downloadBtn = document.getElementById("update-download") as HTMLButtonElement | null;
   if (downloadBtn) downloadBtn.hidden = !allowDownload;
   const noticeDownloadBtn = document.getElementById("update-notice-download") as HTMLButtonElement | null;
@@ -767,11 +769,15 @@ function showNotice(pref: UpdatePreference | null) {
   const notice = known ? updateNotice(known, currentAppVersion, closedThisRun) : null;
   shownNotice = notice;
   must("update-notice").hidden = !notice;
+  const noticeDownloadBtn = document.getElementById("update-notice-download") as HTMLButtonElement | null;
+  if (noticeDownloadBtn) {
+    noticeDownloadBtn.hidden = !notice || !canDownloadInApp;
+  }
   if (notice) {
     const ready = downloadedUpdate && downloadedUpdate.version === notice.version ? downloadedUpdate : null;
     must("update-notice-text").textContent = ready
       ? describeDownloadedUpdate(ready).text
-      : describeUpdate(currentAppVersion, notice).text;
+      : describeUpdate(currentAppVersion, notice, canDownloadInApp).text;
   } else {
     must("update-notice-text").textContent = "";
   }
@@ -790,7 +796,16 @@ function showCheckedAt(at: Date | null) {
 }
 
 async function checkUpdate(currentVersion: string) {
-  if (!invoke || isDownloadingUpdate) return;
+  if (!invoke) return;
+  if (isDownloadingUpdate) {
+    showUpdate({
+      tone: "warn",
+      text: "正在下载更新安装包，请等待下载完成后再检查。",
+      available: Boolean(pendingUpdate ?? shownNotice),
+      canDownload: canDownloadInApp,
+    });
+    return;
+  }
   const button = must("update-check") as HTMLButtonElement;
   if (button.getAttribute("aria-busy") === "true") return;
   button.setAttribute("aria-busy", "true");
@@ -805,7 +820,7 @@ async function checkUpdate(currentVersion: string) {
       if (downloadedUpdate && (!pendingUpdate || downloadedUpdate.version !== pendingUpdate.version)) {
         downloadedUpdate = null;
       }
-      showUpdate(describeUpdate(currentVersion, pendingUpdate));
+      showUpdate(describeUpdate(currentVersion, pendingUpdate, canDownloadInApp));
     }
   } catch (error) {
     pendingUpdate = null;
@@ -922,6 +937,9 @@ async function downloadOrConfirmUpdate() {
     if (shownNotice) must("update-notice-text").textContent = readyMsg.text;
   } catch (error) {
     const detail = error as { code?: string } | null;
+    if (detail?.code === "UPDATE_UNSUPPORTED_PLATFORM") {
+      canDownloadInApp = false;
+    }
     if (
       detail?.code === "UPDATE_HASH_MISMATCH" ||
       detail?.code === "UPDATE_NOT_DOWNLOADED" ||
@@ -972,7 +990,12 @@ must("update-open").addEventListener("click", async () => {
   try {
     await invoke("open_update_page_cmd");
   } catch {
-    showUpdate({ tone: "warn", text: `打不开下载页，请手动访问：${pendingUpdate.url}`, available: true });
+    showUpdate({
+      tone: "warn",
+      text: `打不开下载页，请手动访问：${pendingUpdate.url}`,
+      available: true,
+      canDownload: canDownloadInApp,
+    });
   }
 });
 
@@ -1028,8 +1051,9 @@ let currentAppVersion = "";
 let autoCheckDone = false;
 
 /** 启动时按偏好查一次。查不到就安静退回，不打扰。 */
-async function maybeAutoCheck(status: { appVersion: string }) {
+async function maybeAutoCheck(status: { appVersion: string; platform?: string; arch?: string }) {
   currentAppVersion = status.appVersion;
+  canDownloadInApp = supportsInAppUpdateDownload(status.platform, status.arch);
   (must("update-check") as HTMLButtonElement).disabled = currentAppVersion.length === 0;
   if (!invoke || autoCheckDone) return;
   autoCheckDone = true;
@@ -1047,9 +1071,9 @@ async function maybeAutoCheck(status: { appVersion: string }) {
   // 今天已经查过、不再查的时候，靠上次记下的结果接着提示。
   showNotice(pref);
   const cached = pref.available ?? null;
-  if (cached && describeUpdate(currentAppVersion, cached).available) {
+  if (cached && describeUpdate(currentAppVersion, cached, canDownloadInApp).available) {
     pendingUpdate = cached;
-    showUpdate(describeUpdate(currentAppVersion, cached));
+    showUpdate(describeUpdate(currentAppVersion, cached, canDownloadInApp));
   }
   if (!shouldCheck(pref, new Date().toISOString())) return;
   await checkUpdate(status.appVersion);

@@ -94,8 +94,18 @@ export interface UpdateMessage {
   canDownload?: boolean;
 }
 
+/** 判断给定的操作系统与架构是否支持应用内直接下载安装包（未传或空值时默认按支持处理，以便测试与未知环境兼容）。 */
+export function supportsInAppUpdateDownload(platform?: string | null, arch?: string | null): boolean {
+  if (!platform || !arch) return true;
+  return (platform === "windows" && arch === "x86_64") || (platform === "macos" && arch === "aarch64");
+}
+
 /** 查完之后说什么。 */
-export function describeUpdate(current: string, latest: UpdateInfo | null): UpdateMessage {
+export function describeUpdate(
+  current: string,
+  latest: UpdateInfo | null,
+  canDownload = true,
+): UpdateMessage {
   if (!latest) {
     return { tone: "ok", text: `已经是最新版（${current}）。`, available: false };
   }
@@ -107,6 +117,7 @@ export function describeUpdate(current: string, latest: UpdateInfo | null): Upda
     tone: "warn",
     text: `有新版本 ${latest.version}（现在是 ${current}）。下载后手动安装，装之前不用卸载旧版。`,
     available: true,
+    canDownload,
   };
 }
 
