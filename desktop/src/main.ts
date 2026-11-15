@@ -18,8 +18,20 @@ import {
   registrationCompleted,
 } from "./browser-link.ts";
 import type { NativeMessagingRegistrationOutcome } from "./browser-link.ts";
-import { describeCheckFailure, describeUpdate, formatCheckedAt, outstandingUpdate, parseCheckedAt, shouldCheck, updateNotice } from "./update-check.ts";
-import type { UpdateInfo, UpdatePreference } from "./update-check.ts";
+import {
+  describeCheckFailure,
+  describeDownloadedUpdate,
+  describeDownloadFailure,
+  describeDownloadProgress,
+  describeUpdate,
+  formatBytes,
+  formatCheckedAt,
+  outstandingUpdate,
+  parseCheckedAt,
+  shouldCheck,
+  updateNotice,
+} from "./update-check.ts";
+import type { DownloadedUpdate, UpdateDownloadProgress, UpdateInfo, UpdatePreference } from "./update-check.ts";
 import { mountApplications } from "./applications-ui.ts";
 import { mountInbox } from "./inbox-ui.ts";
 import { followInboxChanges } from "./inbox-refresh.ts";
@@ -40,7 +52,7 @@ import {
   QUIT_WARNING,
   describeCapability,
 } from "./todos.ts";
-import { describeDialogError, fragment, openSettingsDialog, paragraph } from "./settings-dialog.ts";
+import { describeDialogError, factList, fragment, openSettingsDialog, paragraph } from "./settings-dialog.ts";
 
 const invoke: Invoke | undefined = window.__TAURI__?.core?.invoke;
 installFrontendErrors(invoke ?? null);
@@ -690,6 +702,35 @@ setInterval(() => {
 // --- 版本与更新 ---------------------------------------------------------------------------
 
 let pendingUpdate: UpdateInfo | null = null;
+let downloadedUpdate: DownloadedUpdate | null = null;
+let isDownloadingUpdate = false;
+
+function syncDownloadButtons() {
+  const targetVersion = (pendingUpdate ?? shownNotice)?.version ?? null;
+  const ready = Boolean(downloadedUpdate && targetVersion && downloadedUpdate.version === targetVersion);
+  const label = isDownloadingUpdate ? "正在下载…" : ready ? "打开安装程序" : "下载更新";
+  for (const id of ["update-download", "update-notice-download"]) {
+    const btn = document.getElementById(id) as HTMLButtonElement | null;
+    if (!btn) continue;
+    btn.textContent = label;
+    btn.disabled = isDownloadingUpdate;
+    if (isDownloadingUpdate) btn.setAttribute("aria-busy", "true");
+    else btn.removeAttribute("aria-busy");
+  }
+}
+
+function setUpdateProgress(percent: number | null | undefined, visible: boolean) {
+  for (const id of ["update-progress", "update-notice-progress"]) {
+    const bar = document.getElementById(id) as HTMLProgressElement | null;
+    if (!bar) continue;
+    bar.hidden = !visible;
+    if (!visible || percent === null || percent === undefined) {
+      bar.removeAttribute("value");
+    } else {
+      bar.value = percent;
+    }
+  }
+}
 
 function showUpdate(message: { tone: string; text: string; available: boolean }) {
   const box = must("update-msg");
@@ -697,6 +738,9 @@ function showUpdate(message: { tone: string; text: string; available: boolean })
   box.dataset.tone = message.tone;
   box.hidden = false;
   (must("update-open") as HTMLButtonElement).hidden = !message.available;
+  const downloadBtn = document.getElementById("update-download") as HTMLButtonElement | null;
+  if (downloadBtn) downloadBtn.hidden = !message.available;
+  syncDownloadButtons();
 }
 
 /** 主界面顶栏下的提示条，以及「设置」「关于与诊断」上的小圆点。 */
@@ -718,7 +762,15 @@ function showNotice(pref: UpdatePreference | null) {
   const notice = known ? updateNotice(known, currentAppVersion, closedThisRun) : null;
   shownNotice = notice;
   must("update-notice").hidden = !notice;
-  must("update-notice-text").textContent = notice ? describeUpdate(currentAppVersion, notice).text : "";
+  if (notice) {
+    const ready = downloadedUpdate && downloadedUpdate.version === notice.version ? downloadedUpdate : null;
+    must("update-notice-text").textContent = ready
+      ? describeDownloadedUpdate(ready).text
+      : describeUpdate(currentAppVersion, notice).text;
+  } else {
+    must("update-notice-text").textContent = "";
+  }
+  syncDownloadButtons();
   // 收起提示条以后，小圆点还在，直到装上新版。
   const outstanding = known ? outstandingUpdate(known, currentAppVersion) : null;
   document.querySelectorAll<HTMLElement>("[data-update-dot]").forEach((dot) => { dot.hidden = !outstanding; });
@@ -733,15 +785,23 @@ function showCheckedAt(at: Date | null) {
 }
 
 async function checkUpdate(currentVersion: string) {
-  if (!invoke) return;
+  if (!invoke || isDownloadingUpdate) return;
   const button = must("update-check") as HTMLButtonElement;
   if (button.getAttribute("aria-busy") === "true") return;
   button.setAttribute("aria-busy", "true");
+  setUpdateProgress(null, false);
   showUpdate({ tone: "pending", text: "正在检查更新…", available: false });
   try {
     pendingUpdate = (await invoke<UpdateInfo | null>("check_update_cmd")) ?? null;
     checkedThisRun = pendingUpdate;
-    showUpdate(describeUpdate(currentVersion, pendingUpdate));
+    if (downloadedUpdate && pendingUpdate && downloadedUpdate.version === pendingUpdate.version) {
+      showUpdate(describeDownloadedUpdate(downloadedUpdate));
+    } else {
+      if (downloadedUpdate && (!pendingUpdate || downloadedUpdate.version !== pendingUpdate.version)) {
+        downloadedUpdate = null;
+      }
+      showUpdate(describeUpdate(currentVersion, pendingUpdate));
+    }
   } catch (error) {
     pendingUpdate = null;
     showUpdate(describeCheckFailure(error));
@@ -760,12 +820,122 @@ async function checkUpdate(currentVersion: string) {
   }
 }
 
+/**
+ * 弹出安装确认弹窗。
+ *
+ * **下载并校验完成后绝不自动启动安装程序**：必须等用户在弹窗里点「确认并打开安装程序」，
+ * 才调用 `open_downloaded_update_cmd` 打开本地安装包。
+ */
+async function confirmAndOpenInstaller(downloaded: DownloadedUpdate) {
+  if (!invoke) return;
+  await openSettingsDialog({
+    title: `确认打开 v${downloaded.version} 安装程序？`,
+    intro: "安装包已下载到本地并通过 SHA-256 完整性校验。确认后将打开安装程序，安装前无需卸载旧版。",
+    body: fragment(
+      factList([
+        ["新版本", `v${downloaded.version}`],
+        ["安装包文件", downloaded.fileName],
+        ["文件大小", formatBytes(downloaded.sizeBytes)],
+        ["SHA-256 校验", `${downloaded.sha256}（已通过）`],
+      ]),
+      paragraph("安装包尚未做代码签名，系统若弹出安全提示，请核对上方文件名后再继续。", "muted"),
+    ),
+    confirmLabel: "确认并打开安装程序",
+    cancelLabel: "稍后安装",
+    busyLabel: "正在打开安装程序…",
+    size: "md",
+    action: async () => {
+      try {
+        await invoke("open_downloaded_update_cmd", {
+          version: downloaded.version,
+          sha256: downloaded.sha256,
+        });
+      } catch (error) {
+        const detail = error as { code?: string } | null;
+        if (detail?.code === "UPDATE_HASH_MISMATCH" || detail?.code === "UPDATE_NOT_DOWNLOADED") {
+          downloadedUpdate = null;
+          syncDownloadButtons();
+        }
+        throw error;
+      }
+    },
+  });
+}
+
+async function downloadOrConfirmUpdate() {
+  if (!invoke || isDownloadingUpdate) return;
+  const target = pendingUpdate ?? shownNotice;
+  if (!target) return;
+  if (downloadedUpdate && downloadedUpdate.version === target.version) {
+    await confirmAndOpenInstaller(downloadedUpdate);
+    return;
+  }
+
+  isDownloadingUpdate = true;
+  const checkBtn = must("update-check") as HTMLButtonElement;
+  checkBtn.disabled = true;
+  syncDownloadButtons();
+  setUpdateProgress(null, true);
+  const initialText = `正在获取 v${target.version} 的 SHA-256 校验文件并准备下载…`;
+  showUpdate({ tone: "pending", text: initialText, available: true });
+  if (shownNotice) must("update-notice-text").textContent = initialText;
+
+  let unlisten: (() => void) | undefined;
+  const listen = window.__TAURI__?.event?.listen;
+  if (listen) {
+    try {
+      unlisten = await listen("update-download-progress", (event) => {
+        const payload = event.payload as UpdateDownloadProgress | undefined;
+        if (!payload) return;
+        const progress = describeDownloadProgress(payload);
+        setUpdateProgress(progress.percent, true);
+        must("update-msg-text").textContent = progress.text;
+        if (shownNotice) must("update-notice-text").textContent = progress.text;
+      });
+    } catch {
+      // 监听失败不阻断下载本身。
+    }
+  }
+
+  try {
+    const verified = await invoke<DownloadedUpdate>("download_update_cmd");
+    downloadedUpdate = verified;
+    isDownloadingUpdate = false;
+    setUpdateProgress(100, false);
+    const readyMsg = describeDownloadedUpdate(verified);
+    showUpdate(readyMsg);
+    if (shownNotice) must("update-notice-text").textContent = readyMsg.text;
+    // 下载与哈希校验完成后，不直接自动安装，而是弹窗请用户确认。
+    await confirmAndOpenInstaller(verified);
+  } catch (error) {
+    downloadedUpdate = null;
+    isDownloadingUpdate = false;
+    setUpdateProgress(null, false);
+    const failure = describeDownloadFailure(error);
+    showUpdate(failure);
+    if (shownNotice) must("update-notice-text").textContent = failure.text;
+  } finally {
+    unlisten?.();
+    isDownloadingUpdate = false;
+    checkBtn.disabled = currentAppVersion.length === 0;
+    syncDownloadButtons();
+  }
+}
+
 must("update-check").addEventListener("click", () => {
   if (!currentAppVersion) {
     showUpdate({ tone: "warn", text: "正在读取应用版本，请稍后再查。", available: false });
     return;
   }
   void checkUpdate(currentAppVersion);
+});
+
+document.getElementById("update-download")?.addEventListener("click", () => {
+  void downloadOrConfirmUpdate();
+});
+
+document.getElementById("update-notice-download")?.addEventListener("click", () => {
+  void downloadOrConfirmUpdate();
 });
 
 must("update-open").addEventListener("click", async () => {

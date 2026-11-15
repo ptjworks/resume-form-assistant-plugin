@@ -88,7 +88,9 @@ label.button-like.disabled { cursor: default; opacity: .45; }
 .pill { margin: auto 0 0; padding: 12px; font-size: 12px; color: #9ba8bd; overflow-wrap: anywhere; }
 /* 有新版本：顶栏下面一条，不挡操作，可以关掉。 */
 .update-notice { grid-row: 2; display: flex; align-items: center; gap: 10px; padding: 7px 24px; border-bottom: 1px solid #ecd9ae; background: #fdf7ea; color: #7c5a12; font-size: 13px; line-height: 1.5; }
-.update-notice p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.update-notice-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.update-notice p { margin: 0; overflow-wrap: anywhere; }
+.update-progress { width: 100%; height: 6px; margin-top: 4px; border-radius: 999px; accent-color: #2463a8; }
 .update-notice button { flex: none; min-height: 28px; padding: 3px 12px; font-size: 13px; }
 .update-notice .update-notice-close { display: grid; place-items: center; width: 28px; padding: 0; border-color: transparent; background: transparent; color: inherit; }
 .update-notice .update-notice-close:hover:not(:disabled) { background: #f6ead0; border-color: transparent; }

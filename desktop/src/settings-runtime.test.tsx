@@ -19,6 +19,7 @@ vi.mock("./inbox-ui.ts", () => ({ mountInbox: () => ({ refresh: async () => {} }
 vi.mock("./todos-ui.ts", () => ({ mountTodos: () => async () => {} }));
 vi.mock("./backup-ui.ts", () => ({ mountBackup: () => async () => {} }));
 vi.mock("./resume/mount.tsx", () => ({ mountResume: () => ({ refresh: vi.fn(), confirmLeave: async () => true }) }));
+vi.mock("./notes/view.ts", () => ({ mountNotes: () => ({ openForApplication: vi.fn() }) }));
 
 beforeEach(() => {
   vi.resetModules();
@@ -278,4 +279,96 @@ test("when the preference file cannot be written, this run still shows what was 
   await settle();
   expect(notice().hidden).toBe(false);
   expect(document.getElementById("update-notice-text")!.textContent).toContain("0.6.0");
+});
+
+test("in-app download streams progress, verifies SHA-256, and requires user confirmation before opening the installer", async () => {
+  const downloadDeferred = deferred<unknown>();
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  let progressListener = null as ((event: { payload: unknown }) => void) | null;
+  const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  window.__TAURI__ = {
+    core: {
+      invoke: (async (command: string, args?: Record<string, unknown>) => {
+        calls.push({ command, args });
+        if (command === "get_runtime_status") return status("0.4.2");
+        if (command === "get_update_preference_cmd") return { enabled: true };
+        if (command === "check_update_cmd") return release("0.5.0");
+        if (command === "download_update_cmd") return downloadDeferred.promise;
+        if (command === "open_downloaded_update_cmd") return null;
+        return null;
+      }) as Invoke,
+    },
+    event: {
+      listen: async (name, fn) => {
+        if (name === "update-download-progress") {
+          progressListener = fn as (event: { payload: unknown }) => void;
+        }
+        return () => { progressListener = null; };
+      },
+    },
+  };
+  await import("./main.ts");
+  await settle();
+
+  const downloadBtn = document.getElementById("update-notice-download") as HTMLButtonElement;
+  expect(downloadBtn.textContent).toBe("下载更新");
+  fireEvent.click(downloadBtn);
+  await settle();
+
+  expect(calls.some((c) => c.command === "download_update_cmd")).toBe(true);
+  expect(downloadBtn.disabled).toBe(true);
+  expect(downloadBtn.textContent).toBe("正在下载…");
+
+  progressListener?.({
+    payload: {
+      version: "0.5.0",
+      fileName: "wangshen-kuaitian_0.5.0_x64-setup.exe",
+      downloadedBytes: 5 * 1024 * 1024,
+      totalBytes: 10 * 1024 * 1024,
+      phase: "downloading",
+    },
+  });
+  const noticeBar = document.getElementById("update-notice-progress") as HTMLProgressElement;
+  expect(noticeBar.hidden).toBe(false);
+  expect(noticeBar.value).toBe(50);
+  expect(document.getElementById("update-notice-text")!.textContent).toContain("50%");
+
+  downloadDeferred.resolve({
+    version: "0.5.0",
+    fileName: "wangshen-kuaitian_0.5.0_x64-setup.exe",
+    sha256: sha,
+    sizeBytes: 10 * 1024 * 1024,
+  });
+  await settle();
+
+  // 下载完成后绝不能自动调用 open_downloaded_update_cmd，必须等待用户确认。
+  expect(calls.some((c) => c.command === "open_downloaded_update_cmd")).toBe(false);
+  const dialog = document.querySelector("dialog.settings-dialog") as HTMLDialogElement | null;
+  expect(dialog).not.toBeNull();
+  expect(dialog!.textContent).toContain("确认打开 v0.5.0 安装程序？");
+  expect(dialog!.textContent).toContain(sha);
+
+  // 用户点「稍后安装」取消：不启动安装程序，按钮变为「打开安装程序」。
+  const buttons = [...dialog!.querySelectorAll("button")];
+  const cancelBtn = buttons.find((b) => b.textContent === "稍后安装")!;
+  fireEvent.click(cancelBtn);
+  await settle();
+  expect(calls.some((c) => c.command === "open_downloaded_update_cmd")).toBe(false);
+  expect(downloadBtn.textContent).toBe("打开安装程序");
+
+  // 再次点击「打开安装程序」无需重下，直接弹确认窗；点「确认并打开安装程序」后才真正打开。
+  const downloadCallsBefore = calls.filter((c) => c.command === "download_update_cmd").length;
+  fireEvent.click(downloadBtn);
+  await settle();
+  expect(calls.filter((c) => c.command === "download_update_cmd")).toHaveLength(downloadCallsBefore);
+
+  const dialog2 = document.querySelector("dialog.settings-dialog") as HTMLDialogElement;
+  const confirmBtn = [...dialog2.querySelectorAll("button")].find((b) => b.textContent === "确认并打开安装程序")!;
+  fireEvent.click(confirmBtn);
+  await settle();
+  expect(calls).toContainEqual({
+    command: "open_downloaded_update_cmd",
+    args: { version: "0.5.0", sha256: sha },
+  });
 });

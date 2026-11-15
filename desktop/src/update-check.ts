@@ -1,13 +1,28 @@
-// 更新检查的纯逻辑：版本怎么比、什么时候该查、查完说什么。
+// 更新检查与软件内下载校验的纯逻辑：版本怎么比、什么时候该查、下载进度与校验结果怎么说。
 //
-// 首发只做「检查并提示」，不下载、不静默安装（D13 计划里定的）。理由是安装包
-// 没有签名：让程序自己下一个未签名的安装包再运行，远比让用户自己去下更糟。
+// 安装包尚未做代码签名：支持在应用内下载安装包到本地并自动核对 `.sha256` 哈希，
+// 但**绝不自动/静默执行安装**——下载并校验通过后，必须经用户显式确认才打开安装程序。
 
 export interface UpdateInfo {
   /** 最新版本号，例如 `0.2.0`。 */
   version: string;
   /** 那一版的发布页。 */
   url: string;
+}
+
+export interface UpdateDownloadProgress {
+  version: string;
+  fileName: string;
+  downloadedBytes: number;
+  totalBytes?: number | null;
+  phase: "checksum" | "downloading" | "verifying" | "ready" | string;
+}
+
+export interface DownloadedUpdate {
+  version: string;
+  fileName: string;
+  sha256: string;
+  sizeBytes: number;
 }
 
 export interface UpdatePreference {
@@ -106,6 +121,96 @@ export function describeCheckFailure(error: unknown): UpdateMessage {
         tone: "warn",
         text: `没查成：${detail?.message ?? "原因不明"}`,
         available: false,
+      };
+  }
+}
+
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+}
+
+export function describeDownloadProgress(progress: UpdateDownloadProgress): {
+  text: string;
+  percent: number | null;
+} {
+  switch (progress.phase) {
+    case "checksum":
+      return {
+        text: `正在获取 v${progress.version} 的 SHA-256 校验文件…`,
+        percent: null,
+      };
+    case "verifying":
+      return {
+        text: `正在校验 ${progress.fileName} 的 SHA-256 哈希…`,
+        percent: 100,
+      };
+    case "ready":
+      return {
+        text: `安装包 ${progress.fileName} 已完成 SHA-256 校验，请确认后打开安装程序。`,
+        percent: 100,
+      };
+    default: {
+      const total = progress.totalBytes ?? 0;
+      if (total > 0) {
+        const percent = Math.max(0, Math.min(100, Math.round((progress.downloadedBytes / total) * 100)));
+        return {
+          text: `正在下载 v${progress.version} 安装包… ${percent}%（${formatBytes(progress.downloadedBytes)} / ${formatBytes(total)}）`,
+          percent,
+        };
+      }
+      return {
+        text: `正在下载 v${progress.version} 安装包… 已下载 ${formatBytes(progress.downloadedBytes)}`,
+        percent: null,
+      };
+    }
+  }
+}
+
+export function describeDownloadedUpdate(downloaded: DownloadedUpdate): UpdateMessage {
+  return {
+    tone: "ok",
+    text: `新版本 ${downloaded.version} 安装包已下载并通过 SHA-256 校验（${downloaded.sha256.slice(0, 12)}…）。请确认后打开安装程序，装之前不用卸载旧版。`,
+    available: true,
+  };
+}
+
+export function describeDownloadFailure(error: unknown): UpdateMessage {
+  const detail = error as { code?: string; message?: string } | null;
+  switch (detail?.code) {
+    case "UPDATE_HASH_MISMATCH":
+      return {
+        tone: "error",
+        text: detail.message || "安装包 SHA-256 校验未通过，已删除损坏文件，请重新下载。",
+        available: true,
+      };
+    case "UPDATE_BAD_CHECKSUM":
+      return {
+        tone: "error",
+        text: detail.message || "更新服务器上的 SHA-256 校验文件格式异常，已停止下载。",
+        available: true,
+      };
+    case "UPDATE_OFFLINE":
+      return {
+        tone: "warn",
+        text: detail.message || "连不上更新服务器，安装包下载中断，可重试或点「去下载页」手动下载。",
+        available: true,
+      };
+    case "UPDATE_RATE_LIMITED":
+      return {
+        tone: "warn",
+        text: detail.message || "更新服务器暂时限流了，可稍后重试或点「去下载页」手动下载。",
+        available: true,
+      };
+    default:
+      return {
+        tone: "error",
+        text: `下载失败：${detail?.message ?? "原因不明"}`,
+        available: true,
       };
   }
 }

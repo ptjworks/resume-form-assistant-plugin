@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import {
   compareVersions,
   describeCheckFailure,
+  describeDownloadedUpdate,
+  describeDownloadFailure,
+  describeDownloadProgress,
   describeUpdate,
+  formatBytes,
   formatCheckedAt,
   outstandingUpdate,
   parseCheckedAt,
@@ -105,4 +109,45 @@ test("主界面提示：自动检查关着、没查到、已经装上了，都�
   assert.equal(updateNotice({ enabled: true, available: null }, "0.4.2"), null);
   assert.equal(updateNotice({ enabled: true, available }, "0.5.0"), null);
   assert.equal(updateNotice({ enabled: true, available }, "开发版"), null, "认不出当前版本就不提示");
+});
+
+test("软件内下载进度、SHA-256 校验与错误提示文案", () => {
+  assert.equal(formatBytes(0), "0 B");
+  assert.equal(formatBytes(512), "512 B");
+  assert.equal(formatBytes(2048), "2.0 KB");
+  assert.equal(formatBytes(5 * 1024 * 1024), "5.0 MB");
+
+  const checksum = describeDownloadProgress({
+    version: "0.5.2",
+    fileName: "wangshen-kuaitian_0.5.2_x64-setup.exe",
+    downloadedBytes: 0,
+    phase: "checksum",
+  });
+  assert.equal(checksum.percent, null);
+  assert.match(checksum.text, /SHA-256/);
+
+  const half = describeDownloadProgress({
+    version: "0.5.2",
+    fileName: "wangshen-kuaitian_0.5.2_x64-setup.exe",
+    downloadedBytes: 5 * 1024 * 1024,
+    totalBytes: 10 * 1024 * 1024,
+    phase: "downloading",
+  });
+  assert.equal(half.percent, 50);
+  assert.match(half.text, /50%/);
+
+  const verified = describeDownloadedUpdate({
+    version: "0.5.2",
+    fileName: "wangshen-kuaitian_0.5.2_x64-setup.exe",
+    sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    sizeBytes: 10 * 1024 * 1024,
+  });
+  assert.equal(verified.tone, "ok");
+  assert.equal(verified.available, true);
+  assert.match(verified.text, /0123456789ab/);
+  assert.match(verified.text, /请确认后打开安装程序/);
+
+  const mismatch = describeDownloadFailure({ code: "UPDATE_HASH_MISMATCH", message: "SHA-256 不一致" });
+  assert.equal(mismatch.tone, "error");
+  assert.match(mismatch.text, /SHA-256 不一致/);
 });

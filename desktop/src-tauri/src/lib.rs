@@ -101,6 +101,10 @@ struct AppState {
     native_messaging: Mutex<Vec<nm_register::Outcome>>,
     /// D13：上一次查到的可下载版本。「去下载页」开的是它，不是前端传来的任意地址。
     latest_update: Mutex<Option<update_check::UpdateInfo>>,
+    /// 已下载并通过 SHA-256 校验的安装包记录。只在用户点「确认并打开安装程序」时打开。
+    downloaded_update: Mutex<Option<update_check::VerifiedInstaller>>,
+    /// 同一时刻只允许一个安装包下载任务。
+    downloading_update: std::sync::atomic::AtomicBool,
 }
 
 fn ai_data_root(state: &AppState) -> Result<std::path::PathBuf, CommandError> {
@@ -1593,7 +1597,39 @@ async fn check_update_cmd(
     if let Ok(mut slot) = state.latest_update.lock() {
         *slot = offer.clone();
     }
+    if let Ok(mut downloaded) = state.downloaded_update.lock() {
+        let keep = match (&*downloaded, &offer) {
+            (Some(v), Some(o)) => v.info.version == o.version,
+            _ => false,
+        };
+        if !keep {
+            *downloaded = None;
+        }
+    }
     Ok(offer)
+}
+
+fn current_update_offer(
+    state: &AppState,
+    app: &AppHandle,
+) -> Result<update_check::UpdateInfo, CommandError> {
+    let current = app.package_info().version.to_string();
+    state
+        .latest_update
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
+        .filter(|info| newer_than(&info.version, &current))
+        .or_else(|| {
+            ai_data_root(state)
+                .ok()
+                .and_then(|root| update_check::load(&root).available)
+                .filter(|info| newer_than(&info.version, &current))
+        })
+        .ok_or_else(|| CommandError {
+            code: "UPDATE_NOT_CHECKED".into(),
+            message: "还没查到可下载的版本。".into(),
+        })
 }
 
 /// 打开上一次查到的那个下载页。
@@ -1602,23 +1638,7 @@ async fn check_update_cmd(
 /// 这次启动还没查过时，用偏好里记下的那条（同一天重启不再查）；下面照样再核一次地址。
 #[tauri::command]
 fn open_update_page_cmd(state: State<AppState>, app: AppHandle) -> Result<(), CommandError> {
-    let url = state
-        .latest_update
-        .lock()
-        .ok()
-        .and_then(|slot| slot.as_ref().map(|info| info.url.clone()))
-        .or_else(|| {
-            let current = app.package_info().version.to_string();
-            ai_data_root(&state)
-                .ok()
-                .and_then(|root| update_check::load(&root).available)
-                .filter(|info| newer_than(&info.version, &current))
-                .map(|info| info.url)
-        })
-        .ok_or_else(|| CommandError {
-            code: "UPDATE_NOT_CHECKED".into(),
-            message: "还没查到可下载的版本。".into(),
-        })?;
+    let url = current_update_offer(&state, &app)?.url;
     // 和筛选阶段同一把尺子：`https://github.com/` 前缀太松，本仓库以外的
     // Release 页也能过。两处用同一个函数，免得哪天改了一处。
     if !update_check::is_release_page(&url) {
@@ -1632,6 +1652,116 @@ fn open_update_page_cmd(state: State<AppState>, app: AppHandle) -> Result<(), Co
         .map_err(|err| CommandError {
             code: "OPEN_FAILED".into(),
             message: format!("打不开下载页：{err}"),
+        })
+}
+
+struct DownloadBusyGuard<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for DownloadBusyGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// 在应用内直接下载最新版本的安装包到本地缓存目录，流式推送进度并校验 SHA-256。
+///
+/// **下载完成后绝不自动运行安装程序**：仅返回已通过 SHA-256 校验的文件摘要，
+/// 由前端展示给用户确认；用户显式确认后才调用 `open_downloaded_update_cmd`。
+#[tauri::command]
+async fn download_update_cmd(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<update_check::DownloadedUpdate, CommandError> {
+    if state
+        .downloading_update
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return Err(CommandError {
+            code: "UPDATE_DOWNLOAD_BUSY".into(),
+            message: "正在下载更新安装包，请稍候。".into(),
+        });
+    }
+    let _busy = DownloadBusyGuard(&state.downloading_update);
+
+    let info = current_update_offer(&state, &app)?;
+    let cache_dir = state
+        .paths
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|p| p.cache_dir.clone()))
+        .ok_or_else(|| CommandError {
+            code: "NO_DATA_DIR".into(),
+            message: "无法定位应用缓存目录，无法下载更新。".into(),
+        })?;
+
+    let progress_app = app.clone();
+    let verified = update_check::download_installer(&cache_dir, &info, move |progress| {
+        let _ = progress_app.emit("update-download-progress", &progress);
+    })
+    .await?;
+
+    let summary = verified.info.clone();
+    if let Ok(mut slot) = state.downloaded_update.lock() {
+        *slot = Some(verified);
+    }
+    Ok(summary)
+}
+
+/// 用户显式确认安装后，复核磁盘上的安装包 SHA-256 并打开安装程序。
+#[tauri::command]
+async fn open_downloaded_update_cmd(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    version: String,
+    sha256: String,
+) -> Result<(), CommandError> {
+    let verified = state
+        .downloaded_update
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
+        .ok_or_else(|| CommandError {
+            code: "UPDATE_NOT_DOWNLOADED".into(),
+            message: "尚未下载更新安装包，请先下载并校验。".into(),
+        })?;
+
+    let verified_for_check = verified.clone();
+    let version_for_check = version.clone();
+    let sha256_for_check = sha256.clone();
+    let check_result = tokio::task::spawn_blocking(move || {
+        update_check::verify_ready_installer(&verified_for_check, &version_for_check, &sha256_for_check)
+    })
+    .await
+    .map_err(|e| CommandError {
+        code: "UPDATE_FAILED".into(),
+        message: format!("校验安装包任务异常：{e}"),
+    })?;
+
+    let path = match check_result {
+        Ok(path) => path,
+        Err(err) => {
+            if err.code == "UPDATE_HASH_MISMATCH"
+                || (err.code == "UPDATE_NOT_DOWNLOADED" && verified.info.version == version)
+            {
+                if let Ok(mut slot) = state.downloaded_update.lock() {
+                    *slot = None;
+                }
+            }
+            return Err(err);
+        }
+    };
+
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|err| CommandError {
+            code: "OPEN_FAILED".into(),
+            message: format!("打不开安装程序：{err}"),
         })
 }
 
@@ -2013,6 +2143,8 @@ pub fn run() {
             ai_inflight: ai_commands::InflightRegistry::default(),
             native_messaging: Mutex::new(Vec::new()),
             latest_update: Mutex::new(None),
+            downloaded_update: Mutex::new(None),
+            downloading_update: std::sync::atomic::AtomicBool::new(false),
         })
         .setup(move |app| {
             if single_instance_guard::fell_through(&app.config().identifier) {
@@ -2237,6 +2369,8 @@ pub fn run() {
             open_plugin_release_cmd,
             check_update_cmd,
             open_update_page_cmd,
+            download_update_cmd,
+            open_downloaded_update_cmd,
             get_update_preference_cmd,
             set_update_preference_cmd,
             hide_main_window_cmd,
