@@ -6967,7 +6967,6 @@
       if (!look() && !early) kind = "none";
       finish();
     };
-    timer = window.setTimeout(stop, overlayWindowMs);
     try {
       observer = new MutationObserver(() => {
         if (pending === null) pending = window.setTimeout(() => { pending = null; if (!done && look()) stop(); }, 30);
@@ -6979,7 +6978,14 @@
     const calendarOpen = () => visibleOverlays().some((node) => !before.has(node) && isCalendarOverlay(node));
     // 插件自己要收起网页打开的弹层之前（#301 #417 只读框写不上），先看一眼：防抖的那一次可能还没到，收起以后就看不到了。
     const peek = () => { if (!done && look()) stop(); };
-    return { kind: () => kind, settled, stop, calendarOpen, peek };
+    // 控件操作期间（如 suggest 等待建议框）不提前在 1 秒时截止，等 operateControl 结束后再按窗口倒计时。
+    const arm = () => {
+      if (done) return;
+      if (look()) { stop(); return; }
+      window.clearTimeout(timer);
+      timer = window.setTimeout(stop, overlayWindowMs);
+    };
+    return { kind: () => kind, settled, stop, calendarOpen, peek, arm };
   }
 
   // fill：一键填写（含辅助新增）。只有它按框的要求整理要写的字、看写入后的弹层；侧栏和字段卡片的手动写入照原样写。
@@ -6994,8 +7000,13 @@
     // 这次没看弹层的（按日期组件、下拉填的，手动写入）不留上一次看到的。
     if (watch) overlayWatches.set(control, watch);
     else if (control && typeof control === 'object') overlayWatches.delete(control);
-    let result = await operateControl(target, value, { hints: target?.hints, beforeWrite, isCurrent, onWrite, prepare: fill,
-      beforeDismiss: () => watch?.peek(), range });
+    let result;
+    try {
+      result = await operateControl(target, value, { hints: target?.hints, beforeWrite, isCurrent, onWrite, prepare: fill,
+        beforeDismiss: () => watch?.peek(), range });
+    } finally {
+      watch?.arm();
+    }
     if (result.ok && watch && isInputElement(control) && await calendarKeptOpen(watch, control, value)) {
       result = { ...result, ok: false, reason: "value_reverted", observed: { ...result.observed, rolledBack: true, after: "other" } };
     }

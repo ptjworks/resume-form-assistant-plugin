@@ -377,3 +377,20 @@ test("BOSS day calendars commit the requested day and keep date precision in the
   assert.equal(input.value, "2020/09/07");
   assert.equal(api.check(entry).ok, true);
 });
+
+test("#466 BOSS searchable select that renders an empty state reports no_option_match and clears the search input", async t => {
+  const doc = load(t, row("学校名称", school()));
+  const root = doc.querySelector("#school");
+  simulateDropdown(root, { transferred: true });
+  const input = root.querySelector(".ui-select-input");
+  input.addEventListener("input", () => {
+    const list = doc.querySelector(".ui-dropdown-list");
+    if (list) list.innerHTML = '<li class="ui-dropdown-not-found">无匹配数据</li>';
+  });
+  const api = operator(doc);
+  const [college] = scanner.scanPage(doc, { isVisible: visible }).controls;
+  const result = await api.operate(college, "不存在示例大学");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "no_option_match", JSON.stringify(result));
+  assert.equal(input.value, "");
+});

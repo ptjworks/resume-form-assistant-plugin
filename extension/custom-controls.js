@@ -143,7 +143,7 @@
   // 联想框打字后等它自己的建议框出来的上限。Element 防抖后取建议时就先弹出加载中的建议框。
   const FREE_TEXT_TYPED_MS = 1500;
   // 普通文本框写不进时再打一次字，等建议的上限（见 suggest）。
-  const SUGGEST_MS = 1500;
+  const SUGGEST_MS = 2000;
   // #377 YUI 2 AutoComplete（SuccessFactors 的 juic.SFLegacyAutoComplete 改自它）：输入框带 yui-ac-input，
   // 外层 div.yui-ac 里的 .yui-ac-container 是建议框，正好一个才认。
   // 原版 YUI 不带 ARIA，扫描时仍是文本框（默认允许直接输入）；开了 forceSelection 写不进的，由 suggest 从建议里选。
@@ -996,11 +996,12 @@
     const doc = info.el.ownerDocument;
     // 点开的是日历：日期不对、选不成也照实报日历（诊断 opened=calendar）。
     ctx.observed = { ...ctx.observed, popupRole: 'calendar' };
+    info.popup = layer; ctx.popup = layer;
     // 日历切换年/月时整块重建的：旧面板不在了就在控件旁边重新找一次。
     const current = () => {
       if (info.library !== 'boss-date' && layer.isConnected && h.visible(layer)) return layer;
       const again = info.library === 'boss-date' ? bossCalendar(info, h) : calendarNear(info, h);
-      if (again) layer = again;
+      if (again) { layer = again; info.popup = again; ctx.popup = again; }
       return again;
     };
     // 一段起止（「2019.09-2023.06」）：题目写明开始还是结束时取那一头，别的照旧按日期不对报。
@@ -1036,7 +1037,7 @@
     // 才把框里的字交给日历，同一拍回车交出的是日历原来的日子（没选过是今天）。让一拍，再等日历跟上，最多约 0.3 秒：
     // 标题是要填的年月，标成选中的是要填的那天；没有标成选中的日子，就等日历上的字（标题、按钮）和打字前不一样，
     // 标题认不出（英文 Oct 2026）的也这样等。
-    if (mode === 'date' && view.input) {
+    if (mode === 'date' && view.input && !ctx.noCalendarTyping) {
       const input = view.input, sep = input.value.includes('/') ? '/' : '-';
       const reason = h.stop(ctx, true); if (reason) return { reason };
       const face = seen => `${seen.head}|${seen.picked.join(',')}`, untyped = face(view);
@@ -1066,8 +1067,8 @@
       if (!caught.reason || !(still && ((still.headYear && still.headMonth) || still.picked.length))) {
         const View = doc.defaultView;
         if (input.isConnected) for (const type of ['keydown', 'keypress', 'keyup']) input.dispatchEvent(new View.KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-        const typed = await h.waitUntil(ctx, doc.documentElement, accepted, Boolean, 600);
-        if (!typed.reason) return { accepted, dayDefaulted };
+        const typed = await h.waitUntil(ctx, doc.documentElement, () => accepted() && !current(), Boolean, 600);
+        if (!typed.reason) return { accepted, dayDefaulted, typedDate: true };
         if (typed.reason !== 'verification_timeout') return { reason: typed.reason };
       }
       if (!current()) return missed();
@@ -2183,6 +2184,7 @@
       if (settled.reason && settled.reason !== 'verification_timeout') return { reason: settled.reason };
       const seen = settled.value || look();
       if (!seen) return { typed: true };
+      ctx.options?.beforeDismiss?.();
       undo = true;
       if (seen.reason) return seen;
       layer = seen.layer || seen.popup;
