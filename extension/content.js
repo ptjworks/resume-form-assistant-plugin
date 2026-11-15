@@ -198,6 +198,7 @@
     desktopMode: "unavailable",
     aiBusy: false,
     suggestedView: null,
+    aiUnconfigured: false,
     statusTimer: null,
     lastFocusedField: null,
     chipAction: null,
@@ -253,6 +254,7 @@
         status: status?.classList.contains("is-visible") ? status.textContent : "",
         statusKind: status?.classList.contains("is-error") ? "error" : "success",
         openView: state.suggestedView,
+        aiUnconfigured: state.aiUnconfigured,
         // While 辅助新增 runs, its own 停止 is the one control; the fill's cancel stays hidden.
         canCancel: uploading || (!repeatActive() && Boolean(cancel && !cancel.hidden && !cancel.disabled)),
         cancelLabel: uploading ? "停止上传" : "",
@@ -511,6 +513,7 @@
       try {
         const store = self.ResumeProResumeData.normalize(result.data);
         state.desktopMode = "ready";
+        if ("aiUnconfigured" in result) state.aiUnconfigured = result.aiUnconfigured === true;
         return store;
       } catch (error) {
         // The desktop answered with data this page cannot read. That is an error to report,
@@ -700,6 +703,12 @@
         <button class="resume-pro__manager-button" id="resume-pro-cancel-fill" type="button" hidden>取消 AI 等待（保留本地匹配）</button>
         <p id="resume-pro-wait-hint" role="status" hidden></p>
         <div class="resume-pro__status" id="resume-pro-status" aria-live="polite"></div>
+        <div class="resume-pro__fill-record" id="resume-pro-ai-config-hint" hidden>
+          <p class="resume-pro__save-note" id="resume-pro-ai-config-hint-text">尚未配置 AI API Key：当前仅支持填写姓名、电话等少量基础项，配置后可大幅提升填写成功率。</p>
+          <div class="resume-pro__save-actions">
+            <button class="resume-pro__manager-button" type="button" id="resume-pro-open-ai">打开桌面 AI 设置</button>
+          </div>
+        </div>
         <div class="resume-pro__fill-record" id="resume-pro-profile-offer" hidden>
           <p class="resume-pro__save-note" id="resume-pro-profile-offer-text"></p>
           <div class="resume-pro__save-actions">
@@ -834,6 +843,11 @@
     aiFillButton.addEventListener("click", handleAiFillClick);
     sidebar.querySelector("#resume-pro-repeat-fill").addEventListener("click", handleRepeatFillClick);
     openManagerButton?.addEventListener("click", () => state.desktopMode === "ready" ? openManager("home") : openDesktopAction(state.desktopMode));
+    sidebar.querySelector("#resume-pro-open-ai")?.addEventListener("click", () => {
+      state.aiUnconfigured = false;
+      renderSidebar();
+      openManager("settings-ai");
+    });
     sidebar.querySelector("#resume-pro-profile-offer-add")?.addEventListener("click", () => { addUnansweredToProfile().catch(() => {}); });
     sidebar.querySelector("#resume-pro-profile-offer-skip")?.addEventListener("click", closeProfileOffer);
     bindDesktopEvents(sidebar);
@@ -866,6 +880,15 @@
         applySidebarUiState();
       }
     });
+  }
+
+  function syncAiConfigHint(downgradeCopy = null) {
+    const aiConfigHint = shadowRoot?.querySelector("#resume-pro-ai-config-hint");
+    if (!aiConfigHint) return;
+    const hasDowngrade = downgradeCopy !== null
+      ? Boolean(downgradeCopy)
+      : state.desktopMode !== "ready" || (!getActiveTemplate(state.currentStore) && !profileResumeFields().length);
+    aiConfigHint.hidden = hasDowngrade || !(state.suggestedView === "settings-ai" || state.aiUnconfigured);
   }
 
   function renderSidebar() {
@@ -901,6 +924,7 @@
       // With the native side panel this runs from there; the page's copy (window.confirm) stays off.
       repeatButton.hidden = Boolean(state.nativeSidePanel);
     }
+    syncAiConfigHint(downgradeCopy);
 
     if (downgradeCopy) {
       groupsContainer.innerHTML = `
@@ -4241,6 +4265,9 @@
 
         if (response?.openView === "settings-ai") {
           state.suggestedView = "settings-ai";
+          state.aiUnconfigured = true;
+          hinted = true;
+          syncAiConfigHint();
           await openManager("settings-ai");
         }
         if (!response?.success) {

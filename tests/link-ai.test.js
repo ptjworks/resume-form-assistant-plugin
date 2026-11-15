@@ -176,3 +176,34 @@ test('a desktop mode other than ready sends no AI request', async () => {
   assert.deepEqual(await ai.complete({ purpose: 'fill', system: 's', user: 'u' }), { ok: false, reason: 'not_paired' });
   assert.equal(sent.length, 0);
 });
+
+test('onConfigState tracks whether the default AI provider is configured', async () => {
+  const { createAi } = await import('../extension/link/ai.mjs');
+  const states = [];
+  let nextPayload = { status: 'failed', reason: 'not_configured' };
+  const ai = createAi({
+    session: { probe: async () => ({ mode: 'ready', identity: IDENTITY }) },
+    store: { clientInstanceId: async () => CLIENT },
+    port: async (_host, request) => reply(request, nextPayload),
+    uuid: () => MESSAGE,
+    now: () => new Date('2026-09-24T00:00:00.000Z'),
+    onConfigState: configured => states.push(configured)
+  });
+
+  await ai.complete({ purpose: 'fill', system: 's', user: 'u' });
+  assert.deepEqual(states, [false]);
+
+  // Strong-tier not_configured does not mark the default provider as unconfigured.
+  nextPayload = { status: 'failed', reason: 'not_configured', tier: 'strong' };
+  await ai.complete({ purpose: 'fill', tier: 'strong', system: 's', user: 'u' });
+  assert.deepEqual(states, [false]);
+
+  // A provider auth/runtime error or success confirms a provider is configured.
+  nextPayload = { status: 'failed', reason: 'auth', httpStatus: 401 };
+  await ai.complete({ purpose: 'fill', system: 's', user: 'u' });
+  assert.deepEqual(states, [false, true]);
+
+  nextPayload = { status: 'ok', text: '[]' };
+  await ai.complete({ purpose: 'fill', system: 's', user: 'u' });
+  assert.deepEqual(states, [false, true, true]);
+});

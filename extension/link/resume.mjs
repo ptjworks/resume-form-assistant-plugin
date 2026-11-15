@@ -3,7 +3,7 @@ import { sendOnce } from './transport.mjs';
 import { validateRequest } from './protocol/validate.mjs';
 
 /** Read and update the desktop-owned resume without caching a plugin copy. */
-export function createResume({ session, store, sendNative, sleep, uuid, now, send = sendOnce }) {
+export function createResume({ session, store, sendNative, sleep, uuid, now, send = sendOnce, isAiUnconfigured }) {
   async function request(messageType, payload) {
     // ui.open is itself the explicit user request to resume. A background handshake
     // first would be refused after quit and prevent that request ever reaching the host.
@@ -23,9 +23,10 @@ export function createResume({ session, store, sendNative, sleep, uuid, now, sen
       await validateRequest(envelope);
       const result = await send(envelope, { sendNative, sleep, retry: messageType !== 'ui.open' });
       if (result.status === 'ok') {
-        // 侧栏拿它判断桌面是不是太旧，要不要提示更新。
+        // 侧栏拿它判断桌面是不是太旧，要不要提示更新；已知桌面尚未配置 AI 时一并带回提醒标记。
         const desktopVersion = messageType === 'resume.read' && typeof probe.appVersion === 'string' ? { desktopVersion: probe.appVersion } : {};
-        return { status: 'ok', data: result.response.payload, ...desktopVersion };
+        const aiHint = messageType === 'resume.read' && isAiUnconfigured?.() === true ? { aiUnconfigured: true } : {};
+        return { status: 'ok', data: result.response.payload, ...desktopVersion, ...aiHint };
       }
       if (result.status === 'fatal') return { status: result.code === 'payload_too_large' ? 'input_too_large'
         : result.code === 'protocol_incompatible' ? 'incompatible' : result.code ?? 'unavailable' };

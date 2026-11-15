@@ -227,6 +227,19 @@ function strongFailureMessage(tier, result) {
   return null;
 }
 
+// 一键填写碰到未配置 AI 时：说清为什么只填上了几项本地基础字段、还有多少项没法交给 AI 识别，以及未配置会大幅影响填写成功率。
+function fillFailureMessage(tier, result, aiFieldCount) {
+  const strong = strongFailureMessage(tier, result);
+  if (strong) return strong;
+  if (result?.reason === "not_configured") {
+    const skipped = Number.isInteger(aiFieldCount) && aiFieldCount > 0
+      ? `（本次其余 ${aiFieldCount} 个字段需配置 AI 后才能识别填写）`
+      : "";
+    return `桌面还没有配置 AI 服务商，或当前服务商没有 Key。未配置时仅能按本地规则填写姓名、电话等少量基础项${skipped}，会大幅影响填写成功率；请在桌面设置中完成配置。`;
+  }
+  return aiFailureMessage(result);
+}
+
 // 和网页先填（#402）共用 ai-helpers 里的同一份判断。
 function isSecretField(field) {
   return ResumeProAIHelpers.isSecretFormField(field, ResumeProProfile);
@@ -458,7 +471,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       if (!result?.ok) {
         const reason = result?.reason ?? "unavailable";
         if (SKIP_CODES.has(diagnostics.errorCode)) diagnostics.errorCode = reason;
-        warnings.push(strongFailureMessage(tier, result) ?? aiFailureMessage(result));
+        warnings.push(fillFailureMessage(tier, result, remainingFormFields.length));
         if (reason === "not_configured") openView = "settings-ai";
         // Only a failure tied to this batch's content is worth trying the next batch for.
         // Everything else (desktop gone, not paired, no key, slow or unreachable provider)

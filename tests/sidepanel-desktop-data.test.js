@@ -276,15 +276,26 @@ test('an unavailable desktop offers an explicit open rather than another backgro
   assert.ok(ui.calls.some(call => call.type === 'DESKTOP_RESUME_READ'));
 });
 
-test('a desktop not-configured response exposes the AI settings action', async () => {
+test('a desktop not-configured response exposes the AI settings action and non-blocking persistent hint', async () => {
   const ui = await harness();
+  assert.equal(ui.get('ai-config-hint').hidden, true);
   ui.setPageResponse({ ready: true, status: '请查看 AI 设置。', statusKind: 'error', openView: 'settings-ai' });
   ui.poll();
   await ui.tick();
   assert.equal(ui.get('desktop-connection').hidden, false);
   assert.equal(ui.get('desktop-connection-action').dataset.kind, 'settings-ai');
-  await ui.get('desktop-connection-action').listeners.click();
+  assert.equal(ui.get('ai-config-hint').hidden, false);
+  assert.equal(ui.get('fill-button').disabled, false, 'the fill button stays clickable for local rule matching');
+
+  // Switching to another tab where openView is not active keeps the non-blocking AI config hint visible.
+  ui.setPageResponse({ ready: true });
+  ui.poll();
+  await ui.tick();
+  assert.equal(ui.get('ai-config-hint').hidden, false);
+
+  await ui.get('ai-config-hint-action').listeners.click();
   assert.ok(ui.calls.some(item => item.type === 'DESKTOP_OPEN_VIEW' && item.view === 'settings-ai'));
+  assert.equal(ui.get('ai-config-hint').hidden, true);
 });
 
 test('a job recognition running in the page shows in the panel with a cancel button', async () => {
