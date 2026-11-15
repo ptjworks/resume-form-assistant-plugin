@@ -1718,6 +1718,17 @@ async fn download_update_cmd(
     })
     .await?;
 
+    let latest_after = current_update_offer(&state, &app)?;
+    if latest_after.version != verified.info.version {
+        return Err(CommandError {
+            code: "UPDATE_VERSION_CHANGED".into(),
+            message: format!(
+                "下载期间待更新版本已变更为 v{}，请重新下载最新版本。",
+                latest_after.version
+            ),
+        });
+    }
+
     let summary = verified.info.clone();
     if let Ok(mut slot) = state.downloaded_update.lock() {
         *slot = Some(verified);
@@ -1727,10 +1738,15 @@ async fn download_update_cmd(
 
 /// 用户显式确认安装后，复核磁盘上的安装包 SHA-256 并打开安装程序。
 ///
-/// 信任边界说明：本应用的前端是同源打包的内置桌面界面，用户确认弹窗由前端 `openSettingsDialog`
-/// 承载；后端在此命令中要求前端显式传入期望的 `version` 与 `sha256`，并在后台线程中打开只读文件
-/// 句柄（Windows 下设置 `FILE_SHARE_READ` 阻止写入/删除，Unix/macOS 下使用 `O_NOFOLLOW` 并缩短复核至打开窗口）、
-/// 复核磁盘字节数与 SHA-256，持有句柄并在调用系统 opener 前再次校验目标非符号链接且字节大小未变。
+/// 信任边界与平台残余风险说明：
+/// - 本应用的前端是同源打包的内置桌面界面，用户确认弹窗由前端 `openSettingsDialog` 承载；
+/// - 后端在此命令中要求前端显式传入期望的 `version` 与 `sha256`，并在后台线程中打开只读文件句柄、
+///   复核磁盘字节数与 SHA-256；
+/// - Windows 下句柄设置 `FILE_SHARE_READ`（不含 `FILE_SHARE_WRITE` / `FILE_SHARE_DELETE`），
+///   在句柄存活至 `open_path` 期间由操作系统阻止其他进程写入或删除该文件；
+/// - Unix/macOS 下受限于系统 opener 按路径启动的机制，无法由内核保证路径到启动的绝对原子性，
+///   因此在调用 `open_path` 前会再次同步执行一次 `open_and_verify_ready_installer` 复核 SHA-256 与 inode，
+///   将替换窗口缩减至紧邻 `open_path` 调用前。
 #[tauri::command]
 async fn open_downloaded_update_cmd(
     state: State<'_, AppState>,
@@ -1778,22 +1794,17 @@ async fn open_downloaded_update_cmd(
         }
     };
 
-    let pre_open_meta = std::fs::symlink_metadata(&path).map_err(|_| CommandError {
-        code: "UPDATE_NOT_DOWNLOADED".into(),
-        message: "本地安装包不存在或无法读取，请重新下载。".into(),
-    })?;
-    if pre_open_meta.file_type().is_symlink()
-        || !pre_open_meta.is_file()
-        || pre_open_meta.len() != verified.info.size_bytes
-    {
-        if let Ok(mut slot) = state.downloaded_update.lock() {
-            *slot = None;
-        }
-        return Err(CommandError {
-            code: "UPDATE_HASH_MISMATCH".into(),
-            message: "本地安装包在打开前发生变化，已拒绝启动，请重新下载。".into(),
-        });
-    }
+    #[cfg(unix)]
+    let (_unix_final_path, _unix_final_lock) =
+        match update_check::open_and_verify_ready_installer(&verified, &version, &sha256) {
+            Ok(pair) => pair,
+            Err(err) => {
+                if let Ok(mut slot) = state.downloaded_update.lock() {
+                    *slot = None;
+                }
+                return Err(err);
+            }
+        };
 
     tauri_plugin_opener::OpenerExt::opener(&app)
         .open_path(path.to_string_lossy(), None::<&str>)

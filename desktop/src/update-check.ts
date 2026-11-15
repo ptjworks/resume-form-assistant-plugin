@@ -193,10 +193,11 @@ export function describeDownloadFailure(error: unknown): UpdateMessage {
         available: true,
         canDownload: false,
       };
+    case "UPDATE_NOT_CHECKED":
     case "UPDATE_VERSION_CHANGED":
       return {
         tone: "warn",
-        text: detail.message || "待更新版本已变更，请先重新点击「立即检查」后再下载。",
+        text: detail.message || "待更新版本状态已变更，请先重新点击「立即检查」后再下载。",
         available: false,
         canDownload: false,
       };
@@ -207,10 +208,19 @@ export function describeDownloadFailure(error: unknown): UpdateMessage {
         available: true,
         canDownload: true,
       };
+    case "NO_DATA_DIR":
     case "UPDATE_WRITE_FAILED":
       return {
         tone: "error",
         text: detail.message || "无法将安装包写入本地缓存目录，请检查磁盘空间与权限，或点「去下载页」手动下载。",
+        available: true,
+        canDownload: false,
+      };
+    case "UPDATE_NOT_DOWNLOADED":
+    case "OPEN_FAILED":
+      return {
+        tone: "error",
+        text: detail.message || "打开或读取本地安装包失败，请重新下载或点「去下载页」手动下载。",
         available: true,
         canDownload: true,
       };

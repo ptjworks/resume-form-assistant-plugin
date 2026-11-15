@@ -549,8 +549,8 @@ fn sha256_reader(mut file: &std::fs::File) -> Result<(String, u64), std::io::Err
 ///
 /// - 在 Windows 上显式设置 `share_mode(FILE_SHARE_READ)`（`0x00000001`，不含 `FILE_SHARE_WRITE` 与 `FILE_SHARE_DELETE`）
 ///   并加 `FILE_FLAG_OPEN_REPARSE_POINT`（`0x00200000`），使得既不跟随重解析点/符号链接，又在句柄存活期间阻止其他进程写入或删除该文件。
-/// - 在 Unix/macOS 上使用 `O_NOFOLLOW` 打开，防止打开时跟随末端符号链接（注：Unix 下按路径调用系统 opener 仍无法完全消除按路径替换的竞态，
-///   仅能防符号链接跟随并在打开前再次复核文件元数据）。
+/// - 在 Unix/macOS 上核对 `symlink_metadata(path)` 与已打开文件句柄 `file.metadata()` 的 `(dev, ino)` 一致，
+///   确保打开期间路径未被替换为符号链接或其他文件（注：Unix 下按路径调用系统 opener 仍属于用户态复核，不构成内核级原子执行保证）。
 pub fn open_and_sha256_file(path: &Path) -> Result<(std::fs::File, String, u64), std::io::Error> {
     let symlink_meta = std::fs::symlink_metadata(path)?;
     if symlink_meta.file_type().is_symlink() || !symlink_meta.is_file() {
@@ -567,11 +567,6 @@ pub fn open_and_sha256_file(path: &Path) -> Result<(std::fs::File, String, u64),
         // FILE_SHARE_READ (0x1) only; FILE_FLAG_OPEN_REPARSE_POINT (0x00200000) to avoid following symlinks.
         opts.share_mode(0x0000_0001).custom_flags(0x0020_0000);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NOFOLLOW);
-    }
     let file = opts.open(path)?;
     let file_meta = file.metadata()?;
     if file_meta.file_type().is_symlink() || !file_meta.is_file() {
@@ -579,6 +574,16 @@ pub fn open_and_sha256_file(path: &Path) -> Result<(std::fs::File, String, u64),
             std::io::ErrorKind::InvalidInput,
             "not a regular file",
         ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if symlink_meta.dev() != file_meta.dev() || symlink_meta.ino() != file_meta.ino() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "file changed during open",
+            ));
+        }
     }
     let (digest, total) = sha256_reader(&file)?;
     Ok((file, digest, total))
@@ -910,15 +915,24 @@ where
             code: "UPDATE_WRITE_FAILED".into(),
             message: format!("创建临时安装包文件失败：{e}"),
         })?;
-    if let Ok(canonical_part) = std::fs::canonicalize(&part_path) {
-        if canonical_part.parent() != Some(canonical_updates_dir.as_path()) {
+    let canonical_part = match std::fs::canonicalize(&part_path) {
+        Ok(path) => path,
+        Err(e) => {
             drop(part_file);
             let _ = std::fs::remove_file(&part_path);
             return Err(CommandError {
                 code: "UPDATE_WRITE_FAILED".into(),
-                message: "临时安装包路径不在更新缓存目录内，已拒绝写入。".into(),
+                message: format!("校验临时安装包路径失败：{e}"),
             });
         }
+    };
+    if canonical_part.parent() != Some(canonical_updates_dir.as_path()) {
+        drop(part_file);
+        let _ = std::fs::remove_file(&part_path);
+        return Err(CommandError {
+            code: "UPDATE_WRITE_FAILED".into(),
+            message: "临时安装包路径不在更新缓存目录内，已拒绝写入。".into(),
+        });
     }
 
     on_progress(UpdateDownloadProgress {
