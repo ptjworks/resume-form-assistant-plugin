@@ -125,6 +125,30 @@ test("资料里有、AI 却没匹配上的字段达到 3 项：别的都填上�
   assert.ok(new TextEncoder().encode(hidden).length <= 16384);
 });
 
+test("#528 已填满简历现有条数后，网页多余的空白重复行不算 ai_missed_with_data", async (t) => {
+  const row = (i) => `<div class="entry">${item("获奖名称", `<input id="aw_n_${i}">`)}${item("获奖级别", `<input id="aw_l_${i}">`)}</div>`;
+  const body = `<form><h3>获奖情况</h3>${row(1)}${row(2)}${row(3)}</form>`;
+  const resume = { 获奖名称: "国家奖学金", 获奖级别: "国家级" };
+  const p = page(t, { body, resume, ai: (message) => {
+    const f = message.formFields;
+    return {
+      success: true,
+      matches: [
+        { fieldId: f[0].fieldId, value: "国家奖学金" },
+        { fieldId: f[1].fieldId, value: "国家级" }
+      ],
+      diagnostics: {
+        ruleMatches: 0, aiFields: f.length, aiMatches: 2, promptBytes: 800, apiMs: 600, errorCode: "none",
+        unansweredIds: f.slice(2).map((item) => item.fieldId)
+      }
+    };
+  } });
+  const result = await p.run();
+  assert.equal(result.filledCount, 2);
+  // 简历里只有 1 条获奖（2 个字段），已填满第 1 行；第 2、3 行的 4 个空白字段不再计为 inResume，不会误触发 fill_partial 上报。
+  assert.equal(p.reports.length, 0);
+});
+
 test("下拉点开后一直在加载、没有选项：公开部分有控件的样子和等待过程，私有部分有题目、分组和出错字段附近的页面结构", async (t) => {
   const body = `<form><h3>教育信息</h3>
     <label id="q">学历层次</label><button type="button" role="combobox" aria-labelledby="q" aria-controls="choices" aria-expanded="false">请选择</button>

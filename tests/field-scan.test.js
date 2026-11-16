@@ -374,6 +374,24 @@ test("a section title does not turn 地址 or QQ into a phone field for local ru
   assert.deepEqual(matches.map((match) => match.fieldId), ["c"]);
 });
 
+test("#528 a sub-table with header cells does not drop the rest of the page's plain rows as outsideForm", () => {
+  const basicRows = ["姓名", "性别", "出生日期", "民族", "籍贯", "政治面貌", "手机号码", "电子邮箱"]
+    .map((label) => `<div class="row"><span class="t">${label}</span><input type="text"></div>`).join("");
+  const tableRows = Array.from({ length: 4 }, () => "<tr><td><input></td><td><input></td></tr>").join("");
+  const doc = load(`
+    <div class="top"><div class="box"><input type="text" placeholder="搜索职位"><span>搜索</span></div></div>
+    <div class="page">
+      <h3>基本信息</h3>${basicRows}
+      <h3>工作经历</h3>
+      <table><thead><tr><th>公司</th><th>职位</th></tr></thead><tbody>${tableRows}</tbody></table>
+    </div>`);
+  const result = scan(doc);
+  assert.equal(result.controls.length, 16);
+  assert.equal(result.skipped.outsideForm, 0);
+  assert.equal(result.skipped.siteSearch, 1);
+  assert.deepEqual(labels(result).slice(0, 8), ["姓名", "性别", "出生日期", "民族", "籍贯", "政治面貌", "手机号码", "电子邮箱"]);
+});
+
 test("the content script loads the scanner before content.js", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"));
   const scripts = manifest.content_scripts[0].js;

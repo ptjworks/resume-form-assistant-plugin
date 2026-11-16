@@ -80,6 +80,20 @@
     }
     return kinds;
   }
+  // #528 每类资料在简历里有多少项（同一条资料的 key 和 group 归为同一类时只算 1 项），用来判断网页多出的空行是否超出简历条数。
+  function resumeKindCounts(fields) {
+    const counts = new Map();
+    for (const field of Array.isArray(fields) ? fields : []) {
+      if (!String(field?.value ?? "").trim()) continue;
+      const seen = new Set();
+      for (const text of [field.key, field.group]) {
+        const kind = fieldKind(text);
+        if (kind !== "unknown") seen.add(kind);
+      }
+      for (const kind of seen) counts.set(kind, (counts.get(kind) || 0) + 1);
+    }
+    return counts;
+  }
   // #497 A report goes out when at least this many fields the AI saw and did not match are of a kind the
   // resume has (error_category ai_missed), even when everything else got filled.
   const AI_MISSED_MIN = 3;
@@ -327,6 +341,10 @@
     if (requestFailed(code) && !SETUP_CODES.has(code)) return { category: code === "timeout" ? "timeout" : "service_error", stage: "match" };
     if (failedStage) return { category: "unknown", stage: failedStage };
     if (!matched) return { category: missed ? "ai_missed" : "match_failed", stage: "match" };
+    // #528 当已有字段填上，而 AI 漏掉的（且简历中仍有剩余资料的）字段数明显多于写入被拒/未确认的字段数时，主因归为 ai_missed。
+    if (missed && positive(filledCount) > 0 && positive(aiMissedWithData) > positive(unfilledCount) + positive(unconfirmedCount)) {
+      return { category: "ai_missed", stage: "match" };
+    }
     if (filledCount === 0 || unfilledCount > 0 || unconfirmedCount > 0) return { category: "fill_rejected", stage: "fill" };
     return missed ? { category: "ai_missed", stage: "match" } : { category: "none", stage: "none" };
   }
@@ -716,7 +734,7 @@
     });
   }
   const api = { redact, hostname, os, frames, exception, pathTemplate, fillCategory, requestFailed, shownCode, fillDrops, labelSources, aiCalled,
-    fillReport, diagnostics, fillFailure, jobReport, install, fieldKind, resumeKinds, privateReport, privateLayer, utf8Cut, utf8Length, codeMessage,
+    fillReport, diagnostics, fillFailure, jobReport, install, fieldKind, resumeKinds, resumeKindCounts, privateReport, privateLayer, utf8Cut, utf8Length, codeMessage,
     AI_MISSED_MIN, PRIVATE_HEADER, PRIVATE_BYTES,
     // Names only, for the privacy-policy check; the allowlists themselves stay private.
     SECTION_NAMES: Object.freeze([...SECTIONS]), VALUE_KEYS: Object.freeze(Object.keys(VALUES)), KIND_NAMES: Object.freeze([...KIND_NAMES]) };
