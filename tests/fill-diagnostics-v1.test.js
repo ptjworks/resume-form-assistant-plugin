@@ -72,7 +72,6 @@ test("failures after the scan name the stage, and a service failure is not calle
   assert.deepEqual(core.fillCategory({ ...base, matched: 0, filledCount: 0, unfilledCount: 0 }), { category: "match_failed", stage: "match" });
   assert.deepEqual(core.fillCategory({ ...base, matched: 3, filledCount: 0, unfilledCount: 3 }), { category: "fill_rejected", stage: "fill" });
   assert.deepEqual(core.fillCategory({ ...base, matched: 3, filledCount: 2, unfilledCount: 1 }), { category: "fill_rejected", stage: "fill" });
-  assert.deepEqual(core.fillCategory({ ...base, matched: 5, filledCount: 4, unfilledCount: 1, aiMissedWithData: 10 }), { category: "ai_missed", stage: "match" });
   assert.deepEqual(core.fillCategory({ ...base, matched: 3, filledCount: 3, unfilledCount: 0 }), { category: "none", stage: "none" });
 });
 

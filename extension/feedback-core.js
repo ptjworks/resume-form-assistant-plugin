@@ -80,9 +80,10 @@
     }
     return kinds;
   }
-  // #528 每类资料在简历里有多少项（同一条资料的 key 和 group 归为同一类时只算 1 项），用来判断网页多出的空行是否超出简历条数。
+  // #528 每类资料在简历里有几条记录：按所属分组（如「获奖情况 1」「获奖情况 2」）去重；
+  // 同一分组下若同名字段出现多次（或带尾部序号如「获奖1」「获奖2」），取该分组内同基底字段名的最大重复数。
   function resumeKindCounts(fields) {
-    const counts = new Map();
+    const byKind = new Map();
     for (const field of Array.isArray(fields) ? fields : []) {
       if (!String(field?.value ?? "").trim()) continue;
       const seen = new Set();
@@ -90,7 +91,23 @@
         const kind = fieldKind(text);
         if (kind !== "unknown") seen.add(kind);
       }
-      for (const kind of seen) counts.set(kind, (counts.get(kind) || 0) + 1);
+      const groupKey = foldKind(field.group) || "_";
+      const baseKey = foldKind(String(field.key ?? "").replace(/\d+$/g, "")) || "_";
+      for (const kind of seen) {
+        if (!byKind.has(kind)) byKind.set(kind, new Map());
+        const groups = byKind.get(kind);
+        if (!groups.has(groupKey)) groups.set(groupKey, new Map());
+        const keys = groups.get(groupKey);
+        keys.set(baseKey, (keys.get(baseKey) || 0) + 1);
+      }
+    }
+    const counts = new Map();
+    for (const [kind, groups] of byKind.entries()) {
+      let total = 0;
+      for (const keys of groups.values()) {
+        total += Math.max(1, ...keys.values());
+      }
+      counts.set(kind, total);
     }
     return counts;
   }
@@ -341,10 +358,6 @@
     if (requestFailed(code) && !SETUP_CODES.has(code)) return { category: code === "timeout" ? "timeout" : "service_error", stage: "match" };
     if (failedStage) return { category: "unknown", stage: failedStage };
     if (!matched) return { category: missed ? "ai_missed" : "match_failed", stage: "match" };
-    // #528 当已有字段填上，而 AI 漏掉的（且简历中仍有剩余资料的）字段数明显多于写入被拒/未确认的字段数时，主因归为 ai_missed。
-    if (missed && positive(filledCount) > 0 && positive(aiMissedWithData) > positive(unfilledCount) + positive(unconfirmedCount)) {
-      return { category: "ai_missed", stage: "match" };
-    }
     if (filledCount === 0 || unfilledCount > 0 || unconfirmedCount > 0) return { category: "fill_rejected", stage: "fill" };
     return missed ? { category: "ai_missed", stage: "match" } : { category: "none", stage: "none" };
   }

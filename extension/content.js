@@ -3949,8 +3949,21 @@
           if (kind !== 'unknown') matchedByKind.set(kind, (matchedByKind.get(kind) || 0) + 1);
         }
       };
+      const isMissInResume = (meta, kind) => {
+        if (kind === 'unknown' || !resumeKindSet.has(kind)) return false;
+        const groupNum = Number((/\s(\d+)$/.exec(String(meta?.group || '')) || [])[1]) || 0;
+        const rowIndex = Number.isInteger(meta?.repeatIndex) && meta.repeatIndex > 0 ? meta.repeatIndex : groupNum;
+        const totalEntries = resumeKindCounts.get(kind) || 0;
+        if (rowIndex > 1) return rowIndex <= totalEntries;
+        const alreadyMatched = matchedByKind.get(kind) || 0;
+        if (alreadyMatched === 0) return true;
+        const alreadyMissed = usedMissedByKind.get(kind) || 0;
+        if (alreadyMatched + alreadyMissed >= totalEntries) return false;
+        usedMissedByKind.set(kind, alreadyMissed + 1);
+        return true;
+      };
       // #497 AI 看过、没给值的字段（ai-worker 的 unansweredIds）：类别、资料里有没有这一类，私有诊断再带题目和选项。
-      // #528 当同一类字段在本次填写中已经填上过（如第 1 条获奖已填上），网页多出的空行只在简历里还有剩余同类资料时才算 inResume。
+      // #528 重复条目的第 N 行（rowIndex > 1）只在简历中该类条目数不少于 N 时才算 inResume，避免多出的空白行误报 ai_missed。
       const noteAiMisses = (ids, matchedList = null) => {
         noteMatchedKinds(matchedList);
         if (!Array.isArray(ids)) return;
@@ -3960,12 +3973,7 @@
           if (!meta || !entry || aiMisses.some(item => item.fieldId === id)) continue;
           const label = meta.label || meta.placeholder || meta.name || '';
           const kind = fieldKindOf(label);
-          const alreadyMatched = matchedByKind.get(kind) || 0;
-          const alreadyMissed = usedMissedByKind.get(kind) || 0;
-          const totalInResume = resumeKindCounts.get(kind) || 0;
-          const inResume = kind !== 'unknown' && resumeKindSet.has(kind)
-            && (alreadyMatched === 0 || alreadyMatched + alreadyMissed < totalInResume);
-          if (inResume && alreadyMatched > 0) usedMissedByKind.set(kind, alreadyMissed + 1);
+          const inResume = isMissInResume(meta, kind);
           aiMisses.push({ fieldId: id, label, section: fieldSection(entry, meta), kind, inResume,
             nodes: fieldNodes(entry), ...privateOptions(entry, meta, label, kind, null) });
         }
@@ -4083,6 +4091,11 @@
           try {
             resumeKindSet = self.ResumeProFeedback?.resumeKinds?.(resumeFields) || new Set();
             resumeKindCounts = self.ResumeProFeedback?.resumeKindCounts?.(resumeFields) || new Map();
+            for (const item of aiMisses) {
+              if (!item.inResume && item.kind !== "unknown" && resumeKindSet.has(item.kind)) {
+                item.inResume = isMissInResume(fieldMetaMap.get(item.fieldId), item.kind);
+              }
+            }
           } catch { /* diagnostics never break the fill */ }
           if (!isCurrent()) return;
         }

@@ -942,7 +942,7 @@
       || { text: "", source: "none", labelEl: null };
   }
 
-  const STRONG_SOURCES = new Set(["explicit", "item", "item-part", "table", "table-header"]);
+  const STRONG_SOURCES = new Set(["explicit", "item", "table", "table-header"]);
   const OFFERABLE_SOURCES = new Set(["explicit", "item", "item-text", "table", "table-header", "sibling"]);
   // #408 判断「控件一个都没读出来」时不算数的跳过原因：读出错，以及本来就不填的页头、站内搜索、表单外和文件框。
   const UNREADABLE_REASONS = new Set(["scanError", "pageChrome", "siteSearch", "outsideForm", "file"]);
@@ -1047,12 +1047,12 @@
     if (strong.length < 3) return null;
     const region = lowestCommonAncestor(strong.map((control) => control.root));
     if (!region) return null;
-    // #528 页面上只有一张子表格（如家庭成员、工作经历表）用了 table / th，或区域外还有成片的可填字段（≥3 个）时，
-    // 那个最小公共祖先只是表单里的一个局部区块，不能把其余字段当成「表单外」整批丢掉。
-    const outside = controls.filter((control) => control.fillable && !control.searchLike && !region.contains(control.root));
-    const outsideLabeled = outside.filter((control) => OFFERABLE_SOURCES.has(control.labelSource));
-    if (outside.length >= 3 || outside.length > strong.length || (outsideLabeled.length > 0 && Boolean(region.closest?.("table")))) {
-      return lowestCommonAncestor([...strong, ...outside].map((control) => control.root));
+    // #528 页面上只有一张子表格（如家庭成员、工作经历表）用了 table / th，或区域外还有成片带明确文字标签的可填字段（≥3 个）时，
+    // 那个最小公共祖先只是表单里的一个局部区块，只把区域扩到这些有标签的字段，不纳入无标签/仅占位符的外部输入框。
+    const outsideLabeled = controls.filter((control) => control.fillable && !control.searchLike
+      && OFFERABLE_SOURCES.has(control.labelSource) && !region.contains(control.root));
+    if (outsideLabeled.length >= 3 || (outsideLabeled.length > 0 && Boolean(region.closest?.("table")))) {
+      return lowestCommonAncestor([...strong, ...outsideLabeled].map((control) => control.root));
     }
     return region;
   }

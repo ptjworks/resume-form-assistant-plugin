@@ -390,6 +390,22 @@ test("#528 a sub-table with header cells does not drop the rest of the page's pl
   assert.equal(result.skipped.outsideForm, 0);
   assert.equal(result.skipped.siteSearch, 1);
   assert.deepEqual(labels(result).slice(0, 8), ["姓名", "性别", "出生日期", "民族", "籍贯", "政治面貌", "手机号码", "电子邮箱"]);
+
+  // 区域外若是无标签（仅占位符）的零散输入框，即使有 3 个也照旧按 outsideForm 丢弃，不把区域扩出去。
+  const strayDoc = load(`
+    <div class="sidebar">
+      <input type="text" placeholder="请输入邀请码">
+      <input type="text" placeholder="请输入编号">
+      <input type="text" placeholder="请输入备注">
+    </div>
+    <form class="main-form">
+      <div><label for="f1">姓名</label><input id="f1" type="text"></div>
+      <div><label for="f2">邮箱</label><input id="f2" type="text"></div>
+      <div><label for="f3">毕业院校</label><input id="f3" type="text"></div>
+    </form>`);
+  const strayResult = scan(strayDoc);
+  assert.deepEqual(labels(strayResult), ["姓名", "邮箱", "毕业院校"]);
+  assert.equal(strayResult.skipped.outsideForm, 3);
 });
 
 test("the content script loads the scanner before content.js", () => {

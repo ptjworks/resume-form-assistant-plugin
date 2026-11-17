@@ -838,7 +838,8 @@
     const occupied = new Set([...taken, ...saved.map((match) => match.fieldId)]);
     const english = englishResultMatches(forms, resume, pageFields, occupied);
     english.forEach((match) => occupied.add(match.fieldId));
-    return [...rules, ...saved, ...english, ...repeatedAwardMatches(forms, resume, pageFields, occupied)];
+    const usedValues = new Set([...rules, ...saved, ...english].map((match) => String(match?.value ?? "").trim()).filter(Boolean));
+    return [...rules, ...saved, ...english, ...repeatedAwardMatches(forms, resume, pageFields, occupied, usedValues)];
   }
 
   function filterValidMatches(formFields, matches) {
@@ -1061,29 +1062,29 @@
   const AWARD_RESUME_KEY = /^(?:获奖|奖项|奖励|荣誉|(?:获奖|奖项|奖励|荣誉)(?:名称|项目)?|名称)$/;
   const AWARD_RESUME_CONTEXT = /获奖|奖项|奖励|荣誉/;
 
-  // #528 页面有多行「获奖」单框（无论有无区块标题，只要没有分开问获奖时间/级别等子项），按页面行序把简历里的获奖名称逐条填入。
-  function repeatedAwardMatches(forms, resume, pageFields, occupied) {
-    const allFields = Array.isArray(pageFields) && pageFields.length ? pageFields : forms;
-    if (allFields.some(field => AWARD_DETAIL_LABEL.test(normalizeText(field?.label)))) return [];
-    const awardRows = forms.filter(field => !occupied.has(field.fieldId)
-      && AWARD_BARE_ROW_LABEL.test(normalizeText(field.label))
+  // #528 页面有多行「获奖」单框（无论有无区块标题，只要全页没有分开问获奖时间/级别等子项），按页面行序把简历里的获奖名称逐条填入。
+  function repeatedAwardMatches(forms, resume, pageFields, occupied, usedValues = new Set()) {
+    if (!Array.isArray(pageFields) || !pageFields.length) return [];
+    if (pageFields.some(field => AWARD_DETAIL_LABEL.test(normalizeText(field?.label)))) return [];
+    const allAwardRows = forms.filter(field => AWARD_BARE_ROW_LABEL.test(normalizeText(field.label))
       && !["select", "radio", "date", "month", "datetime-local", "date-picker"].includes(field.inputType)
       && field.cascade !== true);
-    if (awardRows.length < 2) return [];
+    if (allAwardRows.length < 2) return [];
     const values = [];
     for (const item of resume) {
       const val = String(item?.value ?? "").trim();
       const key = normalizeText(item?.key);
       const group = normalizeText(item?.group);
-      if (!val || !AWARD_RESUME_KEY.test(key) || !(AWARD_RESUME_CONTEXT.test(key) || AWARD_RESUME_CONTEXT.test(group))) continue;
+      if (!val || usedValues.has(val) || !AWARD_RESUME_KEY.test(key) || !(AWARD_RESUME_CONTEXT.test(key) || AWARD_RESUME_CONTEXT.test(group))) continue;
       values.push(val);
     }
     if (!values.length) return [];
-    const count = Math.min(awardRows.length, values.length);
+    const freeRows = allAwardRows.filter(field => !occupied.has(field.fieldId));
+    const count = Math.min(freeRows.length, values.length);
     const out = [];
     for (let i = 0; i < count; i += 1) {
-      if (isValueValidForField(awardRows[i], values[i])) {
-        out.push({ fieldId: awardRows[i].fieldId, value: values[i] });
+      if (isValueValidForField(freeRows[i], values[i])) {
+        out.push({ fieldId: freeRows[i].fieldId, value: values[i] });
       }
     }
     return out;
