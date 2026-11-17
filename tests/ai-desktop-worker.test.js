@@ -604,3 +604,14 @@ test('AI fill diagnostics count secret form fields on their own and name the ear
   assert.equal(mixed.diagnostics.secretFormFields, 1);
   assert.equal(env.sent.filter(item => item.kind === 'desktop-complete').length, 1);
 });
+
+test('HTTP failures preserve their 3-digit status in diagnostics.errorCode (#531)', async () => {
+  const withStatus = worker(() => ({ ok: false, reason: 'http', httpStatus: 504 }));
+  const failed504 = await withStatus.run();
+  assert.equal(failed504.diagnostics.errorCode, 'http_504');
+  assert.match(failed504.warning, /HTTP 504/);
+
+  const bareHttp = worker(() => ({ ok: false, reason: 'http' }));
+  const failedBare = await bareHttp.run();
+  assert.equal(failedBare.diagnostics.errorCode, 'http');
+});

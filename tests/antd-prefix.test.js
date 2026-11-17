@@ -613,3 +613,43 @@ test("a date range picker with time is left untouched and reported unsupported",
     assert.ok(doc.querySelector(`.${p}-picker-dropdown`).hidden, `${p}: the calendar is closed`);
   }
 });
+
+// #531 小米社招（xiaomi.jobs.f.mioffice.cn）用的是 antd 3 + prefixCls="atsx"：
+// 下拉是 .atsx-select > .atsx-select-selection > .atsx-select-selection__rendered，
+// 表单项是 .atsx-form-item-control > .atsx-form-item-children，
+// 区间日期是 .atsx-calendar-picker 里的两个 .atsx-calendar-range-picker-input。
+test("antd 3 with atsx- prefix (mioffice.cn) is recognized, probed as antd, and its selects and range pickers are scanned (#531)", async () => {
+  const antd3Select = (p, id, selected = "") =>
+    `<div class="${p}-select ${p}-select-enabled"><div class="${p}-select-selection ${p}-select-selection--single" role="combobox" aria-autocomplete="list" aria-haspopup="true" aria-expanded="false" tabindex="0">`
+    + `<div class="${p}-select-selection__rendered"><div class="${p}-select-selection__placeholder"${selected ? " hidden" : ""}>请选择</div>`
+    + (selected ? `<div class="${p}-select-selection-selected-value" title="${selected}">${selected}</div>` : "")
+    + `<div class="${p}-select-search ${p}-select-search--inline" style="display: none;"><div class="${p}-select-search__field__wrap"><input id="${id}" autocomplete="off" class="${p}-select-search__field" value=""></div></div>`
+    + `</div></div></div>`;
+  const antd3Item = (p, id, label, ctrl) =>
+    `<div class="${p}-row ${p}-form-item"><div class="${p}-col ${p}-form-item-label"><label for="${id}" class="${p}-form-item-required">${label}</label></div>`
+    + `<div class="${p}-col ${p}-form-item-control-wrapper"><div class="${p}-form-item-control"><span class="${p}-form-item-children">${ctrl}</span></div></div></div>`;
+  const antd3Range = (p) =>
+    `<span class="${p}-calendar-picker"><span class="${p}-calendar-picker-input ${p}-input">`
+    + `<input readonly placeholder="开始月份" class="${p}-calendar-range-picker-input ${p}-calendar-range-picker-input-left" value="">`
+    + `<span class="${p}-calendar-range-picker-separator"> - </span>`
+    + `<input readonly placeholder="结束月份" class="${p}-calendar-range-picker-input ${p}-calendar-range-picker-input-right" value="">`
+    + `</span></span>`;
+
+  const bySelectOnly = load(`<div>${antd3Select("atsx", "edu")}</div>`);
+  assert.deepEqual(plain(bySelectOnly.w.ResumeProAntdPrefix.prefixes(bySelectOnly.doc)), ["ant", "atsx"]);
+
+  const byItemOnly = load(antd3Item("atsx", "name", "姓名", `<input id="name" class="atsx-input" type="text" value="">`));
+  assert.deepEqual(plain(byItemOnly.w.ResumeProAntdPrefix.prefixes(byItemOnly.doc)), ["ant", "atsx"]);
+
+  const html = `<form class="atsx-form">${antd3Item("atsx", "edu", "学历", antd3Select("atsx", "edu", "本科"))}${antd3Item("atsx", "period", "起止时间", antd3Range("atsx"))}</form>`;
+  const { w, doc, scan } = load(html);
+  installLayout(w);
+  const controls = scan();
+  const edu = control(controls, "学历");
+  assert.equal(edu.controlKind, "custom-select");
+  assert.equal(w.ResumeProCustomControls.describe(targetOf(edu)).library, "antd");
+  assert.deepEqual(plain(w.ResumeProCustomControls.readSelection(targetOf(edu))), { texts: ["本科"], cascade: false });
+  assert.deepEqual(plain(w.ResumeProFillProbe.probePage(doc).custom.byLibrary), { antd: 1 });
+  assert.ok(control(controls, "起止时间（开始）"));
+  assert.ok(control(controls, "起止时间（结束）"));
+});

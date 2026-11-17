@@ -5218,7 +5218,7 @@
     const panel = shadowRoot?.querySelector("#resume-pro-diagnostics");
     const text = shadowRoot?.querySelector("#resume-pro-diagnostics-text");
     if (!panel || !text) return;
-    const code = /^[a-z_]{1,32}$/.test(report.errorCode || "") ? report.errorCode : "";
+    const code = /^(?:[a-z_]{1,32}|http_\d{3})$/.test(report.errorCode || "") ? report.errorCode : "";
     text.value = [
       `网申快填 v${chrome.runtime.getManifest().version}`,
       `${report.mode === "recipe" ? "按本站配方填写" : "深度分析"}没有进入填写${code ? `；错误码：${code}` : ""}`,
