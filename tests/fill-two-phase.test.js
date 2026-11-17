@@ -958,3 +958,25 @@ test("#518 a native date input with a month-only local birth date reports invali
   assert.equal(p2.ui.aiConfigHint.hidden, false);
   assert.equal((await p2.report()).aiUnconfigured, true);
 });
+
+test("#528 bare repeated 获奖 rows are matched in order locally, and repeated fields carry repeatIndex for AI", async (t) => {
+  const resume = [
+    ["基本信息", "姓名", "测试用户"],
+    ["获奖情况 1", "获奖名称", "国家奖学金"],
+    ["获奖情况 2", "获奖名称", "校三好学生"],
+    ["获奖情况 3", "获奖名称", "优秀毕业生"]
+  ];
+  const bareRows = Array.from({ length: 5 }, (_, i) => `<div class="row"><span class="t">获奖</span><input id="aw${i}" type="text"></div>`).join("");
+  const p = page(t, input("name", "姓名") + bareRows, { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.value("aw2") === "优秀毕业生" && p.worker.calls.length === 1));
+  assert.deepEqual([0, 1, 2, 3, 4].map((i) => p.value(`aw${i}`)), ["国家奖学金", "校三好学生", "优秀毕业生", "", ""]);
+  // Remaining empty rows sent to AI carry repeatIndex so the prompt distinguishes them.
+  assert.deepEqual(p.worker.calls[0].fields.map((f) => [f.label, f.repeatIndex, f.repeatCount]), [
+    ["获奖", 4, 5],
+    ["获奖", 5, 5]
+  ]);
+  p.worker.calls[0].reply({});
+  const result = await running;
+  assert.equal(result.filledCount, 4);
+});

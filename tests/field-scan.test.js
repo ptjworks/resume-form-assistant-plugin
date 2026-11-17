@@ -374,6 +374,40 @@ test("a section title does not turn 地址 or QQ into a phone field for local ru
   assert.deepEqual(matches.map((match) => match.fieldId), ["c"]);
 });
 
+test("#528 a sub-table with header cells does not drop the rest of the page's plain rows as outsideForm", () => {
+  const basicRows = ["姓名", "性别", "出生日期", "民族", "籍贯", "政治面貌", "手机号码", "电子邮箱"]
+    .map((label) => `<div class="row"><span class="t">${label}</span><input type="text"></div>`).join("");
+  const tableRows = Array.from({ length: 4 }, () => "<tr><td><input></td><td><input></td></tr>").join("");
+  const doc = load(`
+    <div class="top"><div class="box"><input type="text" placeholder="搜索职位"><span>搜索</span></div></div>
+    <div class="page">
+      <h3>基本信息</h3>${basicRows}
+      <h3>工作经历</h3>
+      <table><thead><tr><th>公司</th><th>职位</th></tr></thead><tbody>${tableRows}</tbody></table>
+    </div>`);
+  const result = scan(doc);
+  assert.equal(result.controls.length, 16);
+  assert.equal(result.skipped.outsideForm, 0);
+  assert.equal(result.skipped.siteSearch, 1);
+  assert.deepEqual(labels(result).slice(0, 8), ["姓名", "性别", "出生日期", "民族", "籍贯", "政治面貌", "手机号码", "电子邮箱"]);
+
+  // 区域外若是无标签（仅占位符）的零散输入框，即使有 3 个也照旧按 outsideForm 丢弃，不把区域扩出去。
+  const strayDoc = load(`
+    <div class="sidebar">
+      <input type="text" placeholder="请输入邀请码">
+      <input type="text" placeholder="请输入编号">
+      <input type="text" placeholder="请输入备注">
+    </div>
+    <form class="main-form">
+      <div><label for="f1">姓名</label><input id="f1" type="text"></div>
+      <div><label for="f2">邮箱</label><input id="f2" type="text"></div>
+      <div><label for="f3">毕业院校</label><input id="f3" type="text"></div>
+    </form>`);
+  const strayResult = scan(strayDoc);
+  assert.deepEqual(labels(strayResult), ["姓名", "邮箱", "毕业院校"]);
+  assert.equal(strayResult.skipped.outsideForm, 3);
+});
+
 test("the content script loads the scanner before content.js", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"));
   const scripts = manifest.content_scripts[0].js;

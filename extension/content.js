@@ -3709,6 +3709,8 @@
     const aiMisses = [];
     // 资料里有值的字段类别，和脱敏要藏起来的资料值（扫描出错时还没算出来，结束时再补）。
     let resumeKindSet = new Set();
+    let resumeKindCounts = new Map();
+    const matchedByKind = new Map();
     let privateValues = null;
     // #301 选完后新出现的字段（#269）和首轮字段一样计入结果、诊断和留档；进诊断的只有计数。
     // pendingNew 是排队等 AI 补填的新字段，没轮到补填就结束的算没送 AI。
@@ -3843,7 +3845,13 @@
       // 诊断里要藏起来的简历内容（一个字的值太容易撞上普通字段名，不参与比较）。
       const resumeValues = resumeFields.map(field => normalizeForOverlap(field?.value)).filter(value => value.length >= 2);
       privateValues = resumeValues;
-      try { resumeKindSet = self.ResumeProFeedback?.resumeKinds?.(resumeFields) || new Set(); } catch { resumeKindSet = new Set(); }
+      try {
+        resumeKindSet = self.ResumeProFeedback?.resumeKinds?.(resumeFields) || new Set();
+        resumeKindCounts = self.ResumeProFeedback?.resumeKindCounts?.(resumeFields) || new Map();
+      } catch {
+        resumeKindSet = new Set();
+        resumeKindCounts = new Map();
+      }
       phase = "roundTripMs";
       stage = "match";
       phaseStart = performance.now();
@@ -3928,8 +3936,36 @@
             ...privateOptions(element, fieldMeta, label, kind, current) });
         } catch { /* diagnostics never break the fill */ }
       };
+      const matchedKindIds = new Set();
+      const usedMissedByKind = new Map();
+      const noteMatchedKinds = list => {
+        if (!Array.isArray(list)) return;
+        for (const match of list) {
+          if (!match?.fieldId || match.blocked || matchedKindIds.has(match.fieldId)) continue;
+          const meta = fieldMetaMap.get(match.fieldId);
+          if (!meta) continue;
+          matchedKindIds.add(match.fieldId);
+          const kind = fieldKindOf(meta.label || meta.placeholder || meta.name || '');
+          if (kind !== 'unknown') matchedByKind.set(kind, (matchedByKind.get(kind) || 0) + 1);
+        }
+      };
+      const isMissInResume = (meta, kind) => {
+        if (kind === 'unknown' || !resumeKindSet.has(kind)) return false;
+        const groupNum = Number((/\s(\d+)$/.exec(String(meta?.group || '')) || [])[1]) || 0;
+        const rowIndex = Number.isInteger(meta?.repeatIndex) && meta.repeatIndex > 0 ? meta.repeatIndex : groupNum;
+        const totalEntries = resumeKindCounts.get(kind) || 0;
+        if (rowIndex > 1) return rowIndex <= totalEntries;
+        const alreadyMatched = matchedByKind.get(kind) || 0;
+        if (alreadyMatched === 0) return true;
+        const alreadyMissed = usedMissedByKind.get(kind) || 0;
+        if (alreadyMatched + alreadyMissed >= totalEntries) return false;
+        usedMissedByKind.set(kind, alreadyMissed + 1);
+        return true;
+      };
       // #497 AI 看过、没给值的字段（ai-worker 的 unansweredIds）：类别、资料里有没有这一类，私有诊断再带题目和选项。
-      const noteAiMisses = ids => {
+      // #528 重复条目的第 N 行（rowIndex > 1）只在简历中该类条目数不少于 N 时才算 inResume，避免多出的空白行误报 ai_missed。
+      const noteAiMisses = (ids, matchedList = null) => {
+        noteMatchedKinds(matchedList);
         if (!Array.isArray(ids)) return;
         for (const id of ids) {
           const meta = fieldMetaMap.get(id);
@@ -3937,7 +3973,8 @@
           if (!meta || !entry || aiMisses.some(item => item.fieldId === id)) continue;
           const label = meta.label || meta.placeholder || meta.name || '';
           const kind = fieldKindOf(label);
-          aiMisses.push({ fieldId: id, label, section: fieldSection(entry, meta), kind, inResume: kind !== 'unknown' && resumeKindSet.has(kind),
+          const inResume = isMissInResume(meta, kind);
+          aiMisses.push({ fieldId: id, label, section: fieldSection(entry, meta), kind, inResume,
             nodes: fieldNodes(entry), ...privateOptions(entry, meta, label, kind, null) });
         }
       };
@@ -4051,6 +4088,15 @@
           resumeFields.push(...siteFields);
           // 诊断里的字段名要藏起这些回答，和一开始就有的资料一样。
           resumeValues.push(...siteFields.map(field => normalizeForOverlap(field.value)).filter(value => value.length >= 2));
+          try {
+            resumeKindSet = self.ResumeProFeedback?.resumeKinds?.(resumeFields) || new Set();
+            resumeKindCounts = self.ResumeProFeedback?.resumeKindCounts?.(resumeFields) || new Map();
+            for (const item of aiMisses) {
+              if (!item.inResume && item.kind !== "unknown" && resumeKindSet.has(item.kind)) {
+                item.inResume = isMissInResume(fieldMetaMap.get(item.fieldId), item.kind);
+              }
+            }
+          } catch { /* diagnostics never break the fill */ }
           if (!isCurrent()) return;
         }
         const helpers = self.ResumeProAIHelpers;
@@ -4070,6 +4116,7 @@
             && normalize(item.key) === normalize(field.label));
           if (same.length === 1) local.push(...(helpers?.filterValidMatches ? helpers.filterValidMatches([field], [{ fieldId: field.fieldId, value: same[0].value }]) : []));
         }
+        noteMatchedKinds(local);
         const localIds = new Set(local.map(match => match.fieldId));
         grown.local += localIds.size;
         grown.matched += localIds.size;
@@ -4086,7 +4133,7 @@
         answered.forEach(id => grownMatchedIds.add(id));
         grown.matched += answered.size;
         const d = reply?.diagnostics || {};
-        try { noteAiMisses(d.unansweredIds); } catch { /* diagnostics never break the fill */ }
+        try { noteAiMisses(d.unansweredIds, more); } catch { /* diagnostics never break the fill */ }
         const counted = value => Number.isInteger(value) && value > 0 ? value : 0;
         grown.local += counted(d.ruleMatches);
         grown.aiFields += counted(d.aiFields);
@@ -4158,6 +4205,7 @@
           if (entry) approvedValues.set(entry, fillValueSnapshot(entry));
         }
         const earlyIds = new Set(early.map(match => match.fieldId));
+        noteMatchedKinds(early);
         if (early.length) awaiting = fields.filter(field => !earlyIds.has(field.fieldId)).map(field => fieldMap.get(field.fieldId)).filter(Boolean);
       }
       // 先填期间在写网页；AI 回来时还是插件写的值的先填字段。
@@ -4259,7 +4307,7 @@
         if (waitHint) waitHint.hidden = true;
         diagnostics = response?.diagnostics || {};
         responded = Boolean(response);
-        try { noteAiMisses(diagnostics.unansweredIds); } catch { /* diagnostics never break the fill */ }
+        try { noteAiMisses(diagnostics.unansweredIds, response?.matches); } catch { /* diagnostics never break the fill */ }
         aiDown = Boolean(self.ResumeProFeedback?.requestFailed?.(diagnostics.errorCode));
         // Cancellation may race a successful AI reply. Only the worker's explicitly
         // cancelled response may retain its documented local matches.
@@ -5376,6 +5424,7 @@
         placeholder: control.placeholder,
         ariaLabel: element.getAttribute("aria-label") || "",
         group: control.group,
+        ...(control.repeatIndex > 0 ? { repeatIndex: control.repeatIndex, repeatCount: control.repeatCount } : {}),
         ...(workPart && workPart !== "range" ? { bossWork: { role: workPart, row: `${prefix}${work.id}:${workIndex}`,
           index: workIndex, companies: work.companies, companyReady: work.inputs.every(Boolean), kind: work.kind } } : {}),
         ...(cetRole ? { bossCet: { role: cetRole, row: `${prefix}${cet.index}`, selected: cet.selected, otherSelected: cet.otherSelected } } : {}),

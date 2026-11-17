@@ -1045,7 +1045,16 @@
   function regionRoot(controls) {
     const strong = controls.filter((control) => control.fillable && STRONG_SOURCES.has(control.labelSource) && !control.searchLike);
     if (strong.length < 3) return null;
-    return lowestCommonAncestor(strong.map((control) => control.root));
+    const region = lowestCommonAncestor(strong.map((control) => control.root));
+    if (!region) return null;
+    // #528 页面上只有一张子表格（如家庭成员、工作经历表）用了 table / th，或区域外还有成片带明确文字标签的可填字段（≥3 个）时，
+    // 那个最小公共祖先只是表单里的一个局部区块，只把区域扩到这些有标签的字段，不纳入无标签/仅占位符的外部输入框。
+    const outsideLabeled = controls.filter((control) => control.fillable && !control.searchLike
+      && OFFERABLE_SOURCES.has(control.labelSource) && !region.contains(control.root));
+    if (outsideLabeled.length >= 3 || (outsideLabeled.length > 0 && Boolean(region.closest?.("table")))) {
+      return lowestCommonAncestor([...strong, ...outsideLabeled].map((control) => control.root));
+    }
+    return region;
   }
 
   // --- 对外入口 ---------------------------------------------------------------

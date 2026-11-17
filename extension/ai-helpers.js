@@ -836,7 +836,10 @@
     const saved = typeof profile.savedAnswerMatches === "function"
       ? dateChecked(filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields))) : [];
     const occupied = new Set([...taken, ...saved.map((match) => match.fieldId)]);
-    return [...rules, ...saved, ...englishResultMatches(forms, resume, pageFields, occupied)];
+    const english = englishResultMatches(forms, resume, pageFields, occupied);
+    english.forEach((match) => occupied.add(match.fieldId));
+    const usedValues = new Set([...rules, ...saved, ...english].map((match) => String(match?.value ?? "").trim()).filter(Boolean));
+    return [...rules, ...saved, ...english, ...repeatedAwardMatches(forms, resume, pageFields, occupied, usedValues)];
   }
 
   function filterValidMatches(formFields, matches) {
@@ -1052,6 +1055,39 @@
     if (!isValueValidForField(level, result.level)) return [];
     return [{ fieldId: level.fieldId, value: result.level }, { fieldId: score.fieldId, value: result.score }]
       .filter(match => forms.some(field => field.fieldId === match.fieldId));
+  }
+
+  const AWARD_BARE_ROW_LABEL = /^(?:获奖|奖项|奖励|荣誉|(?:获奖|奖项|奖励|荣誉)(?:名称|项目|情况)?|所获(?:奖励|荣誉|奖项))$/;
+  const AWARD_DETAIL_LABEL = /(?:获奖|奖项|奖励|荣誉).*(?:时间|日期|级别|等级|单位|机构|描述|说明|内容)|^(?:获得时间|获奖时间|获奖日期|获奖级别|获奖等级|颁奖单位|授予单位)$/;
+  const AWARD_RESUME_KEY = /^(?:获奖|奖项|奖励|荣誉|(?:获奖|奖项|奖励|荣誉)(?:名称|项目)?|名称)$/;
+  const AWARD_RESUME_CONTEXT = /获奖|奖项|奖励|荣誉/;
+
+  // #528 页面有多行「获奖」单框（无论有无区块标题，只要全页没有分开问获奖时间/级别等子项），按页面行序把简历里的获奖名称逐条填入。
+  function repeatedAwardMatches(forms, resume, pageFields, occupied, usedValues = new Set()) {
+    if (!Array.isArray(pageFields) || !pageFields.length) return [];
+    if (pageFields.some(field => AWARD_DETAIL_LABEL.test(normalizeText(field?.label)))) return [];
+    const allAwardRows = forms.filter(field => AWARD_BARE_ROW_LABEL.test(normalizeText(field.label))
+      && !["select", "radio", "date", "month", "datetime-local", "date-picker"].includes(field.inputType)
+      && field.cascade !== true);
+    if (allAwardRows.length < 2) return [];
+    const values = [];
+    for (const item of resume) {
+      const val = String(item?.value ?? "").trim();
+      const key = normalizeText(item?.key);
+      const group = normalizeText(item?.group);
+      if (!val || usedValues.has(val) || !AWARD_RESUME_KEY.test(key) || !(AWARD_RESUME_CONTEXT.test(key) || AWARD_RESUME_CONTEXT.test(group))) continue;
+      values.push(val);
+    }
+    if (!values.length) return [];
+    const freeRows = allAwardRows.filter(field => !occupied.has(field.fieldId));
+    const count = Math.min(freeRows.length, values.length);
+    const out = [];
+    for (let i = 0; i < count; i += 1) {
+      if (isValueValidForField(freeRows[i], values[i])) {
+        out.push({ fieldId: freeRows[i].fieldId, value: values[i] });
+      }
+    }
+    return out;
   }
 
   function englishLevelSearchAlternative(value) {

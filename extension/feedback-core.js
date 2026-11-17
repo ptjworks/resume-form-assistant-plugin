@@ -80,6 +80,37 @@
     }
     return kinds;
   }
+  // #528 每类资料在简历里有几条记录：按所属分组（如「获奖情况 1」「获奖情况 2」）去重；
+  // 同一分组下若同名字段出现多次（或带尾部序号如「获奖1」「获奖2」），取该分组内同基底字段名的最大重复数。
+  function resumeKindCounts(fields) {
+    const byKind = new Map();
+    for (const field of Array.isArray(fields) ? fields : []) {
+      if (!String(field?.value ?? "").trim()) continue;
+      const seen = new Set();
+      for (const text of [field.key, field.group]) {
+        const kind = fieldKind(text);
+        if (kind !== "unknown") seen.add(kind);
+      }
+      const groupKey = foldKind(field.group) || "_";
+      const baseKey = foldKind(String(field.key ?? "").replace(/\d+$/g, "")) || "_";
+      for (const kind of seen) {
+        if (!byKind.has(kind)) byKind.set(kind, new Map());
+        const groups = byKind.get(kind);
+        if (!groups.has(groupKey)) groups.set(groupKey, new Map());
+        const keys = groups.get(groupKey);
+        keys.set(baseKey, (keys.get(baseKey) || 0) + 1);
+      }
+    }
+    const counts = new Map();
+    for (const [kind, groups] of byKind.entries()) {
+      let total = 0;
+      for (const keys of groups.values()) {
+        total += Math.max(1, ...keys.values());
+      }
+      counts.set(kind, total);
+    }
+    return counts;
+  }
   // #497 A report goes out when at least this many fields the AI saw and did not match are of a kind the
   // resume has (error_category ai_missed), even when everything else got filled.
   const AI_MISSED_MIN = 3;
@@ -716,7 +747,7 @@
     });
   }
   const api = { redact, hostname, os, frames, exception, pathTemplate, fillCategory, requestFailed, shownCode, fillDrops, labelSources, aiCalled,
-    fillReport, diagnostics, fillFailure, jobReport, install, fieldKind, resumeKinds, privateReport, privateLayer, utf8Cut, utf8Length, codeMessage,
+    fillReport, diagnostics, fillFailure, jobReport, install, fieldKind, resumeKinds, resumeKindCounts, privateReport, privateLayer, utf8Cut, utf8Length, codeMessage,
     AI_MISSED_MIN, PRIVATE_HEADER, PRIVATE_BYTES,
     // Names only, for the privacy-policy check; the allowlists themselves stay private.
     SECTION_NAMES: Object.freeze([...SECTIONS]), VALUE_KEYS: Object.freeze(Object.keys(VALUES)), KIND_NAMES: Object.freeze([...KIND_NAMES]) };
