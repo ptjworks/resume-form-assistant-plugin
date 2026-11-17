@@ -219,6 +219,7 @@ test('format errors, desktop failures, cancellation and timeout each ask once an
 
   const http = desktop({ ok: false, reason: 'http', httpStatus: 502, host: 'api.example.test' });
   const httpResult = await requestJobExtract({ complete: http.complete, fragments: FRAGMENTS });
+  assert.equal(httpResult.reason, 'http_502');
   assert.deepEqual(httpResult.failure, { reason: 'http', httpStatus: 502 });
 
   let thrown = 0;

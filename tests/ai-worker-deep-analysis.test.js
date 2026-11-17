@@ -76,6 +76,9 @@ test("an old desktop and a strong provider without a key get their own messages"
   const keyless = await worker(() => ({ ok: false, reason: "not_configured", tier: "strong" })).ask({ type: "AI_ANALYZE_PAGE", requestId: "r", outline: "e1", part: 1, parts: 1 });
   assert.match(keyless.error, /强模型那条服务商还没有 Key/);
   assert.equal(keyless.openView, "settings-ai");
+  const http502 = await worker(() => ({ ok: false, reason: "http", httpStatus: 502 })).ask({ type: "AI_ANALYZE_PAGE", requestId: "r", outline: "e1", part: 1, parts: 1 });
+  assert.equal(http502.errorCode, "http_502");
+  assert.match(http502.error, /HTTP 502/);
 });
 
 test("an analysis timeout names the strong model's host, the seconds waited and what to try", async () => {

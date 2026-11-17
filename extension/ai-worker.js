@@ -352,6 +352,12 @@ const SKIP_CODES = new Set(["none", "no_context", "input_too_large"]);
 // Where a desktop request timed out (#299): connecting, waiting for the headers, or reading the body.
 const TIMEOUT_STAGES = ["connect", "first_byte", "body"];
 
+function diagnosticErrorCode(result) {
+  const reason = result?.reason ?? "unavailable";
+  return reason === "http" && Number.isInteger(result?.httpStatus) && result.httpStatus >= 100 && result.httpStatus <= 599
+    ? `http_${result.httpStatus}` : reason;
+}
+
 // #224 深度分析：只把插件已经脱敏的页面大纲交给强模型（purpose=analyze，不带 tier 即强档）。
 // 返回解析后的说明书对象；模型原文不回传、不进诊断。校验由页面里的 deep-analysis.js 按本次大纲做。
 const ANALYZE_MAX_OUTLINE = 45_000;
@@ -375,7 +381,7 @@ async function handleAnalyzePage(message, controller) {
     let error = aiFailureMessage(result);
     if (reason === "incompatible") error = "深度分析需要更新桌面程序。";
     else if (reason === "not_configured" && result.tier === "strong") error = strongFailureMessage("strong", result);
-    return { success: false, error, errorCode: reason, tierUsed, apiMs,
+    return { success: false, error, errorCode: diagnosticErrorCode(result), tierUsed, apiMs,
       ...(reason === "not_configured" ? { openView: "settings-ai" } : {}) };
   }
   if (controller.signal.aborted) return { success: false, error: aiFailureMessage({ reason: "cancelled" }), errorCode: "cancelled", tierUsed, apiMs };
@@ -470,7 +476,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       if (TIMEOUT_STAGES.includes(result?.timeoutStage)) diagnostics.timeoutStage = result.timeoutStage;
       if (!result?.ok) {
         const reason = result?.reason ?? "unavailable";
-        if (SKIP_CODES.has(diagnostics.errorCode)) diagnostics.errorCode = reason;
+        if (SKIP_CODES.has(diagnostics.errorCode)) diagnostics.errorCode = diagnosticErrorCode(result);
         warnings.push(fillFailureMessage(tier, result, remainingFormFields.length));
         if (reason === "not_configured") openView = "settings-ai";
         // Only a failure tied to this batch's content is worth trying the next batch for.

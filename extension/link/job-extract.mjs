@@ -64,9 +64,12 @@ export async function requestJobExtract({ complete, fragments, signal, timeoutMs
   if (timedOut) return manual('timeout');
   if (signal?.aborted) return manual('cancelled');
   if (!reply?.ok) {
-    const failure = { reason: typeof reply?.reason === 'string' ? reply.reason : 'unavailable' };
+    const reason = typeof reply?.reason === 'string' ? reply.reason : 'unavailable';
+    const failure = { reason };
     if (reply?.httpStatus != null) failure.httpStatus = reply.httpStatus;
-    return { ...manual(failure.reason), failure };
+    const code = reason === 'http' && Number.isInteger(reply?.httpStatus) && reply.httpStatus >= 100 && reply.httpStatus <= 599
+      ? `http_${reply.httpStatus}` : reason;
+    return { ...manual(code), failure };
   }
   const content = reply.text;
   if (typeof content !== 'string' || !content.trim() || content.length > MAX_REPLY_CHARS) {
