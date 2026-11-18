@@ -586,7 +586,7 @@
     if (!item || item.type !== "control") return [];
     const extra = [];
     const cls = customClassHint(item.root || item.element);
-    if (cls) extra.push(`cls=${cls}`);
+    if (cls && !sensitiveShape(cls) && redact(cls, 40) === cls) extra.push(`cls=${cls}`);
     if (item.control?.outsideForm) extra.push("区域外");
     const label = item.control?.label || attr(item.element, "aria-label");
     if (!label) {

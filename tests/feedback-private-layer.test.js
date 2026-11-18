@@ -565,8 +565,9 @@ test("ai-worker 拒绝无效 AI 回答时在 diagnostics.missReasons 和 aiRejec
   });
 });
 
-test("scripts/feedback-private.mjs 解析参数、提取 Issue 去重键并格式化输出", async () => {
-  const { parseArgs, extractDedupeKeyFromBody, formatPrivateItems } = await import("../scripts/feedback-private.mjs");
+test("scripts/feedback-private.mjs 解析参数、提取 Issue 去重键、校验 HTTPS 端点并支持直接子进程运行", async () => {
+  const { spawnSync } = require("node:child_process");
+  const { parseArgs, extractDedupeKeyFromBody, formatPrivateItems, resolveEndpoint } = await import("../scripts/feedback-private.mjs");
   assert.deepEqual(parseArgs(["--issue", "#533", "--limit", "3"]), {
     issue: "533",
     dedupeKey: "",
@@ -574,6 +575,9 @@ test("scripts/feedback-private.mjs 解析参数、提取 Issue 去重键并格�
     limit: 3,
     json: false
   });
+  assert.equal(resolveEndpoint("https://feedback.19991107.xyz/"), "https://feedback.19991107.xyz");
+  assert.equal(resolveEndpoint("http://localhost:8787"), "http://localhost:8787");
+  assert.throws(() => resolveEndpoint("http://evil.example.com"), /拒绝通过非 HTTPS 地址/);
   assert.equal(
     extractDedupeKeyFromBody("正文\n<!-- feedback-dedupe-key: v3:e6e98b22700e37f9 -->\n"),
     "v3:e6e98b22700e37f9"
@@ -594,4 +598,10 @@ test("scripts/feedback-private.mjs 解析参数、提取 Issue 去重键并格�
   );
   assert.match(formatted, /Dedupe Key: v3:e6e98b22700e37f9/);
   assert.match(formatted, /--- 私有诊断 v1 ---/);
+  // 验证包含空格的路径下通过子进程直接调用脚本时主入口正常触发
+  const cli = spawnSync(process.execPath, [path.join(__dirname, "..", "scripts", "feedback-private.mjs")], {
+    encoding: "utf8"
+  });
+  assert.equal(cli.status, 1);
+  assert.match(cli.stderr, /用法: node scripts\/feedback-private\.mjs/);
 });

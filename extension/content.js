@@ -3891,6 +3891,13 @@
         return false;
       };
       const approvedValues = new Map();
+      const resolveFieldKind = (meta, fallbackLabel = '') => {
+        for (const text of [fallbackLabel, meta?.label, meta?.placeholder, meta?.name]) {
+          const kind = fieldKindOf(text);
+          if (kind !== 'unknown') return kind;
+        }
+        return 'unknown';
+      };
 
       const noteControlFailure = (element, fieldMeta, value, reason, uncertain) => {
         const control = element.kind === 'element' ? element.element : element;
@@ -3935,24 +3942,25 @@
           // 深度填写：插件实际按哪种控件去操作的（说明书给的类型经 DOM 校正后），分清是类型判错还是组件打不开。
           ...(element.deepRef ? { operated: element.controlKind } : {}) });
         try {
-          const limit = isHtmlElement(control) ? (textLimits.get(control) || textLimit(control)) : null;
-          const maxLength = limit && Number.isInteger(limit.max) && limit.max > 0 ? `${limit.max}${limit.bytes ? 'B' : ''}` : '';
-          const errorTip = isHtmlElement(control) ? fieldErrorText(control) : '';
+          let maxLength = '';
+          let errorTip = '';
+          let extraValues = [];
+          try {
+            const limit = isHtmlElement(control) ? (textLimits.get(control) || textLimit(control)) : null;
+            maxLength = limit && Number.isInteger(limit.max) && limit.max > 0 ? `${limit.max}${limit.bytes ? 'B' : ''}` : '';
+            const domTarget = isHtmlElement(control) ? control : (element?.elements?.[0] || element?.root || null);
+            errorTip = isHtmlElement(domTarget) ? fieldErrorText(domTarget) : '';
+            const currentVal = isHtmlElement(control) && typeof control.value === 'string' ? normalizeForOverlap(control.value) : '';
+            extraValues = [shownValue, currentVal].filter(v => v && v.length >= 2);
+          } catch { /* optional field details never drop the unfilled entry */ }
           privateUnfilled.push({ label, section: fieldSection(element, fieldMeta), kind, reasonCode: reason, nodes: fieldNodes(element),
             ...privateOptions(element, fieldMeta, label, kind, current),
             ...(maxLength ? { maxLength } : {}),
-            ...(errorTip ? { errorTip } : {}) });
+            ...(errorTip ? { errorTip, ...(extraValues.length ? { extraValues } : {}) } : {}) });
         } catch { /* diagnostics never break the fill */ }
       };
       const matchedKindIds = new Set();
       const usedMissedByKind = new Map();
-      const resolveFieldKind = (meta, fallbackLabel = '') => {
-        for (const text of [fallbackLabel, meta?.label, meta?.placeholder, meta?.name]) {
-          const kind = fieldKindOf(text);
-          if (kind !== 'unknown') return kind;
-        }
-        return 'unknown';
-      };
       const noteMatchedKinds = list => {
         if (!Array.isArray(list)) return;
         for (const match of list) {
@@ -4881,7 +4889,7 @@
       // #497 私有诊断的材料：有没写上的、AI 没匹配上的字段、扫描丢弃的字段（本次填写存在故障时），或扫描出错时才留。
       // 拼成文字（要遍历整页做大纲）留到用得上时：同意了自动报告、这次要发的时候（放开忙碌状态之后），或手动反馈预览的时候。
       // 没同意自动报告的人，自动报告和手动反馈都不带私有层：页面元素和资料值不留到下一次填写。
-      const includeDropped = Boolean(scanDroppedNodes.length && (verdict.category !== "none" || hinted));
+      const includeDropped = Boolean(scanDroppedNodes.length && (verdict.category !== "none" || hinted || fieldCount === 0));
       lastPrivate = feedbackAgreed && (privateUnfilled.length || aiMisses.length || includeDropped || scanFault?.message)
         ? { input: { unfilled: privateUnfilled, missed: aiMisses, dropped: includeDropped ? scanDroppedNodes : [], fault: scanFault,
             values: privateValues || redactionValues(activeTemplate, profileFields) },
@@ -5044,12 +5052,15 @@
     if (!feedback?.privateReport || !outline?.createRedactor) return "";
     const redact = outline.createRedactor(values || []);
     const plain = outline.createRedactor([]);
-    const field = item => ({ label: redact(item.label, 80), section: redact(item.section, 40), kind: item.kind, reasonCode: item.reasonCode,
-      ...(typeof item.inResume === "boolean" ? { inResume: item.inResume } : {}),
-      ...(item.options ? { options: item.options.map(text => plain(text, 20)).filter(Boolean), optionTotal: item.optionTotal } : {}),
-      ...(item.missReason ? { missReason: item.missReason } : {}),
-      ...(item.maxLength ? { maxLength: item.maxLength } : {}),
-      ...(item.errorTip ? { errorTip: redact(item.errorTip, 80) } : {}) });
+    const field = item => {
+      const tipRedact = item.extraValues?.length ? outline.createRedactor([...(values || []), ...item.extraValues]) : redact;
+      return { label: redact(item.label, 80), section: redact(item.section, 40), kind: item.kind, reasonCode: item.reasonCode,
+        ...(typeof item.inResume === "boolean" ? { inResume: item.inResume } : {}),
+        ...(item.options ? { options: item.options.map(text => plain(text, 20)).filter(Boolean), optionTotal: item.optionTotal } : {}),
+        ...(item.missReason ? { missReason: item.missReason } : {}),
+        ...(item.maxLength ? { maxLength: item.maxLength } : {}),
+        ...(item.errorTip ? { errorTip: tipRedact(item.errorTip, 80) } : {}) };
+    };
     const nodes = [...unfilled, ...missed].flatMap(item => item.nodes || []).concat(Array.isArray(dropped) ? dropped : []);
     let page = "";
     if (nodes.length && outline.excerpt) {

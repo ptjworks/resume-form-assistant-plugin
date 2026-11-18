@@ -4,11 +4,27 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
-const ENDPOINT = process.env.FEEDBACK_RELAY_URL || "https://feedback.19991107.xyz";
+const DEFAULT_ENDPOINT = "https://feedback.19991107.xyz";
 const DEDUPE_RE = /<!--\s*feedback-dedupe-key:\s*(v\d{1,3}:[0-9a-f]{16})\s*-->/i;
 const KEY_RE = /^v\d{1,3}:[0-9a-f]{16}$/i;
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function resolveEndpoint(raw = process.env.FEEDBACK_RELAY_URL || DEFAULT_ENDPOINT) {
+  let parsed;
+  try {
+    parsed = new URL(String(raw || DEFAULT_ENDPOINT));
+  } catch {
+    throw new Error(`无效的 FEEDBACK_RELAY_URL: ${raw}`);
+  }
+  const isLocal = parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+  if (parsed.protocol !== "https:" && !isLocal) {
+    throw new Error(`拒绝通过非 HTTPS 地址发送私有读取凭据: ${parsed.origin}`);
+  }
+  return parsed.origin;
+}
 
 export function parseArgs(argv = process.argv.slice(2)) {
   const out = { issue: "", dedupeKey: "", id: "", limit: 5, json: false };
@@ -109,11 +125,12 @@ async function main() {
     console.error("用法: node scripts/feedback-private.mjs <--issue 533 | --dedupe-key v3:... | --id uuid> [--limit 5] [--json]");
     process.exit(1);
   }
+  const endpoint = resolveEndpoint();
   const secret = readSecret();
   const query = args.id
     ? `id=${encodeURIComponent(args.id)}`
     : `dedupe_key=${encodeURIComponent(dedupeKey)}&limit=${args.limit}`;
-  const res = await fetch(`${ENDPOINT.replace(/\/$/, "")}/private?${query}`, {
+  const res = await fetch(`${endpoint}/private?${query}`, {
     headers: { "x-private-secret": secret }
   });
   const body = await res.json().catch(() => ({ ok: false, status: res.status }));
@@ -128,7 +145,8 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
+if (invokedPath && import.meta.url === invokedPath) {
   main().catch((err) => {
     console.error(err.message || err);
     process.exit(1);

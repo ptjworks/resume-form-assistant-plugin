@@ -494,7 +494,7 @@ async function handleAiFill(message, controller = new AbortController()) {
         const valid = ResumeProAIHelpers.filterValidMatches(batch.fields, found);
         const validIds = new Set(valid.map(match => match.fieldId));
         for (const match of found) {
-          if (!validIds.has(match.fieldId) && !rejectedReasons.has(match.fieldId)) rejectedReasons.set(match.fieldId, "invalid_value");
+          if (!match.blocked && !validIds.has(match.fieldId) && !rejectedReasons.has(match.fieldId)) rejectedReasons.set(match.fieldId, "invalid_value");
         }
         aiMatches.push(...valid);
         answeredFields.push(...batch.fields);
