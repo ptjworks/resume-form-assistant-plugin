@@ -30,10 +30,10 @@
     ["身高体重", ["身高", "体重", "height", "weight"]],
     ["健康状况", ["健康", "疾病", "病史", "health"]],
     ["参加工作时间", ["参加工作", "首次工作", "工作年限", "工龄"]],
-    ["毕业时间", ["毕业时间", "毕业日期", "毕业年份", "毕业年月", "预计毕业", "届别", "graduation"]],
+    ["毕业时间", ["毕业时间", "毕业日期", "毕业年份", "毕业年月", "预计毕业", "届别", "毕业届", "graduation"]],
     ["求职状态", ["求职状态", "在职状态", "工作状态", "目前状态", "当前状态"]],
     ["到岗时间", ["到岗", "入职时间", "可入职", "报到"]],
-    ["期望", ["期望", "意向", "意愿", "expect"]],
+    ["期望", ["期望", "意向", "意愿", "调剂", "投递城市", "工作城市", "工作地点", "面试城市", "面试地点", "expect"]],
     ["薪资", ["薪资", "薪酬", "工资", "年薪", "月薪", "salary"]],
     ["现居住地", ["现居", "居住地", "居住城市", "当前城市", "所在城市", "所在地", "现住址", "currentcity", "location"]],
     ["地址", ["地址", "住址", "address"]],
@@ -49,14 +49,14 @@
     ["获奖", ["获奖", "奖项", "奖励", "荣誉", "award"]],
     ["证书", ["证书", "资格", "certificate"]],
     ["学校", ["学校", "院校", "大学", "学院", "高中", "school", "university", "college"]],
-    ["专业", ["专业", "major"]],
+    ["专业", ["专业", "研究方向", "院系", "系别", "major", "specialty", "department"]],
     ["学历", ["学历", "培养层次", "教育程度", "degree"]],
     ["学位", ["学位"]],
     ["学习形式", ["学习形式", "学习方式", "培养方式", "全日制", "studymode"]],
     ["公司", ["公司", "单位", "雇主", "company", "employer"]],
-    ["职位", ["职位", "职务", "岗位", "职称", "position"]],
+    ["职位", ["职位", "职务", "岗位", "职称", "担任角色", "角色", "position", "role"]],
     ["起止时间", ["开始时间", "结束时间", "起止", "起始", "入学时间", "在校时间", "时间", "日期", "date"]],
-    ["描述", ["描述", "介绍", "评价", "说明", "内容", "职责", "业绩", "description"]],
+    ["描述", ["描述", "介绍", "评价", "说明", "内容", "职责", "业绩", "成果", "收获", "总结", "优势", "特长爱好", "兴趣爱好", "description", "summary", "achievement"]],
     ["姓名", ["姓名", "名字", "曾用名", "realname", "name"]]
   ].map(([name, words]) => [name, words.map(word => foldKind(word))]);
   const KIND_NAMES = [...FIELD_KINDS.map(([name]) => name), "unknown"];
@@ -659,6 +659,7 @@
     }
     return out;
   }
+  const MISS_REASONS = ["raw_value", "not_in_fits", "bad_ref", "bad_date_part", "off_topic", "join_failed", "invalid_value", "catalog_trimmed"];
   function privateField(title, item) {
     const lines = [`[${title}]`, `label: ${oneLine(item?.label, 80) || "-"}`, `section: ${oneLine(item?.section, 40) || "-"}`,
       `kind: ${KIND_NAMES.includes(item?.kind) ? item.kind : "unknown"}`];
@@ -671,6 +672,10 @@
       const cut = options.length > MAX_PRIVATE_OPTIONS || (Number.isInteger(item.optionTotal) && item.optionTotal > MAX_PRIVATE_OPTIONS);
       lines.push(`options: ${options.slice(0, MAX_PRIVATE_OPTIONS).join(" | ")}${cut ? " | …" : ""}`);
     }
+    if (typeof item?.missReason === "string" && MISS_REASONS.includes(item.missReason)) lines.push(`miss_reason: ${item.missReason}`);
+    if (typeof item?.maxLength === "string" && /^\d{1,6}B?$/.test(item.maxLength)) lines.push(`max_length: ${item.maxLength}`);
+    const tip = oneLine(item?.errorTip, 80);
+    if (tip) lines.push(`error_tip: ${tip}`);
     return lines.join("\n");
   }
   // { unfilled: [...], missed: [...], outline: "", exception: { name, message } } → the private layer, or "".

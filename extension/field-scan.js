@@ -1196,8 +1196,14 @@
     skipped.ambiguous = ambiguousSkipped;
     const idCounts = new Map();
     const bossRoots = ctx.bossCampus ? allControls.filter(el => structuredSelect(el) === el) : [];
+    const droppedNodes = controls
+      .filter((control) => ["noLabel", "outsideForm", "scanError"].includes(control.skipReason))
+      .slice(0, 15)
+      .map((control) => control.root || control.element)
+      .filter(Boolean);
     return {
       controls: kept.map((control) => publicControl(control, idCounts)),
+      droppedNodes,
       skipped,
       sources,
       bossRoots,
@@ -1351,6 +1357,33 @@
     return { title: resolved?.text || "", item };
   }
 
+  function unlabeledClue(control, ctx) {
+    if (control.label) return "";
+    try {
+      const boundaries = boundaryControls(ctx);
+      const placeholders = placeholdersOf(control);
+      const skip = new Set([control.root, ...optionLabelElements(control)]);
+      for (let scope = control.item || control.root, depth = 0; scope && scope !== ctx.body && scope.tagName !== "HTML" && depth < 4; scope = scope.parentElement, depth += 1) {
+        const boxes = Array.from(scope.querySelectorAll(CONTROL_SELECTOR)).filter((el) => boundaries.has(el));
+        if (boxes.length > MAX_PART_BOXES) break;
+        const segments = usefulSegments(textSegments(scope, ctx, skip), placeholders)
+          .filter((segment) => isBefore(segment.node, control.root) && !containsBoundary(segment.el, ctx));
+        if (!segments.length) continue;
+        for (let i = segments.length - 1; i >= 0; i -= 1) {
+          const labelEl = labelLikeAncestor(segments[i].el, scope);
+          if (!labelEl || containsBoundary(labelEl, ctx)) continue;
+          const text = cleanLabel(joinSegments(segments.filter((s) => labelEl.contains(s.node))), placeholders);
+          if (text) return truncate(text, MAX_LABEL_CHARS);
+        }
+        const tail = cleanLabel(joinSegments(segments.slice(-3)), placeholders);
+        if (tail) return truncate(tail, MAX_LABEL_CHARS);
+      }
+    } catch {
+      // Best-effort diagnostic clue only.
+    }
+    return "";
+  }
+
   // #224 页面大纲：同一套逻辑控件归并和题目判断，但不按「能不能一键填写」筛掉控件——
   // 对不上题目、在页头或像站内搜索的也列出来，由大纲自己决定写不写。只读结构，不读值。
   // root 是 Document 或开放的 ShadowRoot。
@@ -1371,11 +1404,14 @@
         control.disabled = isDisabledControl(control, ctx);
         control.chrome = isPageChrome(control.root);
         control.searchLike = control.controlKind === "text" && control.elements.some(looksSearchLike);
+        control.fillable = control.controlKind !== "file" && !control.disabled && control.labelSource !== "none"
+          && !control.chrome && !(control.searchLike && !STRONG_SOURCES.has(control.labelSource));
         return true;
       } catch {
         return false;
       }
     });
+    const region = regionRoot(controls);
     const claimed = new Set(controls.map((control) => control.labelEl).filter(Boolean));
     return controls.flatMap((control) => {
       let found;
@@ -1384,6 +1420,9 @@
       } catch {
         return [];
       }
+      const outsideForm = Boolean(region && control.fillable && !region.contains(control.root)
+        && (!STRONG_SOURCES.has(control.labelSource) || control.searchLike));
+      const nearbyText = unlabeledClue(control, ctx);
       return [{
         kind: control.kind,
         controlKind: control.controlKind,
@@ -1397,6 +1436,8 @@
         disabled: control.disabled,
         chrome: control.chrome,
         searchLike: control.searchLike,
+        outsideForm,
+        nearbyText,
         pickerType: control.pickerType || "",
         rangePart: control.rangePart || "",
         mixed: Boolean(control.mixed),

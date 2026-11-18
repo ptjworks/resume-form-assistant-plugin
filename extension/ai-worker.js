@@ -438,6 +438,7 @@ async function handleAiFill(message, controller = new AbortController()) {
   const answeredFields = [];
   // 目录被裁剪的那几批里的题（trimmedUnanswered 数其中没答上的）。
   const trimmedFields = new Set();
+  const rejectedReasons = new Map();
   if (remainingFormFields.length) {
     const apiStart = performance.now();
     // 选项读得到、却没有一项资料填得进去的下拉不发，记作没有对应的资料，不算 AI 没匹配上。
@@ -489,8 +490,13 @@ async function handleAiFill(message, controller = new AbortController()) {
       if (controller.signal.aborted) break;
       if (batch.partial) batch.fields.forEach(field => trimmedFields.add(field.fieldId));
       try {
-        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)), withValues);
-        aiMatches.push(...ResumeProAIHelpers.filterValidMatches(batch.fields, found));
+        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)), withValues, rejectedReasons);
+        const valid = ResumeProAIHelpers.filterValidMatches(batch.fields, found);
+        const validIds = new Set(valid.map(match => match.fieldId));
+        for (const match of found) {
+          if (!match.blocked && !validIds.has(match.fieldId) && !rejectedReasons.has(match.fieldId)) rejectedReasons.set(match.fieldId, "invalid_value");
+        }
+        aiMatches.push(...valid);
         answeredFields.push(...batch.fields);
       } catch {
         if (SKIP_CODES.has(diagnostics.errorCode)) diagnostics.errorCode = "bad_response";
@@ -537,6 +543,16 @@ async function handleAiFill(message, controller = new AbortController()) {
   // #497 AI 看过、没给值的题（开放题除外）：网页按字段类别计数，看资料里有没有这一类。只有字段编号。
   diagnostics.unansweredIds = [...new Set(answeredFields.filter(field => !opinion(field) && !seenMatchIds.has(field.fieldId))
     .map(field => field.fieldId))].filter(id => typeof id === "string").slice(0, 200);
+  const missReasons = {};
+  let aiRejected = 0;
+  for (const id of diagnostics.unansweredIds) {
+    const rejected = rejectedReasons.get(id);
+    if (rejected) aiRejected += 1;
+    const reason = rejected || (trimmedFields.has(id) ? "catalog_trimmed" : "");
+    if (reason) missReasons[id] = reason;
+  }
+  if (aiRejected > 0) diagnostics.aiRejected = aiRejected;
+  if (Object.keys(missReasons).length) diagnostics.missReasons = missReasons;
   const warning = [...new Set(warnings)].join(" ");
   return { success: !warning || matches.some(match => !match.blocked), matches, warning, error: warning, diagnostics,
     ...(openView ? { openView } : {}) };
@@ -843,15 +859,23 @@ function promptFields(fields, catalog, withValues = false) {
 // 条目里自己写了值的，整条不要；多选只去掉这样的几项，剩下的照拼。
 // withValues（发资料原文）时，没有 fits 的下拉、单选的「编号 + 选项」先按 optionMatch 核对，对得上就填那个选项；对不上的照只有编号处理。
 // 带 fits 的不看 AI 给的选项：fits 被裁空的题整题不发（trimmedOut），本批里带 fits 的 fits 都不空，编号要在 fits 里，值按编号映射到选项。
-function refMatches(payload, fields, catalog, allowed, withValues = false) {
+function refMatches(payload, fields, catalog, allowed, withValues = false, rejectedReasons = null) {
   const source = Array.isArray(payload) ? payload : payload?.matches;
   if (!Array.isArray(source)) throw new Error("结果不是 JSON 数组。");
   const byId = new Map(fields.map(field => [field.fieldId, field]));
+  const noteReject = (fieldId, reason) => {
+    if (rejectedReasons && fieldId && !rejectedReasons.has(fieldId)) rejectedReasons.set(fieldId, reason);
+  };
   return source.flatMap(item => {
-    if (!item || typeof item !== "object" || item.value !== undefined) return [];
+    if (!item || typeof item !== "object") return [];
     const field = byId.get(String(item.fieldId ?? "").trim());
+    if (!field) return [];
+    if (item.value !== undefined) {
+      noteReject(field.fieldId, "raw_value");
+      return [];
+    }
     const list = Array.isArray(item.refs) ? item.refs : item.ref === undefined ? [] : [item.ref];
-    if (!field || !list.length) return [];
+    if (!list.length) return [];
     // 多选最多 20 项，别的题最多 8 项：再多的不填，报原因。
     if (list.length > (field.multiple === true ? 20 : 8)) return [{ fieldId: field.fieldId, value: "", blocked: "too_many_items" }];
     const option = withValues && !field.fits ? optionMatch(item, field, list, catalog, allowed) : null;
@@ -870,19 +894,40 @@ function refMatches(payload, fields, catalog, allowed, withValues = false) {
     });
     // 年、月、日只给问年月日的题（出生年份、毕业月份）和带 fits 的下拉：普通文本框（「期望年薪」）收到的整条不要。
     const parted = tokens.some(token => DATE_PARTS.includes(REF_TOKEN.exec(token)?.[2]));
-    if (parted && !field.fits && !asksPartOnly(field)) return [];
+    if (parted && !field.fits && !asksPartOnly(field)) {
+      noteReject(field.fieldId, "bad_date_part");
+      return [];
+    }
     // 同一个编号给了两次（refs: ["r1", "r1"]）只算一次，免得拼出「深圳、深圳」。
     tokens.splice(0, tokens.length, ...new Set(tokens));
-    const usable = token => (!allowed || allowed.has(REF_TOKEN.exec(token)?.[1])) && (!field.fits || field.fits.includes(token));
-    if (field.multiple === true) tokens.splice(0, tokens.length, ...tokens.filter(usable));
-    else if (tokens.some(token => !usable(token))) return [];
+    const inCatalog = token => Boolean(REF_TOKEN.exec(token)?.[1]) && (!allowed || allowed.has(REF_TOKEN.exec(token)?.[1]));
+    const usable = token => inCatalog(token) && (!field.fits || field.fits.includes(token));
+    const badFit = token => inCatalog(token) && Boolean(field.fits && !field.fits.includes(token));
+    if (field.multiple === true) {
+      const had = tokens.length;
+      const fitRejected = tokens.some(badFit);
+      tokens.splice(0, tokens.length, ...tokens.filter(usable));
+      if (!tokens.length && had) {
+        noteReject(field.fieldId, fitRejected ? "not_in_fits" : "bad_ref");
+        return [];
+      }
+    } else if (tokens.some(token => !usable(token))) {
+      noteReject(field.fieldId, tokens.some(badFit) ? "not_in_fits" : "bad_ref");
+      return [];
+    }
     if (!tokens.length) return [];
-    if (isTextAnswer(field) && !answersOnTopic(field, tokens, catalog)) return [];
+    if (isTextAnswer(field) && !answersOnTopic(field, tokens, catalog)) {
+      noteReject(field.fieldId, "off_topic");
+      return [];
+    }
     const values = tokens.map(token => refValue(token, field, catalog));
     // 问几样东西的文本题最多拼 3 项（joinRefValues）：再多的不填，报原因。
     if (isTextAnswer(field) && asksSeveral(field) && values.length > TEXT_JOIN_LIMIT) return [{ fieldId: field.fieldId, value: "", blocked: "too_many_items" }];
     const joined = values.every(Boolean) ? joinRefValues(field, values) : "";
-    if (!joined) return [];
+    if (!joined) {
+      noteReject(field.fieldId, "join_failed");
+      return [];
+    }
     // 日期控件只收写得成「2019-09」「2000-03-17」或「至今」的：别的不交给控件，记作没填上、报日期不对。
     if (isDateControl(field)) {
       const date = pickerDate(field, joined);
@@ -902,7 +947,11 @@ function refMatches(payload, fields, catalog, allowed, withValues = false) {
       return [coarse ? { fieldId: field.fieldId, value: "", blocked: "region_too_coarse" } : { fieldId: field.fieldId, value }];
     }
     const value = ResumeProAIHelpers.choiceValue(field, joined);
-    return value ? [{ fieldId: field.fieldId, value }] : [];
+    if (!value) {
+      noteReject(field.fieldId, "invalid_value");
+      return [];
+    }
+    return [{ fieldId: field.fieldId, value }];
   });
 }
 
