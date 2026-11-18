@@ -78,12 +78,14 @@ GET /private?dedupe_key=<去重键>&limit=<1～20，默认 5>
 
 私有层是尽力写的：写失败时报告照样收下、照样进 `/pending`，日志里留一行 `private_diagnostics not stored for <id>`（不含内容）。
 
-调用示例（口令经管道传给 curl，不进命令行和网址）：
+调用示例（可用 `scripts/feedback-private.mjs` 直接按 Issue 编号或 `dedupe_key` 拉取并格式化，口令经环境变量或标准输入传入，不进命令行参数和网址）：
 
 ```sh
+node scripts/feedback-private.mjs --issue 533
+
+# 或手动经管道传给脚本 / curl：
 op-sensitive read "op://Dev-Sensitive/app-feedback-relay PRIVATE_READ_SECRET/credential" \
-  | { IFS= read -r secret; printf 'header = "x-private-secret: %s"\n' "$secret"; } \
-  | curl -sS -K - "https://feedback.19991107.xyz/private?dedupe_key=v3:0123456789abcdef&limit=5"
+  | node scripts/feedback-private.mjs --issue 533
 ```
 
 ### 发布列表（/releases）

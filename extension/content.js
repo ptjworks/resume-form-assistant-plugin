@@ -3720,6 +3720,7 @@
     // #408 扫描出错（整页没扫完，或有控件读不出来被跳过）：错误类型和本扩展代码的位置（feedback-core 的 exception()），
     // 只进本地诊断文字。
     let scanFault = null;
+    let scanDroppedNodes = [];
     // 诊断 v1（#215）：失败卡在哪一步，以及这个页面像不像网申填写页。
     const readyAtScan = document.readyState === "complete";
     let scanDone = false;
@@ -3773,6 +3774,7 @@
       // 别的控件读出来了、只是禁用或对不上题目时不算，照常给「没找到输入框」那类提示，出错的那一项在 describeScan 里上报。
       if (scanned.unreadable && !scanned.fields.length) {
         stats = scanned.stats;
+        scanDroppedNodes = scanned.droppedNodes || [];
         throw scanned.fault;
       }
       let fieldMap = scanned.fieldMap;
@@ -3785,6 +3787,7 @@
       scanDone = true;
       const describeScan = () => {
         fieldCount = fields.length;
+        scanDroppedNodes = scanned.droppedNodes || [];
         // 和页面探测比较、相减的只算顶层的字段：探测只数顶层的自定义控件和只读框（#400 框架里的字段不算）。
         const topFields = fields.filter(field => entryDocument(fieldMap.get(field.fieldId)) === document);
         scannedCustom = topFields.filter(field => ["custom-select", "cascader"].includes(field.controlKind)).length;
@@ -3922,7 +3925,7 @@
         // 读页面出错（网页改过的 getter）只少几项诊断，不打断填写。
         const shape = controlShapes.get(control);
         const current = shape && shape.session === session ? shape : null;
-        const kind = fieldKindOf(label);
+        const kind = resolveFieldKind(fieldMeta, label);
         let form = null;
         try { form = controlForm(element, current, observed.opened); } catch { form = null; }
         unfilledControls.push({ label: overlaps || showsResume ? '（字段名已隐藏）' : label, reason: why, kind,
@@ -3932,12 +3935,24 @@
           // 深度填写：插件实际按哪种控件去操作的（说明书给的类型经 DOM 校正后），分清是类型判错还是组件打不开。
           ...(element.deepRef ? { operated: element.controlKind } : {}) });
         try {
+          const limit = isHtmlElement(control) ? (textLimits.get(control) || textLimit(control)) : null;
+          const maxLength = limit && Number.isInteger(limit.max) && limit.max > 0 ? `${limit.max}${limit.bytes ? 'B' : ''}` : '';
+          const errorTip = isHtmlElement(control) ? fieldErrorText(control) : '';
           privateUnfilled.push({ label, section: fieldSection(element, fieldMeta), kind, reasonCode: reason, nodes: fieldNodes(element),
-            ...privateOptions(element, fieldMeta, label, kind, current) });
+            ...privateOptions(element, fieldMeta, label, kind, current),
+            ...(maxLength ? { maxLength } : {}),
+            ...(errorTip ? { errorTip } : {}) });
         } catch { /* diagnostics never break the fill */ }
       };
       const matchedKindIds = new Set();
       const usedMissedByKind = new Map();
+      const resolveFieldKind = (meta, fallbackLabel = '') => {
+        for (const text of [fallbackLabel, meta?.label, meta?.placeholder, meta?.name]) {
+          const kind = fieldKindOf(text);
+          if (kind !== 'unknown') return kind;
+        }
+        return 'unknown';
+      };
       const noteMatchedKinds = list => {
         if (!Array.isArray(list)) return;
         for (const match of list) {
@@ -3945,7 +3960,7 @@
           const meta = fieldMetaMap.get(match.fieldId);
           if (!meta) continue;
           matchedKindIds.add(match.fieldId);
-          const kind = fieldKindOf(meta.label || meta.placeholder || meta.name || '');
+          const kind = resolveFieldKind(meta);
           if (kind !== 'unknown') matchedByKind.set(kind, (matchedByKind.get(kind) || 0) + 1);
         }
       };
@@ -3964,7 +3979,7 @@
       };
       // #497 AI 看过、没给值的字段（ai-worker 的 unansweredIds）：类别、资料里有没有这一类，私有诊断再带题目和选项。
       // #528 重复条目的第 N 行（rowIndex > 1）只在简历中该类条目数不少于 N 时才算 inResume，避免多出的空白行误报 ai_missed。
-      const noteAiMisses = (ids, matchedList = null) => {
+      const noteAiMisses = (ids, matchedList = null, missReasons = null) => {
         noteMatchedKinds(matchedList);
         if (!Array.isArray(ids)) return;
         for (const id of ids) {
@@ -3972,9 +3987,11 @@
           const entry = fieldMap.get(id);
           if (!meta || !entry || aiMisses.some(item => item.fieldId === id)) continue;
           const label = meta.label || meta.placeholder || meta.name || '';
-          const kind = fieldKindOf(label);
+          const kind = resolveFieldKind(meta, label);
           const inResume = isMissInResume(meta, kind);
+          const missReason = missReasons && typeof missReasons === 'object' && typeof missReasons[id] === 'string' ? missReasons[id] : '';
           aiMisses.push({ fieldId: id, label, section: fieldSection(entry, meta), kind, inResume,
+            ...(missReason ? { missReason } : {}),
             nodes: fieldNodes(entry), ...privateOptions(entry, meta, label, kind, null) });
         }
       };
@@ -4133,7 +4150,7 @@
         answered.forEach(id => grownMatchedIds.add(id));
         grown.matched += answered.size;
         const d = reply?.diagnostics || {};
-        try { noteAiMisses(d.unansweredIds, more); } catch { /* diagnostics never break the fill */ }
+        try { noteAiMisses(d.unansweredIds, more, d.missReasons); } catch { /* diagnostics never break the fill */ }
         const counted = value => Number.isInteger(value) && value > 0 ? value : 0;
         grown.local += counted(d.ruleMatches);
         grown.aiFields += counted(d.aiFields);
@@ -4307,7 +4324,7 @@
         if (waitHint) waitHint.hidden = true;
         diagnostics = response?.diagnostics || {};
         responded = Boolean(response);
-        try { noteAiMisses(diagnostics.unansweredIds, response?.matches); } catch { /* diagnostics never break the fill */ }
+        try { noteAiMisses(diagnostics.unansweredIds, response?.matches, diagnostics.missReasons); } catch { /* diagnostics never break the fill */ }
         aiDown = Boolean(self.ResumeProFeedback?.requestFailed?.(diagnostics.errorCode));
         // Cancellation may race a successful AI reply. Only the worker's explicitly
         // cancelled response may retain its documented local matches.
@@ -4861,11 +4878,13 @@
       if (entry === "panel" && upload.reportForFill && upload.report) reportInput.upload = upload.report;
       upload.reportForFill = false;
       writeFillDiagnostics(reportInput);
-      // #497 私有诊断的材料：有没写上的、AI 没匹配上的字段，或扫描出错时才留。拼成文字（要遍历整页做大纲）留到用得上时：
-      // 同意了自动报告、这次要发的时候（放开忙碌状态之后），或手动反馈预览的时候。
+      // #497 私有诊断的材料：有没写上的、AI 没匹配上的字段、扫描丢弃的字段（本次填写存在故障时），或扫描出错时才留。
+      // 拼成文字（要遍历整页做大纲）留到用得上时：同意了自动报告、这次要发的时候（放开忙碌状态之后），或手动反馈预览的时候。
       // 没同意自动报告的人，自动报告和手动反馈都不带私有层：页面元素和资料值不留到下一次填写。
-      lastPrivate = feedbackAgreed && (privateUnfilled.length || aiMisses.length || scanFault?.message)
-        ? { input: { unfilled: privateUnfilled, missed: aiMisses, fault: scanFault, values: privateValues || redactionValues(activeTemplate, profileFields) },
+      const includeDropped = Boolean(scanDroppedNodes.length && (verdict.category !== "none" || hinted));
+      lastPrivate = feedbackAgreed && (privateUnfilled.length || aiMisses.length || includeDropped || scanFault?.message)
+        ? { input: { unfilled: privateUnfilled, missed: aiMisses, dropped: includeDropped ? scanDroppedNodes : [], fault: scanFault,
+            values: privateValues || redactionValues(activeTemplate, profileFields) },
           text: null } : null;
       const privateHolder = lastPrivate;
       // Feedback cannot delay filling, archiving or releasing the busy state.
@@ -5019,7 +5038,7 @@
   // #497 私有诊断：题目原文、分组标题、选项列表、出错字段附近的页面大纲、扫描出错的原文。都过深度分析发送前的那套脱敏
   // （page-outline.js：手机号、邮箱、证件号、网址、凭据和资料里有的文字换成「〔内容〕」，密码、验证码类的控件跳过）。
   // 选项不按资料值藏：藏起来的那一项就是要选的那一项，只挡手机号、证件号、网址这类。不收字段值，也不标出想选的是哪一项。
-  function buildPrivateReport({ unfilled, missed, fault, values }) {
+  function buildPrivateReport({ unfilled, missed, dropped = [], fault, values }) {
     const feedback = self.ResumeProFeedback;
     const outline = self.ResumeProPageOutline;
     if (!feedback?.privateReport || !outline?.createRedactor) return "";
@@ -5027,8 +5046,11 @@
     const plain = outline.createRedactor([]);
     const field = item => ({ label: redact(item.label, 80), section: redact(item.section, 40), kind: item.kind, reasonCode: item.reasonCode,
       ...(typeof item.inResume === "boolean" ? { inResume: item.inResume } : {}),
-      ...(item.options ? { options: item.options.map(text => plain(text, 20)).filter(Boolean), optionTotal: item.optionTotal } : {}) });
-    const nodes = [...unfilled, ...missed].flatMap(item => item.nodes || []);
+      ...(item.options ? { options: item.options.map(text => plain(text, 20)).filter(Boolean), optionTotal: item.optionTotal } : {}),
+      ...(item.missReason ? { missReason: item.missReason } : {}),
+      ...(item.maxLength ? { maxLength: item.maxLength } : {}),
+      ...(item.errorTip ? { errorTip: redact(item.errorTip, 80) } : {}) });
+    const nodes = [...unfilled, ...missed].flatMap(item => item.nodes || []).concat(Array.isArray(dropped) ? dropped : []);
     let page = "";
     if (nodes.length && outline.excerpt) {
       try {
@@ -5324,7 +5346,8 @@
 
     // fault：逐项跳过时第一个出错的原因（#408），只给一键填写上报用，不进诊断。unreadable：有文档的控件一个都没读出来。
     return { fields, fieldMap, stats: scanStats(scans, fields.length), fault: scans.find(({ scan }) => scan.fault)?.scan.fault || null,
-      unreadable: scans.some(({ scan }) => scan.unreadable) };
+      unreadable: scans.some(({ scan }) => scan.unreadable),
+      droppedNodes: scans.flatMap(({ scan }) => scan.droppedNodes || []).slice(0, 15) };
   }
 
   function bossEducationSchoolMatches(element, expected) {
@@ -6614,6 +6637,34 @@
       }
     }
     return false;
+  }
+
+  function fieldErrorText(element) {
+    if (!element?.ownerDocument) return "";
+    const ids = `${element.getAttribute?.("aria-describedby") || ""} ${element.getAttribute?.("aria-errormessage") || ""}`
+      .split(/\s+/)
+      .filter(Boolean);
+    for (const id of ids) {
+      const node = docOf(element).getElementById?.(id);
+      if (node && node !== element && isShown(node) && (looksLikeFieldError(node) || node.getAttribute?.("role") === "alert")
+        && !node.querySelector?.("input, select, textarea")) {
+        const text = String(node.textContent || "").trim();
+        if (text) return text;
+      }
+    }
+    const container = associatedContainer(element);
+    if (!container) return "";
+    const stack = [...(container.children || [])];
+    while (stack.length) {
+      const node = stack.shift();
+      if (node === element) continue;
+      if (looksLikeFieldError(node) && isShown(node) && !node.querySelector?.("input, select, textarea")) {
+        const text = String(node.textContent || "").trim();
+        if (text) return text;
+      }
+      if (node?.children?.length) stack.push(...node.children);
+    }
+    return "";
   }
 
   function containerFrameworkUnsynced(element) {

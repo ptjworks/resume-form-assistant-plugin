@@ -428,3 +428,170 @@ test("先填了学校这类文本框、再点开的下拉：列表可能按填�
   assert.match(report?.private || "", /^label: 所学专业\nsection: 教育信息\nkind: 专业\nreason: no_option_match$/m);
   assert.doesNotMatch(report.private, /计算机科学/);
 });
+
+test("扫描阶段因 no_label 丢弃的控件也进入私有层大纲，附带 name、邻近文本线索与未知组件 cls 前缀", async (t) => {
+  // 同一容器内两个输入框共用上方文字，无子项区分，触发 scanPage 的 noLabel 丢弃（candidates=0 -> fill_failed）。
+  const body = `<form><h3>投递意向</h3>
+    <div class="row">
+      <div class="field-label">期望工作地点与备选城市</div>
+      <div class="controls">
+        <input class="byte-input__inner" name="expect_city_primary">
+        <input class="byte-input__inner" name="expect_city_backup">
+      </div>
+    </div>
+  </form>`;
+  const p = page(t, {
+    body,
+    resume: { 期望城市: "上海" },
+    ai: () => ({ success: true, matches: [], diagnostics: { errorCode: "none" } })
+  });
+  await p.run();
+  const report = p.reports.find((entry) => entry.kind === "fill_failed");
+  assert.ok(report?.private, "candidates=0 时只要有 no_label 丢弃节点也生成私有层大纲");
+  assert.match(report.private, /^\[页面大纲\]\n\[区块\] 投递意向$/m);
+  assert.match(report.private, /^> {1}e1 input\[text\] cls=byte-input__inner name=expect_city_primary 邻近="期望工作地点与备选城市"$/m);
+  assert.match(report.private, /^> {1}e2 input\[text\] cls=byte-input__inner name=expect_city_backup 邻近="期望工作地点与备选城市"$/m);
+});
+
+test("未填字段私有层附带脱敏后的页面校验提示（error_tip）与字数上限（max_length），AI 拦截附带 miss_reason", async (t) => {
+  const body = `<form><h3>基本信息</h3>
+    <div class="form-item">
+      <label for="award">获奖经历</label>
+      <input id="award" maxlength="50">
+      <div class="field-error" role="alert">格式错误：测试用户请勿输入特殊字符 13800138000</div>
+    </div>
+    ${item("承担工作", '<input id="role" placeholder="请输入担任角色">')}
+    ${item("院系", '<input id="dept">')}
+    ${item("是否服从调剂", '<input id="adj">')}
+  </form>`;
+  const resume = {
+    姓名: "测试用户",
+    获奖名称: "国家奖学金",
+    职位: "后端开发",
+    专业: "计算机科学与技术",
+    期望: "同意"
+  };
+  const p = page(t, {
+    body,
+    resume,
+    setup: (w) => {
+      const award = w.document.getElementById("award");
+      award.addEventListener("blur", () => {
+        award.value = "";
+      });
+    },
+    ai: (message, ids) => ({
+      success: true,
+      matches: [{ fieldId: ids["获奖经历"], value: "国家奖学金" }],
+      diagnostics: {
+        ruleMatches: 0,
+        aiFields: message.formFields.length,
+        aiMatches: 1,
+        aiRejected: 2,
+        promptBytes: 600,
+        apiMs: 500,
+        errorCode: "none",
+        unansweredIds: [ids["承担工作"], ids["院系"], ids["是否服从调剂"]].filter(Boolean),
+        missReasons: {
+          [ids["承担工作"]]: "off_topic",
+          [ids["院系"]]: "not_in_fits",
+          [ids["是否服从调剂"]]: "catalog_trimmed"
+        }
+      }
+    })
+  });
+  await p.run();
+  const report = p.reports.find((entry) => entry.kind === "fill_failed" || entry.kind === "fill_partial");
+  assert.ok(report?.private, JSON.stringify(p.reports));
+  const sent = await send(report);
+  const hidden = sent.private_diagnostics;
+  // 未填字段包含 max_length 和脱敏后的 error_tip（姓名和手机号被隐去）
+  assert.match(hidden, /^\[未填字段 1\]\nlabel: 获奖经历\nsection: 基本信息\nkind: 获奖\nreason: value_not_committed\nmax_length: 50\nerror_tip: 〔内容〕$/m);
+  assert.ok(!hidden.includes("测试用户") && !hidden.includes("13800138000"));
+  // 承担工作（label 本身不在表里，靠 placeholder 识别为「职位」）、院系（专业）、是否服从调剂（期望）及各自的 miss_reason
+  assert.match(hidden, /^\[AI未匹配 1\]\nlabel: 承担工作\nsection: 基本信息\nkind: 职位\nin_resume: yes\nmiss_reason: off_topic$/m);
+  assert.match(hidden, /^\[AI未匹配 2\]\nlabel: 院系\nsection: 基本信息\nkind: 专业\nin_resume: yes\nmiss_reason: not_in_fits$/m);
+  assert.match(hidden, /^\[AI未匹配 3\]\nlabel: 是否服从调剂\nsection: 基本信息\nkind: 期望\nin_resume: yes\nmiss_reason: catalog_trimmed$/m);
+});
+
+test("ai-worker 拒绝无效 AI 回答时在 diagnostics.missReasons 和 aiRejected 中记录原因", async () => {
+  let sequence = 0;
+  const ctx = vm.createContext({
+    importScripts() {},
+    ResumeProAIHelpers: require("../extension/ai-helpers.js"),
+    ResumeProProfile: require("../extension/profile-fields.js"),
+    AbortController,
+    TextEncoder,
+    performance: { now: () => 0 },
+    crypto: { randomUUID: () => `call-${++sequence}` }
+  });
+  ctx.self = {
+    postMessage(message) {
+      if (message.kind !== "desktop-complete") return;
+      const text = JSON.stringify({
+        matches: [
+          { fieldId: "f_raw", value: "直接写了值" },
+          { fieldId: "f_fit", ref: "r2" },
+          { fieldId: "f_badref", ref: "r99" },
+          { fieldId: "f_part", ref: "r3.year" },
+          { fieldId: "f_topic", ref: "r1" }
+        ]
+      });
+      queueMicrotask(() => ctx.self.onmessage({ data: { kind: "desktop-result", callId: message.callId, reply: { ok: true, text } } }));
+    }
+  };
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "ai-worker.js"), "utf8"), ctx);
+  const res = await ctx.handleAiFill({
+    formFields: [
+      { fieldId: "f_raw", label: "研究方向", inputType: "text", tagName: "input" },
+      { fieldId: "f_fit", label: "学历层次", inputType: "select", tagName: "select", options: ["硕士", "博士"] },
+      { fieldId: "f_badref", label: "院系名称", inputType: "text", tagName: "input" },
+      { fieldId: "f_part", label: "期望年薪", inputType: "text", tagName: "input" },
+      { fieldId: "f_topic", label: "为什么选择我们公司", inputType: "text", tagName: "input" }
+    ],
+    resumeFields: [
+      { group: "教育经历", key: "学历", value: "硕士" },
+      { group: "基本信息", key: "期望城市", value: "北京" },
+      { group: "基本信息", key: "毕业时间", value: "2025-06" }
+    ]
+  });
+  assert.equal(res.diagnostics.aiMatches, 0);
+  assert.equal(res.diagnostics.aiRejected, 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(res.diagnostics.missReasons)), {
+    f_raw: "raw_value",
+    f_fit: "not_in_fits",
+    f_badref: "bad_ref",
+    f_part: "bad_date_part"
+  });
+});
+
+test("scripts/feedback-private.mjs 解析参数、提取 Issue 去重键并格式化输出", async () => {
+  const { parseArgs, extractDedupeKeyFromBody, formatPrivateItems } = await import("../scripts/feedback-private.mjs");
+  assert.deepEqual(parseArgs(["--issue", "#533", "--limit", "3"]), {
+    issue: "533",
+    dedupeKey: "",
+    id: "",
+    limit: 3,
+    json: false
+  });
+  assert.equal(
+    extractDedupeKeyFromBody("正文\n<!-- feedback-dedupe-key: v3:e6e98b22700e37f9 -->\n"),
+    "v3:e6e98b22700e37f9"
+  );
+  const formatted = formatPrivateItems(
+    {
+      ok: true,
+      items: [
+        {
+          id: "11111111-2222-3333-4444-555555555555",
+          app_version: "0.5.1",
+          server_ts: "2026-11-17T13:18:02.365Z",
+          private_diagnostics: "--- 私有诊断 v1 ---\n[AI未匹配 1]\nlabel: 实习经历"
+        }
+      ]
+    },
+    { dedupeKey: "v3:e6e98b22700e37f9" }
+  );
+  assert.match(formatted, /Dedupe Key: v3:e6e98b22700e37f9/);
+  assert.match(formatted, /--- 私有诊断 v1 ---/);
+});

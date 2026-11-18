@@ -567,6 +567,39 @@
   // 资料里的值，等于标出了要选哪一项：这种选项列表整段换成「（略）」；复选框自己的文字一律不带。
   const EXCERPT_AROUND = 3;
   const EXCERPT_CHARS = 2500;
+  const CLASS_HINT_TOKEN = /^(?:[a-z][a-z0-9]{0,15}[-_]{1,2})+(?:select|selector|dropdown|combobox|combo|picker|cascader|date|datepicker|calendar|input|textarea|radio|checkbox|switch)(?:[-_]{1,2}[a-z0-9]+)?$/i;
+  const GENERIC_CLASS_HINT = /^(?:form[-_](?:control|input|select|field|item)|input[-_](?:box|wrap|wrapper|group|inner|field)|select[-_](?:box|wrap|wrapper|input)|field[-_](?:input|control|select)|text[-_]?input|custom[-_]?select|css-[-a-z0-9]+|sc-[-a-z0-9]+)$/i;
+  function customClassHint(el) {
+    if (libraryOf(el)) return "";
+    for (let current = el, depth = 0; current && depth <= 4; current = current.parentElement, depth += 1) {
+      const tokens = typeof current.className === "string" ? current.className.split(/\s+/) : [];
+      for (const token of tokens) {
+        if (token.length <= 36 && CLASS_HINT_TOKEN.test(token) && !GENERIC_CLASS_HINT.test(token)) {
+          return token;
+        }
+      }
+    }
+    return "";
+  }
+
+  function excerptMeta(item, redact) {
+    if (!item || item.type !== "control") return [];
+    const extra = [];
+    const cls = customClassHint(item.root || item.element);
+    if (cls) extra.push(`cls=${cls}`);
+    if (item.control?.outsideForm) extra.push("区域外");
+    const label = item.control?.label || attr(item.element, "aria-label");
+    if (!label) {
+      const rawName = attr(item.element, "name");
+      if (/^[A-Za-z][A-Za-z0-9_.-]{0,39}$/.test(rawName) && !sensitiveShape(rawName) && redact(rawName, 40) === rawName) {
+        extra.push(`name=${rawName}`);
+      }
+      const nearby = item.control?.nearbyText ? redact(item.control.nearbyText, MAX_SEGMENT) : "";
+      if (nearby) extra.push(`邻近="${nearby}"`);
+    }
+    return extra;
+  }
+
   function excerpt(doc, targets, options = {}) {
     const wanted = new Set(Array.from(targets || []).filter(Boolean));
     if (!wanted.size) return "";
@@ -598,7 +631,14 @@
       // 复选框自己的文字是 lineFor 里前面带空格的那一段引号（ph="…" 的引号前是等号）。
       if (/^ {2}e\d+ checkbox\b/.test(line)) line = line.replace(/ "[^"]*"/, "");
       const ref = /^ {2}(e\d+) /.exec(line)?.[1];
-      if (ref && refs.has(ref)) line = `>${line.slice(1)}`;
+      if (ref && refs.has(ref)) {
+        const extra = excerptMeta(built.nodes.get(ref), built.redact);
+        if (extra.length) {
+          const arrow = line.indexOf(" ← ");
+          line = arrow >= 0 ? `${line.slice(0, arrow)} ${extra.join(" ")}${line.slice(arrow)}` : `${line} ${extra.join(" ")}`;
+        }
+        line = `>${line.slice(1)}`;
+      }
       out.push(line);
       last = at;
     }
