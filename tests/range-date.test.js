@@ -555,3 +555,72 @@ test("#301 an unknown range that only takes whole days still gets them when the 
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(boxes.map((box) => box.value), ["2019-09-01", "2023-06-01"]);
 });
+
+// #301 小米（飞书招聘旧版 atsx 组件，这里用 ant- 前缀）的年月区间：两个「YYYY-MM」标签，背后只有一个不存值的隐藏输入框。
+// 点标签打开「年份列 | 月份列」的面板；点年份、再点月份就选好；选完开始，网站自动打开结束的面板。
+function periodPicker(title = "起止时间") {
+  const label = (part) => `<div class="ant-date-picker-period-month-label" data-part="${part}"><span>YYYY</span><span>-</span><span>MM</span></div>`;
+  const h = load(`<div class="row"><label class="row-label">${title}</label>
+    <div class="ant-date-picker ant-date-picker-period-month">${label(0)}<div class="ant-date-picker-period-line"></div>${label(1)}
+    <input class="ant-date-picker-period-hidden-input"></div></div>`);
+  const { doc } = h;
+  const labels = Array.from(doc.querySelectorAll(".ant-date-picker-period-month-label"));
+  const log = { opened: [] };
+  let layer = null;
+  const close = () => { layer?.remove(); layer = null; };
+  const open = (part) => {
+    close();
+    log.opened.push(part);
+    layer = doc.createElement("div");
+    layer.className = "ant-date-picker-dropdown";
+    const years = Array.from({ length: 30 }, (_, i) => 2030 - i).map((y) => `<div class="ant-date-picker-period-month-panel-list-item">${y}</div>`).join("");
+    layer.innerHTML = `<div class="ant-date-picker-period-month-panel"><div class="ant-date-picker-period-month-panel-list">${years}</div></div>`;
+    doc.body.append(layer);
+    let year = "";
+    layer.querySelectorAll(".ant-date-picker-period-month-panel-list-item").forEach((item) => item.addEventListener("click", () => {
+      year = item.textContent;
+      const panel = layer.querySelector(".ant-date-picker-period-month-panel");
+      panel.querySelectorAll(".ant-date-picker-period-month-panel-list")[1]?.remove();
+      const months = doc.createElement("div");
+      months.className = "ant-date-picker-period-month-panel-list";
+      months.innerHTML = Array.from({ length: 12 }, (_, i) => `<div class="ant-date-picker-period-month-panel-list-item">${String(i + 1).padStart(2, "0")}</div>`).join("");
+      panel.append(months);
+      months.querySelectorAll(".ant-date-picker-period-month-panel-list-item").forEach((m) => m.addEventListener("click", () => {
+        labels[part].innerHTML = `<span>${year}</span><span>-</span><span>${m.textContent}</span>`;
+        if (part === 0) setTimeout(() => open(1), 20); else close();
+      }));
+    }));
+  };
+  labels.forEach((el, part) => el.addEventListener("click", () => (layer ? close() : open(part))));
+  doc.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+  const shown = () => labels.map((el) => el.textContent.replace(/\s+/g, ""));
+  return { ...h, labels, log, shown, isOpen: () => Boolean(layer) };
+}
+
+test("#301 a year-month period picker fills both ends from one span, using the end panel the page opens by itself", async () => {
+  const h = periodPicker();
+  const { start, end } = parts(h.doc, "起止时间");
+  assert.equal(start.pickerType, "period");
+  const value = "2022.09 - 2027.06（预计毕业）";
+  const result = await h.api.operate(start, value, { range: { entry: end, value } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.shown(), ["2022-09", "2027-06"]);
+  assert.deepEqual(h.log.opened, [0, 1], "the end panel is the one the page opened, not clicked open again");
+  assert.equal(h.isOpen(), false);
+  const again = await h.api.operate(end, value, { range: { entry: start, value } });
+  assert.equal(again.ok, true, JSON.stringify(again));
+  assert.deepEqual(h.log.opened, [0, 1], "an end that already shows the date is not reopened");
+});
+
+test("#301 a lone start closes the end panel the page opened, and a year off the list is not guessed", async () => {
+  const h = periodPicker();
+  const { start, end } = parts(h.doc, "起止时间");
+  const result = await h.api.operate(start, "2021.03", { range: { entry: end, value: null } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.shown(), ["2021-03", "YYYY-MM"]);
+  assert.equal(h.isOpen(), false);
+  const far = await h.api.operate(end, "1990.06", { range: { entry: start, value: null } });
+  assert.equal(far.ok, false);
+  assert.equal(far.reason, "no_option_match");
+  assert.equal(h.isOpen(), false);
+});

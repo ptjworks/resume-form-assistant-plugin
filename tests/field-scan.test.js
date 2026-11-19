@@ -525,3 +525,27 @@ test("#301 side-by-side selects without telling placeholders stay unlabelled", (
   t.after(() => doc.defaultView.close());
   assert.equal(scan(doc).skipped.noLabel, 2);
 });
+
+test("#301 小米: a component's own English aria-label is not the question, and a note beside the <label> is not part of it", (t) => {
+  const doc = load(`<form>
+    <div class="atsx-form-item"><div class="atsx-form-item-label"><label>期望工作地点</label></div>
+      <div class="atsx-form-item-control"><div class="atsx-select"><input class="atsx-select-search__field" aria-label="filter select" aria-autocomplete="list"></div></div></div>
+    <div class="atsx-form-item"><div class="atsx-col atsx-form-item-label"><label for="p"><div class="customResumeForm-fieldName">专业</div><div class="customResumeForm-fieldName-desc"></div></label>
+      <div style="color: gray">请填写主修专业的全称</div></div><div class="atsx-form-item-control"><input id="x"></div></div>
+    </form>`);
+  t.after(() => doc.defaultView.close());
+  assert.deepEqual(labels(scan(doc)), ["期望工作地点", "专业"]);
+});
+
+// 替身用 ant- 前缀：小米真站是换了前缀的 atsx-，由 antd-prefix.js 按页面展开（见 antd-prefix.test.js）。
+test("#301 小米: the year-month period picker with one hidden input becomes a start and an end field", (t) => {
+  const label = `<div class="ant-date-picker-period-month-label"><span>YYYY</span><span>-</span><span>MM</span></div>`;
+  const doc = load(`<form><div class="ant-form-item"><div class="ant-form-item-label"><label>起止时间</label></div>
+    <div class="ant-form-item-control"><div class="ant-date-picker ant-date-picker-period-month">${label}<div class="ant-date-picker-period-line"></div>${label}
+    <input class="ant-date-picker-period-hidden-input"></div></div></div>
+    <div class="ant-form-item"><div class="ant-form-item-label"><label for="n">姓名</label></div><input id="n" class="ant-input"></div></form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  const parts = result.controls.filter((control) => control.controlKind === "date-picker");
+  assert.deepEqual(parts.map((control) => [control.label, control.pickerType, control.rangePart]), [["起止时间（开始）", "period", "开始"], ["起止时间（结束）", "period", "结束"]]);
+});

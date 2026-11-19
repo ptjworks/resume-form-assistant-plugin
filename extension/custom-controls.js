@@ -985,6 +985,80 @@
     return outcome;
   }
 
+  // #301 小米（飞书招聘旧版 atsx 组件）的年月区间 .ant-date-picker-period-month：两个「YYYY-MM」标签，点开是「年份列 | 月份列」的面板，
+  // 点年份、再点月份就选好；选完开始的月份，网站自动打开结束的面板。背后的隐藏输入框不存值，填没填上只看标签上的字。
+  const PERIOD_ROOT = '.ant-date-picker-period-month';
+  const periodLabels = root => Array.from(root?.querySelectorAll?.(antd(root, '.ant-date-picker-period-month-label')) || [])
+    .filter(label => label.parentElement === root);
+  const periodText = label => { const text = trim(label?.textContent).replace(/\s+/g, ''); return /^\d{4}-\d{2}$/.test(text) ? text : ''; };
+  function periodRoot(entry) {
+    const root = entry?.root;
+    return root?.matches?.(antd(root, PERIOD_ROOT)) && periodLabels(root).length === 2 ? root : null;
+  }
+  // 这一头标签上显示的年月（没选时显示「YYYY-MM」占位，算空）。
+  function periodShown(entry) {
+    const root = periodRoot(entry);
+    return root ? periodText(periodLabels(root)[entry?.binding?.rangePart === '结束' ? 1 : 0]) : '';
+  }
+  async function pickPeriod(ctx, raw, h) {
+    const root = periodRoot(ctx.entry);
+    if (!root) return { reason: 'unsupported_control' };
+    const doc = root.ownerDocument, labels = periodLabels(root);
+    const own = ctx.entry.binding?.rangePart === '结束' ? 1 : 0, other = 1 - own;
+    const part = index => (index ? '结束' : '开始');
+    const month = (text, index) => {
+      // 只用「开始 / 结束」取一头：题目本身已经带着这一头的名字（「起止时间（开始）」），拼上另一头会两头都像。
+      const one = h.helpers.rangeDateValue?.(String(text ?? ''), part(index)) ?? text;
+      const value = h.helpers.normalizeDateValue?.(String(one ?? '').trim(), 'month') ?? '';
+      return /^\d{4}-\d{2}$/.test(value) ? value : '';
+    };
+    const want = [];
+    want[own] = month(raw, own);
+    if (!want[own]) return { reason: PRESENT.test(trim(h.helpers.rangeDateValue?.(String(raw ?? ''), part(own)) ?? raw)) ? 'no_option_match' : 'invalid_date' };
+    // 另一头这次也要填（宿主把它的值一起交来）就接着选；网站选完开始会自动打开结束的面板。
+    const partner = ctx.options.range?.entry?.root === root ? ctx.options.range : null;
+    want[other] = partner?.value != null ? month(partner.value, other) : month(raw, other) !== want[own] ? month(raw, other) : '';
+    if (want[0] && want[1] && want[0] > want[1]) return { reason: 'invalid_date' };
+    const panels = () => Array.from(doc.querySelectorAll(antd(doc, '.ant-date-picker-dropdown')))
+      .filter(layer => h.visible(layer) && layer.querySelector(antd(layer, '.ant-date-picker-period-month-panel')));
+    const lists = layer => Array.from(layer.querySelectorAll(antd(layer, '.ant-date-picker-period-month-panel-list')));
+    const itemIn = (list, text) => Array.from(list?.querySelectorAll(antd(list, '.ant-date-picker-period-month-panel-list-item')) || [])
+      .filter(item => trim(item.textContent) === text);
+    ctx.observed = { ...ctx.observed, popupRole: 'calendar' };
+    let autoOpened = null;
+    for (const index of [0, 1]) {
+      if (!want[index] || periodText(labels[index]) === want[index]) { autoOpened = null; continue; }
+      let layer = autoOpened && autoOpened.isConnected && h.visible(autoOpened) ? autoOpened : null;
+      if (!layer) {
+        const before = new Set(panels());
+        const reason = h.click(labels[index], ctx); if (reason) return { reason };
+        const opened = await h.waitUntil(ctx, doc.documentElement, () => { const fresh = panels().filter(item => !before.has(item)); return fresh.length === 1 ? fresh[0] : null; }, Boolean, 1500);
+        if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
+        layer = opened.value;
+      }
+      ctx.popup = layer;
+      const [year, mm] = want[index].split('-');
+      const years = itemIn(lists(layer)[0], year);
+      if (years.length !== 1) { await leaveCalendar(ctx, ctx.el, root, layer, h); return { reason: 'no_option_match' }; }
+      years[0].scrollIntoView?.({ block: 'nearest' });
+      let reason = h.click(years[0], ctx, true); if (reason) return { reason };
+      const months = await h.waitUntil(ctx, doc.documentElement, () => { const found = itemIn(lists(layer)[1], mm); return found.length === 1 ? found[0] : null; }, Boolean, 1500);
+      if (months.reason) { await leaveCalendar(ctx, ctx.el, root, layer, h); return { reason: months.reason === 'verification_timeout' ? 'no_option_match' : months.reason }; }
+      months.value.scrollIntoView?.({ block: 'nearest' });
+      reason = h.click(months.value, ctx, true); if (reason) return { reason };
+      const shown = await h.waitUntil(ctx, doc.documentElement, () => periodText(labels[index]) === want[index], Boolean, 1500);
+      if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'selection_not_committed' : shown.reason };
+      // 选完开始，网站自动打开结束的面板（可能就是同一块换了内容）：要接着选结束就用它，不要再去点结束的标签（再点会收起）。
+      // 等开始的面板退场（200ms）再看：那时开着的唯一一块就是结束的面板。
+      const pickedAt = Date.now();
+      const next = index === 0 ? await h.waitUntil(ctx, doc.documentElement, () => { const open = panels(); return Date.now() - pickedAt >= 200 && open.length === 1 ? open[0] : null; }, Boolean, 600) : { reason: 'none' };
+      autoOpened = next.reason ? null : next.value;
+    }
+    // 只填了一头、网站自己打开的另一头面板还开着：收起它，不留半开的面板。
+    for (const layer of panels()) await leaveCalendar(ctx, ctx.el, root, layer, h);
+    return { accepted: () => periodText(labels[own]) === want[own] };
+  }
+
   async function pickPresent(ctx, h, layer, info) {
     // 日历里自带「至今」选项（勾选框或按钮）才点；没有就交还，由页面上单独的「至今」勾选题去填。
     const marks = Array.from(layer.querySelectorAll('*')).filter(el => h.visible(el) && PRESENT.test(trim(el.textContent))
@@ -2352,6 +2426,6 @@
     return [node, ...node.querySelectorAll('[aria-checked], [class]')].some(el => el.getAttribute('aria-checked') === 'true'
       || String(el.getAttribute('class') || '').split(/\s+/).some(token => CHECKED_TOKEN.test(token)));
   }
-  scope.ResumeProCustomControls = { describe, acceptsFreeText, snapshot, hasExistingValue, readSelection, visiblePopups, optionTarget, isChecked, run, suggest, libraryVersion,
+  scope.ResumeProCustomControls = { describe, acceptsFreeText, snapshot, hasExistingValue, pickPeriod, periodShown, readSelection, visiblePopups, optionTarget, isChecked, run, suggest, libraryVersion,
     openLayers, dismissOpened, pickRange, leaveRange, pickBossDate };
 })(typeof self !== 'undefined' ? self : globalThis);

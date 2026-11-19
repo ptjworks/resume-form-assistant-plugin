@@ -3602,6 +3602,8 @@
     if (entry.kind === "radio") return entry.elements.some(radioChecked);
     const el = entry.element;
     if (!el?.isConnected) return true;
+    // #301 小米的年月区间：值显示在标签上，隐藏输入框一直是空的。
+    if (entry.pickerType === "period") return Boolean(self.ResumeProCustomControls?.periodShown?.(entry));
     if (["custom-select", "cascader"].includes(entry.controlKind) && self.ResumeProCustomControls) {
       return self.ResumeProCustomControls.hasExistingValue(entry)
         || Boolean(entry.binding && self.ResumeProFieldScan?.hasDisplayedValue(entry.binding, { isVisible }));
@@ -3621,6 +3623,7 @@
       ? JSON.stringify(entry.elements.map(el => [isInputElement(el) ? el.value : el.textContent.trim(), radioChecked(el)])) : null;
     const el = entry.element;
     if (!el?.isConnected) return null;
+    if (entry.pickerType === "period") return JSON.stringify(["period", self.ResumeProCustomControls?.periodShown?.(entry) || ""]);
     if (["custom-select", "cascader"].includes(entry.controlKind) && self.ResumeProCustomControls) {
       const state = self.ResumeProCustomControls.snapshot(entry);
       return state === null ? null : JSON.stringify([state,
