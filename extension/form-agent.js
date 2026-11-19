@@ -219,6 +219,10 @@
       if (Array.from(row.querySelectorAll(editable)).some(isVisible)) break;
     }
     if (!row || row === top || !Array.from(row.querySelectorAll(editable)).some(isVisible)) return null;
+    // 往上找到的这一块里还有别的「添加 / 新增」：它跨过了别的分组（小米空的实习经历一栏往上就是整张表），不能当成条目。
+    const otherAdds = Array.from(row.querySelectorAll("*")).filter(el => el !== button && !button.contains(el) && !el.contains(button)
+      && /^(?:添加|新增)/.test(bare(el.textContent)) && !Array.from(el.children).some(child => /^(?:添加|新增)/.test(bare(child.textContent))));
+    if (otherAdds.length) return null;
     const hasInputs = el => Array.from(el.querySelectorAll(editable)).some(isVisible);
     // 按钮在条目外面、和条目列表是兄弟（北森式「列表 + 底部添加」）：第一个装着输入框的祖先是整组，条目是列表里的每一项。
     const branch = Array.from(row.children).find(child => child.contains(button));
@@ -245,10 +249,17 @@
     let anchors = group.rows || [];
     if (!button?.isConnected || !isVisible(button)) return { reason: "target_changed" };
     const top = button.ownerDocument?.body;
-    let inferred = null;
+    let inferred = inferRows(button, others, isVisible);
     if (!anchors.length) {
-      inferred = inferRows(button, others, isVisible);
       if (inferred) anchors = inferred.anchors;
+    } else if (inferred) {
+      // #301 小米：AI 指出了已有条目，「添加」又在条目里面。按结构认出的条目和 AI 指的一一对上（每条正好一个），就按整条来数；
+      // 对不上就照原来的办法，数不清就不加。
+      const owner = el => inferred.rows.find(row => row.contains(el));
+      const owners = anchors.map(owner);
+      if (owners.every(Boolean) && new Set(owners).size === anchors.length && owners.length === inferred.rows.length) {
+        anchors = inferred.rows.map(row => anchors[owners.indexOf(row)]);
+      } else inferred = null;
     }
     let scope;
     if (!anchors.length) {

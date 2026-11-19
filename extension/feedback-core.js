@@ -659,7 +659,7 @@
     }
     return out;
   }
-  const MISS_REASONS = ["raw_value", "not_in_fits", "bad_ref", "bad_date_part", "off_topic", "join_failed", "invalid_value", "catalog_trimmed"];
+  const MISS_REASONS = ["raw_value", "not_in_fits", "bad_ref", "bad_date_part", "off_topic", "join_failed", "invalid_value", "catalog_trimmed", "wrong_section"];
   function privateField(title, item) {
     const lines = [`[${title}]`, `label: ${oneLine(item?.label, 80) || "-"}`, `section: ${oneLine(item?.section, 40) || "-"}`,
       `kind: ${KIND_NAMES.includes(item?.kind) ? item.kind : "unknown"}`];

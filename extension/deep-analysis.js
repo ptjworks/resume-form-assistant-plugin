@@ -262,6 +262,8 @@
         root: refined ? node.shapeRoot : control.root, hints: item.hints, deepRef: item.ref };
       if (item.control === "date" && node.pickerType) {
         entry.pickerType = node.pickerType;
+        // #301 一个元素管着开始、结束两道题（小米的年月区间）：记下是哪一头，绑定扫描结果时按它对上。
+        if (control.rangePart) entry.rangePart = control.rangePart;
         entry.pickerInputType = pickerInputType(control.root, element);
       }
       fieldMap.set(fieldId, entry);

@@ -27,7 +27,8 @@ const AI_SYSTEM_PROMPT = [
   "14. 匹配考虑同义词：手机=电话=联系方式=mobile=phone；学历=最高学历=培养层次；aka 是这项资料别的叫法；英文题目按意思对应中文字段名",
   "15. 补充字段、本网站回答两组的 key 是用户以前答过的题目原文：网页上的题意思相同（换了说法也算）就用它",
   "16. shape 是插件按值算出的形态（几位数字、邮箱、日期这类），字段名看不出意思时参考它",
-  "17. 带 maxLength 的字段照常对应：资料太长时插件不填，会告诉用户字数上限，不要因为它跳过，也不要换一项不相干的资料"
+  "17. 带 maxLength 的字段照常对应：资料太长时插件不填，会告诉用户字数上限，不要因为它跳过，也不要换一项不相干的资料",
+  "18. 网页上工作经历和实习经历是分开的两栏时（请求里的 pageSections 两样都有），资料里的实习经历只填网页实习经历一栏的字段，工作经历只填工作经历一栏；网页只有一栏时照常对应"
 ].join("\n");
 
 // 插件状态页打开「AI 填写时发送资料原文」时（请求里 sendValues === true）：目录里每项带上值（value），AI 照旧回编号，值仍由插件按编号填，
@@ -416,6 +417,9 @@ async function handleAiFill(message, controller = new AbortController()) {
   // 补填新出现的字段时网页带上整张表的题目（pageLabels），同名的题和页面上原有的一起数。
   const pageFields = Array.isArray(message.pageLabels)
     ? message.pageLabels.filter(label => typeof label === "string").map(label => ({ label })) : formFields;
+  // #301 网页上有哪几种经历栏：网页带来的（还没有输入框的空栏也算，小米的实习经历），加上这次字段自己所在的栏。
+  const pageSections = new Set([...(Array.isArray(message.pageSections) ? message.pageSections : []),
+    ...formFields.map(field => experienceSection(String(field.group ?? "").replace(/\s*\d+$/, "")))].filter(type => type === "internship" || type === "employment"));
   const ruleMatches = ResumeProAIHelpers.localRuleMatches(formFields, resumeFields, ResumeProProfile, pageFields);
   const matchedFieldIds = new Set(ruleMatches.map(match => match.fieldId));
   const remainingFormFields = formFields.filter(field => !matchedFieldIds.has(field.fieldId));
@@ -490,7 +494,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       if (controller.signal.aborted) break;
       if (batch.partial) batch.fields.forEach(field => trimmedFields.add(field.fieldId));
       try {
-        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)), withValues, rejectedReasons);
+        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)), withValues, rejectedReasons, pageSections);
         const valid = ResumeProAIHelpers.filterValidMatches(batch.fields, found);
         const validIds = new Set(valid.map(match => match.fieldId));
         for (const match of found) {
@@ -859,7 +863,7 @@ function promptFields(fields, catalog, withValues = false) {
 // 条目里自己写了值的，整条不要；多选只去掉这样的几项，剩下的照拼。
 // withValues（发资料原文）时，没有 fits 的下拉、单选的「编号 + 选项」先按 optionMatch 核对，对得上就填那个选项；对不上的照只有编号处理。
 // 带 fits 的不看 AI 给的选项：fits 被裁空的题整题不发（trimmedOut），本批里带 fits 的 fits 都不空，编号要在 fits 里，值按编号映射到选项。
-function refMatches(payload, fields, catalog, allowed, withValues = false, rejectedReasons = null) {
+function refMatches(payload, fields, catalog, allowed, withValues = false, rejectedReasons = null, pageSections = new Set()) {
   const source = Array.isArray(payload) ? payload : payload?.matches;
   if (!Array.isArray(source)) throw new Error("结果不是 JSON 数组。");
   const byId = new Map(fields.map(field => [field.fieldId, field]));
@@ -916,6 +920,18 @@ function refMatches(payload, fields, catalog, allowed, withValues = false, rejec
       return [];
     }
     if (!tokens.length) return [];
+    // #301 网页上工作经历、实习经历分开两栏时，实习的资料不进工作经历一栏，工作的资料不进实习一栏。
+    const ownSection = experienceSection(String(field.group ?? "").replace(/\s*\d+$/, ""));
+    if ((ownSection === "employment" && pageSections.has("internship")) || (ownSection === "internship" && pageSections.has("employment"))) {
+      const otherSection = tokens.some(token => {
+        const type = experienceSection(catalog.items.get(REF_TOKEN.exec(token)?.[1])?.group);
+        return (type === "internship" || type === "employment") && type !== ownSection;
+      });
+      if (otherSection) {
+        noteReject(field.fieldId, "wrong_section");
+        return [];
+      }
+    }
     if (isTextAnswer(field) && !answersOnTopic(field, tokens, catalog)) {
       noteReject(field.fieldId, "off_topic");
       return [];

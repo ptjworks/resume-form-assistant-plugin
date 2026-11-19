@@ -189,7 +189,8 @@
       if (!visibility.has(el)) {
         let visible = true;
         try {
-          visible = options.isVisible ? Boolean(options.isVisible(el)) : true;
+          // #301 小米的年月区间：存值的隐藏输入框是 0×0，看不看得见按组件本身（两个「YYYY-MM」标签）算。
+          visible = options.isVisible ? Boolean(options.isVisible(periodCarrierRoot(el) || el)) : true;
         } catch {
           visible = false;
         }
@@ -358,8 +359,17 @@
   }
 
   const PERIOD_PICKER = ".ant-date-picker-period-month";
+  function periodRootOk(root) {
+    return Boolean(root) && root.querySelectorAll(antdCss(root, ":scope > .ant-date-picker-period-month-label")).length === 2;
+  }
+  // 组件里唯一的输入框（只存值、不显示）：返回组件根，别的元素返回 null。
+  function periodCarrierRoot(el) {
+    if (el?.tagName !== "INPUT") return null;
+    const root = el.parentElement?.closest?.(antdCss(el, PERIOD_PICKER));
+    return root && periodRootOk(root) && root.querySelectorAll("input").length === 1 ? root : null;
+  }
   function pickerTypeOf(root, ctx) {
-    if (root.matches(antdCss(root, PERIOD_PICKER)) && root.querySelectorAll(antdCss(root, ":scope > .ant-date-picker-period-month-label")).length === 2) return "period";
+    if (root.matches(antdCss(root, PERIOD_PICKER)) && periodRootOk(root)) return "period";
     const bossDates = ".ui-date-editor-date, .ui-date-editor-month";
     if (bossItem(root, ctx) && (root.matches(bossDates)
       || (root.matches(".date-picker-range-wrapper") && root.querySelector(bossDates)))) return "boss";

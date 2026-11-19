@@ -156,3 +156,24 @@ test("#301 an add whose new card is not recognised reports the stop detail and t
   assert.equal(result.grew, 1);
   assert.match(result.message, /多出了 1 个输入框/);
 });
+
+// #301 小米：每组经历只有一条，「添加」在这一条最下面；AI 指出了已有的那一条。按整条来数，不因按钮在条目里就数不清。
+// 实习经历一栏是空的、只有「添加」：往上找会碰到整张表，不能把整张表当成一条。
+test("#301 an existing entry the model points at is counted as a whole when the add button sits inside it, and an empty section stays at zero", (t) => {
+  const { window } = new JSDOM(`<form>
+    <div class="sec"><p>教育经历</p><div class="item"><div class="col"><input class="school"></div><div class="col"><input class="major"></div>
+      <div class="col"><div class="period"><input class="hidden"></div></div><div class="op"><div class="addBtn" id="edu-add"><span>添加</span></div></div></div></div>
+    <div class="sec" id="intern"><p>实习经历</p><div class="addBtn" id="intern-add"><span>添加</span></div></div>
+    <div class="sec"><p>项目经历</p><div class="addBtn" id="proj-add"><span>添加</span></div></div></form>`);
+  t.after(() => window.close());
+  const doc = window.document;
+  const edu = { domain: "education", button: doc.getElementById("edu-add"), rows: [doc.querySelector(".school")], others: [] };
+  const fields = [...records(2)];
+  const counted = agent.collectSpec([edu], fields, { isVisible: visible });
+  assert.deepEqual(counted.problems, []);
+  assert.deepEqual(counted.candidates.map(({ current, target }) => [current, target]), [[1, 2]]);
+  const intern = { domain: "internship", button: doc.getElementById("intern-add"), rows: [], others: [] };
+  const internships = [{ group: "实习经历", key: "A实习经历-公司", value: "a" }, { group: "实习经历", key: "B实习经历-公司", value: "b" }];
+  const empty = agent.collectSpec([intern], internships, { isVisible: visible });
+  assert.deepEqual(empty.candidates.map(({ current, target }) => [current, target]), [[0, 2]]);
+});

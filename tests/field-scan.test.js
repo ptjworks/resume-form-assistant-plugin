@@ -549,3 +549,16 @@ test("#301 小米: the year-month period picker with one hidden input becomes a 
   const parts = result.controls.filter((control) => control.controlKind === "date-picker");
   assert.deepEqual(parts.map((control) => [control.label, control.pickerType, control.rangePart]), [["起止时间（开始）", "period", "开始"], ["起止时间（结束）", "period", "结束"]]);
 });
+
+test("#301 小米: the period picker counts as visible by its labels even though its value input is 0×0", (t) => {
+  const label = `<div class="ant-date-picker-period-month-label"><span>YYYY</span><span>-</span><span>MM</span></div>`;
+  const doc = load(`<form><div class="ant-form-item"><div class="ant-form-item-label"><label>起止时间</label></div>
+    <div class="ant-form-item-control"><div class="ant-date-picker ant-date-picker-period-month">${label}${label}<input class="ant-date-picker-period-hidden-input"></div></div></div>
+    <div class="ant-form-item"><div class="ant-form-item-label"><label for="n">姓名</label></div><input id="n"><input class="zero"></div></form>`);
+  t.after(() => doc.defaultView.close());
+  // 真站上这个输入框宽高都是 0：插件填写时的可见判断会把它当成看不见。别的 0×0 输入框照旧看不见。
+  const zeroSize = (el) => el.matches(".ant-date-picker-period-hidden-input, .zero");
+  const result = scanner.scanPage(doc, { isVisible: (el) => isVisible(el) && !zeroSize(el) });
+  assert.deepEqual(result.controls.filter((control) => control.pickerType === "period").map((control) => control.label), ["起止时间（开始）", "起止时间（结束）"]);
+  assert.ok(!result.controls.some((control) => control.element.classList.contains("zero")));
+});

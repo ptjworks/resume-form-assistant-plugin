@@ -998,13 +998,13 @@
   // 这一头标签上显示的年月（没选时显示「YYYY-MM」占位，算空）。
   function periodShown(entry) {
     const root = periodRoot(entry);
-    return root ? periodText(periodLabels(root)[entry?.binding?.rangePart === '结束' ? 1 : 0]) : '';
+    return root ? periodText(periodLabels(root)[(entry?.binding?.rangePart || entry?.rangePart) === '结束' ? 1 : 0]) : '';
   }
   async function pickPeriod(ctx, raw, h) {
     const root = periodRoot(ctx.entry);
     if (!root) return { reason: 'unsupported_control' };
     const doc = root.ownerDocument, labels = periodLabels(root);
-    const own = ctx.entry.binding?.rangePart === '结束' ? 1 : 0, other = 1 - own;
+    const own = (ctx.entry.binding?.rangePart || ctx.entry.rangePart) === '结束' ? 1 : 0, other = 1 - own;
     const part = index => (index ? '结束' : '开始');
     const month = (text, index) => {
       // 只用「开始 / 结束」取一头：题目本身已经带着这一头的名字（「起止时间（开始）」），拼上另一头会两头都像。
