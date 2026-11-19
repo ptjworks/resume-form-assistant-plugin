@@ -3630,7 +3630,9 @@
     if (el.multiple && el.options) return JSON.stringify(Array.from(el.options, option => [option.value, option.selected]));
     if (isSelectElement(el)) {
       const option = el.options[el.selectedIndex];
-      const emptyPlaceholder = el.value === "" && (el.selectedIndex < 0
+      // #301 中铁的市级下拉：选了省以后网站重新生成选项，第一项从「市级」换成「请选择」。值为空、停在第一项就是还没选，
+      // 不管第一项写的什么；否则提示项换了说法会被当成用户改过，整次填写停下。
+      const emptyPlaceholder = el.value === "" && (el.selectedIndex <= 0
         || (option && self.ResumeProAIHelpers?.isPlaceholderOption?.({ value: option.value, text: option.text, disabled: option.disabled })));
       return JSON.stringify([el.value, emptyPlaceholder ? -1 : el.selectedIndex]);
     }
