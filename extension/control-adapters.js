@@ -309,8 +309,10 @@
       // #405 inputmode 是数字的框照原样写了，页面没收下：改写能放心取出的数字（175cm → 175）；
       // 取不出的（10k-15k）只在页面滤掉了数字以外的字时不留滤剩的字（1015），恢复原值，报只能填数字。
       // 页面没有滤字、是别的原因不收的（自己改了格式、整段清空），照原来的原因报，框里的不动。
-      const mobile = !shown && ctx.options.prepare && verdict.reason === 'validation_not_cleared'
-        ? deps.retryMobile?.(ctx.el, typed) : '';
+      // #301 飞书招聘的手机号框：带空格的号码整段不收（框里还是原来的字），也不出提示。整段被退回的手机号框照样改写连续 11 位再试。
+      const refused = rejected(verdict.reason) && String(ctx.el.value ?? '') === previous;
+      const mobile = !shown && ctx.options.prepare && (verdict.reason === 'validation_not_cleared' || refused)
+        ? deps.retryMobile?.(ctx.el, typed, refused) : '';
       const retryNumeric = rejected(verdict.reason) && 'numeric' in prepared
         && (prepared.numeric !== null || droppedNonDigits(left, typed));
       const retryValue = mobile || prepared.numeric;
@@ -770,6 +772,10 @@
       let done = ctx.entry.pickerType === 'antd' ? await antRange(ctx, want, boxes)
         : boxes.some(box => box.readOnly) ? (custom?.pickRange ? await custom.pickRange(ctx, want, boxes, host) : { reason: 'unsupported_control' })
           : await typedRange(ctx, want, boxes);
+      // #301 资料只到月、框上又看不出是月份选择器（飞书招聘的区间月份框没有占位文字和 month 类名）：按「年-月-日」打的没收下，
+      // 先按「年-月」再打一次，还不收再去点日历格子。
+      if (done.retype && ctx.entry.pickerType !== 'antd' && ctx.entry.pickerInputType !== 'month' && want.every(date => !date || !date.d)
+        && !boxes.some(box => box.readOnly) && !stop(ctx, true)) done = await typedRange(ctx, want, boxes, -1, 'month');
       // 按组件的格式打字没收下（网站改了显示格式）：收起弹层，改点日历格子。
       if (done.retype && custom?.pickRange && !stop(ctx, true)) done = await custom.pickRange(ctx, want, boxes, host);
       if (done.reason) return { reason: done.reason };
@@ -841,8 +847,8 @@
     // 能打字的区间（Element UI、Element Plus 的 daterange、monthrange）：两个框按组件默认的格式（YYYY-MM-DD、YYYY-MM）各写各的，
     // 再在结束框上回车。两头都收下时组件提交并收起弹层；不收（网站改了显示格式）弹层还开着，交回去改点格子（retype）。
     // only：手动只填一头时只写这一个框，不回车，弹层开着等另一头（见 operateRange）。
-    async function typedRange(ctx, want, boxes, only = -1) {
-      const mode = ctx.entry.pickerInputType === 'month' ? 'month' : 'date';
+    async function typedRange(ctx, want, boxes, only = -1, forced = '') {
+      const mode = forced || (ctx.entry.pickerInputType === 'month' ? 'month' : 'date');
       const text = date => mode === 'month' ? `${date.y}-${pad2(date.m)}` : `${date.y}-${pad2(date.m)}-${pad2(date.d || 1)}`;
       const doc = ctx.el.ownerDocument, View = doc.defaultView;
       // 只看这次打开的日历：上一个日期框的日历可能还在退场。

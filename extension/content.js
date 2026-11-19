@@ -6711,6 +6711,8 @@
     const digits = text.replace(/\s/g, "");
     if (digits === text || !/^1[3-9]\d{9}$/.test(digits) || !isPhoneInput(element)) return "";
     const wantsEleven = hint => /11\s*位\s*(?:的\s*)?(?:中国大陆\s*)?(?:手机(?:号(?:码)?)?|数字)/.test(hint);
+    // 页面整段退回了带空格的手机号（框里还是原来的字）：认得出是手机号框就改写连续 11 位，不看有没有提示。
+    if (checkErrors === "refused") return digits;
     if (checkErrors) return describedErrorVisible(element, wantsEleven) || containerErrorVisible(element, wantsEleven) ? digits : "";
     const pattern = (element.getAttribute("pattern") || "").replace(/^\^|\$$/g, "");
     const digitsPattern = [
@@ -6999,7 +7001,7 @@
       isVisible, writeValue: writeControlValue, focus: focusControl, blur: blurControl,
       normalizeText: normalizeExpectedTextValue, prepareText: prepareTextValue, runTextLifecycle, sameTextValue,
       inspectText: inspectTextCommit, waitTextCommit: waitForTextCommit,
-      retryMobile: (element, value) => compactMobileForField(element, value, true),
+      retryMobile: (element, value, refused = false) => compactMobileForField(element, value, refused ? "refused" : true),
       replayFocusBlur, prefersSequential: prefersSequentialInput, dispatchTextInput,
       getSettleMs: () => textCommitWaitMs <= 0 ? 0 : 250
     });

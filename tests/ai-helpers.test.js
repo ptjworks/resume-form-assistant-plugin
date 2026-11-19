@@ -1034,3 +1034,20 @@ test("a date part reads which end of a span to take from the name or id when the
   assert.equal(helpers.datePart("2019.09-2023.06", "year", { label: "年", ariaLabel: "End year", options: [] }), "2023");
   assert.equal(helpers.questionHint({ label: "a", placeholder: "b", ariaLabel: "c", name: "d", idAttr: "e" }), "a b c d e");
 });
+
+test("#301 an education-level select that lists bare levels takes the same level, and a study-mode select takes 全日制", () => {
+  const levels = { label: "学历", inputType: "select", options: ["博士", "MBA", "硕士", "本科", "大专"] };
+  assert.equal(helpers.choiceValue(levels, "博士研究生（直博）"), "博士");
+  assert.equal(helpers.choiceValue(levels, "硕士研究生"), "硕士");
+  assert.equal(helpers.choiceValue(levels, "大学本科"), "本科");
+  // 状态、学位、别的题都不换。
+  assert.equal(helpers.choiceValue(levels, "硕士在读"), "硕士在读");
+  assert.equal(helpers.choiceValue(levels, "理学学士"), "理学学士");
+  assert.equal(helpers.choiceValue({ ...levels, label: "学位" }, "博士研究生"), "博士研究生");
+  assert.equal(helpers.choiceValue({ ...levels, options: ["博士", "博士后"] }, "博士研究生"), "博士");
+  const mode = { label: "学历类型", inputType: "select", options: ["海外及港澳台", "统招全日制", "统招非全日制", "自考", "其他"] };
+  assert.equal(helpers.choiceValue(mode, "博士研究生（全日制）"), "全日制");
+  assert.equal(helpers.choiceValue(mode, "硕士研究生（非全日制）"), "非全日制");
+  assert.equal(helpers.choiceValue(mode, "自考"), "自考");
+  assert.equal(helpers.findSelectOptionIndex(mode.options, "非全日制"), 2);
+});

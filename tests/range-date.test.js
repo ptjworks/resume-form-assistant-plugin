@@ -520,3 +520,19 @@ test("an editable range of an unknown component still fills one box alone when t
   assert.equal(pair.ok, true, JSON.stringify(pair));
   assert.deepEqual([start.element.value, end.element.value], ["2020-09-01", "2023-06-30"]);
 });
+
+test("#301 a month range that shows no month hint and refuses typed days is typed again as year-month", async () => {
+  // 飞书招聘的区间月份框（throne-biz-date-range-picker）：没有占位文字、类名也不带 month，只收「年-月」，打「年-月-日」整段退回。
+  const h = load(`<div class="row"><label class="row-label">起止时间</label>
+    <div class="throne-biz-date-range-picker-wrapper"><div class="throne-biz-date-range-picker-input"><input></div>
+    <div class="throne-biz-date-range-picker-rangeInput-seperator"></div><div class="throne-biz-date-range-picker-input"><input></div></div></div>`);
+  const boxes = Array.from(h.doc.querySelectorAll("input"));
+  boxes.forEach((box) => box.addEventListener("input", () => { if (!/^\d{4}-\d{2}$/.test(box.value)) setTimeout(() => { box.value = ""; }, 0); }));
+  const { start, end } = parts(h.doc, "起止时间");
+  assert.equal(start.pickerType, "generic");
+  assert.equal(start.pickerInputType, "date", "nothing on the boxes says month");
+  const value = "2022.09 - 2027.06（预计毕业）";
+  const result = await h.api.operate(start, value, { range: { entry: end, value } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(boxes.map((box) => box.value), ["2022-09", "2027-06"]);
+});
