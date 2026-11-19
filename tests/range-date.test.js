@@ -527,7 +527,13 @@ test("#301 a month range that shows no month hint and refuses typed days is type
     <div class="throne-biz-date-range-picker-wrapper"><div class="throne-biz-date-range-picker-input"><input></div>
     <div class="throne-biz-date-range-picker-rangeInput-seperator"></div><div class="throne-biz-date-range-picker-input"><input></div></div></div>`);
   const boxes = Array.from(h.doc.querySelectorAll("input"));
-  boxes.forEach((box) => box.addEventListener("input", () => { if (!/^\d{4}-\d{2}$/.test(box.value)) setTimeout(() => { box.value = ""; }, 0); }));
+  // 每个框回车才收下：焦点离开时，没回车的字换回收下的值。
+  const kept = ["", ""];
+  boxes.forEach((box, index) => {
+    box.addEventListener("input", () => { if (!/^\d{4}-\d{2}$/.test(box.value)) setTimeout(() => { box.value = kept[index]; }, 0); });
+    box.addEventListener("keydown", (event) => { if (event.key === "Enter" && /^\d{4}-\d{2}$/.test(box.value)) kept[index] = box.value; });
+    box.addEventListener("blur", () => { box.value = kept[index]; });
+  });
   const { start, end } = parts(h.doc, "起止时间");
   assert.equal(start.pickerType, "generic");
   assert.equal(start.pickerInputType, "date", "nothing on the boxes says month");
@@ -535,4 +541,17 @@ test("#301 a month range that shows no month hint and refuses typed days is type
   const result = await h.api.operate(start, value, { range: { entry: end, value } });
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(boxes.map((box) => box.value), ["2022-09", "2027-06"]);
+});
+
+test("#301 an unknown range that only takes whole days still gets them when the resume gives months", async () => {
+  // 先按资料的精度打「年-月」；组件只收「年-月-日」（整段退回）时再按「年-月-日」打。
+  const h = load(`<div class="row"><label class="row-label">在校时间</label>
+    <div class="my-date-range-picker"><input><span>至</span><input></div></div>`);
+  const boxes = Array.from(h.doc.querySelectorAll("input"));
+  boxes.forEach((box) => box.addEventListener("input", () => { if (!/^\d{4}-\d{2}-\d{2}$/.test(box.value)) setTimeout(() => { box.value = ""; }, 0); }));
+  const { start, end } = parts(h.doc, "在校时间");
+  const value = "2019.09 - 2023.06";
+  const result = await h.api.operate(start, value, { range: { entry: end, value } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(boxes.map((box) => box.value), ["2019-09-01", "2023-06-01"]);
 });

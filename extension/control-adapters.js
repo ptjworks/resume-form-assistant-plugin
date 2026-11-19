@@ -769,13 +769,13 @@
       const settled = index => (want[index] ? showsDate(boxes[index], want[index]) : !String(boxes[index].value ?? '').trim());
       if (settled(0) && settled(1) && !calendarOpen()) return finished();
       const custom = scope.ResumeProCustomControls;
+      // #301 认不出是哪家组件的区间、资料又只到月（飞书招聘的区间月份框没有占位文字和 month 类名）：先按资料的精度打「年-月」，
+      // 没收下再按「年-月-日」打，还不收再去点日历格子。按「年-月-日」先打、被退回后再改，月份框会留下半截状态，第二次也收不下。
+      const monthFirst = ctx.entry.pickerType === 'generic' && ctx.entry.pickerInputType !== 'month' && want.every(date => !date || !date.d);
       let done = ctx.entry.pickerType === 'antd' ? await antRange(ctx, want, boxes)
         : boxes.some(box => box.readOnly) ? (custom?.pickRange ? await custom.pickRange(ctx, want, boxes, host) : { reason: 'unsupported_control' })
-          : await typedRange(ctx, want, boxes);
-      // #301 资料只到月、框上又看不出是月份选择器（飞书招聘的区间月份框没有占位文字和 month 类名）：按「年-月-日」打的没收下，
-      // 先按「年-月」再打一次，还不收再去点日历格子。
-      if (done.retype && ctx.entry.pickerType !== 'antd' && ctx.entry.pickerInputType !== 'month' && want.every(date => !date || !date.d)
-        && !boxes.some(box => box.readOnly) && !stop(ctx, true)) done = await typedRange(ctx, want, boxes, -1, 'month');
+          : await typedRange(ctx, want, boxes, -1, monthFirst ? 'month' : '');
+      if (done.retype && monthFirst && !stop(ctx, true)) done = await typedRange(ctx, want, boxes, -1, 'date');
       // 按组件的格式打字没收下（网站改了显示格式）：收起弹层，改点日历格子。
       if (done.retype && custom?.pickRange && !stop(ctx, true)) done = await custom.pickRange(ctx, want, boxes, host);
       if (done.reason) return { reason: done.reason };
@@ -866,6 +866,12 @@
         write(boxes[index], text(want[index]), ctx); input(boxes[index]);
         // 让一拍：Element UI 要等 Vue 处理完这次改动，紧跟着回车不收起弹层。
         await delay(0);
+        // #301 认不出是哪家组件的区间（飞书招聘）：每个框各自回车才收下，焦点一离开开始框，没回车的字就被换回原来的。
+        // Element 两头打完只在结束框回车一次（见下面），不在这里回车。
+        if (ctx.entry.pickerType === 'generic' && only < 0 && index === 0 && View?.KeyboardEvent) {
+          boxes[0].dispatchEvent(new View.KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+          await delay(0);
+        }
       }
       if (only >= 0) return {};
       const stopped = stop(ctx, true); if (stopped) return { reason: stopped };

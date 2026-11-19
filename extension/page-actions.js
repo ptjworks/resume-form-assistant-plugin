@@ -170,7 +170,8 @@
     const sections = (spec.sections || []).filter(section => section.addRef && !campus.some(group =>
       group.domain === section.domain || group.button === nodes.get(section.addRef)?.element));
     if ((sections.length || campus.length) && templateFields.length) {
-      if (items.length || manual.length) {
+      // 取消勾选「没有××经历」只让那一组冒出输入框，不重画别的分组：别的分组的「添加」照常一起做。
+      if (items.some(item => !item.toggle) || manual.length) {
         blocked.push("先完成「编辑 / 展开」；如果网页上的经历条目比简历少，完成后再点一次「深度分析本页」来新增。");
       } else {
         const groupOf = section => ({

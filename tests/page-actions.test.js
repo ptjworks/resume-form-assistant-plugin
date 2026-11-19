@@ -620,3 +620,26 @@ test("a hidden template row with the same structure is not an entry; a visible o
     assert.deepEqual(planned.items.map((item) => item.label), expected, `hidden=${hidden}`);
   }
 });
+
+// #301 飞书招聘：实习经历默认勾着「没有实习经历」。取消勾选只让那一组冒出输入框，同一轮里教育经历照常新增，
+// 不再要用户先取消勾选、再点一次深度分析才加教育经历。
+test("#301 unchecking a '没有实习经历' switch and adding education happen in the same confirmed plan", async () => {
+  const { dom, doc, clicks } = beisenPage({ education: 1, work: 0 });
+  doc.getElementById("work").outerHTML = `<div class="sc-sec" id="intern"><div class="sc-sec-title">实习经历</div>
+    <label class="none"><input type="checkbox" checked><span>没有实习经历</span></label><div class="sc-list"></div></div>`;
+  const box = doc.querySelector("#intern input");
+  box.addEventListener("change", () => { if (!box.checked) doc.querySelector("#intern .sc-list").insertAdjacentHTML("beforeend", ROW("实习经历", 1)); });
+  const { built, checked } = analyse(doc, beisenSpec(doc, ["edu"]));
+  assert.equal(checked.ok, true, JSON.stringify(checked));
+  const template = [...records("教育经历", 2), ...records("实习经历", 1, "公司")];
+  const planned = plan(doc, built, checked.spec, template);
+  assert.deepEqual(planned.items.map((item) => item.label), ["取消勾选「没有实习经历」", "教育经历：添加 ×1"]);
+  assert.deepEqual(planned.blocked, []);
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, `${result.code} ${result.message}`);
+  assert.deepEqual(result.done, { edit: 0, expand: 1, add: 1 });
+  assert.equal(box.checked, false);
+  assert.deepEqual(clicks, ["edu"]);
+  assert.equal(doc.querySelectorAll("#edu .sc-entry").length, 2);
+  dom.window.close();
+});
