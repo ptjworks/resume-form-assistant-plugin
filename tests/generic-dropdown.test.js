@@ -1385,6 +1385,47 @@ test("#301 Universe Design select: a combobox with no ARIA wiring takes the gene
   assert.equal(h.api.check(h.target).ok, true);
 });
 
+// PR #539 审查（A10/B6）担心：没有接线的 role=combobox 一律改走通用路径，会让原来靠 role=option / listbox 的站点回退。
+// 下面把能想到的几种弹层写法都试过：通用路径都选得上，所以不加「失败再按 ARIA 重试」的退路。以后遇到真站失败再按那个案例加。
+function bareCombobox({ attrs = "", popup }) {
+  const h = load(`<div class="item"><label for="c">城市</label><div class="box"><input id="c" role="combobox" ${attrs} readonly></div></div>`);
+  const { doc } = h;
+  const input = doc.getElementById("c");
+  const clicks = [];
+  const build = () => {
+    const layer = doc.createElement("ul");
+    layer.setAttribute("role", "listbox");
+    layer.innerHTML = ["北京", "上海"].map((text) => `<li${popup.options ? ' role="option"' : ""}>${text}</li>`).join("");
+    layer.querySelectorAll("li").forEach((li) => li.addEventListener("click", () => {
+      clicks.push(li.textContent); input.value = li.textContent; if (popup.keep) layer.hidden = true; else layer.remove();
+    }));
+    return layer;
+  };
+  if (popup.keep) {
+    const layer = build(); layer.hidden = true; doc.body.append(layer);
+    input.addEventListener("click", () => { layer.hidden = false; });
+  } else {
+    input.addEventListener("click", () => (popup.inside ? doc.querySelector(".box") : doc.body).append(build()));
+  }
+  return { ...h, clicks, target: scanned(doc, "城市") };
+}
+
+for (const [name, config] of Object.entries({
+  "a body-level listbox with role=option items": { popup: { options: true } },
+  "a body-level listbox whose items carry no role": { popup: { options: false } },
+  "a listbox that is rendered once and only shown on click": { popup: { options: true, keep: true } },
+  "a listbox appended inside the combobox's own container": { popup: { options: true, inside: true } },
+  "a combobox with only aria-autocomplete": { attrs: 'aria-autocomplete="list"', popup: { options: true } }
+})) {
+  test(`#539 an unwired combobox on the generic path still picks from ${name}`, async () => {
+    const h = bareCombobox(config);
+    assert.equal(h.w.ResumeProCustomControls.describe(h.target).library, "generic");
+    const result = await h.api.operate(h.target, "上海");
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(h.clicks, ["上海"]);
+  });
+}
+
 test("#301 a combobox with real ARIA wiring still takes the ARIA path", () => {
   const { w, doc } = load(`<div class="item"><label for="c">城市</label><div class="box"><input id="c" role="combobox" aria-expanded="false" aria-controls="list-c"></div></div>`);
   const control = scanner.scanPage(doc, { isVisible: () => true }).controls.find((item) => item.label === "城市");

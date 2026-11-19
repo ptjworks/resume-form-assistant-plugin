@@ -5241,8 +5241,10 @@
     // #301 新增失败时的细分码和点击后页面多出的输入框数：看诊断就知道停在哪一步、网页有没有真的加了条目。
     const detail = stop && /^[a-z_]{1,32}$/.test(a.detail || "") ? `（${a.detail}）` : "";
     const grew = stop && count(a.grew) ? `；点击后页面输入框多出 ${count(a.grew)} 个` : "";
+    // #301 取消勾选后没能接着补条目：只写固定的原因码。
+    const skipped = (Array.isArray(a.notFollowed) ? a.notFollowed : []).filter(code => /^[a-z_]{1,32}$/.test(code));
     return [
-      `前置动作：计划 ${kinds(a.planned)}；已完成 ${kinds(a.done)}${stop ? `；停止原因：${stop}${detail}${grew}` : ""}`,
+      `前置动作：计划 ${kinds(a.planned)}；已完成 ${kinds(a.done)}${stop ? `；停止原因：${stop}${detail}${grew}` : ""}${skipped.length ? `；取消勾选后未补条目：${skipped.join("、")}` : ""}`,
       `需手动点击：${count(a.manual)}；未自动新增的分组：${count(a.blocked)}${a.missingAdds ? `；配方里找不到「添加」的分组：${count(a.missingAdds)}` : ""}；分析轮数：${count(report.rounds)}`
     ];
   }
