@@ -66,9 +66,21 @@
     return Boolean(allow) && deep.buttonAllowed(node, allow);
   }
 
+  // #301 「没有实习经历」这类开关：点之前再确认一次——还连在网页上、看得见、没禁用，勾选框还是勾着的，字没变。
+  function toggleAllowed(item, { isVisible, doc }) {
+    const { box, text } = item.toggle || {};
+    const el = item.element;
+    if (!el?.isConnected || !box?.isConnected || !el.contains(box) || !box.checked || box.disabled) return false;
+    if (doc && el.ownerDocument !== doc && !roots(doc).some(root => root.contains?.(el))) return false;
+    try { if (!isVisible(el)) return false; } catch { return false; }
+    return disabledNow(box) === false && String(el.textContent || "").replace(/[\s\p{P}\p{S}]/gu, "") === text;
+  }
+  const itemAllowed = (item, ctx) => item.toggle ? toggleAllowed(item, ctx) : targetAllowed(item.element, item.kind, ctx);
+
   // 模拟一次真实点击（指针、鼠标、click）。链接和按钮的默认动作一律取消：
   // 不让「#」改网址，也不让漏网的提交按钮提交表单；网页自己的点击处理照常运行。
-  function press(el) {
+  // guard: false 只给勾选框的开关用（点 label 靠默认动作切换勾选，勾选框点了也不会提交表单）。
+  function press(el, { guard: protect = true } = {}) {
     const view = el.ownerDocument?.defaultView;
     const fire = (Type, type) => {
       if (typeof Type !== "function") return;
@@ -80,7 +92,7 @@
     fire(view?.PointerEvent, "pointerup");
     fire(view?.MouseEvent, "mouseup");
     if (!el.isConnected) return "target_changed";
-    const guard = el.tagName === "BUTTON" || Boolean(el.closest?.("a[href], area[href], form"));
+    const guard = protect && (el.tagName === "BUTTON" || Boolean(el.closest?.("a[href], area[href], form")));
     const prevent = event => event.preventDefault();
     if (guard) el.addEventListener("click", prevent, { capture: true });
     try { el.click(); } finally { if (guard) el.removeEventListener("click", prevent, { capture: true }); }
@@ -147,6 +159,12 @@
       }
       items.push({ kind: action.kind, ref: action.ref, element: node.element, label: name.label });
     }
+    // #301 勾着「没有实习经历」的分组没有「添加」按钮：简历里有这类经历时，列一步取消勾选，用户确认后才执行。
+    for (const toggle of formAgent?.emptyToggles?.(doc, templateFields, isVisible) || []) {
+      if (items.some(item => item.element === toggle.element || item.element.contains(toggle.element) || toggle.element.contains(item.element))) continue;
+      items.push({ kind: "expand", ref: "", toggle: { box: toggle.box, text: toggle.text }, element: toggle.element,
+        label: `取消勾选「${toggle.text}」` });
+    }
     let adds = null;
     const campus = formAgent?.campusGroups?.(doc) || [];
     const sections = (spec.sections || []).filter(section => section.addRef && !campus.some(group =>
@@ -193,9 +211,21 @@
     return { items, manual, blocked, adds };
   }
 
+  // form-agent 的固定报错文案 → 停止细分码（只用这些码写诊断，不写网页文字）。
+  const ADD_STOP_DETAILS = [
+    [/未确认出现新条目/, "no_new_row"], [/无法确定新增的条目/, "unclear_row"], [/一次新增了多个/, "many_rows"],
+    [/分组已被替换/, "scope_replaced"], [/已停止辅助新增/, "stopped"], [/网页重建或改变了已有字段/, "values_changed"],
+    [/新条目没有可见输入框/, "no_inputs"],
+    [/新增按钮或分组已变化|条目数量已变化|网页条目已变化|页面条目已变化|网页分组已变化/, "target_changed"]
+  ];
+  function addStopDetail(error) {
+    const message = String(error?.message || "");
+    return (ADD_STOP_DETAILS.find(([pattern]) => pattern.test(message)) || [null, "other"])[1];
+  }
+
   // 执行前：所有目标都还是预览时那样（同一个元素、仍然允许）。任何一个变了，整份不执行。
   function planStillValid(plan, ctx) {
-    return plan.items.every(item => targetAllowed(item.element, item.kind, ctx));
+    return plan.items.every(item => itemAllowed(item, ctx));
   }
 
   // 逐个执行确认过的计划。ctx：doc、deep、describe、isVisible、formAgent、stopped（返回原因）、onProgress、timing。
@@ -204,7 +234,7 @@
     const done = { edit: 0, expand: 0, add: 0 };
     // 进度按实际点击次数算：「添加 ×k」是 k 次点击（PR #279 审查）。
     const total = plan.items.reduce((sum, item) => sum + (item.kind === "add" ? Number(item.count) || 0 : 1), 0);
-    const end = (code, message = "") => ({ ok: false, code, message, done, scopes: [] });
+    const end = (code, message = "", extra = {}) => ({ ok: false, code, message, done, scopes: [], ...extra });
     if (!planStillValid(plan, ctx)) return end("target_changed");
     let index = 0;
     for (const item of plan.items) {
@@ -212,13 +242,15 @@
       index += 1;
       const reason = ctx.stopped();
       if (reason) return end(reason === "navigated" ? "navigated" : "stopped");
-      if (!targetAllowed(item.element, item.kind, ctx)) return end("target_changed");
+      if (!itemAllowed(item, ctx)) return end("target_changed");
       const before = editableControls(ctx.doc, ctx.isVisible);
-      const saved = before.map(valueOf);
+      // 开关自己的勾选状态本来就要变，不算网页改了用户的内容。
+      const saved = before.filter(el => el !== item.toggle?.box).map(valueOf);
       ctx.onProgress?.({ index, total, label: item.label, kind: item.kind });
-      const pressed = press(item.element);
+      const pressed = press(item.element, item.toggle ? { guard: false } : {});
       if (pressed) return end(pressed);
-      const fresh = () => editableControls(ctx.doc, ctx.isVisible).some(el => !before.includes(el));
+      const fresh = () => editableControls(ctx.doc, ctx.isVisible).some(el => !before.includes(el))
+        || Boolean(item.toggle && item.toggle.box.isConnected && !item.toggle.box.checked);
       const waited = await waitSettled(ctx.doc, { stopped: ctx.stopped, ready: fresh, ...(ctx.timing || {}) });
       if (waited.reason) return end(waited.reason === "navigated" ? "navigated" : "stopped");
       // 没出现新的输入框：页面早就安静了是「没有变化」，一直在变是「超时」。两种都停下，不再点下一个。
@@ -228,6 +260,7 @@
     }
     let scopes = [];
     if (plan.adds) {
+      const controlsBefore = editableControls(ctx.doc, ctx.isVisible).length;
       const stopped = () => Boolean(ctx.stopped());
       try {
         const result = await ctx.formAgent.execute(plan.adds.plan, plan.adds.snapshot, stopped, step => {
@@ -240,8 +273,12 @@
         done.add = Number.isInteger(error?.added) ? error.added : 0;
         const reason = ctx.stopped();
         if (reason) return end(reason === "navigated" ? "navigated" : "stopped");
-        // form-agent 的报错是固定文案，直接给用户看。
-        return end("add_failed", String(error?.message || "").slice(0, 120));
+        // form-agent 的报错是固定文案，直接给用户看。点过之后页面上多出了输入框，说明网页可能已经加了一条，
+        // 只是没认出来：如实告诉用户，不能只报「完成 0」。detail 是固定的停止细分码，写进诊断。
+        const grew = Math.max(0, editableControls(ctx.doc, ctx.isVisible).length - controlsBefore);
+        const text = String(error?.message || "").slice(0, 120);
+        return end("add_failed", grew ? `${text}页面上多出了 ${grew} 个输入框，网页可能已经新增了条目，请检查。` : text,
+          { detail: addStopDetail(error), grew });
       }
     }
     return { ok: true, code: "", message: "", done, scopes };
