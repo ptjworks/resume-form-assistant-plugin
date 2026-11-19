@@ -215,6 +215,16 @@
       return false;
     }
   }
+  // #301 小米空栏里的「添加」：鼠标移上去之前不显示手形，按光标认不出。写着「添加 / 新增」、类名带 add / btn / button / plus
+  // 或者里面有图标的，也算看得出能点。只给新增类的字用，「编辑」「展开」照旧按光标认。
+  const ADD_WORD = /^(?:新增|添加|增加|继续添加|add)/i;
+  function addLike(el) {
+    if (!ADD_WORD.test(bare(el.textContent))) return false;
+    const cls = String(el.getAttribute?.("class") || "");
+    // 类名里以 add / btn / button / plus 开头的一段（createFormSection-addBtn、addMore），不认 padding、address 这类夹在中间的。
+    return /(?:^|[\s_-])(?:add|btn|button|plus)/i.test(cls) || Boolean(el.querySelector?.(":scope > i, :scope > svg, :scope > [class*='icon' i]"));
+  }
+
 
   // 按钮的结构描述：大纲生成时用它，#225 点击前也用它按网页当前的样子重新判断一次（文字、提交、跨页、跨站）。
   function describeButton(el) {
@@ -297,11 +307,14 @@
       const startText = bare(start.textContent);
       if (!ACTION_TEXT.test(startText)) continue;
       // 文字相同的祖先链（「＋」图标和文字常分在几层里）里，取最外层看得出能点的那个。
-      let el = null;
+      let el = null, added = null;
       for (let current = start, depth = 0; current && depth <= MAX_TEXT_CLIMB; current = current.parentElement, depth += 1) {
         if (current !== start && bare(current.textContent) !== startText) break;
         if (pointerLike(current)) el = current;
+        else if (!el && !added && addLike(current)) added = current;
       }
+      // 整条链上都看不出手形时，才用最里面那个像「添加」按钮的。
+      el = el || added;
       if (!el) continue;
       const label = squash(el.textContent);
       if (seenClickable.has(el) || chars(label).length > MAX_BUTTON_TEXT || !ACTION_TEXT.test(bare(label))) continue;

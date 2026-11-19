@@ -80,22 +80,37 @@
   // 模拟一次真实点击（指针、鼠标、click）。链接和按钮的默认动作一律取消：
   // 不让「#」改网址，也不让漏网的提交按钮提交表单；网页自己的点击处理照常运行。
   // guard: false 只给勾选框的开关用（点 label 靠默认动作切换勾选，勾选框点了也不会提交表单）。
+  // #301 小米：「添加」外面一层是带手形光标的区域，点击处理挂在里面那层上；点外层，事件不会往里传。
+  // 像人点在字上一样，点按钮里写着同样文字的最里层（只认文字完全相同的那层，夹着别的字的不点），事件照样一路冒泡到按钮。
+  const pressText = node => String(node?.textContent || "").replace(/[\s\p{P}\p{S}]/gu, "");
+  function pressTarget(el) {
+    const text = pressText(el);
+    if (!text) return el;
+    let target = el;
+    for (;;) {
+      const same = Array.from(target.children || []).filter(child => pressText(child) === text);
+      if (same.length !== 1 || /^(?:INPUT|SELECT|TEXTAREA|BUTTON|A)$/.test(same[0].tagName)) return target;
+      target = same[0];
+    }
+  }
   function press(el, { guard: protect = true } = {}) {
     const view = el.ownerDocument?.defaultView;
+    const target = pressTarget(el);
     const fire = (Type, type) => {
       if (typeof Type !== "function") return;
-      el.dispatchEvent(new Type(type, { bubbles: true, cancelable: true, composed: true, button: 0, ...(type.startsWith("pointer") ? { pointerType: "mouse" } : {}) }));
+      target.dispatchEvent(new Type(type, { bubbles: true, cancelable: true, composed: true, button: 0, ...(type.startsWith("pointer") ? { pointerType: "mouse" } : {}) }));
     };
     fire(view?.PointerEvent, "pointerdown");
     fire(view?.MouseEvent, "mousedown");
-    if (!el.isConnected) return "target_changed";
+    if (!el.isConnected || !target.isConnected) return "target_changed";
     fire(view?.PointerEvent, "pointerup");
     fire(view?.MouseEvent, "mouseup");
-    if (!el.isConnected) return "target_changed";
+    if (!el.isConnected || !target.isConnected) return "target_changed";
+    // 拦默认动作的监听挂在按钮本身、捕获阶段：点里层时事件先经过它，提交、跳转照样拦下。
     const guard = protect && (el.tagName === "BUTTON" || Boolean(el.closest?.("a[href], area[href], form")));
     const prevent = event => event.preventDefault();
     if (guard) el.addEventListener("click", prevent, { capture: true });
-    try { el.click(); } finally { if (guard) el.removeEventListener("click", prevent, { capture: true }); }
+    try { target.click(); } finally { if (guard) el.removeEventListener("click", prevent, { capture: true }); }
     return "";
   }
 
