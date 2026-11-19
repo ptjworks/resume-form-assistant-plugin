@@ -916,7 +916,13 @@
     return { box, members, main: null, names };
   }
 
+  // 下拉的选项会跟着上一级重新生成（中铁选了省以后，市的提示项从「市级」变成「请选择」）：先看不会变的 name、id，
+  // 认得出是省、市、区县就用它；认不出才看提示项。名字变了，填写前核对题目时会当成页面已变化。
+  const REGION_PART = [[/prov|省/i, "省"], [/city|市/i, "市"], [/county|district|area|town|区|县/i, "区县"]];
   function selectPartName(el) {
+    const own = `${attr(el, "name")} ${attr(el, "id")}`;
+    const level = REGION_PART.find(([pattern]) => pattern.test(own));
+    if (level) return level[1];
     if (el.tagName !== "SELECT") return partName(el);
     const empty = Array.from(el.options || []).find((option) => !String(option.value ?? "").trim());
     const text = squash(empty?.textContent).replace(/^(?:请(?:选择)?|选择)/, "").replace(/[-—.。…:：\s]+$/, "").trim();

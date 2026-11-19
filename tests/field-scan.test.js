@@ -464,9 +464,20 @@ test("#301 中铁 生源地: three side-by-side selects under one question are n
     <li><p><span></span>手&nbsp;机&nbsp;号&nbsp;码：</p><input type="text" name="phone" maxlength="11"></li></ul></div></form>`);
   t.after(() => doc.defaultView.close());
   const result = scan(doc);
-  assert.deepEqual(labels(result), ["姓 名", "生 源 地 - 省级", "生 源 地 - 市级", "生 源 地 - 县级", "手 机 号 码"]);
+  assert.deepEqual(labels(result), ["姓 名", "生 源 地 - 省", "生 源 地 - 市", "生 源 地 - 区县", "手 机 号 码"]);
   assert.equal(result.skipped.noLabel, 0);
   assert.ok(result.controls.every((control) => !control.repeatIndex), "the three parts are not taken as repeated records");
+  // 选了省以后网站重新生成市的选项，提示项变成「请选择」：题目不变，填市之前的核对照样通过。
+  const city = result.controls.find((control) => control.label === "生 源 地 - 市");
+  doc.querySelector("select[name=city]").innerHTML = `<option value="">请选择</option><option value="南通市">南通市</option>`;
+  assert.equal(scanner.isBindingCurrent(city, doc, { isVisible }), true);
+});
+
+test("#301 side-by-side selects without region names fall back to their placeholder option", (t) => {
+  const doc = load(`<form><ul><li><p>出生日期：</p><ul><li><select name="y"><option value="">年</option></select></li>
+    <li><select name="m"><option value="">月</option></select></li></ul></li><li><p>姓名：</p><input></li></ul></form>`);
+  t.after(() => doc.defaultView.close());
+  assert.deepEqual(labels(scan(doc)), ["出生日期 - 年", "出生日期 - 月", "姓名"]);
 });
 
 test("#301 side-by-side selects without telling placeholders stay unlabelled", (t) => {
