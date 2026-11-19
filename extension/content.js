@@ -6713,6 +6713,8 @@
     const wantsEleven = hint => /11\s*位\s*(?:的\s*)?(?:中国大陆\s*)?(?:手机(?:号(?:码)?)?|数字)/.test(hint);
     // 页面整段退回了带空格的手机号（框里还是原来的字）：认得出是手机号框就改写连续 11 位，不看有没有提示。
     if (checkErrors === "refused") return digits;
+    // #301 中铁的手机号框 maxlength=11：带空格的号码超过上限、去掉空格正好放得下，就写连续 11 位。
+    if (!checkErrors && element.maxLength > 0 && text.length > element.maxLength && digits.length <= element.maxLength) return digits;
     if (checkErrors) return describedErrorVisible(element, wantsEleven) || containerErrorVisible(element, wantsEleven) ? digits : "";
     const pattern = (element.getAttribute("pattern") || "").replace(/^\^|\$$/g, "");
     const digitsPattern = [

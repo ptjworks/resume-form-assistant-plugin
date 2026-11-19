@@ -453,3 +453,25 @@ test("#301 a number box with a unit select after it is one question, and a numbe
   assert.equal(result.skipped.merged, 1);
   assert.equal(result.skipped.noLabel, 2, "two unlabelled boxes with no question text stay unlabelled");
 });
+
+test("#301 中铁 生源地: three side-by-side selects under one question are named by their own placeholder option", (t) => {
+  const doc = load(`<form><div class="basic_table"><h3>用户基本信息</h3><ul class="basic_per">
+    <li><p><span></span>姓&nbsp;&nbsp;名：</p><input type="text" name="name"></li>
+    <li><p><span></span>生&nbsp;源&nbsp;地：</p><ul class="originOfStudent">
+      <li><select name="province"><option value="">省级</option><option value="北京市">北京市</option></select></li>
+      <li><select name="city"><option value="">市级</option></select></li>
+      <li><select name="county"><option value="">县级</option></select></li></ul></li>
+    <li><p><span></span>手&nbsp;机&nbsp;号&nbsp;码：</p><input type="text" name="phone" maxlength="11"></li></ul></div></form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(labels(result), ["姓 名", "生 源 地 - 省级", "生 源 地 - 市级", "生 源 地 - 县级", "手 机 号 码"]);
+  assert.equal(result.skipped.noLabel, 0);
+  assert.ok(result.controls.every((control) => !control.repeatIndex), "the three parts are not taken as repeated records");
+});
+
+test("#301 side-by-side selects without telling placeholders stay unlabelled", (t) => {
+  const doc = load(`<form><ul><li><p>地址：</p><ul><li><select><option value="">请选择</option></select></li>
+    <li><select><option value="">请选择</option></select></li></ul></li><li><p>姓名：</p><input></li></ul></form>`);
+  t.after(() => doc.defaultView.close());
+  assert.equal(scan(doc).skipped.noLabel, 2);
+});

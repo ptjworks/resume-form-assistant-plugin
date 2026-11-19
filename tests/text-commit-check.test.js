@@ -900,3 +900,9 @@ test("#301 a phone box that silently refuses a spaced number is written again as
   assert.equal(await p.set("note", "138 5188 2340"), false);
   assert.equal(p.input("note").value, "");
 });
+
+test("#301 a phone box with maxlength 11 gets the spaced number as 11 digits instead of being skipped as too long", async (t) => {
+  const p = page(t, item("phone", "手机号码", 'maxlength="11"'));
+  assert.equal(await p.set("phone", "138 5188 2340"), true, p.reason("phone"));
+  assert.equal(p.input("phone").value, "13851882340");
+});
