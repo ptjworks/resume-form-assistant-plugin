@@ -3621,23 +3621,9 @@
       && Boolean(self.ResumeProFieldScan?.hasDisplayedValue(entry.binding, { isVisible }));
   }
 
-  // #301 网页上有哪几种经历栏（只说种类，不带网页文字）：看得见的、整段字就是「实习经历」「工作经历」的标题。
-  // 还没有输入框的空栏（小米的实习经历只有一个「添加」）也算，AI 据此不把实习填进工作经历一栏。
-  const EXPERIENCE_HEADINGS = [[/^(?:实习经历|实习经验)$/, "internship"], [/^(?:工作经历|工作经验)$/, "employment"]];
+  // #301 网页上有哪几种经历栏（只说种类，不带网页文字），判断见 form-agent.js 的 pageSections。
   function pageExperienceSections() {
-    const found = new Set();
-    try {
-      for (const el of document.querySelectorAll("h1, h2, h3, h4, h5, h6, legend, p, span, div, label")) {
-        if (found.size === EXPERIENCE_HEADINGS.length) break;
-        if (el.childElementCount > 0) continue;
-        const text = String(el.textContent || "").replace(/[\s*＊:：]/g, "");
-        const kind = EXPERIENCE_HEADINGS.find(([pattern]) => pattern.test(text))?.[1];
-        if (kind && !found.has(kind) && isVisibleInOwnDocument(el)) found.add(kind);
-      }
-    } catch {
-      // 读不到就不带，AI 照常对应。
-    }
-    return [...found];
+    try { return self.ResumeProFormAgent?.pageSections?.(document, isVisibleInOwnDocument) || []; } catch { return []; }
   }
 
   // 只在本次填写期间比较网页值，不保存或发送到桌面/AI。

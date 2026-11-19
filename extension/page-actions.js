@@ -206,7 +206,7 @@
             ...toggles.map(toggle => toggle.element)].filter(Boolean);
         });
         const snapshot = formAgent.collectSpec(groups, templateFields, {
-          isVisible, labelOf, press, timing: timing?.add,
+          isVisible, labelOf, press, timing: timing?.add, pageSections: formAgent.pageSections?.(doc, isVisible) || [],
           allowed: el => targetAllowed(el, "add", { deep, describe, isVisible, doc })
         });
         for (const problem of snapshot.problems) {
@@ -280,7 +280,8 @@
     });
     if (buttons.length !== 1 || !targetAllowed(buttons[0], "add", ctx)) return skip("no_add");
     const snapshot = ctx.formAgent.collectSpec([{ domain: follow.domain, button: buttons[0], rows: [], others: [] }], follow.fields || [], {
-      isVisible: ctx.isVisible, press, timing: ctx.timing?.add, allowed: el => targetAllowed(el, "add", ctx)
+      isVisible: ctx.isVisible, press, timing: ctx.timing?.add, allowed: el => targetAllowed(el, "add", ctx),
+      pageSections: ctx.formAgent.pageSections?.(ctx.doc, ctx.isVisible) || []
     });
     const plan = snapshot.candidates.map(candidate => ({ id: candidate.id, count: candidate.target - candidate.current }));
     const total = plan.reduce((sum, action) => sum + action.count, 0);

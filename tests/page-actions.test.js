@@ -771,3 +771,23 @@ test("#301 pressing a button whose text sits in an inner span still has its subm
   assert.equal(submitted, false);
   dom.window.close();
 });
+
+// #301 小米：空栏只有一个类名带 title 的短标题和一个「添加」。标题要写进大纲，模型才分得清每个「添加」属于哪一栏。
+test("#301 the outline lists the short title of an empty section before its add button", () => {
+  const dom = new JSDOM(`<!doctype html><body><form>
+    <div class="sec"><div class="createFormSection-title"><p class="createFormSection-text">工作经历</p></div><label>公司名称<input></label></div>
+    <div class="sec"><div class="createFormSection-title"><p class="createFormSection-text">实习经历</p></div>
+      <div class="createFormSection-addBtn"><i class="anticon"></i><span>添加</span></div></div>
+    <div class="sec"><div class="createFormSection-title"><p class="createFormSection-text">项目经历</p></div>
+      <div class="createFormSection-addBtn"><i class="anticon"></i><span>添加</span></div></div>
+    <div class="page-header"><a href="/jobs">返回岗位列表</a></div>
+  </form></body>`, { url: "https://xiaomi.jobs.example.test/apply" });
+  const built = outline.build(dom.window.document, { isVisible, fieldScan });
+  const text = built.parts.map((part) => part.text).join("\n");
+  const intern = text.indexOf("实习经历"), project = text.indexOf("项目经历");
+  assert.ok(intern > 0 && project > intern, text);
+  const firstAdd = text.indexOf('"添加"', intern);
+  assert.ok(firstAdd > intern && firstAdd < project, "the internship title sits right before its own add button");
+  assert.doesNotMatch(text, /标题.*返回岗位列表/, "a header holding a link is not taken as a title");
+  dom.window.close();
+});

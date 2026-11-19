@@ -25,6 +25,9 @@
   // 像「编辑 / 展开 / 添加」、并且看得出能点（手形光标、onclick、可聚焦）的元素；别的文字不会因此变成按钮。
   const ACTION_TEXT = /^(?:编辑|修改|完善|展开|收起|更多|查看更多|新增|添加|增加|继续添加|edit|modify|add|more|expand)/i;
   const MAX_TEXT_CLIMB = 3;
+  // 类名里以 title / header / heading 为一段的短标题（见下面空栏标题那一段）。
+  const TITLE_CLASS = /(?:^|[\s_-])(?:title|header|heading)(?:$|[\s_-])/i;
+  const MAX_TITLE_CHARS = 12;
   const ARIA_CONTROL_SELECTOR = "[contenteditable]:not([contenteditable='false']), [role='textbox'], [role='listbox'], [role='radiogroup'], [role='switch'], [role='spinbutton'], [role='checkbox']";
   const TEXT_CLUE_SELECTOR = "label, legend, th, dt, [role='heading'], h1, h2, h3, h4, h5, h6, caption";
   const HEADING_SELECTOR = "h1, h2, h3, h4, h5, h6, legend, caption, [role='heading']";
@@ -335,6 +338,20 @@
       if (!text || chars(text).length > MAX_SEGMENT * 2) continue;
       const heading = el.matches(HEADING_SELECTOR) || Boolean(campusTitle && el.matches(campusTitle));
       add(el, { type: heading ? "heading" : "text", element: el, text });
+    }
+    // #301 小米：还没有输入框的空栏（实习经历、项目经历……）只有一个类名带 title 的短标题和一个「添加」，
+    // 不写进来，模型看到的是一串分不清属于哪一栏的「添加」。类名里有 title / header / heading 一段、字很短、
+    // 里面没有输入框和按钮的，按标题列出（已经列过的不重复）。
+    const listed = new Set(Array.from(root.querySelectorAll(clueSelector)));
+    for (const el of Array.from(root.querySelectorAll("[class*='title' i], [class*='header' i], [class*='heading' i]"))) {
+      if (listed.has(el) || !TITLE_CLASS.test(String(el.getAttribute("class") || ""))) continue;
+      if (Array.from(listed).some(other => other.contains(el) || el.contains(other))) continue;
+      if (ctx.exclude(el) || !ctx.isVisible(el) || insideClaimed(el) || editableHere(el)) continue;
+      if (el.querySelector?.("input, select, textarea, button, a[href], [role='combobox'], [role='button']")) continue;
+      const text = squash(el.textContent);
+      if (!text || chars(text).length > MAX_TITLE_CHARS) continue;
+      listed.add(el);
+      add(el, { type: "heading", element: el, text });
     }
 
     // 文档顺序：querySelectorAll("*") 本身就按顺序；宿主元素后面接着展开它的 Shadow root 或框架。

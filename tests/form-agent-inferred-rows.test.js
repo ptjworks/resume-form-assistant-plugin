@@ -177,3 +177,16 @@ test("#301 an existing entry the model points at is counted as a whole when the 
   const empty = agent.collectSpec([intern], internships, { isVisible: visible });
   assert.deepEqual(empty.candidates.map(({ current, target }) => [current, target]), [[0, 2]]);
 });
+
+// #301 小米：网页上有单独的实习经历一栏（空栏也算）时，工作经历只按真正的工作经历数，不拿实习凑数。
+test("#301 a work group is not filled up with internships when the page has its own internship section", (t) => {
+  const { window } = new JSDOM(`<form><div class="sec"><p>工作经历</p><div class="addw"><span>添加</span></div></div>
+    <div class="sec"><p>实习经历</p><div class="addi"><span>添加</span></div></div></form>`);
+  t.after(() => window.close());
+  const doc = window.document;
+  assert.deepEqual(agent.pageSections(doc, visible).sort(), ["employment", "internship"]);
+  const work = { domain: "work", button: doc.querySelector(".addw"), rows: [], others: [doc.querySelector(".addi")] };
+  const internships = [{ group: "实习经历", key: "A实习经历-公司", value: "a" }, { group: "实习经历", key: "B实习经历-公司", value: "b" }];
+  assert.deepEqual(agent.collectSpec([work], internships, { isVisible: visible, pageSections: ["employment", "internship"] }).candidates, []);
+  assert.deepEqual(agent.collectSpec([work], internships, { isVisible: visible, pageSections: ["employment"] }).candidates.map(({ target }) => target), [2]);
+});

@@ -322,7 +322,11 @@
     const helpers = root.ResumeProAIHelpers || (typeof require === "function" ? require("./ai-helpers.js") : null);
     // BOSS uses the same source records for planning rows and filling them.
     // #301 网页上工作经历和实习经历是两个分开的分组时，各数各的；只有一个「工作 / 实习」分组时，实习记录算在工作里（targetCounts）。
-    const splitWork = groups.some(group => group.domain === "internship" && !group.workKind);
+    // 页面上「工作经历」「实习经历」两栏都有（还没有输入框的空栏也算）也是分开的：工作经历不拿实习凑数。
+    // 只有一栏叫「实习经历」的（北森），它就是这一组本身，照旧按实习数。
+    const shown = Array.isArray(options.pageSections) ? options.pageSections : [];
+    const splitWork = groups.some(group => group.domain === "internship" && !group.workKind)
+      || (shown.includes("internship") && shown.includes("employment"));
     const targetFor = group => group.workKind && helpers?.workRecords
       ? helpers.workRecords(fields, group.workKind).length
       : helpers?.workRecords && group.domain === "internship" ? helpers.workRecords(fields, "internship").length
@@ -568,8 +572,25 @@
       return count > 0 ? [{ ...item, count }] : [];
     });
   }
+  // #301 网页上有哪几种经历栏（只说种类）：看得见的、整段字就是「实习经历」「工作经历」的标题。
+  // 还没有输入框的空栏也算（小米的实习经历只有一个「添加」）。填写时告诉 AI、新增时决定工作经历要不要拿实习凑数，都用它。
+  const SECTION_HEADINGS = [[/^(?:实习经历|实习经验)$/, "internship"], [/^(?:工作经历|工作经验)$/, "employment"]];
+  function pageSections(doc, isVisible = visible) {
+    const found = new Set();
+    try {
+      for (const el of doc.querySelectorAll("h1, h2, h3, h4, h5, h6, legend, p, span, div, label")) {
+        if (found.size === SECTION_HEADINGS.length) break;
+        if (el.childElementCount > 0) continue;
+        const kind = SECTION_HEADINGS.find(([pattern]) => pattern.test(bare(el.textContent)))?.[1];
+        if (kind && !found.has(kind) && isVisible(el)) found.add(kind);
+      }
+    } catch {
+      // 读不到就不带。
+    }
+    return [...found];
+  }
   const labels = Object.fromEntries([...domains, internshipDomain].map(domain => [domain.id, domain.label]));
-  const api = { targetCounts, collect, collectSpec, emptyToggles, campusGroups, campusRows, campusWorkScope, campusWorkKind, validatePlan, execute, labels };
+  const api = { targetCounts, collect, collectSpec, emptyToggles, pageSections, campusGroups, campusRows, campusWorkScope, campusWorkKind, validatePlan, execute, labels };
   root.ResumeProFormAgent = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);
