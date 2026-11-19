@@ -160,10 +160,15 @@
       items.push({ kind: action.kind, ref: action.ref, element: node.element, label: name.label });
     }
     // #301 勾着「没有实习经历」的分组没有「添加」按钮：简历里有这类经历时，列一步取消勾选，用户确认后才执行。
-    for (const toggle of formAgent?.emptyToggles?.(doc, templateFields, isVisible) || []) {
+    // 取消勾选前这一组没有「添加」按钮，第一轮分析看不到它：简历里不止一条时，取消勾选后在这一组里找「添加」接着补齐
+    // （见 followToggleAdds），写进预览，和取消勾选一起确认。
+    const toggles = formAgent?.emptyToggles?.(doc, templateFields, isVisible) || [];
+    for (const toggle of toggles) {
       if (items.some(item => item.element === toggle.element || item.element.contains(toggle.element) || toggle.element.contains(item.element))) continue;
-      items.push({ kind: "expand", ref: "", toggle: { box: toggle.box, text: toggle.text }, element: toggle.element,
-        label: `取消勾选「${toggle.text}」` });
+      const label = formAgent.labels?.[toggle.domain] || "条目";
+      const follow = toggle.count > 1 && toggle.count <= MAX_ADDS ? { domain: toggle.domain, target: toggle.count, fields: templateFields } : null;
+      items.push({ kind: "expand", ref: "", toggle: { box: toggle.box, text: toggle.text, follow }, element: toggle.element,
+        label: follow ? `取消勾选「${toggle.text}」，再把${label}补到 ${toggle.count} 条` : `取消勾选「${toggle.text}」` });
     }
     let adds = null;
     const campus = formAgent?.campusGroups?.(doc) || [];
@@ -180,8 +185,10 @@
           rows: section.rowRefs.map(ref => nodes.get(ref)?.element).filter(Boolean)
         });
         const groups = [...sections.map(groupOf), ...campus];
+        // 「没有××经历」开关属于它自己那一组：别的分组往上扩范围时碰到它就停（取消勾选后那一组会冒出输入框）。
         groups.forEach((group, index) => {
-          group.others = groups.filter((_, i) => i !== index).flatMap(other => [other.button, ...(other.rows || [])]).filter(Boolean);
+          group.others = [...groups.filter((_, i) => i !== index).flatMap(other => [other.button, ...(other.rows || [])]),
+            ...toggles.map(toggle => toggle.element)].filter(Boolean);
         });
         const snapshot = formAgent.collectSpec(groups, templateFields, {
           isVisible, labelOf, press, timing: timing?.add,
@@ -229,15 +236,45 @@
     return plan.items.every(item => itemAllowed(item, ctx));
   }
 
+  // #301 取消勾选「没有××经历」以后：在这一组新冒出来的那块里找唯一的「添加」，按页面结构数已有条目，补到简历的条数。
+  // 找那一块：从开关往上，到第一个装着新输入框的祖先为止。「添加」只认一个、而且按网页当前样子仍然允许点；
+  // 找不到、不止一个、数不清就不补（第二轮分析会提示用户再分析一次）。返回 formAgent.execute 的结果，出错时抛出它的错误。
+  const FOLLOW_ADD_TEXT = /^[+＋]?(?:添加|新增)(?:一条)?(?:工作|实习|项目)?(?:经历|经验)?$/;
+  const bareText = el => String(el?.textContent || "").replace(/[\s\p{P}\p{S}]/gu, "");
+  async function followToggleAdds(item, before, ctx, onStep) {
+    const follow = item.toggle?.follow;
+    if (!follow || !ctx.deep || !ctx.describe || !ctx.formAgent?.collectSpec) return { added: 0, scopes: [] };
+    const fresh = editableControls(ctx.doc, ctx.isVisible).filter(el => !before.includes(el));
+    let box = item.element.parentElement;
+    for (let depth = 0; box && box !== ctx.doc.body && depth < 8 && !fresh.some(el => box.contains(el)); depth += 1) box = box.parentElement;
+    if (!fresh.length || !box || box === ctx.doc.body) return { added: 0, scopes: [] };
+    const words = Array.from(box.querySelectorAll("*")).filter(el => FOLLOW_ADD_TEXT.test(bareText(el).replace(/^＋/, "+"))
+      && !Array.from(el.children).some(child => FOLLOW_ADD_TEXT.test(bareText(child))));
+    const buttons = [...new Set(words.map(el => el.closest("button, [role='button'], a[href]") || el))].filter(el => {
+      try { return ctx.isVisible(el); } catch { return false; }
+    });
+    if (buttons.length !== 1 || !targetAllowed(buttons[0], "add", ctx)) return { added: 0, scopes: [] };
+    const snapshot = ctx.formAgent.collectSpec([{ domain: follow.domain, button: buttons[0], rows: [], others: [] }], follow.fields || [], {
+      isVisible: ctx.isVisible, press, timing: ctx.timing?.add, allowed: el => targetAllowed(el, "add", ctx)
+    });
+    const plan = snapshot.candidates.map(candidate => ({ id: candidate.id, count: candidate.target - candidate.current }));
+    const total = plan.reduce((sum, action) => sum + action.count, 0);
+    if (!total || total > MAX_ADDS) return { added: 0, scopes: [] };
+    return ctx.formAgent.execute(plan, snapshot, () => Boolean(ctx.stopped()), onStep, () => !ctx.stopped());
+  }
+
   // 逐个执行确认过的计划。ctx：doc、deep、describe、isVisible、formAgent、stopped（返回原因）、onProgress、timing。
   // 返回 { ok, code, message, done: { edit, expand, add }, scopes }；ok 为 false 时后面的动作一律没做。
   async function executePlan(plan, ctx) {
     const done = { edit: 0, expand: 0, add: 0 };
     // 进度按实际点击次数算：「添加 ×k」是 k 次点击（PR #279 审查）。
-    const total = plan.items.reduce((sum, item) => sum + (item.kind === "add" ? Number(item.count) || 0 : 1), 0);
+    // 取消勾选后接着补的条目也算进去（取消勾选后网页多半自带一张空白条目，按少一条估）。
+    const total = plan.items.reduce((sum, item) => sum + (item.kind === "add" ? Number(item.count) || 0 : 1)
+      + (item.toggle?.follow ? Math.max(0, item.toggle.follow.target - 1) : 0), 0);
     const end = (code, message = "", extra = {}) => ({ ok: false, code, message, done, scopes: [], ...extra });
     if (!planStillValid(plan, ctx)) return end("target_changed");
     let index = 0;
+    let scopes = [];
     for (const item of plan.items) {
       if (item.kind === "add") continue;
       index += 1;
@@ -258,8 +295,25 @@
       if (!waited.ready) return end(waited.quiet ? "no_change" : "timeout");
       if (!valuesKept(saved)) return end("values_changed");
       done[item.kind] += 1;
+      if (item.toggle?.follow) {
+        const controlsBefore = editableControls(ctx.doc, ctx.isVisible).length;
+        try {
+          const follow = await followToggleAdds(item, before, ctx, step => {
+            ctx.onProgress?.({ index, total, label: `${ctx.formAgent.labels?.[step.domain] || "条目"}：添加 ${step.index}/${step.count}`, kind: "add" });
+          });
+          done.add += follow.added;
+          scopes.push(...follow.scopes);
+        } catch (error) {
+          done.add += Number.isInteger(error?.added) ? error.added : 0;
+          const reason = ctx.stopped();
+          if (reason) return end(reason === "navigated" ? "navigated" : "stopped");
+          const grew = Math.max(0, editableControls(ctx.doc, ctx.isVisible).length - controlsBefore);
+          const text = String(error?.message || "").slice(0, 120);
+          return end("add_failed", grew ? `${text}页面上多出了 ${grew} 个输入框，网页可能已经新增了条目，请检查。` : text,
+            { detail: addStopDetail(error), grew });
+        }
+      }
     }
-    let scopes = [];
     if (plan.adds) {
       const controlsBefore = editableControls(ctx.doc, ctx.isVisible).length;
       const stopped = () => Boolean(ctx.stopped());
@@ -269,7 +323,7 @@
           ctx.onProgress?.({ index, total, label: `${ctx.formAgent.labels[step.domain] || "条目"}：添加 ${step.index}/${step.count}`, kind: "add" });
         }, () => !ctx.stopped());
         done.add = result.added;
-        scopes = result.scopes;
+        scopes.push(...result.scopes);
       } catch (error) {
         done.add = Number.isInteger(error?.added) ? error.added : 0;
         const reason = ctx.stopped();

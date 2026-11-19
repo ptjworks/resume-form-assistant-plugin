@@ -219,6 +219,18 @@
       if (Array.from(row.querySelectorAll(editable)).some(isVisible)) break;
     }
     if (!row || row === top || !Array.from(row.querySelectorAll(editable)).some(isVisible)) return null;
+    const hasInputs = el => Array.from(el.querySelectorAll(editable)).some(isVisible);
+    // 按钮在条目外面、和条目列表是兄弟（北森式「列表 + 底部添加」）：第一个装着输入框的祖先是整组，条目是列表里的每一项。
+    const branch = Array.from(row.children).find(child => child.contains(button));
+    const holders = Array.from(row.children).filter(child => child !== branch && hasInputs(child));
+    if (holders.length === 1) {
+      const items = Array.from(holders[0].children).filter(hasInputs);
+      const sig = items.length ? signature(items[0]) : "";
+      if (items.length && items.every(item => signature(item) === sig)
+        && Array.from(holders[0].querySelectorAll(editable)).filter(isVisible).every(el => items.some(item => item.contains(el)))) {
+        return { anchors: items.map(item => Array.from(item.querySelectorAll(editable)).find(isVisible)), rows: items };
+      }
+    }
     const parent = row.parentElement;
     if (!parent || parent === top || containsAny(parent, others)) return null;
     const sig = signature(row);
@@ -292,7 +304,9 @@
   // options：isVisible、labelOf（输入框 → 题目，用来认出一个容器里装了两条记录）、allowed（按钮按网页当前样子重新判断）、
   // press（点击方式，默认 el.click()）。同类分组有两个以上时都不给候选（歧义）。
   function collectSpec(groups, fields, options = {}) {
-    const isVisible = options.isVisible || visible;
+    // #301 分组里的「没有××经历」开关（取消勾选后还留在原处）不是条目的一部分：数条目、找新条目时都不算它。
+    const baseVisible = options.isVisible || visible;
+    const isVisible = el => !isNoneToggle(el) && baseVisible(el);
     const targets = targetCounts(fields);
     const helpers = root.ResumeProAIHelpers || (typeof require === "function" ? require("./ai-helpers.js") : null);
     // BOSS uses the same source records for planning rows and filling them.
@@ -516,6 +530,11 @@
   // 简历里确实有这一类经历时，列出来让用户确认后取消勾选；简历里没有的不碰。每项：domain、box（勾选框）、
   // element（点它：包着勾选框的 label）、text（开关上的字）。勾选框必须是 label 里唯一的输入框、已勾选、可操作。
   const NONE_TOGGLE = /^(?:没有|无|暂无|不涉及|无需填写)(?:相关)?(工作|实习|项目)(?:经历|经验)$/;
+  function isNoneToggle(el) {
+    if (el?.tagName !== "INPUT" || String(el.type).toLowerCase() !== "checkbox") return false;
+    const label = el.closest?.("label");
+    return Boolean(label) && label.querySelectorAll("input").length === 1 && NONE_TOGGLE.test(bare(label.textContent));
+  }
   const TOGGLE_DOMAIN = { 工作: "work", 实习: "internship", 项目: "projects" };
   function emptyToggles(doc, fields, isVisible = visible) {
     if (!doc?.querySelectorAll || !Array.isArray(fields) || !fields.length) return [];
@@ -531,10 +550,11 @@
     }
     const splitWork = found.some(item => item.domain === "internship");
     const targets = targetCounts(fields);
-    return found.filter(item => {
+    // count：简历里这一类有几条，取消勾选后按它补齐条目（page-actions 的 followToggleAdds）。
+    return found.flatMap(item => {
       const count = item.domain === "internship" ? helpers?.workRecords?.(fields, "internship").length
         : item.domain === "work" && splitWork ? helpers?.workRecords?.(fields, "work").length : targets[item.domain];
-      return count > 0;
+      return count > 0 ? [{ ...item, count }] : [];
     });
   }
   const labels = Object.fromEntries([...domains, internshipDomain].map(domain => [domain.id, domain.label]));
