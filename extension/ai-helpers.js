@@ -1295,6 +1295,7 @@
     `^(?:(?:${EDUCATION_QUALIFIER})[,，、]?)*(${EDUCATION_LEVEL}|硕士|博士)(?:[,，、]?(?:${EDUCATION_QUALIFIER}))*$`
   );
 
+  const STUDY_MODE_LABEL = /^(?:学历类型|学历性质|学习形式|学习方式|培养方式|就读方式)$/;
   function isEducationLevelLabel(label) {
     return /^(?:最高|当前|在读|教育|(?:最高)?已(?:取得|获得|完成))?学历(?:层次)?$/.test(normalizeText(label));
   }
@@ -1334,6 +1335,26 @@
       const equivalent = available.filter(option => names(option).some(text => isSameOptionText(text, level)));
       if (equivalent.length === 1) return level;
       if (equivalent.length > 1) return "";
+    }
+    // #301 问学历的下拉，选项只写层次（飞书招聘：博士、硕士、本科）：资料写「博士研究生（直博）」「硕士研究生」，
+    // 按同一个层次换成选项里正好一项的写法。只在题目问学历时这样换：「硕士」「博士」也是学位，别的题不混；
+    // 带「在读」「未毕业」这类状态的不换（没取得的学历不能当成取得了），学位（「理学学士」）也不当学历。
+    if (isEducationLevelLabel(field?.label) && hasRealOptions(field)) {
+      const kind = educationLevelKind(value);
+      const available = field.options.filter(option => !isPlaceholderOption(option));
+      const names = option => [option?.text ?? option, option?.value].filter(text => text !== undefined && text !== null);
+      const full = normalizeText(value);
+      if (kind && !available.some(option => names(option).some(text => normalizeText(text) === full))) {
+        // 只换成不带附注的层次选项（「博士」），不换成另一种附注（「博士研究生（普博）」不是「直博」）。
+        const same = available.filter(option => names(option).some(text => PLAIN_EDUCATION_LEVEL.test(normalizeText(text)) && educationLevelKind(text) === kind));
+        if (same.length === 1) return String(same[0]?.text ?? same[0]);
+      }
+    }
+    // #301 问学习形式的下拉（学历类型：统招全日制 / 统招非全日制 / 自考）：资料只在学历里带着「全日制」「非全日制」。
+    if (STUDY_MODE_LABEL.test(normalizeText(field?.label)) && hasRealOptions(field)) {
+      const text = normalizeText(value);
+      const mode = text.includes("非全日制") ? "非全日制" : text.includes("全日制") ? "全日制" : "";
+      if (mode && mode !== text && findSelectOptionIndex(field.options, value) < 0 && findSelectOptionIndex(field.options, mode) >= 0) return mode;
     }
     if (inferFieldSemantic(field) !== "gender" || !hasRealOptions(field) || findSelectOptionIndex(field.options, value) >= 0) return value;
     const text = normalizeText(value);

@@ -25,7 +25,7 @@
   const MAX_SEGMENT_CHARS = 64;
   const DOM_KINDS = new Set(["text", "textarea", "native-select", "radio", "checkbox", "date", "custom-select", "cascader"]);
   const FILL_CONTROLS = new Set(["text", "textarea", "native-select", "radio", "checkbox", "date", "custom-select", "cascader"]);
-  const DOMAINS = new Set(["education", "work", "projects", "papers"]);
+  const DOMAINS = new Set(["education", "work", "internship", "projects", "papers"]);
   const TIERS = new Set(["strong", "default", ""]);
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   // 「请输入」「请选择」这类占位文字每个框都一样，只能加分，不能单独当作找到字段的依据。

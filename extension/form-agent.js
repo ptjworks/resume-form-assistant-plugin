@@ -206,11 +206,50 @@
     const all = pieces.join("");
     return pieces.length > 2 || /\d{4}/.test(all) || all.length > 60;
   }
+  // #301 AI 没有列出已有条目、「添加」按钮却就在一张带输入框的卡片里（飞书招聘：默认就有一张空白的教育经历卡片，
+  // 按钮在卡片右下角）：已有几条看页面结构就能数出来，不能因为 AI 没说就当成 0 条。
+  // 从按钮往上（最多 4 层）找到第一个装着看得见的输入框的祖先，就是按钮所在的那一条；
+  // 它的同层、结构相同、也装着输入框的兄弟都是条目。里面混进别的分组的按钮或条目、或者找不到，就返回 null（照旧按没有条目算）。
+  const INFER_DEPTH = 4;
+  function inferRows(button, others, isVisible) {
+    const top = button.ownerDocument?.body;
+    let row = button.parentElement;
+    for (let depth = 0; row && row !== top && depth < INFER_DEPTH; depth += 1, row = row.parentElement) {
+      if (containsAny(row, others)) return null;
+      if (Array.from(row.querySelectorAll(editable)).some(isVisible)) break;
+    }
+    if (!row || row === top || !Array.from(row.querySelectorAll(editable)).some(isVisible)) return null;
+    const hasInputs = el => Array.from(el.querySelectorAll(editable)).some(isVisible);
+    // 按钮在条目外面、和条目列表是兄弟（北森式「列表 + 底部添加」）：第一个装着输入框的祖先是整组，条目是列表里的每一项。
+    const branch = Array.from(row.children).find(child => child.contains(button));
+    const holders = Array.from(row.children).filter(child => child !== branch && hasInputs(child));
+    if (holders.length === 1) {
+      const items = Array.from(holders[0].children).filter(hasInputs);
+      const sig = items.length ? signature(items[0]) : "";
+      if (items.length && items.every(item => signature(item) === sig)
+        && Array.from(holders[0].querySelectorAll(editable)).filter(isVisible).every(el => items.some(item => item.contains(el)))) {
+        return { anchors: items.map(item => Array.from(item.querySelectorAll(editable)).find(isVisible)), rows: items };
+      }
+    }
+    const parent = row.parentElement;
+    if (!parent || parent === top || containsAny(parent, others)) return null;
+    const sig = signature(row);
+    const list = Array.from(parent.children).filter(child => signature(child) === sig && Array.from(child.querySelectorAll(editable)).some(isVisible));
+    if (!list.includes(row)) return null;
+    const anchors = list.map(item => Array.from(item.querySelectorAll(editable)).find(isVisible));
+    return anchors.every(Boolean) ? { anchors, rows: list } : null;
+  }
   // group：{ domain, button, rows（已有条目里各取一个元素，一条一个）, others（别的分组的按钮和条目） }。
   function locateGroup(group, isVisible, labelOf) {
-    const { button, rows: anchors = [], others = [] } = group;
+    const { button, others = [] } = group;
+    let anchors = group.rows || [];
     if (!button?.isConnected || !isVisible(button)) return { reason: "target_changed" };
     const top = button.ownerDocument?.body;
+    let inferred = null;
+    if (!anchors.length) {
+      inferred = inferRows(button, others, isVisible);
+      if (inferred) anchors = inferred.anchors;
+    }
     let scope;
     if (!anchors.length) {
       // 还没有条目：从按钮往上找到最大的、不含任何输入框和别的分组的容器。
@@ -253,8 +292,8 @@
       if (all.some(el => !found.some(row => row.contains(el)))) return { reason: "uncountable" };
       if (found.some(row => looksRepeated(row, isVisible, labelOf))) return { reason: "uncountable" };
     } else {
-      let only = anchors[0];
-      while (only.parentElement && only.parentElement !== scope && !only.parentElement.contains(button)) only = only.parentElement;
+      let only = inferred ? inferred.rows[0] : anchors[0];
+      while (!inferred && only.parentElement && only.parentElement !== scope && !only.parentElement.contains(button)) only = only.parentElement;
       if (all.some(el => !only.contains(el)) || looksRepeated(only, isVisible, labelOf)) return { reason: "uncountable" };
     }
     return { scope, current: anchors.length, model, anchor: anchors[0], initial: all };
@@ -265,12 +304,19 @@
   // options：isVisible、labelOf（输入框 → 题目，用来认出一个容器里装了两条记录）、allowed（按钮按网页当前样子重新判断）、
   // press（点击方式，默认 el.click()）。同类分组有两个以上时都不给候选（歧义）。
   function collectSpec(groups, fields, options = {}) {
-    const isVisible = options.isVisible || visible;
+    // #301 分组里的「没有××经历」开关（取消勾选后还留在原处）不是条目的一部分：数条目、找新条目时都不算它。
+    const baseVisible = options.isVisible || visible;
+    const isVisible = el => !isNoneToggle(el) && baseVisible(el);
     const targets = targetCounts(fields);
     const helpers = root.ResumeProAIHelpers || (typeof require === "function" ? require("./ai-helpers.js") : null);
     // BOSS uses the same source records for planning rows and filling them.
+    // #301 网页上工作经历和实习经历是两个分开的分组时，各数各的；只有一个「工作 / 实习」分组时，实习记录算在工作里（targetCounts）。
+    const splitWork = groups.some(group => group.domain === "internship" && !group.workKind);
     const targetFor = group => group.workKind && helpers?.workRecords
-      ? helpers.workRecords(fields, group.workKind).length : targets[group.domain];
+      ? helpers.workRecords(fields, group.workKind).length
+      : helpers?.workRecords && group.domain === "internship" ? helpers.workRecords(fields, "internship").length
+      : helpers?.workRecords && group.domain === "work" && splitWork ? helpers.workRecords(fields, "work").length
+      : targets[group.domain];
     const candidates = [];
     const refs = new Map();
     const problems = [];
@@ -480,8 +526,39 @@
     }
     return { added, scopes };
   }
+  // #301 网页默认勾着「没有实习经历」这类开关（飞书招聘）：勾着时这一组只有这个勾选框，没有「添加」按钮、也没有输入框。
+  // 简历里确实有这一类经历时，列出来让用户确认后取消勾选；简历里没有的不碰。每项：domain、box（勾选框）、
+  // element（点它：包着勾选框的 label）、text（开关上的字）。勾选框必须是 label 里唯一的输入框、已勾选、可操作。
+  const NONE_TOGGLE = /^(?:没有|无|暂无|不涉及|无需填写)(?:相关)?(工作|实习|项目)(?:经历|经验)$/;
+  function isNoneToggle(el) {
+    if (el?.tagName !== "INPUT" || String(el.type).toLowerCase() !== "checkbox") return false;
+    const label = el.closest?.("label");
+    return Boolean(label) && label.querySelectorAll("input").length === 1 && NONE_TOGGLE.test(bare(label.textContent));
+  }
+  const TOGGLE_DOMAIN = { 工作: "work", 实习: "internship", 项目: "projects" };
+  function emptyToggles(doc, fields, isVisible = visible) {
+    if (!doc?.querySelectorAll || !Array.isArray(fields) || !fields.length) return [];
+    const helpers = root.ResumeProAIHelpers || (typeof require === "function" ? require("./ai-helpers.js") : null);
+    const found = [];
+    for (const box of Array.from(doc.querySelectorAll("input[type='checkbox']"))) {
+      if (!box.checked || box.disabled || box.getAttribute("aria-disabled") === "true") continue;
+      const label = box.closest("label");
+      if (!label || label.querySelectorAll("input").length !== 1 || !isVisible(label)) continue;
+      const text = bare(label.textContent);
+      const match = NONE_TOGGLE.exec(text);
+      if (match) found.push({ domain: TOGGLE_DOMAIN[match[1]], box, element: label, text });
+    }
+    const splitWork = found.some(item => item.domain === "internship");
+    const targets = targetCounts(fields);
+    // count：简历里这一类有几条，取消勾选后按它补齐条目（page-actions 的 followToggleAdds）。
+    return found.flatMap(item => {
+      const count = item.domain === "internship" ? helpers?.workRecords?.(fields, "internship").length
+        : item.domain === "work" && splitWork ? helpers?.workRecords?.(fields, "work").length : targets[item.domain];
+      return count > 0 ? [{ ...item, count }] : [];
+    });
+  }
   const labels = Object.fromEntries([...domains, internshipDomain].map(domain => [domain.id, domain.label]));
-  const api = { targetCounts, collect, collectSpec, campusGroups, campusRows, campusWorkScope, campusWorkKind, validatePlan, execute, labels };
+  const api = { targetCounts, collect, collectSpec, emptyToggles, campusGroups, campusRows, campusWorkScope, campusWorkKind, validatePlan, execute, labels };
   root.ResumeProFormAgent = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);

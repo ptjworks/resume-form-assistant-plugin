@@ -2115,7 +2115,8 @@
         const known = scanned.fields.filter(field => isBossScanField(field, scanned.fieldMap.get(field.fieldId)));
         return known.length ? { ...bound, ...mergeRecipeScan(bound, { ...scanned, fields: known }) } : bound;
       },
-      hasLocalSections: () => Boolean(self.ResumeProFormAgent?.campusGroups(document).length),
+      hasLocalSections: templateFields => Boolean(self.ResumeProFormAgent?.campusGroups(document).length
+        || self.ResumeProFormAgent?.emptyToggles?.(document, templateFields || [], isVisibleInOwnDocument).length),
       planActions: self.ResumeProPageActions && self.ResumeProFormAgent ? planDeepActions : null,
       // #226 站点配方：保存（深度分析效果更好时）、配方模式下找按钮和字段。
       baseline: deepBaseline,
@@ -5197,7 +5198,7 @@
           ? `本站配方：过期（${reasons[recipe.reason]}）`
           : `本站配方：过期（定位 ${count(recipe.located)}/${count(recipe.total)}，找不到 ${count(recipe.missing)}，有歧义 ${count(recipe.ambiguous)}），已退回普通扫描`;
       case "saved": {
-        const labels = { education: "教育经历", work: "工作经历", projects: "项目经历", papers: "论文" };
+        const labels = { education: "教育经历", work: "工作经历", internship: "实习经历", projects: "项目经历", papers: "论文" };
         const missing = (Array.isArray(recipe.missingSections) ? recipe.missingSections : []).map(domain => labels[domain]).filter(Boolean);
         return `本站配方：新保存（${count(recipe.fields)} 个字段${missing.length ? `；未记住的新增分组：${missing.join("、")}` : ""}）`;
       }
@@ -5237,8 +5238,13 @@
     const kinds = list => `编辑 ${count(list?.edit)}、展开 ${count(list?.expand)}、新增 ${count(list?.add)}`;
     const a = report.actions;
     const stop = /^[a-z_]{1,32}$/.test(a.stop || "") ? a.stop : "";
+    // #301 新增失败时的细分码和点击后页面多出的输入框数：看诊断就知道停在哪一步、网页有没有真的加了条目。
+    const detail = stop && /^[a-z_]{1,32}$/.test(a.detail || "") ? `（${a.detail}）` : "";
+    const grew = stop && count(a.grew) ? `；点击后页面输入框多出 ${count(a.grew)} 个` : "";
+    // #301 取消勾选后没能接着补条目：只写固定的原因码。
+    const skipped = (Array.isArray(a.notFollowed) ? a.notFollowed : []).filter(code => /^[a-z_]{1,32}$/.test(code));
     return [
-      `前置动作：计划 ${kinds(a.planned)}；已完成 ${kinds(a.done)}${stop ? `；停止原因：${stop}` : ""}`,
+      `前置动作：计划 ${kinds(a.planned)}；已完成 ${kinds(a.done)}${stop ? `；停止原因：${stop}${detail}${grew}` : ""}${skipped.length ? `；取消勾选后未补条目：${skipped.join("、")}` : ""}`,
       `需手动点击：${count(a.manual)}；未自动新增的分组：${count(a.blocked)}${a.missingAdds ? `；配方里找不到「添加」的分组：${count(a.missingAdds)}` : ""}；分析轮数：${count(report.rounds)}`
     ];
   }
@@ -6707,6 +6713,8 @@
     const digits = text.replace(/\s/g, "");
     if (digits === text || !/^1[3-9]\d{9}$/.test(digits) || !isPhoneInput(element)) return "";
     const wantsEleven = hint => /11\s*位\s*(?:的\s*)?(?:中国大陆\s*)?(?:手机(?:号(?:码)?)?|数字)/.test(hint);
+    // 页面整段退回了带空格的手机号（框里还是原来的字）：认得出是手机号框就改写连续 11 位，不看有没有提示。
+    if (checkErrors === "refused") return digits;
     if (checkErrors) return describedErrorVisible(element, wantsEleven) || containerErrorVisible(element, wantsEleven) ? digits : "";
     const pattern = (element.getAttribute("pattern") || "").replace(/^\^|\$$/g, "");
     const digitsPattern = [
@@ -6995,7 +7003,7 @@
       isVisible, writeValue: writeControlValue, focus: focusControl, blur: blurControl,
       normalizeText: normalizeExpectedTextValue, prepareText: prepareTextValue, runTextLifecycle, sameTextValue,
       inspectText: inspectTextCommit, waitTextCommit: waitForTextCommit,
-      retryMobile: (element, value) => compactMobileForField(element, value, true),
+      retryMobile: (element, value, refused = false) => compactMobileForField(element, value, refused ? "refused" : true),
       replayFocusBlur, prefersSequential: prefersSequentialInput, dispatchTextInput,
       getSettleMs: () => textCommitWaitMs <= 0 ? 0 : 250
     });

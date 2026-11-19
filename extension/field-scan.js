@@ -28,7 +28,7 @@
   const POPUP_SELECTOR = "[role='listbox'], [role='tree'], [role='menu'], [role='option'], .layui-form-select > dl";
   const POPUP_TOKEN = /[-_](?:dropdown|popper|popover|popup)(?:[-_]?(?:menu|panel|content|wrapper|list|inner))?$|^(?:dropdown-menu|popper|popover)$/i;
   // #301 简道云表单的日期框：.fx-form-datetime 里的 .x-datetime（类名不带 date-picker）。
-  const DATE_PICKER_SELECTOR = ".ant-picker, .el-date-editor, [class*='date-picker'], [class*='datepicker'], [class*='DatePicker'], [class*='date-editor'], .fx-form-datetime .x-datetime";
+  const DATE_PICKER_SELECTOR = ".ant-picker, .el-date-editor, [class*='date-picker'], [class*='datepicker'], [class*='DatePicker'], [class*='date-editor'], [class*='date-range-picker'], .fx-form-datetime .x-datetime";
   const SELECT_TOKEN = /(?:^|[-_])(?:select|selector|cascader|combobox|combo|dropdown|autocomplete|treeselect|multiselect|picker)(?:$|[-_])/i;
   // #269 只有类名、没有别的信号时，只认明确是选择框的词（北森 phoenix-select、Moka sd-Select）；
   // autocomplete、combo 这类可能允许自由输入，picker 可能是日期；Tailwind 的 select-none 之类不是组件。
@@ -39,7 +39,7 @@
   const MAX_RADIO_OPTION_CHARS = 40;
   const LIBRARY_SELECT_TOKENS = new Set(["ant-select", "ant-cascader", "el-select", "el-cascader", "arco-select", "arco-cascader",
     "ivu-select", "ivu-cascader", "n-select", "n-cascader", "t-select", "t-cascader", "v-select", "select2-container", "chosen-container"]);
-  const NOISE_TOKEN = /^(?:error|err|invalid|explain|help|helper|tip|tips|hint|extra|count|counter|wordcount|limit|message|msg|feedback|warning|validate|validation|suffix|prefix|placeholder|unit)$/i;
+  const NOISE_TOKEN = /^(?:error|err|invalid|explain|help|helper|tip|tips|hint|extra|count|counter|wordcount|limit|message|msg|feedback|warning|validate|validation|suffix|prefix|placeholder|unit|desc|description)$/i;
   const LABEL_TOKEN = /^(?:label|title|question|caption|subject|stem|tit|head|heading)$/i;
   const HEADING_TOKEN = /^(?:title|header|heading|head|caption|subtitle|tit)$/i;
   const SKIPPED_TEXT_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "SVG", "BUTTON", "SELECT", "TEXTAREA", "INPUT", "OPTION", "DATALIST"]);
@@ -878,6 +878,53 @@
     return null;
   }
 
+  // #301 一格多个控件（飞书招聘的「区号下拉 + 手机号」「证件类型下拉 + 证件号」、薪资数字 + 单位下拉）：
+  // 控件自己的表单项里没有题目，因为同一格里还有别的控件，往上一层就碰到了「别的控件」。
+  // 这样的几个控件自己没有任何题目文字（带字的只有控件组件里面显示的已选值、占位文字），
+  // 就把它们当成一个整体，从整体往上找题目。整体里只有一个文字框：题目属于它；
+  // 其余的下拉是它的前缀或后缀（区号、证件类型、单位），不单独填，也不重复用同一个题目。
+  // 整体里有两个以上文字框（手机号 + 验证码）、有单选勾选上传、超过 4 个控件、或者自己带着文字的，不在这里处理。
+  function controlCluster(control, ctx) {
+    if (control.kind !== "element" || !["text", "custom-select", "select"].includes(control.controlKind)) return null;
+    const boundaries = boundaryControls(ctx);
+    let box = null;
+    for (let node = control.root.parentElement, depth = 0; node && node !== ctx.body && node.tagName !== "HTML" && depth < 6; node = node.parentElement, depth += 1) {
+      if (hasForeignControl(node, control.root, ctx)) { box = node; break; }
+    }
+    if (!box) return null;
+    const members = Array.from(box.querySelectorAll(CONTROL_SELECTOR)).filter((el) => boundaries.has(el));
+    if (members.length < 2 || members.length > MAX_PART_BOXES) return null;
+    if (members.some((el) => CHOICE_TYPES.has(inputType(el)) || inputType(el) === "file")
+      || customRadioGroups(ctx).some(({ group }) => box.contains(group))) return null;
+    // 组件里面的字（已选值「+86」）不算：往上到整体之间有装着控件的祖先，就是控件组件的一部分。
+    const placeholders = members.map((el) => attr(el, "placeholder")).filter(Boolean);
+    const inside = (segment) => {
+      for (let node = segment.el; node && node !== box; node = node.parentElement) {
+        if (containsBoundary(node, ctx)) return true;
+      }
+      return false;
+    };
+    const own = usefulSegments(textSegments(box, ctx, new Set()), placeholders).filter((segment) => !inside(segment));
+    if (own.length) return null;
+    const texts = members.filter((el) => isTextBox(el));
+    if (texts.length !== 1) return null;
+    return { box, members, main: texts[0] };
+  }
+
+  function clusterLabel(control, ctx) {
+    const cluster = controlCluster(control, ctx);
+    if (!cluster) return null;
+    if (!cluster.members.some((el) => control.elements.includes(el))) return null;
+    // 前缀、后缀下拉：认出来、不填，也不算「对不上题目」。
+    if (!control.elements.includes(cluster.main)) return { text: "", source: "affix", labelEl: null, affix: true };
+    let item = cluster.box;
+    while (item.parentElement && item.parentElement !== ctx.body && item.parentElement.tagName !== "HTML"
+      && !hasForeignControl(item.parentElement, cluster.box, ctx)) item = item.parentElement;
+    const whole = { kind: "element", controlKind: "text", element: cluster.main, elements: cluster.members, root: cluster.box };
+    const found = itemLabel(whole, item, ctx) || siblingLabel(whole, item, ctx);
+    return found ? { ...found, question: item } : null;
+  }
+
   // 控件和题目是同一层的兄弟：只看紧挨着的前文，碰到别的控件就停。
   function siblingLabel(control, item, ctx) {
     const placeholders = placeholdersOf(control);
@@ -938,6 +985,7 @@
       || gridLabel(control, item, ctx)
       || siblingLabel(control, item, ctx)
       || partLabel(control, item, ctx)
+      || clusterLabel(control, ctx)
       || placeholderHint(control)
       || { text: "", source: "none", labelEl: null };
   }
@@ -1086,8 +1134,10 @@
         control.chrome = isPageChrome(control.root);
         // 禁用的控件和文件框只用来划分表单项边界，不填写。
         const disabled = isDisabledControl(control, ctx);
-        control.fillable = control.controlKind !== "file" && !disabled && control.labelSource !== "none";
-        control.skipReason = control.controlKind === "file" ? "file" : disabled ? "disabled" : control.labelSource === "none" ? "noLabel" : "";
+        // #301 前缀、后缀下拉（区号、证件类型）跟着旁边的文字框走，不单独填，也不算对不上题目。
+        const affix = Boolean(resolved.affix);
+        control.fillable = control.controlKind !== "file" && !disabled && !affix && control.labelSource !== "none";
+        control.skipReason = control.controlKind === "file" ? "file" : disabled ? "disabled" : affix ? "affix" : control.labelSource === "none" ? "noLabel" : "";
       } catch (error) {
         // #408 读这一项的题目时出错：只跳过它并计数，别的照常扫描。
         if (!fault) fault = error;
@@ -1117,7 +1167,8 @@
     }
 
     controls.forEach((control) => {
-      if (control.skipReason && skipped[control.skipReason] !== undefined) skipped[control.skipReason] += 1;
+      const reason = control.skipReason === "affix" ? "merged" : control.skipReason;
+      if (reason && skipped[reason] !== undefined) skipped[reason] += 1;
     });
 
     const claimed = new Set(controls.filter((control) => control.fillable).map((control) => control.labelEl).filter(Boolean));
@@ -1401,7 +1452,7 @@
         control.labelSource = resolved.source;
         control.labelEl = resolved.labelEl;
         control.question = resolved.question || null;
-        control.disabled = isDisabledControl(control, ctx);
+        control.disabled = isDisabledControl(control, ctx) || Boolean(resolved.affix);
         control.chrome = isPageChrome(control.root);
         control.searchLike = control.controlKind === "text" && control.elements.some(looksSearchLike);
         control.fillable = control.controlKind !== "file" && !control.disabled && control.labelSource !== "none"

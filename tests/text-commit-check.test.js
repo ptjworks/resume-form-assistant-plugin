@@ -886,3 +886,17 @@ test("the allowlist keeps the new words and drops anything else a page could put
     "- 出生日期: input[text] inputmode=numeric after=empty overlay=other reason=format_mismatch",
     "- 学校: input[text] reason=value_reverted"].join("\n"));
 });
+
+test("#301 a phone box that silently refuses a spaced number is written again as 11 digits", async (t) => {
+  // 飞书招聘的手机号框：onChange 里只收数字，带空格的整段不收，也没有任何提示。
+  const p = page(t, item("phone", "手机号码") + item("note", "备注"));
+  const writes = [];
+  controlled(p.input("phone"), { onInput: (value) => { writes.push(value); return /^\d*$/.test(value) ? value : ""; } });
+  controlled(p.input("note"), { onInput: (value) => (/^\d*$/.test(value) ? value : "") });
+  assert.equal(await p.set("phone", "138 5188 2340"), true, p.reason("phone"));
+  assert.equal(p.input("phone").value, "13851882340");
+  assert.ok(writes.includes("13851882340"));
+  // 不是手机号框的不改写。
+  assert.equal(await p.set("note", "138 5188 2340"), false);
+  assert.equal(p.input("note").value, "");
+});

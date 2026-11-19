@@ -620,3 +620,122 @@ test("a hidden template row with the same structure is not an entry; a visible o
     assert.deepEqual(planned.items.map((item) => item.label), expected, `hidden=${hidden}`);
   }
 });
+
+// #301 飞书招聘：实习经历默认勾着「没有实习经历」。取消勾选只让那一组冒出输入框，同一轮里教育经历照常新增，
+// 不再要用户先取消勾选、再点一次深度分析才加教育经历。
+test("#301 unchecking a '没有实习经历' switch and adding education happen in the same confirmed plan", async () => {
+  const { dom, doc, clicks } = beisenPage({ education: 1, work: 0 });
+  doc.getElementById("work").outerHTML = `<div class="sc-sec" id="intern"><div class="sc-sec-title">实习经历</div>
+    <label class="none"><input type="checkbox" checked><span>没有实习经历</span></label><div class="sc-list"></div></div>`;
+  const box = doc.querySelector("#intern input");
+  box.addEventListener("change", () => { if (!box.checked) doc.querySelector("#intern .sc-list").insertAdjacentHTML("beforeend", ROW("实习经历", 1)); });
+  const { built, checked } = analyse(doc, beisenSpec(doc, ["edu"]));
+  assert.equal(checked.ok, true, JSON.stringify(checked));
+  const template = [...records("教育经历", 2), ...records("实习经历", 1, "公司")];
+  const planned = plan(doc, built, checked.spec, template);
+  assert.deepEqual(planned.items.map((item) => item.label), ["取消勾选「没有实习经历」", "教育经历：添加 ×1"]);
+  assert.deepEqual(planned.blocked, []);
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, `${result.code} ${result.message}`);
+  assert.deepEqual(result.done, { edit: 0, expand: 1, add: 1 });
+  assert.equal(box.checked, false);
+  assert.deepEqual(clicks, ["edu"]);
+  assert.equal(doc.querySelectorAll("#edu .sc-entry").length, 2);
+  dom.window.close();
+});
+
+// #301 实习经历两段：取消勾选后网页给出一张空白条目和「添加」，同一步里接着补到两条，不用再分析一次。
+test("#301 after unchecking '没有实习经历' the group's own add button fills it up to the resume's count in the same step", async () => {
+  const { dom, doc, clicks } = beisenPage({ education: 1, work: 0 });
+  doc.getElementById("work").outerHTML = `<div class="sc-sec" id="intern"><div class="sc-sec-title">实习经历</div>
+    <div class="sc-sec-body"><label class="none"><input type="checkbox" checked><span>没有实习经历</span></label><div class="sc-list"></div></div></div>`;
+  const box = doc.querySelector("#intern input");
+  const body = doc.querySelector("#intern .sc-sec-body");
+  box.addEventListener("change", () => {
+    if (box.checked) return;
+    body.querySelector(".sc-list").insertAdjacentHTML("beforeend", ROW("实习经历", 1));
+    body.insertAdjacentHTML("beforeend", `<div class="sc-add" style="cursor:pointer" id="intern-add"><span>＋ 添加</span></div>`);
+    doc.getElementById("intern-add").addEventListener("click", () => {
+      clicks.push("intern");
+      setTimeout(() => body.querySelector(".sc-list").insertAdjacentHTML("beforeend", ROW("实习经历", 2)), 10);
+    });
+  });
+  const { built, checked } = analyse(doc, beisenSpec(doc, ["edu"]));
+  assert.equal(checked.ok, true, JSON.stringify(checked));
+  const template = [...records("教育经历", 2), ...records("实习经历", 2, "公司")];
+  const planned = plan(doc, built, checked.spec, template);
+  assert.deepEqual(planned.items.map((item) => item.label), ["取消勾选「没有实习经历」，再把实习经历补到 2 条", "教育经历：添加 ×1"]);
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, `${result.code} ${result.message}`);
+  // 两处新增都算上：取消勾选后补的实习一条、教育经历一条。
+  assert.deepEqual(result.done, { edit: 0, expand: 1, add: 2 });
+  assert.deepEqual(clicks, ["intern", "edu"]);
+  assert.equal(doc.querySelectorAll("#intern .sc-entry").length, 2);
+  assert.equal(doc.querySelectorAll("#edu .sc-entry").length, 2);
+  assert.equal(result.scopes.length, 2);
+  dom.window.close();
+});
+
+// #539 审查：取消勾选只是勾选状态变了，新卡片和「添加」可能等一会儿才画出来。补条目先多等一会儿，不能当成「没有」。
+function internPage({ delay = 0, addButton = true, row = true, interns = 2 } = {}) {
+  const page = beisenPage({ education: 1, work: 0 });
+  const { doc, clicks } = page;
+  doc.getElementById("work").outerHTML = `<div class="sc-sec" id="intern"><div class="sc-sec-title">实习经历</div>
+    <div class="sc-sec-body"><label class="none"><input type="checkbox" checked><span>没有实习经历</span></label><div class="sc-list"></div></div></div>`;
+  const box = doc.querySelector("#intern input");
+  const body = doc.querySelector("#intern .sc-sec-body");
+  box.addEventListener("change", () => {
+    if (box.checked || !row) return;
+    const render = () => {
+      body.querySelector(".sc-list").insertAdjacentHTML("beforeend", ROW("实习经历", 1));
+      if (!addButton) return;
+      body.insertAdjacentHTML("beforeend", `<div class="sc-add" style="cursor:pointer" id="intern-add"><span>＋ 添加</span></div>`);
+      doc.getElementById("intern-add").addEventListener("click", () => {
+        clicks.push("intern");
+        setTimeout(() => body.querySelector(".sc-list").insertAdjacentHTML("beforeend", ROW("实习经历", 2)), 10);
+      });
+    };
+    if (delay) setTimeout(render, delay); else render();
+  });
+  const { built, checked } = analyse(doc, beisenSpec(doc, ["edu"]));
+  assert.equal(checked.ok, true, JSON.stringify(checked));
+  const template = [...records("教育经历", 2), ...records("实习经历", interns, "公司")];
+  return { ...page, planned: plan(doc, built, checked.spec, template), built };
+}
+
+test("#539 the new card appears only after the toggle settled: the follow-up waits for it instead of giving up", async () => {
+  const { dom, doc, clicks, planned, built } = internPage({ delay: 150 });
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, `${result.code} ${result.message}`);
+  assert.deepEqual(result.notFollowed, []);
+  assert.deepEqual(result.done, { edit: 0, expand: 1, add: 2 });
+  assert.deepEqual(clicks, ["intern", "edu"]);
+  assert.equal(doc.querySelectorAll("#intern .sc-entry").length, 2);
+  dom.window.close();
+});
+
+test("#539 no single 添加 after unchecking: the result says which group was not filled up and why", async () => {
+  const { dom, doc, planned, built } = internPage({ addButton: false });
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, `${result.code} ${result.message}`);
+  assert.deepEqual(result.notFollowed, [{ label: "取消勾选「没有实习经历」，再把实习经历补到 2 条", reason: "no_add" }]);
+  // 教育经历照常新增，没补的只是实习。
+  assert.deepEqual(result.done, { edit: 0, expand: 1, add: 1 });
+  dom.window.close();
+});
+
+test("#539 nothing new ever appears after unchecking: reported as no_inputs, not as a silent success", async () => {
+  const { dom, doc, planned, built } = internPage({ row: false });
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, `${result.code} ${result.message}`);
+  assert.deepEqual(result.notFollowed.map(entry => entry.reason), ["no_inputs"]);
+  dom.window.close();
+});
+
+test("#539 the count is already enough after unchecking: that is not a skipped follow-up", async () => {
+  const { dom, doc, planned, built } = internPage({ interns: 1 });
+  const result = await run(doc, built, planned);
+  assert.equal(result.ok, true, `${result.code} ${result.message}`);
+  assert.deepEqual(result.notFollowed, []);
+  dom.window.close();
+});

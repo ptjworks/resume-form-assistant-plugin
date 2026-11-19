@@ -414,3 +414,42 @@ test("the content script loads the scanner before content.js", () => {
   assert.ok(scripts.includes("field-scan.js"));
   assert.ok(scripts.indexOf("field-scan.js") < scripts.indexOf("content.js"));
 });
+
+// #301 飞书招聘（字节校招投递页）：一格里拼着几个控件时，题目属于里面的文字框，前缀下拉不单独填。
+const FEISHU = fs.readFileSync(path.join(__dirname, "fixtures", "field-scan", "feishu-campus-apply.html"), "utf8");
+
+test("#301 Feishu form: a prefix select plus number box shares one question, and the prefix select is not filled", (t) => {
+  const doc = new JSDOM(FEISHU).window.document;
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(labels(result), ["手机号码", "个人证件", "期望工作地点", "起止时间（开始）", "起止时间（结束）", "学历", "学校名称"]);
+  const phone = result.controls.find((control) => control.label === "手机号码");
+  assert.equal(phone.controlKind, "text");
+  assert.equal(phone.element.getAttribute("data-form-field-id"), "mobile", "the number box, not the +86 select");
+  assert.equal(result.skipped.noLabel, 0);
+  assert.equal(result.skipped.merged, 2, "the two prefix selects are counted as merged, not as unlabelled");
+  assert.ok(result.controls.every((control) => !control.elements.some((el) => el.closest(".ud__input-group > .ud__select"))));
+});
+
+test("#301 Feishu form: the range date picker is two boxes, and the field description is not taken as the question", (t) => {
+  const doc = new JSDOM(FEISHU).window.document;
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  const parts = result.controls.filter((control) => control.controlKind === "date-picker");
+  assert.deepEqual(parts.map((control) => [control.label, control.rangePart]), [["起止时间（开始）", "开始"], ["起止时间（结束）", "结束"]]);
+  assert.equal(parts[0].root, parts[1].root);
+});
+
+test("#301 a number box with a unit select after it is one question, and a number plus verification-code box is left to the part rule", (t) => {
+  const doc = load(`<form>
+    <div class="row"><label class="title">期望薪资</label><div class="group"><input class="num"><div class="unit-select"><input role="combobox" readonly><span>万/年</span></div></div></div>
+    <div class="row"><div class="group"><input class="a"><input class="b"></div></div>
+    </form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  const salary = result.controls.filter((control) => control.label === "期望薪资");
+  assert.equal(salary.length, 1);
+  assert.equal(salary[0].element.className, "num");
+  assert.equal(result.skipped.merged, 1);
+  assert.equal(result.skipped.noLabel, 2, "two unlabelled boxes with no question text stay unlabelled");
+});

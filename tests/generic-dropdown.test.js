@@ -1344,3 +1344,91 @@ test("a select-named label that is itself the dropdown root still gives its titl
     <div class="item"><label class="select-label-wrap"><span>政治面貌</span><div class="my-select"><input readonly placeholder="请选择"></div></label></div>`);
   for (const label of ["学历", "政治面貌"]) assert.equal(scanned(h.doc, label).controlKind, "custom-select", label);
 });
+
+// #301 飞书招聘（字节校招）的 Universe Design 下拉：输入框只有 role=combobox，没有 aria-controls、aria-expanded；
+// 弹层 .ud__select__dropdown 挂在 body 下，条目 .ud__select__list__item 没有 role=option，放在虚拟列表里。
+function universeSelect(choices = ["博士", "硕士", "本科", "大专"]) {
+  const h = load(`<div class="ud-formily-item"><div class="ud-formily-item-label"><label>学历</label></div><div class="ud-formily-item-control">
+    <div class="ud__select"><div class="ud__select__selector"><div class="ud__select__selector__content">
+      <div class="ud__select__selector__placeholder"></div>
+      <div class="ud__select__selector__search"><input class="ud__select__selector__search__input ud__native-input" role="combobox" autocomplete="off" type="search" readonly></div>
+    </div></div></div></div></div>`);
+  const { doc } = h;
+  const root = doc.querySelector(".ud__select");
+  const content = doc.querySelector(".ud__select__selector__content");
+  const clicks = [];
+  root.querySelector(".ud__select__selector").addEventListener("click", () => {
+    if (doc.querySelector(".ud__select__dropdown")) return;
+    const layer = doc.createElement("div");
+    layer.className = "ud__select__dropdown";
+    layer.innerHTML = `<div class="rc-virtual-list"><div class="rc-virtual-list-holder"><div>${choices.map((text) => `<div class="ud__select__list__item"><div class="ud__textOverflow">${text}</div></div>`).join("")}</div></div></div>`;
+    layer.querySelectorAll(".ud__select__list__item").forEach((item) => item.addEventListener("click", () => {
+      clicks.push(item.textContent);
+      const shown = doc.createElement("div");
+      shown.className = "ud__select__selector__selectItem";
+      shown.textContent = item.textContent;
+      content.prepend(shown);
+      layer.remove();
+    }));
+    doc.body.append(layer);
+  });
+  return { ...h, root, clicks, target: scanned(doc, "学历") };
+}
+
+test("#301 Universe Design select: a combobox with no ARIA wiring takes the generic path and picks the option", async () => {
+  const h = universeSelect();
+  assert.equal(h.target.controlKind, "custom-select");
+  assert.equal(h.w.ResumeProCustomControls.describe(h.target).library, "generic");
+  const result = await h.api.operate(h.target, "硕士");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ["硕士"]);
+  assert.equal(h.api.check(h.target).ok, true);
+});
+
+// PR #539 审查（A10/B6）担心：没有接线的 role=combobox 一律改走通用路径，会让原来靠 role=option / listbox 的站点回退。
+// 下面把能想到的几种弹层写法都试过：通用路径都选得上，所以不加「失败再按 ARIA 重试」的退路。以后遇到真站失败再按那个案例加。
+function bareCombobox({ attrs = "", popup }) {
+  const h = load(`<div class="item"><label for="c">城市</label><div class="box"><input id="c" role="combobox" ${attrs} readonly></div></div>`);
+  const { doc } = h;
+  const input = doc.getElementById("c");
+  const clicks = [];
+  const build = () => {
+    const layer = doc.createElement("ul");
+    layer.setAttribute("role", "listbox");
+    layer.innerHTML = ["北京", "上海"].map((text) => `<li${popup.options ? ' role="option"' : ""}>${text}</li>`).join("");
+    layer.querySelectorAll("li").forEach((li) => li.addEventListener("click", () => {
+      clicks.push(li.textContent); input.value = li.textContent; if (popup.keep) layer.hidden = true; else layer.remove();
+    }));
+    return layer;
+  };
+  if (popup.keep) {
+    const layer = build(); layer.hidden = true; doc.body.append(layer);
+    input.addEventListener("click", () => { layer.hidden = false; });
+  } else {
+    input.addEventListener("click", () => (popup.inside ? doc.querySelector(".box") : doc.body).append(build()));
+  }
+  return { ...h, clicks, target: scanned(doc, "城市") };
+}
+
+for (const [name, config] of Object.entries({
+  "a body-level listbox with role=option items": { popup: { options: true } },
+  "a body-level listbox whose items carry no role": { popup: { options: false } },
+  "a listbox that is rendered once and only shown on click": { popup: { options: true, keep: true } },
+  "a listbox appended inside the combobox's own container": { popup: { options: true, inside: true } },
+  "a combobox with only aria-autocomplete": { attrs: 'aria-autocomplete="list"', popup: { options: true } }
+})) {
+  test(`#539 an unwired combobox on the generic path still picks from ${name}`, async () => {
+    const h = bareCombobox(config);
+    assert.equal(h.w.ResumeProCustomControls.describe(h.target).library, "generic");
+    const result = await h.api.operate(h.target, "上海");
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(h.clicks, ["上海"]);
+  });
+}
+
+test("#301 a combobox with real ARIA wiring still takes the ARIA path", () => {
+  const { w, doc } = load(`<div class="item"><label for="c">城市</label><div class="box"><input id="c" role="combobox" aria-expanded="false" aria-controls="list-c"></div></div>`);
+  const control = scanner.scanPage(doc, { isVisible: () => true }).controls.find((item) => item.label === "城市");
+  const target = { kind: "element", element: control.element, elements: control.elements, root: control.root, controlKind: control.controlKind, hints: {} };
+  assert.equal(w.ResumeProCustomControls.describe(target).library, "aria");
+});

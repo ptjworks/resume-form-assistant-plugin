@@ -54,6 +54,7 @@
   // 不靠类名认弹层：点开后看页面上新冒出来、贴着这个控件的那一块；选项是里面只含一段短文字的条目；
   // 选完读组件上显示的文字核验。拿不准（两块并存、没有匹配、被回滚）一律不选或不算成功。
   const ARIA_SIGNALS = '[role="combobox"], [aria-haspopup]:not([aria-haspopup="false"]), [aria-controls], [aria-owns], [aria-autocomplete]';
+  const ARIA_WIRING = '[aria-haspopup]:not([aria-haspopup="false"]), [aria-controls], [aria-owns], [aria-expanded]';
   // 北森的空列表写「这里什么都没有...」。
   const GENERIC_EMPTY = /^(?:暂无数据|无匹配数据|没有数据|无数据|这里什么都没有|暂无搜索结果|加载中|搜索中|no data|no results?|loading)/i;
   const GENERIC_LOADING = /^(?:加载中|搜索中|loading)/i;
@@ -170,6 +171,9 @@
       : root?.matches?.('.arco-select, .arco-cascader') ? 'arco'
       : root?.matches?.('.layui-form-select') ? 'layui' : 'aria';
     if (library === 'aria' && root && !root.matches?.(ARIA_SIGNALS) && !el?.matches?.(ARIA_SIGNALS) && !root.querySelector?.(ARIA_SIGNALS)) library = 'generic';
+    // #301 只贴了 role=combobox、没有任何接线（aria-controls、aria-owns、aria-expanded、aria-haspopup）的下拉（飞书 Universe Design 的 .ud__select）：
+    // 顺着 ARIA 找不到弹层，选项也没有 role=option。这样的标记不足以按 ARIA 操作，和没有标记一样走通用路径。
+    if (library === 'aria' && root && !root.matches?.(ARIA_WIRING) && !el?.matches?.(ARIA_WIRING) && !root.querySelector?.(ARIA_WIRING)) library = 'generic';
     if (library === 'generic') return { el, root, combo: el, library, cascade: target?.controlKind === 'cascader', multiple: false };
     const cascade = target?.controlKind === 'cascader' || root?.matches?.(antd(root, '.ant-cascader, .el-cascader, .arco-cascader'));
     const combo = root?.matches?.('[role="combobox"]') ? root : root?.querySelector?.('[role="combobox"]') || el;
