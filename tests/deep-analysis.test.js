@@ -673,6 +673,22 @@ test("confirm → act → rebuild the outline → analyse once more → fill; th
   assert.deepEqual(report.actions.planned, { edit: 1, expand: 0, add: 0 });
 });
 
+// #539 审查：取消勾选「没有××经历」后没能接着补条目，不能当成补齐了：提示里说清楚是哪一组、为什么，诊断里留原因码。
+test("a toggle follow-up that could not add cards is told to the user and kept in the report", async () => {
+  const h = actionHarness({ execute: async () => ({ ok: true, done: { edit: 1, expand: 0, add: 0 }, scopes: [],
+    notFollowed: [{ label: "取消勾选「没有实习经历」，再把实习经历补到 2 条", reason: "no_add" }, { label: "别的", reason: "不是固定码" }] }) });
+  const { requestId } = await h.controller.start();
+  const state = await h.settle(previewing);
+  h.controller.confirm(requestId, state.planId);
+  const done = await h.settle(finished);
+  assert.equal(done.phase, "completed", done.message);
+  const note = done.notes.find((text) => text.includes("没有自动补条目"));
+  assert.ok(note, JSON.stringify(done.notes));
+  assert.match(note, /取消勾选「没有实习经历」后：没有找到唯一的「添加」按钮/);
+  assert.doesNotMatch(note, /再把实习经历补到/);
+  assert.deepEqual(h.controller.report().actions.notFollowed, ["no_add"], "an unknown reason code is dropped");
+});
+
 test("an old preview, a wrong plan id or a second 确认 is refused", async () => {
   const h = actionHarness();
   const { requestId } = await h.controller.start();

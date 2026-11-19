@@ -238,28 +238,40 @@
 
   // #301 取消勾选「没有××经历」以后：在这一组新冒出来的那块里找唯一的「添加」，按页面结构数已有条目，补到简历的条数。
   // 找那一块：从开关往上，到第一个装着新输入框的祖先为止。「添加」只认一个、而且按网页当前样子仍然允许点；
-  // 找不到、不止一个、数不清就不补（第二轮分析会提示用户再分析一次）。返回 formAgent.execute 的结果，出错时抛出它的错误。
+  // 找不到、不止一个、数不清就不补，但要说清楚没补（skipped：固定的原因码），不能和「条数已经够了」混成一回事。
+  // 返回 formAgent.execute 的结果（出错时抛出它的错误），或 { added: 0, scopes: [], skipped }。
   const FOLLOW_ADD_TEXT = /^[+＋]?(?:添加|新增)(?:一条)?(?:工作|实习|项目)?(?:经历|经验)?$/;
+  const FOLLOW_SKIPS = ["no_inputs", "no_add", "too_many", "stopped"];
   const bareText = el => String(el?.textContent || "").replace(/[\s\p{P}\p{S}]/gu, "");
   async function followToggleAdds(item, before, ctx, onStep) {
     const follow = item.toggle?.follow;
     if (!follow || !ctx.deep || !ctx.describe || !ctx.formAgent?.collectSpec) return { added: 0, scopes: [] };
-    const fresh = editableControls(ctx.doc, ctx.isVisible).filter(el => !before.includes(el));
+    const skip = skipped => ({ added: 0, scopes: [], skipped });
+    const freshNow = () => editableControls(ctx.doc, ctx.isVisible).filter(el => !before.includes(el));
+    let fresh = freshNow();
+    if (!fresh.length) {
+      // 取消勾选只是勾选状态变了，新卡片可能要等请求回来才画出来：像点「添加」一样多等一会儿，再判断有没有。
+      const waited = await waitSettled(ctx.doc, { stopped: ctx.stopped, ready: () => freshNow().length > 0, ...(ctx.timing || {}) });
+      if (waited.reason) return skip("stopped");
+      fresh = freshNow();
+    }
     let box = item.element.parentElement;
     for (let depth = 0; box && box !== ctx.doc.body && depth < 8 && !fresh.some(el => box.contains(el)); depth += 1) box = box.parentElement;
-    if (!fresh.length || !box || box === ctx.doc.body) return { added: 0, scopes: [] };
+    if (!fresh.length || !box || box === ctx.doc.body) return skip("no_inputs");
     const words = Array.from(box.querySelectorAll("*")).filter(el => FOLLOW_ADD_TEXT.test(bareText(el).replace(/^＋/, "+"))
       && !Array.from(el.children).some(child => FOLLOW_ADD_TEXT.test(bareText(child))));
     const buttons = [...new Set(words.map(el => el.closest("button, [role='button'], a[href]") || el))].filter(el => {
       try { return ctx.isVisible(el); } catch { return false; }
     });
-    if (buttons.length !== 1 || !targetAllowed(buttons[0], "add", ctx)) return { added: 0, scopes: [] };
+    if (buttons.length !== 1 || !targetAllowed(buttons[0], "add", ctx)) return skip("no_add");
     const snapshot = ctx.formAgent.collectSpec([{ domain: follow.domain, button: buttons[0], rows: [], others: [] }], follow.fields || [], {
       isVisible: ctx.isVisible, press, timing: ctx.timing?.add, allowed: el => targetAllowed(el, "add", ctx)
     });
     const plan = snapshot.candidates.map(candidate => ({ id: candidate.id, count: candidate.target - candidate.current }));
     const total = plan.reduce((sum, action) => sum + action.count, 0);
-    if (!total || total > MAX_ADDS) return { added: 0, scopes: [] };
+    // 条数已经够了（total 为 0）是正常的，不算没补。
+    if (total > MAX_ADDS) return skip("too_many");
+    if (!total) return { added: 0, scopes: [] };
     return ctx.formAgent.execute(plan, snapshot, () => Boolean(ctx.stopped()), onStep, () => !ctx.stopped());
   }
 
@@ -275,6 +287,7 @@
     if (!planStillValid(plan, ctx)) return end("target_changed");
     let index = 0;
     let scopes = [];
+    const notFollowed = [];
     for (const item of plan.items) {
       if (item.kind === "add") continue;
       index += 1;
@@ -303,6 +316,9 @@
           });
           done.add += follow.added;
           scopes.push(...follow.scopes);
+          if (follow.skipped) notFollowed.push({ label: item.label, reason: follow.skipped });
+          const stoppedNow = ctx.stopped();
+          if (stoppedNow) return end(stoppedNow === "navigated" ? "navigated" : "stopped");
         } catch (error) {
           done.add += Number.isInteger(error?.added) ? error.added : 0;
           const reason = ctx.stopped();
@@ -336,7 +352,7 @@
           { detail: addStopDetail(error), grew });
       }
     }
-    return { ok: true, code: "", message: "", done, scopes };
+    return { ok: true, code: "", message: "", done, scopes, notFollowed };
   }
 
   // 悬停预览时在网页上框出目标。只改元素自己的行内 outline，结束时原样恢复（框架里、Shadow DOM 里的元素也适用）。
@@ -367,7 +383,7 @@
     return { show, clear, active: () => Boolean(current) };
   }
 
-  const api = { MAX_PRE_ACTIONS, MAX_ADDS, QUIET_MS, MAX_WAIT_MS, CODES, editableControls, targetAllowed, press, waitSettled,
+  const api = { MAX_PRE_ACTIONS, MAX_ADDS, QUIET_MS, MAX_WAIT_MS, CODES, FOLLOW_SKIPS, editableControls, targetAllowed, press, waitSettled,
     buildPlan, planStillValid, executePlan, createHighlighter, valuesKept };
   scope.ResumeProPageActions = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }

@@ -316,6 +316,13 @@
     values_changed: "点击后网页上已有的内容被改动了，已停止，没有继续操作，请核对网页。",
     add_failed: "新增条目没有完成，已停止，没有继续操作。"
   };
+  // 取消勾选「没有××经历」后没能接着补条目：固定文案，写进提示；原因码写进诊断（report.actions.notFollowed）。
+  const FOLLOW_SKIP_NOTES = {
+    no_inputs: "取消勾选后网页上没有出现新的输入框",
+    no_add: "没有找到唯一的「添加」按钮",
+    too_many: "需要补的条数太多",
+    stopped: "补条目时被停止"
+  };
   function doneSummary(done) {
     const parts = [done.edit ? `编辑 ${done.edit} 处` : "", done.expand ? `展开 ${done.expand} 处` : "", done.add ? `新增 ${done.add} 条` : ""].filter(Boolean);
     return parts.length ? `已完成：${parts.join("、")}${done.add ? "（新增的条目会保留，请在网页上核对）" : ""}。` : "网页上没有完成任何操作。";
@@ -745,6 +752,12 @@
         }
         const adds = (again?.items || []).filter(item => item.kind === "add").map(item => item.label);
         if (adds.length) state.notes.push(`网页上的经历条目比简历少（${adds.join("、")}），这一次不再自动新增；填写完成后可以再点一次「深度分析本页」来新增。`);
+      }
+      // 取消勾选了、但没能接着补条目：说清楚是哪一组、为什么没补，免得以为已经补齐了（PR #539 审查）。
+      const notFollowed = Array.isArray(result.notFollowed) ? result.notFollowed.filter(entry => FOLLOW_SKIP_NOTES[entry?.reason]) : [];
+      if (notFollowed.length) {
+        report.actions.notFollowed = notFollowed.map(entry => entry.reason);
+        state.notes.push(`${notFollowed.map(entry => `${entry.label.replace(/，再把.*$/, "")}后：${FOLLOW_SKIP_NOTES[entry.reason]}`).join("；")}，没有自动补条目；请手动点「添加」补齐后，再点一次「深度分析本页」。`);
       }
       state.notes.splice(0, Math.max(0, state.notes.length - 3));
       await fillWith(run, merged, outline, { after: doneSummary(report.actions.done) });
