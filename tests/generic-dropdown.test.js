@@ -1344,3 +1344,50 @@ test("a select-named label that is itself the dropdown root still gives its titl
     <div class="item"><label class="select-label-wrap"><span>政治面貌</span><div class="my-select"><input readonly placeholder="请选择"></div></label></div>`);
   for (const label of ["学历", "政治面貌"]) assert.equal(scanned(h.doc, label).controlKind, "custom-select", label);
 });
+
+// #301 飞书招聘（字节校招）的 Universe Design 下拉：输入框只有 role=combobox，没有 aria-controls、aria-expanded；
+// 弹层 .ud__select__dropdown 挂在 body 下，条目 .ud__select__list__item 没有 role=option，放在虚拟列表里。
+function universeSelect(choices = ["博士", "硕士", "本科", "大专"]) {
+  const h = load(`<div class="ud-formily-item"><div class="ud-formily-item-label"><label>学历</label></div><div class="ud-formily-item-control">
+    <div class="ud__select"><div class="ud__select__selector"><div class="ud__select__selector__content">
+      <div class="ud__select__selector__placeholder"></div>
+      <div class="ud__select__selector__search"><input class="ud__select__selector__search__input ud__native-input" role="combobox" autocomplete="off" type="search" readonly></div>
+    </div></div></div></div></div>`);
+  const { doc } = h;
+  const root = doc.querySelector(".ud__select");
+  const content = doc.querySelector(".ud__select__selector__content");
+  const clicks = [];
+  root.querySelector(".ud__select__selector").addEventListener("click", () => {
+    if (doc.querySelector(".ud__select__dropdown")) return;
+    const layer = doc.createElement("div");
+    layer.className = "ud__select__dropdown";
+    layer.innerHTML = `<div class="rc-virtual-list"><div class="rc-virtual-list-holder"><div>${choices.map((text) => `<div class="ud__select__list__item"><div class="ud__textOverflow">${text}</div></div>`).join("")}</div></div></div>`;
+    layer.querySelectorAll(".ud__select__list__item").forEach((item) => item.addEventListener("click", () => {
+      clicks.push(item.textContent);
+      const shown = doc.createElement("div");
+      shown.className = "ud__select__selector__selectItem";
+      shown.textContent = item.textContent;
+      content.prepend(shown);
+      layer.remove();
+    }));
+    doc.body.append(layer);
+  });
+  return { ...h, root, clicks, target: scanned(doc, "学历") };
+}
+
+test("#301 Universe Design select: a combobox with no ARIA wiring takes the generic path and picks the option", async () => {
+  const h = universeSelect();
+  assert.equal(h.target.controlKind, "custom-select");
+  assert.equal(h.w.ResumeProCustomControls.describe(h.target).library, "generic");
+  const result = await h.api.operate(h.target, "硕士");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ["硕士"]);
+  assert.equal(h.api.check(h.target).ok, true);
+});
+
+test("#301 a combobox with real ARIA wiring still takes the ARIA path", () => {
+  const { w, doc } = load(`<div class="item"><label for="c">城市</label><div class="box"><input id="c" role="combobox" aria-expanded="false" aria-controls="list-c"></div></div>`);
+  const control = scanner.scanPage(doc, { isVisible: () => true }).controls.find((item) => item.label === "城市");
+  const target = { kind: "element", element: control.element, elements: control.elements, root: control.root, controlKind: control.controlKind, hints: {} };
+  assert.equal(w.ResumeProCustomControls.describe(target).library, "aria");
+});
