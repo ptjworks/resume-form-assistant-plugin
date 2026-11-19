@@ -199,7 +199,8 @@
   // 宿主（control-adapters.js）据此在建议里没有时按文本框填写，这里据此只选同名的建议（见 sameOption）。
   // antd 的 AutoComplete（ant-select-auto-complete，换了前缀的也算）也是：框里的字就是值，没有选中项的标记。
   const AUTOCOMPLETE_TOKEN = /(?:^|[-_])auto-?complete$/i;
-  const antdAutoComplete = info => info.library === 'antd' && !info.cascade && Boolean(info.root?.matches?.(antd(info.root, '.ant-select-auto-complete')));
+  // #301 小米的学校名称是 antd 3 的 combobox 模式（ant-select-combobox）：框里的字就是值，下面只是建议，和 AutoComplete 一样按联想框填。
+  const antdAutoComplete = info => info.library === 'antd' && !info.cascade && Boolean(info.root?.matches?.(antd(info.root, '.ant-select-auto-complete, .ant-select-combobox')));
   function acceptsFreeText(ctx) {
     const el = ctx.el, info = describe(ctx.entry);
     if (ctx.kind !== 'custom-select' || el?.tagName !== 'INPUT' || el.readOnly || el.disabled) return false;
