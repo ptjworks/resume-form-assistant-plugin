@@ -301,8 +301,11 @@
   const WAIT_EXPLAINED = "带深度思考的模型在字段多的页面上可能要几分钟；长时间没有任何返回会自动停止，你也可以随时停止。";
   const PHASES = ["idle", ...ACTIVE, "completed", "needs_action", "failed", "stopped"];
   const ACTION_KINDS_ALL = ["edit", "expand", "add"];
+  // #301 取消勾选「没有××经历」后接着补的条目算进新增（取消勾选后网页多半自带一张空白条目，按少一条估）。
+  const followAdds = list => list.reduce((sum, item) => sum + Math.max(0, (Number(item.toggle?.follow?.target) || 0) - 1), 0);
   const countKinds = (list, key = item => item.kind) => Object.fromEntries(ACTION_KINDS_ALL.map(kind => [kind,
-    list.filter(item => key(item) === kind).reduce((sum, item) => sum + (kind === "add" ? Number(item.count) || 0 : 1), 0)]));
+    list.filter(item => key(item) === kind).reduce((sum, item) => sum + (kind === "add" ? Number(item.count) || 0 : 1), 0)
+      + (kind === "add" ? followAdds(list) : 0)]));
   // 动作没做完时告诉用户：停在哪、已经做了什么。只用固定文案和计数。
   const ACTION_STOPS = {
     stopped: "已停止，后面的操作没有执行。",

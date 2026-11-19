@@ -646,7 +646,7 @@ test("#301 unchecking a '没有实习经历' switch and adding education happen 
 
 // #301 实习经历两段：取消勾选后网页给出一张空白条目和「添加」，同一步里接着补到两条，不用再分析一次。
 test("#301 after unchecking '没有实习经历' the group's own add button fills it up to the resume's count in the same step", async () => {
-  const { dom, doc, clicks } = beisenPage({ education: 2, work: 0 });
+  const { dom, doc, clicks } = beisenPage({ education: 1, work: 0 });
   doc.getElementById("work").outerHTML = `<div class="sc-sec" id="intern"><div class="sc-sec-title">实习经历</div>
     <div class="sc-sec-body"><label class="none"><input type="checkbox" checked><span>没有实习经历</span></label><div class="sc-list"></div></div></div>`;
   const box = doc.querySelector("#intern input");
@@ -664,12 +664,14 @@ test("#301 after unchecking '没有实习经历' the group's own add button fill
   assert.equal(checked.ok, true, JSON.stringify(checked));
   const template = [...records("教育经历", 2), ...records("实习经历", 2, "公司")];
   const planned = plan(doc, built, checked.spec, template);
-  assert.deepEqual(planned.items.map((item) => item.label), ["取消勾选「没有实习经历」，再把实习经历补到 2 条"]);
+  assert.deepEqual(planned.items.map((item) => item.label), ["取消勾选「没有实习经历」，再把实习经历补到 2 条", "教育经历：添加 ×1"]);
   const result = await run(doc, built, planned);
   assert.equal(result.ok, true, `${result.code} ${result.message}`);
-  assert.deepEqual(result.done, { edit: 0, expand: 1, add: 1 });
-  assert.deepEqual(clicks, ["intern"]);
+  // 两处新增都算上：取消勾选后补的实习一条、教育经历一条。
+  assert.deepEqual(result.done, { edit: 0, expand: 1, add: 2 });
+  assert.deepEqual(clicks, ["intern", "edu"]);
   assert.equal(doc.querySelectorAll("#intern .sc-entry").length, 2);
-  assert.equal(result.scopes.length, 1);
+  assert.equal(doc.querySelectorAll("#edu .sc-entry").length, 2);
+  assert.equal(result.scopes.length, 2);
   dom.window.close();
 });

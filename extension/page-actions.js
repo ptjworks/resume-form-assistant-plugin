@@ -322,10 +322,10 @@
           index += 1;
           ctx.onProgress?.({ index, total, label: `${ctx.formAgent.labels[step.domain] || "条目"}：添加 ${step.index}/${step.count}`, kind: "add" });
         }, () => !ctx.stopped());
-        done.add = result.added;
+        done.add += result.added;
         scopes.push(...result.scopes);
       } catch (error) {
-        done.add = Number.isInteger(error?.added) ? error.added : 0;
+        done.add += Number.isInteger(error?.added) ? error.added : 0;
         const reason = ctx.stopped();
         if (reason) return end(reason === "navigated" ? "navigated" : "stopped");
         // form-agent 的报错是固定文案，直接给用户看。点过之后页面上多出了输入框，说明网页可能已经加了一条，
