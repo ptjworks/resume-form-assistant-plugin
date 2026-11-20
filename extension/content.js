@@ -2205,6 +2205,11 @@
       if (!known?.binding) continue;
       Object.assign(entry, { binding: known.binding, offerable: known.offerable, offerLabel: known.offerLabel });
       const descriptor = scannedControl.field;
+      // #301 小米：AI 给的分组只写「实习经历」，不带第几条；扫描认得这个框，分组带着序号（「实习经历 1」）。
+      // 同一种分组（去掉序号后相同，或 AI 没给）就用扫描的，插件才分得清两个描述框各属于哪一条经历。
+      const scanGroup = String(descriptor?.group ?? "").trim();
+      const base = text => String(text ?? "").replace(/\s*\d+$/, "").replace(/\s+/g, "");
+      if (scanGroup && scanGroup !== field.group && (!field.group || base(scanGroup) === base(field.group))) field.group = scanGroup;
       // 深度分析的文字推测不能覆盖 BOSS 已识别的级联或日历。
       if (isBossScanField(descriptor, known)) {
         Object.assign(entry, { root: known.root, controlKind: known.controlKind, pickerType: known.pickerType, pickerInputType: known.pickerInputType });
