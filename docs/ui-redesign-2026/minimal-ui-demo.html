@@ -1,0 +1,2921 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>网申快填 · 极简美学版（Linear / Apple / 即刻风格）</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #18181b;
+      background: transparent;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .window-shell {
+      position: relative;
+      background: #ffffff;
+      border: 1px solid #e4e4e7;
+      border-radius: 14px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+      overflow: hidden;
+    }
+
+    .topbar {
+      height: 52px;
+      padding: 0 20px;
+      background: #fafafa;
+      border-bottom: 1px solid #ececef;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .mac-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+    .top-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .top-nav button {
+      position: relative;
+      padding: 6px 14px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #71717a;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+    .top-nav button:hover {
+      color: #18181b;
+      background: #f0f0f2;
+    }
+    .top-nav button.active {
+      color: #18181b;
+      background: #ffffff;
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 1px #e4e4e7;
+    }
+    .unread-dot {
+      display: inline-block;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #2f7a6c;
+      margin-left: 4px;
+      vertical-align: 6px;
+    }
+
+    .ico {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex: none;
+    }
+
+    .btn-primary {
+      background: #2f7a6c;
+      color: #ffffff;
+      border: 0;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .btn-primary:hover { background: #256358; }
+
+    .btn-ghost {
+      background: transparent;
+      color: #52525b;
+      border: 1px solid #e4e4e7;
+      border-radius: 8px;
+      padding: 5px 11px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn-ghost:hover { background: #f4f4f5; color: #18181b; border-color: #d4d4d8; }
+
+    .linear-row {
+      display: grid;
+      grid-template-columns: minmax(150px, 1.1fr) minmax(170px, 1.35fr) minmax(130px, 0.95fr) auto;
+      align-items: center;
+      padding: 12px 18px;
+      border-bottom: 1px solid #f4f4f5;
+      cursor: pointer;
+      transition: background 0.12s;
+      gap: 14px;
+    }
+    @media (max-width: 680px) {
+      .linear-row { grid-template-columns: 1fr auto; }
+      .linear-row .col-role, .linear-row .col-sched { display: none; }
+    }
+    .linear-row:first-child { border-top-left-radius: 12px; border-top-right-radius: 12px; }
+    .linear-row:last-child { border-bottom: 0; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
+    .linear-row:hover { background: #fafafa; }
+    .linear-row.is-active { background: #f5f9f8; }
+
+    .job-group-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2px 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .job-group-card {
+      background: #ffffff;
+      border: 1px solid #ececef;
+      border-radius: 12px;
+    }
+    .job-inline-expand {
+      background: #fcfcfd;
+      border-bottom: 1px solid #f4f4f5;
+      padding: 14px 20px;
+    }
+    .job-inline-expand:last-child {
+      border-bottom: 0;
+      border-bottom-left-radius: 12px;
+      border-bottom-right-radius: 12px;
+    }
+    .memo-inline-input {
+      width: 100%;
+      background: transparent;
+      border: 0;
+      border-radius: 6px;
+      padding: 4px 7px;
+      margin-left: -7px;
+      font-size: 12.5px;
+      color: #52525b;
+      outline: none;
+      transition: background 0.12s;
+    }
+    .memo-inline-input::placeholder { color: #a1a1aa; }
+    .memo-inline-input:hover, .memo-inline-input:focus {
+      background: #f4f4f5;
+      color: #18181b;
+    }
+    .gear-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      border: 0;
+      background: transparent;
+      color: #52525b;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .gear-btn:hover { background: #f0f0f2; color: #18181b; }
+    .gear-btn.active {
+      background: #ffffff;
+      color: #2f7a6c;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 1px #e4e4e7;
+    }
+    .tag-pill-opt {
+      padding: 3px 9px;
+      border-radius: 6px;
+      border: 1px solid #e4e4e7;
+      background: #ffffff;
+      color: #52525b;
+      font-size: 11.5px;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .tag-pill-opt:hover { background: #f4f4f5; }
+    .tag-pill-opt.active {
+      background: #e6f4f0;
+      border-color: #9fd0c5;
+      color: #235d52;
+      font-weight: 500;
+    }
+
+    .stage-select-inline {
+      appearance: none;
+      -webkit-appearance: none;
+      background: #ffffff;
+      border: 1px solid #e4e4e7;
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-size: 11.5px;
+      font-weight: 500;
+      cursor: pointer;
+      outline: none;
+      transition: border-color 0.12s;
+    }
+    .stage-select-inline:hover { border-color: #cbd5e1; }
+
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+
+    .cal-day {
+      min-height: 60px;
+      padding: 5px 7px;
+      border-right: 1px solid #f1f1f4;
+      border-bottom: 1px solid #f1f1f4;
+      background: #ffffff;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .cal-day:nth-child(7n) { border-right: 0; }
+    .cal-day:hover { background: #fafafa; }
+    .cal-day.selected-day {
+      background: #f4faf8;
+      box-shadow: inset 0 0 0 1px #9fd0c5;
+    }
+    .cal-day.selected-day:hover { background: #eef7f4; }
+
+    .comm-nav-btn {
+      width: 100%;
+      text-align: left;
+      padding: 6px 10px;
+      border-radius: 7px;
+      border: 0;
+      background: transparent;
+      color: #52525b;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.12s;
+    }
+    .comm-nav-btn:hover { background: #f4f4f5; color: #18181b; }
+    .comm-nav-btn.active { background: #f4f4f5; color: #18181b; font-weight: 600; }
+    .cal-pill {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      margin-top: 4px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+    .cal-pill:hover { filter: brightness(0.96); }
+
+    .comm-card {
+      background: #ffffff;
+      border: 1px solid #eceef2;
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+      transition: transform 0.16s ease, box-shadow 0.16s ease;
+    }
+    .comm-card:hover {
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
+    }
+    .comm-card-warm {
+      background: linear-gradient(155deg, #fffdf9 0%, #fff7eb 100%);
+      border-color: #f6e4c8;
+    }
+    .av-grad-orange { background: linear-gradient(135deg, #fb923c, #f97316); color: #ffffff; }
+    .av-grad-teal { background: linear-gradient(135deg, #2dd4bf, #0f766e); color: #ffffff; }
+    .av-grad-indigo { background: linear-gradient(135deg, #818cf8, #4f46e5); color: #ffffff; }
+    .av-grad-rose { background: linear-gradient(135deg, #fb7185, #e11d48); color: #ffffff; }
+    .av-grad-amber { background: linear-gradient(135deg, #fbbf24, #d97706); color: #ffffff; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      font-weight: 500;
+      background: #f4f4f5;
+      color: #52525b;
+    }
+    .hot-comment-strip {
+      margin-top: 10px;
+      padding: 7px 11px;
+      border-radius: 9px;
+      background: #f7f8fa;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #52525b;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .hot-comment-tag {
+      flex: none;
+      font-size: 10px;
+      font-weight: 600;
+      color: #ea580c;
+      background: #ffedd5;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .poll-opt {
+      position: relative;
+      width: 100%;
+      text-align: left;
+      padding: 9px 12px;
+      border-radius: 9px;
+      border: 1px solid #e4e4e7;
+      background: #fafafa;
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .poll-opt:hover { border-color: #cbd5e1; }
+    .poll-opt.is-picked { border-color: #2f7a6c; background: #ffffff; }
+    .poll-bar-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      background: #e6f4f0;
+      transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+      pointer-events: none;
+    }
+    .poll-opt.is-picked .poll-bar-fill { background: #cdebe3; }
+
+    .wb-tab {
+      border: 0;
+      background: transparent;
+      color: #71717a;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 2px;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.14s;
+      white-space: nowrap;
+    }
+    .wb-tab:hover { color: #18181b; }
+    .wb-tab.active {
+      color: #18181b;
+      font-weight: 600;
+      border-bottom-color: #2f7a6c;
+    }
+
+    .wb-tool-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 9px;
+      border-radius: 7px;
+      border: 0;
+      background: transparent;
+      color: #52525b;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .wb-tool-btn:hover { background: #f4f4f5; color: #18181b; }
+    .wb-tool-btn.active { background: #e6f4f0; color: #235d52; }
+
+    .wb-img-card {
+      border-radius: 11px;
+      overflow: hidden;
+      border: 1px solid #eceef2;
+      cursor: zoom-in;
+      transition: transform 0.16s ease, box-shadow 0.16s ease;
+    }
+    .wb-img-card:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+    }
+
+    .lightbox-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(18, 18, 22, 0.72);
+      backdrop-filter: blur(3px);
+      z-index: 48;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .phone-frame {
+      width: 320px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 8px solid #18181b;
+      border-radius: 34px;
+      overflow: hidden;
+      box-shadow: 0 16px 36px rgba(0,0,0,0.14);
+    }
+
+    .toast-bar {
+      position: absolute;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      background: #18181b;
+      color: #ffffff;
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.16);
+      z-index: 40;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body class="p-1 select-none">
+
+  <!-- 顶部轻切换条：在桌面端 App 与浏览器插件侧边栏之间切换 -->
+  <div class="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs" style="color:#71717a;">
+    <span>Linear / Apple / 即刻风格 · 纯净留白与零嵌套导航演示</span>
+    <div class="flex items-center gap-1.5">
+      <button onclick="switchDevice('desktop')" id="dev-desktop" class="px-2.5 py-1 rounded-md font-semibold border-0 cursor-pointer" style="background:#18181b; color:#ffffff;">桌面端 App</button>
+      <button onclick="switchDevice('plugin')" id="dev-plugin" class="px-2.5 py-1 rounded-md font-medium border-0 cursor-pointer" style="background:#f4f4f5; color:#52525b;">浏览器插件侧边栏</button>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 一、极简桌面端 App                                                     -->
+  <!-- ===================================================================== -->
+  <div id="view-desktop" class="window-shell">
+
+    <!-- 唯一一层顶栏：5 个两字纯文字按钮，零套娃 -->
+    <header class="topbar">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5">
+          <span class="mac-dot" style="background:#ff5f57;"></span>
+          <span class="mac-dot" style="background:#febc2e;"></span>
+          <span class="mac-dot" style="background:#28c840;"></span>
+        </div>
+        <div class="flex items-center gap-2 ml-1">
+          <span class="w-6 h-6 rounded-md flex items-center justify-center text-white text-xs font-semibold" style="background:#2f7a6c;">快</span>
+          <span class="text-[14px] font-semibold tracking-tight" style="color:#18181b;">网申快填</span>
+        </div>
+      </div>
+
+      <!-- 5 个两字主导航：前 4 项为个人工作台（按使用频率排列），隔线后为公共社区 -->
+      <nav class="top-nav" aria-label="主导航">
+        <button onclick="showPage('jobs')" id="nav-jobs">投递</button>
+        <button onclick="showPage('calendar')" id="nav-calendar">日历</button>
+        <button onclick="showPage('inbox')" id="nav-inbox">通知<span class="unread-dot" aria-hidden="true"></span></button>
+        <button onclick="showPage('resume')" id="nav-resume">简历</button>
+        <span style="width:1px; height:14px; background:#e4e4e7; margin:0 3px; flex:none;" aria-hidden="true"></span>
+        <button onclick="showPage('community')" id="nav-community">社区</button>
+      </nav>
+
+      <!-- 右侧：连接点 + 设置齿轮 + 账号头像 -->
+      <div class="flex items-center gap-2.5">
+        <button onclick="switchDevice('plugin')" class="flex items-center gap-1.5 text-xs border-0 bg-transparent cursor-pointer mr-1" style="color:#52525b;" title="切换到浏览器插件侧边栏预览">
+          <span class="status-dot" style="background:#10b981;"></span>
+          <span>扩展已连接</span>
+        </button>
+        <button onclick="showPage('settings')" id="nav-settings" class="gear-btn active" title="应用设置与 AI 接口配置" aria-label="设置">
+          <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <button onclick="toggleAccountSheet()" class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold text-white border-0 cursor-pointer" style="background:#27272a;" title="账号与云同步状态">
+          K
+        </button>
+      </div>
+    </header>
+
+    <!-- 账号与云同步轻抽屉（点右上角 K 头像滑出；完整配置请点左侧齿轮） -->
+    <div id="account-sheet" class="hidden absolute top-[52px] right-0 bottom-0 w-72 bg-white p-5 flex flex-col justify-between" style="border-left:1px solid #e4e4e7; box-shadow:-12px 0 32px rgba(0,0,0,0.06); z-index:30;">
+      <div class="space-y-4 text-xs">
+        <div class="flex items-center justify-between pb-3 border-b" style="border-color:#f1f1f4;">
+          <div>
+            <div class="font-semibold text-sm" style="color:#18181b;">kiki@student.edu.cn</div>
+            <div class="mt-0.5" style="color:#71717a;">已登录平台账号</div>
+          </div>
+          <button onclick="toggleAccountSheet()" class="btn-ghost py-1 px-2">关闭</button>
+        </div>
+
+        <div class="space-y-2.5">
+          <div class="font-medium" style="color:#a1a1aa;">加密云同步（保护隐私，默认仅本机）</div>
+          <label class="flex items-center justify-between py-1 cursor-pointer">
+            <span style="color:#27272a;">端到端同步 AI 配置</span>
+            <input type="checkbox" checked class="accent-[#2f7a6c]" />
+          </label>
+          <label class="flex items-center justify-between py-1 cursor-pointer">
+            <span style="color:#27272a;">端到端同步简历与投递</span>
+            <input type="checkbox" class="accent-[#2f7a6c]" />
+          </label>
+        </div>
+
+        <div class="pt-3 border-t" style="border-color:#f1f1f4;">
+          <button onclick="showPage('settings')" class="btn-primary w-full py-2 text-xs">打开完整设置与 API 配置 →</button>
+        </div>
+      </div>
+      <div class="pt-3 border-t flex justify-between text-xs" style="border-color:#f1f1f4; color:#a1a1aa;">
+        <span>v0.5.1</span>
+        <button onclick="showToast('已退出登录（演示占位）')" class="border-0 bg-transparent cursor-pointer" style="color:#71717a;">退出登录</button>
+      </div>
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- 页面 1：投递（清晰分段白卡 + 默认全收起 + 极简 3 行原地展开）          -->
+    <!-- =================================================================== -->
+    <section id="page-jobs" class="hidden" style="min-height: 440px; background:#fafafa;">
+      <div class="px-6 py-4 bg-white flex flex-wrap items-center justify-between gap-2 border-b" style="border-color:#f1f1f4;">
+        <div class="flex items-baseline gap-2.5">
+          <h1 class="text-base font-semibold m-0" style="color:#18181b;">投递</h1>
+          <span id="job-count-label" class="text-xs" style="color:#a1a1aa;">5 家进行中 · 2 家已结束</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="relative flex items-center">
+            <svg class="ico absolute left-2.5 pointer-events-none" style="color:#a1a1aa;" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="job-search-input" type="search" oninput="applyJobFilters()" placeholder="搜索公司、岗位或城市" class="pl-8 pr-3 py-1.5 rounded-lg text-xs" style="background:#f4f4f5; border:1px solid transparent; width:190px; outline:none;" />
+          </div>
+          <button onclick="toggleNewJobForm()" class="btn-primary">+ 新增</button>
+        </div>
+      </div>
+
+      <!-- 轻量化行内新增条 -->
+      <div id="new-job-bar" class="hidden px-6 py-3 bg-white border-b flex flex-wrap items-center gap-2 text-xs" style="border-color:#f1f1f4;">
+        <input id="nj-company" type="text" placeholder="公司名称" class="px-2.5 py-1.5 rounded-lg bg-white border text-xs w-36" style="border-color:#e4e4e7;" />
+        <input id="nj-role" type="text" placeholder="投递岗位" class="px-2.5 py-1.5 rounded-lg bg-white border text-xs flex-1 min-w-[150px]" style="border-color:#e4e4e7;" />
+        <input id="nj-city" type="text" placeholder="城市（选填）" class="px-2.5 py-1.5 rounded-lg bg-white border text-xs w-28" style="border-color:#e4e4e7;" />
+        <button onclick="addNewJobRow()" class="btn-primary">保存</button>
+        <button onclick="toggleNewJobForm()" class="btn-ghost">取消</button>
+      </div>
+
+      <!-- 独立分段列表容器（由 renderJobsGroupedList 动态生成） -->
+      <div id="jobs-grouped-list" class="px-6 py-5 space-y-5"></div>
+
+      <div class="px-6 pb-5 text-xs" style="color:#a1a1aa;">
+        默认全部收起；右侧可直接切阶段，点任意行在原地左右两栏均衡展开进度备注与相关入口。
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- 页面 2：日历（左侧完整 5 周 35 天月历 + 右侧常驻当天详情面板）          -->
+    <!-- =================================================================== -->
+    <section id="page-calendar" class="hidden" style="min-height: 440px;">
+      <div class="grid grid-cols-1 md:grid-cols-12" style="min-height: 440px;">
+        <!-- 左 70%：完整 5 周月历（11月2日 – 12月6日，共 35 格） -->
+        <div class="md:col-span-8 border-b md:border-b-0 md:border-r flex flex-col" style="border-color:#f1f1f4;">
+          <div class="px-5 py-3.5 flex items-center justify-between border-b" style="border-color:#f1f1f4;">
+            <div class="flex items-center gap-2.5">
+              <h1 class="text-base font-semibold m-0">2026 年 11 月</h1>
+              <span class="text-xs" style="color:#a1a1aa;">11/2 – 12/6 完整五周</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="selectCalDay('11-18'); showToast('已回到今天：11月18日')" class="btn-ghost py-1">今天</button>
+              <button onclick="toggleCalAddForm(true)" class="btn-primary py-1">+ 新增日程</button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-7 text-center py-1.5 text-[11px] font-medium border-b" style="color:#a1a1aa; border-color:#f1f1f4;">
+            <div>周一</div><div>周二</div><div>周三</div><div>周四</div><div>周五</div><div>周六</div><div>周日</div>
+          </div>
+
+          <div id="cal-month-grid" class="grid grid-cols-7 flex-1">
+            <!-- 第 1 周：11/2 - 11/8 -->
+            <div class="cal-day" data-day="11-02" onclick="selectCalDay('11-02')"><span class="text-xs" style="color:#a1a1aa;">2</span></div>
+            <div class="cal-day" data-day="11-03" onclick="selectCalDay('11-03')"><span class="text-xs" style="color:#a1a1aa;">3</span></div>
+            <div class="cal-day" data-day="11-04" onclick="selectCalDay('11-04')"><span class="text-xs" style="color:#a1a1aa;">4</span></div>
+            <div class="cal-day" data-day="11-05" onclick="selectCalDay('11-05')">
+              <span class="text-xs" style="color:#a1a1aa;">5</span>
+              <button class="cal-pill" style="background:#f4f4f5; color:#71717a;">14:00 美团一面</button>
+            </div>
+            <div class="cal-day" data-day="11-06" onclick="selectCalDay('11-06')"><span class="text-xs" style="color:#a1a1aa;">6</span></div>
+            <div class="cal-day" data-day="11-07" onclick="selectCalDay('11-07')"><span class="text-xs" style="color:#a1a1aa;">7</span></div>
+            <div class="cal-day" data-day="11-08" onclick="selectCalDay('11-08')"><span class="text-xs" style="color:#a1a1aa;">8</span></div>
+
+            <!-- 第 2 周：11/9 - 11/15 -->
+            <div class="cal-day" data-day="11-09" onclick="selectCalDay('11-09')"><span class="text-xs" style="color:#a1a1aa;">9</span></div>
+            <div class="cal-day" data-day="11-10" onclick="selectCalDay('11-10')"><span class="text-xs" style="color:#a1a1aa;">10</span></div>
+            <div class="cal-day" data-day="11-11" onclick="selectCalDay('11-11')"><span class="text-xs" style="color:#a1a1aa;">11</span></div>
+            <div class="cal-day" data-day="11-12" onclick="selectCalDay('11-12')">
+              <span class="text-xs" style="color:#a1a1aa;">12</span>
+              <button class="cal-pill" style="background:#f4f4f5; color:#71717a;">16:00 幻方一面</button>
+            </div>
+            <div class="cal-day" data-day="11-13" onclick="selectCalDay('11-13')"><span class="text-xs" style="color:#a1a1aa;">13</span></div>
+            <div class="cal-day" data-day="11-14" onclick="selectCalDay('11-14')"><span class="text-xs" style="color:#a1a1aa;">14</span></div>
+            <div class="cal-day" data-day="11-15" onclick="selectCalDay('11-15')"><span class="text-xs" style="color:#a1a1aa;">15</span></div>
+
+            <!-- 第 3 周：11/16 - 11/22 -->
+            <div class="cal-day" data-day="11-16" onclick="selectCalDay('11-16')"><span class="text-xs" style="color:#a1a1aa;">16</span></div>
+            <div class="cal-day" data-day="11-17" onclick="selectCalDay('11-17')">
+              <span class="text-xs" style="color:#a1a1aa;">17</span>
+              <button class="cal-pill" style="background:#f4f4f5; color:#71717a;">15:00 极氪二面</button>
+            </div>
+            <div class="cal-day" data-day="11-18" onclick="selectCalDay('11-18')">
+              <span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-semibold text-white" style="background:#2f7a6c;">18</span>
+              <button class="cal-pill" style="background:#fef3c7; color:#b45309;">18:00 金发测评</button>
+            </div>
+            <div class="cal-day selected-day" data-day="11-19" onclick="selectCalDay('11-19')">
+              <span class="text-xs font-semibold" style="color:#18181b;">19</span>
+              <button class="cal-pill" style="background:#e6f4f0; color:#235d52;">14:30 幻方二面</button>
+              <button class="cal-pill" style="background:#e6f4f0; color:#235d52;">16:30 腾讯一面</button>
+            </div>
+            <div class="cal-day" data-day="11-20" onclick="selectCalDay('11-20')">
+              <span class="text-xs font-medium" style="color:#18181b;">20</span>
+              <button class="cal-pill" style="background:#e0f2fe; color:#0369a1;">19:00 字节笔试</button>
+            </div>
+            <div class="cal-day" data-day="11-21" onclick="selectCalDay('11-21')">
+              <span class="text-xs font-medium" style="color:#18181b;">21</span>
+              <button class="cal-pill" style="background:#dcfce7; color:#15803d;">10:00 美团谈薪</button>
+            </div>
+            <div class="cal-day" data-day="11-22" onclick="selectCalDay('11-22')"><span class="text-xs" style="color:#52525b;">22</span></div>
+
+            <!-- 第 4 周：11/23 - 11/29 -->
+            <div class="cal-day" data-day="11-23" onclick="selectCalDay('11-23')"><span class="text-xs" style="color:#52525b;">23</span></div>
+            <div class="cal-day" data-day="11-24" onclick="selectCalDay('11-24')">
+              <span class="text-xs font-medium" style="color:#18181b;">24</span>
+              <button class="cal-pill" style="background:#e6f4f0; color:#235d52;">14:00 智谱一面</button>
+            </div>
+            <div class="cal-day" data-day="11-25" onclick="selectCalDay('11-25')"><span class="text-xs" style="color:#52525b;">25</span></div>
+            <div class="cal-day" data-day="11-26" onclick="selectCalDay('11-26')">
+              <span class="text-xs font-medium" style="color:#18181b;">26</span>
+              <button class="cal-pill" style="background:#fef3c7; color:#b45309;">20:00 电网测评</button>
+            </div>
+            <div class="cal-day" data-day="11-27" onclick="selectCalDay('11-27')"><span class="text-xs" style="color:#52525b;">27</span></div>
+            <div class="cal-day" data-day="11-28" onclick="selectCalDay('11-28')"><span class="text-xs" style="color:#52525b;">28</span></div>
+            <div class="cal-day" data-day="11-29" onclick="selectCalDay('11-29')"><span class="text-xs" style="color:#52525b;">29</span></div>
+
+            <!-- 第 5 周：11/30 - 12/6 -->
+            <div class="cal-day" data-day="11-30" onclick="selectCalDay('11-30')"><span class="text-xs" style="color:#52525b;">30</span></div>
+            <div class="cal-day" data-day="12-01" onclick="selectCalDay('12-01')"><span class="text-xs" style="color:#a1a1aa;">12/1</span></div>
+            <div class="cal-day" data-day="12-02" onclick="selectCalDay('12-02')">
+              <span class="text-xs" style="color:#a1a1aa;">2</span>
+              <button class="cal-pill" style="background:#e6f4f0; color:#235d52;">15:00 腾讯二面</button>
+            </div>
+            <div class="cal-day" data-day="12-03" onclick="selectCalDay('12-03')"><span class="text-xs" style="color:#a1a1aa;">3</span></div>
+            <div class="cal-day" data-day="12-04" onclick="selectCalDay('12-04')"><span class="text-xs" style="color:#a1a1aa;">4</span></div>
+            <div class="cal-day" data-day="12-05" onclick="selectCalDay('12-05')"><span class="text-xs" style="color:#a1a1aa;">5</span></div>
+            <div class="cal-day" data-day="12-06" onclick="selectCalDay('12-06')"><span class="text-xs" style="color:#a1a1aa;">6</span></div>
+          </div>
+        </div>
+
+        <!-- 右 30%：选中日期的常驻日程详情面板 -->
+        <aside id="cal-agenda-pane" class="md:col-span-4 p-5 flex flex-col justify-between" style="background:#fafafa;">
+          <div class="space-y-4">
+            <div class="pb-3 border-b flex items-baseline justify-between" style="border-color:#ececef;">
+              <div>
+                <div id="cal-agenda-date" class="text-sm font-semibold" style="color:#18181b;">11月19日 · 周四</div>
+                <div id="cal-agenda-sub" class="text-[11px] mt-0.5" style="color:#2f7a6c;">明天 · 共 2 项面试日程</div>
+              </div>
+            </div>
+
+            <div id="cal-agenda-list" class="space-y-3 text-xs">
+              <!-- 由 selectCalDay() 动态渲染 -->
+            </div>
+          </div>
+
+          <div class="pt-3 mt-4 border-t space-y-2 text-xs" style="border-color:#ececef;">
+            <div id="cal-add-form" class="hidden space-y-2 pb-1">
+              <div class="flex gap-1.5">
+                <input id="cal-new-time" type="text" placeholder="15:00" class="w-16 px-2 py-1.5 rounded-lg bg-white border text-xs" style="border-color:#e4e4e7; outline:none;" />
+                <input id="cal-new-title" type="text" placeholder="面试公司与环节" class="flex-1 px-2.5 py-1.5 rounded-lg bg-white border text-xs" style="border-color:#e4e4e7; outline:none;" />
+              </div>
+              <input id="cal-new-meta" type="text" placeholder="会议号 / 链接 / 地点（选填）" class="w-full px-2.5 py-1.5 rounded-lg bg-white border text-xs" style="border-color:#e4e4e7; outline:none;" />
+              <div class="flex gap-1.5">
+                <button onclick="addCalEventForSelectedDay()" class="btn-primary flex-1 py-1.5">保存日程</button>
+                <button onclick="toggleCalAddForm(false)" class="btn-ghost py-1.5">取消</button>
+              </div>
+            </div>
+            <button onclick="toggleCalAddForm()" class="btn-ghost w-full py-1.5 text-xs">+ 在当天添加日程</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- 页面 3：通知（Apple Mail 纯白极简两栏：左列表，右完整邮件正文阅读）      -->
+    <!-- =================================================================== -->
+    <section id="page-inbox" class="hidden grid grid-cols-1 md:grid-cols-12" style="min-height: 440px;">
+      <div class="md:col-span-4 border-r" style="border-color:#f1f1f4;">
+        <div class="px-4 py-3.5 flex items-center justify-between border-b" style="border-color:#f1f1f4;">
+          <span class="text-sm font-semibold">收件箱</span>
+          <button onclick="showToast('支持连接邮箱、导入 .eml / 图片 / PDF 或粘贴文本')" class="btn-ghost text-xs">+ 导入</button>
+        </div>
+        <div>
+          <div onclick="readMail(0)" id="imail-0" class="px-4 py-3.5 border-b cursor-pointer" style="border-color:#f4f4f5; background:#f8faf9;">
+            <div class="flex justify-between text-xs">
+              <span class="font-semibold" style="color:#18181b;">幻方量化校园招聘</span>
+              <span style="color:#a1a1aa;">10:14</span>
+            </div>
+            <div class="text-xs mt-1 truncate" style="color:#52525b;">二轮技术面试邀请函（明天 14:30）</div>
+          </div>
+          <div onclick="readMail(1)" id="imail-1" class="px-4 py-3.5 border-b cursor-pointer hover:bg-[#fafafa]" style="border-color:#f4f4f5;">
+            <div class="flex justify-between text-xs">
+              <span class="font-semibold flex items-center gap-1.5" style="color:#18181b;">
+                <span class="status-dot" style="background:#2f7a6c;"></span>字节跳动招聘组
+              </span>
+              <span style="color:#a1a1aa;">09:20</span>
+            </div>
+            <div class="text-xs mt-1 truncate" style="color:#52525b;">第四场后端在线笔试通知（周五 19:00）</div>
+          </div>
+          <div onclick="readMail(2)" id="imail-2" class="px-4 py-3.5 border-b cursor-pointer hover:bg-[#fafafa]" style="border-color:#f4f4f5;">
+            <div class="flex justify-between text-xs">
+              <span class="font-semibold" style="color:#18181b;">跃迁动力 HR</span>
+              <span style="color:#a1a1aa;">3天前</span>
+            </div>
+            <div class="text-xs mt-1 truncate" style="color:#52525b;">录用意向书 Offer Letter.pdf</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="md:col-span-8 p-6 flex flex-col justify-between">
+        <div class="space-y-4">
+          <div class="border-b pb-4" style="border-color:#f1f1f4;">
+            <h2 id="mr-subject" class="text-base font-semibold m-0">【幻方量化】2027 届量化系统研发专家 - 二轮技术面试邀请</h2>
+            <div id="mr-from" class="text-xs mt-1.5" style="color:#a1a1aa;">campus-hr@high-flyer.cn · 2026-11-18 10:14</div>
+          </div>
+          <div id="mr-body" class="text-[13px] leading-7 space-y-3" style="color:#27272a;">
+            <p class="m-0">林同学，你好：</p>
+            <p class="m-0">恭喜你通过一轮技术初试。现邀请你参加二轮系统设计与性能调优专场视频面试，安排如下：</p>
+            <p class="m-0 pl-3" style="border-left:2px solid #2f7a6c; color:#18181b;">
+              时间：2026年11月19日（周四）14:30 - 15:30<br/>
+              会议：腾讯会议 839-291-039（密码 2027）
+            </p>
+            <p class="m-0" style="color:#71717a;">请提前 5 分钟进入等候室。如需调整时间请直接回复邮件。</p>
+          </div>
+        </div>
+
+        <div class="pt-4 mt-4 border-t flex flex-wrap items-center justify-between gap-2 text-xs" style="border-color:#f1f1f4;">
+          <div class="flex items-center gap-2" style="color:#52525b;">
+            <span>AI 识别到日程，关联到：</span>
+            <select id="mr-target" class="btn-ghost py-1">
+              <option>幻方量化 · 量化系统研发</option>
+              <option>字节跳动 · 后端研发</option>
+              <option>跃迁动力 · 嵌入式系统</option>
+            </select>
+          </div>
+          <button id="mr-sync-btn" onclick="syncMailToCalendar()" class="btn-primary">确认并同步到日历</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- 页面 4：社区（微博 + 牛客三栏形式：发图文/投票/热搜/灯箱 + 手机端映射）  -->
+    <!-- =================================================================== -->
+    <section id="page-community" class="hidden" style="min-height: 440px; background:#f5f6f8;">
+      <!-- 顶部社区栏：频道标签 + 搜索 + 手机预览 -->
+      <div class="px-5 py-2.5 bg-white border-b flex flex-wrap items-center justify-between gap-2" style="border-color:#eceef2;">
+        <div class="flex items-center gap-5">
+          <button onclick="setCommNav('square', 'all', 'wtab-all')" id="wtab-all" class="wb-tab active">推荐</button>
+          <button onclick="setCommNav('square', 'hot', 'wtab-hot')" id="wtab-hot" class="wb-tab">热门</button>
+          <button onclick="setCommNav('square', 'poll', 'wtab-poll')" id="wtab-poll" class="wb-tab">Offer 帮选</button>
+          <button onclick="setCommNav('square', 'lucky', 'wtab-lucky')" id="wtab-lucky" class="wb-tab">喜报</button>
+          <button onclick="setCommNav('square', 'interview', 'wtab-interview')" id="wtab-interview" class="wb-tab">面经</button>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <div class="relative flex items-center">
+            <svg class="ico absolute left-2.5 pointer-events-none" style="color:#a1a1aa;" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="comm-search-input" type="search" oninput="clearCommCompanyChip(false); applyCommFilter()" placeholder="搜索公司、面经、话题..." class="pl-8 pr-3 py-1 rounded-lg text-xs" style="background:#f4f4f5; border:0; width:175px; outline:none; color:#18181b;" />
+          </div>
+          <button id="comm-filter-chip" onclick="clearCommCompanyChip(true)" class="hidden px-2 py-1 rounded-md text-[11px] font-medium border-0 cursor-pointer flex-none" style="background:#e6f4f0; color:#235d52;"></button>
+          <button onclick="toggleWeiboMobileView()" id="btn-wb-mobile" class="btn-ghost text-xs">预览手机 App</button>
+        </div>
+      </div>
+
+      <!-- 桌面三栏主体 -->
+      <div id="comm-desktop-main" class="flex flex-col md:flex-row" style="min-height: 440px;">
+        <!-- 左栏：简洁导航 + 我的状态 -->
+        <aside class="w-full md:w-44 flex-none p-4 bg-white border-b md:border-b-0 md:border-r flex flex-col justify-between gap-5" style="border-color:#eceef2;">
+          <div class="space-y-5">
+            <div class="space-y-1">
+              <div class="px-2.5 pb-1 text-[11px] font-medium" style="color:#a1a1aa;">发现</div>
+              <button id="cnav-square-all" onclick="setCommNav('square', 'all', 'wtab-all')" class="comm-nav-btn active"><span>全部广场</span></button>
+              <button id="cnav-square-hot" onclick="setCommNav('square', 'hot', 'wtab-hot')" class="comm-nav-btn"><span>热门精选</span></button>
+              <button id="cnav-square-poll" onclick="setCommNav('square', 'poll', 'wtab-poll')" class="comm-nav-btn"><span>Offer 帮选</span></button>
+              <button id="cnav-square-lucky" onclick="setCommNav('square', 'lucky', 'wtab-lucky')" class="comm-nav-btn"><span>喜报接好运</span></button>
+              <button id="cnav-square-interview" onclick="setCommNav('square', 'interview', 'wtab-interview')" class="comm-nav-btn"><span>面经复盘</span></button>
+            </div>
+
+            <div class="space-y-1">
+              <div class="px-2.5 pb-1 text-[11px] font-medium" style="color:#a1a1aa;">我的</div>
+              <button id="cnav-written-all" onclick="setCommNav('written', 'all', null)" class="comm-nav-btn"><span>我写的</span><span id="cnt-written" class="text-[11px]" style="color:#a1a1aa;">1</span></button>
+              <button id="cnav-saved-all" onclick="setCommNav('saved', 'all', null)" class="comm-nav-btn"><span>我收藏的</span><span id="cnt-saved" class="text-[11px]" style="color:#a1a1aa;">1</span></button>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-xl border space-y-1.5" style="background:#fafafa; border-color:#eceef2;">
+            <div class="flex items-center justify-between text-[11px]" style="color:#a1a1aa;">
+              <span>我的状态</span>
+              <span>点可切换</span>
+            </div>
+            <button id="my-status-btn" onclick="cycleMyStatus()" class="w-full text-left px-2.5 py-1.5 rounded-lg border-0 cursor-pointer flex items-center gap-1.5 text-xs font-medium" style="background:#e6f4f0; color:#235d52;">
+              <span class="status-dot" style="background:#2f7a6c;"></span>
+              <span id="my-status-label">冲刺二面中</span>
+            </button>
+          </div>
+        </aside>
+
+        <!-- 中栏：微博式常驻发帖盒 + 图文多态卡片流 -->
+        <div class="flex-1 min-w-0 p-4 space-y-3.5">
+          <!-- 常驻微博式发帖框（支持配图、发投票、带话题） -->
+          <div class="comm-card space-y-2.5" style="padding: 14px 16px;">
+            <div class="flex gap-3">
+              <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold av-grad-teal flex-none mt-0.5">K</span>
+              <div class="flex-1 min-w-0 space-y-2">
+                <textarea id="qw-text" rows="2" placeholder="有什么秋招新鲜事想聊聊？直接写一段、晒张战绩图或发个 Offer 投票..." class="w-full p-2.5 rounded-xl text-[13px]" style="background:#f6f7f9; border:1px solid transparent; outline:none; resize:none;"></textarea>
+
+                <!-- 已选图片缩略预览区 -->
+                <div id="qw-img-preview" class="hidden flex flex-wrap gap-2"></div>
+
+                <!-- 点击「图片」展开的快捷选图条 -->
+                <div id="qw-img-picker" class="hidden p-2.5 rounded-xl border space-y-2 text-[11px]" style="background:#fafafa; border-color:#eceef2;">
+                  <div class="flex items-center justify-between" style="color:#71717a;">
+                    <span>选择本地配图（演示可选最多 3 张示例图卡片）</span>
+                    <button type="button" onclick="toggleComposerImages(false)" class="border-0 bg-transparent cursor-pointer p-0" style="color:#a1a1aa;">收起</button>
+                  </div>
+                  <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <button type="button" onclick="toggleDraftImage(0)" id="dpick-0" class="p-2 rounded-lg bg-white border text-left cursor-pointer hover:border-[#2f7a6c]" style="border-color:#e4e4e7;">
+                      <div class="font-semibold" style="color:#c2410c;">漏斗战绩图</div>
+                      <div class="text-[10px]" style="color:#a1a1aa;">74投11面1Offer</div>
+                    </button>
+                    <button type="button" onclick="toggleDraftImage(1)" id="dpick-1" class="p-2 rounded-lg bg-white border text-left cursor-pointer hover:border-[#2f7a6c]" style="border-color:#e4e4e7;">
+                      <div class="font-semibold" style="color:#2f7a6c;">意向书打码图</div>
+                      <div class="text-[10px]" style="color:#a1a1aa;">Offer 截图样式</div>
+                    </button>
+                    <button type="button" onclick="toggleDraftImage(2)" id="dpick-2" class="p-2 rounded-lg bg-white border text-left cursor-pointer hover:border-[#2f7a6c]" style="border-color:#e4e4e7;">
+                      <div class="font-semibold" style="color:#0f766e;">手写架构笔记</div>
+                      <div class="text-[10px]" style="color:#a1a1aa;">技术考点手绘图</div>
+                    </button>
+                    <button type="button" onclick="toggleDraftImage(3)" id="dpick-3" class="p-2 rounded-lg bg-white border text-left cursor-pointer hover:border-[#2f7a6c]" style="border-color:#e4e4e7;">
+                      <div class="font-semibold" style="color:#4f46e5;">测评心电图</div>
+                      <div class="text-[10px]" style="color:#a1a1aa;">120题崩溃实录</div>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 点击「投票」展开的双选项输入 -->
+                <div id="qw-poll-fields" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <input id="qw-opt1" type="text" placeholder="选项 A（如：字节后端 45w · 北京）" class="px-2.5 py-1.5 rounded-lg bg-white border text-xs" style="border-color:#e4e4e7; outline:none;" />
+                  <input id="qw-opt2" type="text" placeholder="选项 B（如：腾讯微信 42w · 深圳）" class="px-2.5 py-1.5 rounded-lg bg-white border text-xs" style="border-color:#e4e4e7; outline:none;" />
+                </div>
+
+                <!-- 点击「# 话题」展开的选填话题与公司输入 -->
+                <div id="qw-tag-row" class="hidden flex flex-wrap items-center gap-2 text-xs">
+                  <button type="button" onclick="toggleQuickTag('lucky', this)" class="tag-pill-opt">喜报接好运</button>
+                  <button type="button" onclick="toggleQuickTag('interview', this)" class="tag-pill-opt">面经复盘</button>
+                  <button type="button" onclick="toggleQuickTag('rant', this)" class="tag-pill-opt"># 吐槽</button>
+                  <input id="qw-company" type="text" placeholder="关联公司（选填，如 腾讯科技）" class="px-2.5 py-1 rounded-lg bg-white border text-xs w-44" style="border-color:#e4e4e7; outline:none;" />
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部工具栏：图片 / 投票 / 话题 + 可见范围 / 发布 -->
+            <div class="pl-11 flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div class="flex items-center gap-1">
+                <button type="button" onclick="toggleComposerImages()" id="btn-tool-img" class="wb-tool-btn">
+                  <svg class="ico" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+                  <span>图片</span>
+                </button>
+                <button type="button" onclick="toggleComposerPoll()" id="btn-tool-poll" class="wb-tool-btn">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+                  <span>投票</span>
+                </button>
+                <button type="button" onclick="toggleComposerTag()" id="btn-tool-tag" class="wb-tool-btn">
+                  <svg class="ico" viewBox="0 0 24 24"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+                  <span>话题/公司</span>
+                </button>
+              </div>
+              <div class="flex items-center gap-2">
+                <select id="qw-vis" class="btn-ghost py-1 text-xs">
+                  <option value="public">公开</option>
+                  <option value="private">仅自己可见</option>
+                </select>
+                <button type="button" onclick="submitWeiboPost()" class="btn-primary py-1.5 px-4">发布</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 信息流 -->
+          <div id="jike-feed" class="space-y-3.5">
+
+            <!-- 帖子 1：图文晒单 + 喜报接好运（两图横向晒单，点图放大大灯箱） -->
+            <article data-tab="square hot" data-kind="lucky" data-comp="yq" class="comm-card comm-card-warm">
+              <div class="flex items-center justify-between text-xs mb-2.5">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold av-grad-amber">岸</span>
+                  <div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-semibold" style="color:#18181b;">南山终于上岸了</span>
+                      <span class="status-badge" style="background:#fef3c7; color:#b45309;">已收意向书</span>
+                    </div>
+                    <div class="text-[11px]" style="color:#a1a1aa;">18 分钟前 · 发布于桌面端</div>
+                  </div>
+                </div>
+                <span class="px-2 py-0.5 rounded-md text-[11px] font-medium" style="background:#ffedd5; color:#c2410c;">开奖喜报</span>
+              </div>
+
+              <p class="text-[13.5px] leading-6 m-0 mb-2.5" style="color:#18181b;">
+                74 投 11 面终收第一份正式 Offer！十月底差点心态崩盘，最后半个月把所有面试错题整理完，终于在跃迁动力上岸了，晒两张图把秋招好运接力给还在冲刺的同学们。
+              </p>
+
+              <!-- 微博风 2 图横向网格（点任意图打开灯箱大图） -->
+              <div class="grid grid-cols-2 gap-2 max-w-[460px]">
+                <div onclick="openLightbox('秋招 74 投战绩漏斗图', '74 次投递 → 21 场笔试 → 11 场面试 → 1 份 Offer（南山终于上岸了 分享）', 0)" class="wb-img-card p-3.5 flex flex-col justify-between h-28" style="background: linear-gradient(145deg, #fef3c7 0%, #fed7aa 100%); color:#7c2d12;">
+                  <span class="text-[10px] font-semibold">秋招战绩统计</span>
+                  <div>
+                    <div class="text-base font-extrabold">74投 → 11面 → 1 Offer</div>
+                    <div class="text-[10px]" style="color:#9a3412;">点击查看大图</div>
+                  </div>
+                </div>
+                <div onclick="openLightbox('录用意向书通知（关键信息已打码）', '来自「跃迁动力 HR」 · 嵌入式系统负责人 Offer 意向确认函', 1)" class="wb-img-card p-3.5 bg-white flex flex-col justify-between h-28">
+                  <div class="flex items-center justify-between text-[10px]">
+                    <span class="font-semibold" style="color:#2f7a6c;">录用意向书.pdf</span>
+                    <span class="px-1.5 py-0.5 rounded" style="background:#dcfce7; color:#15803d;">已核验</span>
+                  </div>
+                  <div class="space-y-1 text-[10.5px]" style="color:#52525b;">
+                    <div class="font-semibold" style="color:#18181b;">跃迁动力 · 嵌入式系统</div>
+                    <div>薪酬：<span class="px-1 rounded" style="background:#e4e4e7; color:#e4e4e7;">已打码隐私</span> · Base 深圳</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hot-comment-strip" style="background:#fff4e5;">
+                <span class="hot-comment-tag" style="background:#fed7aa; color:#c2410c;">热评</span>
+                <span class="truncate"><strong style="color:#18181b;">秋招锦鲤附体：</strong>接这份 11 面成 1 的坚持！祝我明天幻方二面顺顺利利！</span>
+              </div>
+
+              <div class="mt-3 pt-2.5 border-t flex items-center gap-5 text-xs" style="border-color:#f6e4c8; color:#71717a;">
+                <button onclick="toggleBless(this, 520)" class="px-2.5 py-1 rounded-full border-0 cursor-pointer text-xs font-medium flex items-center gap-1" style="background:#ffedd5; color:#c2410c;">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+                  <span>接好运 520</span>
+                </button>
+                <button onclick="toggleComments(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs flex items-center gap-1" style="color:inherit;">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <span>评论 96</span>
+                </button>
+                <button onclick="toggleSavePost(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">收藏</button>
+              </div>
+              <div class="hidden mt-3 pt-2.5 border-t text-xs space-y-2" style="border-color:#f6e4c8; color:#52525b;">
+                <div class="comm-cmt-list space-y-1.5">
+                  <div><strong style="color:#18181b;">秋招锦鲤附体：</strong>接好运！下周二面加油！</div>
+                  <div><strong style="color:#18181b;">早睡早起：</strong>太稳了，请问项目复盘怎么准备的？</div>
+                </div>
+                <div class="flex items-center gap-2 pt-1">
+                  <input type="text" placeholder="写一句评论或接好运..." class="flex-1 px-2.5 py-1 rounded-lg bg-white border text-xs" style="border-color:#f6e4c8; outline:none;" />
+                  <button onclick="replyPostComment(this)" class="btn-primary py-1 text-[11px]">回复</button>
+                </div>
+              </div>
+            </article>
+
+            <!-- 帖子 2：Offer 帮选互动投票卡 -->
+            <article data-tab="square hot" data-kind="poll" data-comp="hf tx" class="comm-card">
+              <div class="flex items-center justify-between text-xs mb-2.5">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold av-grad-indigo">选</span>
+                  <div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-semibold" style="color:#18181b;">Offer 选择困难户</span>
+                      <span class="status-badge" style="background:#eef2ff; color:#4f46e5;">手握 2 个意向</span>
+                    </div>
+                    <div class="text-[11px]" style="color:#a1a1aa;">36 分钟前 · 话题 #Offer帮选</div>
+                  </div>
+                </div>
+                <span class="px-2 py-0.5 rounded-md text-[11px] font-medium" style="background:#eef2ff; color:#4f46e5;">Offer 投票</span>
+              </div>
+
+              <div class="text-[14px] font-semibold mb-1" style="color:#18181b;">应届第一份工作：幻方量化系统研发 vs 腾讯 WXG 后台开发怎么选？</div>
+              <p class="text-[13px] leading-6 m-0 mb-3" style="color:#52525b;">
+                两边技术栈都很喜欢，幻方总包多出约 20%，但担心小而美赛道以后跳槽面窄；微信平台大且团队稳定，求大家帮投一票。
+              </p>
+
+              <div id="poll-offer-1" class="space-y-2 text-xs">
+                <button onclick="castFeedPoll('poll-offer-1', 0)" class="poll-opt" data-votes="214">
+                  <span class="poll-bar-fill"></span>
+                  <span class="relative flex items-center justify-between font-medium" style="color:#18181b;">
+                    <span>幻方量化 · 量化系统（杭州 55w）</span>
+                    <span class="poll-pct hidden font-semibold" style="color:#2f7a6c;">61%</span>
+                  </span>
+                </button>
+                <button onclick="castFeedPoll('poll-offer-1', 1)" class="poll-opt" data-votes="134">
+                  <span class="poll-bar-fill"></span>
+                  <span class="relative flex items-center justify-between font-medium" style="color:#18181b;">
+                    <span>腾讯 WXG · 微信后台（深圳 42w）</span>
+                    <span class="poll-pct hidden font-semibold" style="color:#52525b;">39%</span>
+                  </span>
+                </button>
+                <div class="poll-meta text-[11px] pt-0.5 flex justify-between" style="color:#a1a1aa;">
+                  <span>点击选项直接投票 · 已有 348 位同学参与</span>
+                  <span>2 天后截止</span>
+                </div>
+              </div>
+
+              <div class="hot-comment-strip">
+                <span class="hot-comment-tag">热评</span>
+                <span class="truncate"><strong style="color:#18181b;">架构组学长：</strong>量化核心系统对底层并发调优要求极高，出来做基础架构或 AI Infra 不愁下家。</span>
+              </div>
+
+              <div class="mt-3 pt-2.5 border-t flex items-center gap-5 text-xs" style="border-color:#f4f4f5; color:#71717a;">
+                <button onclick="toggleLike(this, 186)" class="border-0 bg-transparent cursor-pointer p-0 text-xs flex items-center gap-1" style="color:inherit;">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>
+                  <span>赞 186</span>
+                </button>
+                <button onclick="toggleComments(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs flex items-center gap-1" style="color:inherit;">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <span>评论 42</span>
+                </button>
+                <button onclick="toggleSavePost(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">收藏</button>
+              </div>
+              <div class="hidden mt-3 pt-2.5 border-t text-xs space-y-2" style="border-color:#f4f4f5; color:#52525b;">
+                <div class="comm-cmt-list space-y-1.5">
+                  <div><strong style="color:#18181b;">架构组学长：</strong>量化核心系统对底层调优要求极高，出来做 AI Infra 根本不愁下家。</div>
+                  <div><strong style="color:#18181b;">深圳打工人：</strong>WXG 公积金和大平台稳定度确实也很香。</div>
+                </div>
+                <div class="flex items-center gap-2 pt-1">
+                  <input type="text" placeholder="说说你的看法..." class="flex-1 px-2.5 py-1 rounded-lg bg-[#f6f7f9] border-0 text-xs" style="outline:none;" />
+                  <button onclick="replyPostComment(this)" class="btn-primary py-1 text-[11px]">回复</button>
+                </div>
+              </div>
+            </article>
+
+            <!-- 帖子 3：三图宫格面经笔记卡（微博典型 3 图横排） -->
+            <article data-tab="square hot saved" data-kind="interview" data-comp="hf" class="comm-card">
+              <div class="flex items-center justify-between text-xs mb-2.5">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold av-grad-teal">K</span>
+                  <div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-semibold" style="color:#18181b;">KernelHacker</span>
+                      <span class="status-badge" style="background:#e6f4f0; color:#235d52;">系统组内推人</span>
+                    </div>
+                    <div class="text-[11px]" style="color:#a1a1aa;">2 小时前 · 幻方量化</div>
+                  </div>
+                </div>
+                <span class="px-2 py-0.5 rounded-md text-[11px] font-medium" style="background:#e6f4f0; color:#235d52;">面经</span>
+              </div>
+              <div class="text-[14px] font-semibold mb-1.5" style="color:#18181b;">幻方量化系统研发一二面真题：Rust 无锁环形队列与内存屏障</div>
+              <p class="text-[13px] leading-6 m-0 mb-2.5" style="color:#52525b;">
+                整理了手撕 SPSC RingBuffer 的 3 张考点笔记图（结构示意图 / 内存序对比 / RDMA 零拷贝），点击任一图片可直接放大看细节。
+              </p>
+
+              <!-- 微博风 3 图横排宫格 -->
+              <div class="grid grid-cols-3 gap-2">
+                <div onclick="openLightbox('图 1 · 无锁环形队列示意图', 'AtomicUsize head/tail 缓存行独立对齐，避免 False Sharing', 2)" class="wb-img-card p-2.5 h-24 text-white flex flex-col justify-between" style="background: linear-gradient(145deg, #134e4a, #2f7a6c);">
+                  <span class="text-[9.5px] opacity-80">图 1 / 结构图</span>
+                  <div class="text-[11px] font-semibold leading-tight">SPSC RingBuffer 缓存行对齐</div>
+                </div>
+                <div onclick="openLightbox('图 2 · Acquire / Release vs SeqCst', '单生产者单消费者场景只需 Acquire-Release 即可保序，省去全屏障开销', 2)" class="wb-img-card p-2.5 h-24 flex flex-col justify-between" style="background:#f8faf9; color:#18181b;">
+                  <span class="text-[9.5px]" style="color:#2f7a6c;">图 2 / 内存序</span>
+                  <div class="text-[11px] font-semibold leading-tight">Acquire / Release 对比</div>
+                </div>
+                <div onclick="openLightbox('图 3 · RDMA 零拷贝路径', '内核旁路直接 DMA 写入用户态内存环形缓冲区，降低尾延迟', 2)" class="wb-img-card p-2.5 h-24 flex flex-col justify-between" style="background:#f4f4f5; color:#18181b;">
+                  <span class="text-[9.5px]" style="color:#71717a;">图 3 / 零拷贝</span>
+                  <div class="text-[11px] font-semibold leading-tight">Linux RDMA 内核旁路链路</div>
+                </div>
+              </div>
+
+              <div class="mt-3 pt-2.5 border-t flex items-center gap-5 text-xs" style="border-color:#f4f4f5; color:#71717a;">
+                <button onclick="toggleLike(this, 892)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">赞 892</button>
+                <button onclick="toggleComments(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">评论 64</button>
+                <button onclick="toggleSavePost(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:#2f7a6c;">已收藏</button>
+              </div>
+              <div class="hidden mt-3 pt-2.5 border-t text-xs space-y-2" style="border-color:#f4f4f5; color:#52525b;">
+                <div class="comm-cmt-list space-y-1.5">
+                  <div><strong style="color:#18181b;">系统组同学：</strong>三张笔记图太清晰了，明天二面前再看一遍！</div>
+                </div>
+                <div class="flex items-center gap-2 pt-1">
+                  <input type="text" placeholder="写一句评论..." class="flex-1 px-2.5 py-1 rounded-lg bg-[#f6f7f9] border-0 text-xs" style="outline:none;" />
+                  <button onclick="replyPostComment(this)" class="btn-primary py-1 text-[11px]">回复</button>
+                </div>
+              </div>
+            </article>
+
+            <!-- 帖子 4：单图吐槽 + 搞笑折线图 + 神评 -->
+            <article data-tab="square hot" data-kind="rant" data-comp="" class="comm-card">
+              <div class="flex items-center justify-between text-xs mb-2.5">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold av-grad-rose">脆</span>
+                  <div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-semibold" style="color:#18181b;">秋招脆皮大学生</span>
+                      <span class="status-badge">第 42 投 · 等通知</span>
+                    </div>
+                    <div class="text-[11px]" style="color:#a1a1aa;">3 小时前 · 手机客户端</div>
+                  </div>
+                </div>
+                <span class="text-[11px]" style="color:#a1a1aa;"># 吐槽</span>
+              </div>
+              <p class="text-[13.5px] leading-6 m-0 mb-2.5" style="color:#18181b;">
+                北森那个 120 道性格测试题做完人都麻了，前脚问我喜不喜欢团队社交，后脚换个说法测谎。附一张我的做题心电图……做完一般几天出面试通知啊？
+              </p>
+
+              <!-- 单图展示 -->
+              <div onclick="openLightbox('做完 120 题心理波动记录', '第 1 题认真读题 -> 第 60 题怀疑人生 -> 第 120 题彻底放飞', 3)" class="wb-img-card max-w-[300px] p-3" style="background:#fff1f2;">
+                <div class="flex items-center justify-between text-[10px] mb-1.5" style="color:#be123c;">
+                  <span class="font-semibold">北森 120 题做题心电图</span>
+                  <span>点击大图</span>
+                </div>
+                <svg viewBox="0 0 240 44" class="w-full h-11" fill="none">
+                  <polyline points="4,22 36,18 68,26 100,10 132,34 164,14 196,38 236,36" stroke="#e11d48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+
+              <div class="hot-comment-strip">
+                <span class="hot-comment-tag">热评</span>
+                <span class="truncate"><strong style="color:#18181b;">过来人学长：</strong>性格测试测的不是你是谁，而是「你知不知道公司想要谁」，演就完事了。</span>
+              </div>
+
+              <div class="mt-3 pt-2.5 border-t flex items-center gap-5 text-xs" style="border-color:#f4f4f5; color:#71717a;">
+                <button onclick="toggleEmpathy(this, 512)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">同感 +1 (512)</button>
+                <button onclick="toggleComments(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs flex items-center gap-1" style="color:inherit;">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <span>评论 89</span>
+                </button>
+                <button onclick="toggleSavePost(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">收藏</button>
+              </div>
+              <div class="hidden mt-3 pt-2.5 border-t text-xs space-y-2" style="border-color:#f4f4f5; color:#52525b;">
+                <div class="comm-cmt-list space-y-1.5">
+                  <div><strong style="color:#18181b;">路人甲：</strong>一般 3 到 5 个工作日发一面通知，保持手机畅通。</div>
+                  <div><strong style="color:#18181b;">秋招脆皮大学生：</strong>收到，谢谢解答。</div>
+                </div>
+                <div class="flex items-center gap-2 pt-1">
+                  <input type="text" placeholder="写一句评论..." class="flex-1 px-2.5 py-1 rounded-lg bg-[#f6f7f9] border-0 text-xs" style="outline:none;" />
+                  <button onclick="replyPostComment(this)" class="btn-primary py-1 text-[11px]">回复</button>
+                </div>
+              </div>
+            </article>
+
+            <!-- 帖子 5：产品白板配图卡（腾讯科技） -->
+            <article data-tab="square" data-kind="interview" data-comp="tx" class="comm-card">
+              <div class="flex items-center justify-between text-xs mb-2.5">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold av-grad-orange">南</span>
+                  <div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-semibold" style="color:#18181b;">小南瓜上岸</span>
+                      <span class="status-badge">在蹲二面结果</span>
+                    </div>
+                    <div class="text-[11px]" style="color:#a1a1aa;">昨天 · 腾讯科技</div>
+                  </div>
+                </div>
+                <span class="px-2 py-0.5 rounded-md text-[11px] font-medium" style="background:#e6f4f0; color:#235d52;">面经</span>
+              </div>
+              <div class="text-[14px] font-semibold mb-1.5" style="color:#18181b;">微信产品一二面复盘：深挖小程序留存与搜索改版</div>
+              <p class="text-[13px] leading-6 m-0 mb-2.5" style="color:#52525b;">
+                一面核对简历转化率数据口径；二面总监给了 3 个研发和 1 个月周期，现场手画了下面这张评估树：
+              </p>
+
+              <div onclick="openLightbox('搜索入口 ROI 评估树（手绘白板版）', '曝光点击率 × 次日留存回访增量 ÷ 研发人天消耗 · 腾讯产品二面复盘', 4)" class="wb-img-card max-w-[360px] p-3.5" style="background: linear-gradient(155deg, #eff6ff 0%, #dbeafe 100%); color:#1e3a8a;">
+                <div class="flex justify-between text-[10px] mb-1.5 font-semibold">
+                  <span>白板草图 · 小程序搜索 ROI 评估树</span>
+                  <span>点击查看大图</span>
+                </div>
+                <div class="p-2 rounded-lg bg-white text-[11.5px] font-medium border text-center" style="border-color:#bfdbfe; color:#1e40af;">
+                  入口曝光点击率 × 留存回访增量 ÷ 研发人天消耗
+                </div>
+              </div>
+
+              <div class="mt-3 pt-2.5 border-t flex items-center gap-5 text-xs" style="border-color:#f4f4f5; color:#71717a;">
+                <button onclick="toggleLike(this, 428)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">赞 428</button>
+                <button onclick="toggleComments(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">评论 36</button>
+                <button onclick="toggleSavePost(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">收藏</button>
+              </div>
+              <div class="hidden mt-3 pt-2.5 border-t text-xs space-y-2" style="border-color:#f4f4f5; color:#52525b;">
+                <div class="comm-cmt-list space-y-1.5">
+                  <div><strong style="color:#18181b;">Momo：</strong>请问一面完几天收到二面通知的？</div>
+                </div>
+                <div class="flex items-center gap-2 pt-1">
+                  <input type="text" placeholder="写一句评论..." class="flex-1 px-2.5 py-1 rounded-lg bg-[#f6f7f9] border-0 text-xs" style="outline:none;" />
+                  <button onclick="replyPostComment(this)" class="btn-primary py-1 text-[11px]">回复</button>
+                </div>
+              </div>
+            </article>
+
+            <!-- 帖子 6：字节笔试攻略卡 -->
+            <article data-tab="square" data-kind="interview" data-comp="zj" class="comm-card">
+              <div class="flex items-center justify-between text-xs mb-2">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold av-grad-indigo">G</span>
+                  <div>
+                    <span class="font-semibold" style="color:#18181b;">Golang打工人</span>
+                    <div class="text-[11px]" style="color:#a1a1aa;">2 天前 · 字节跳动</div>
+                  </div>
+                </div>
+                <span class="px-2 py-0.5 rounded-md text-[11px] font-medium" style="background:#e6f4f0; color:#235d52;">面经</span>
+              </div>
+              <div class="text-[14px] font-semibold mb-1" style="color:#18181b;">字节后端第四场在线笔试 AC 思路汇总（含高频动态规划）</div>
+              <p class="text-[13px] leading-6 m-0" style="color:#52525b;">
+                前两题模拟送分，第三题前缀和 + 哈希表注意取模负数边界，第四题树形 DP 状态压缩，建议预留 45 分钟给最后一题。
+              </p>
+              <div class="mt-3 pt-2.5 border-t flex items-center gap-5 text-xs" style="border-color:#f4f4f5; color:#71717a;">
+                <button onclick="toggleLike(this, 319)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">赞 319</button>
+                <button onclick="toggleComments(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">评论 27</button>
+                <button onclick="toggleSavePost(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">收藏</button>
+              </div>
+              <div class="hidden mt-3 pt-2.5 border-t text-xs space-y-2" style="border-color:#f4f4f5; color:#52525b;">
+                <div class="comm-cmt-list space-y-1.5">
+                  <div><strong style="color:#18181b;">算法萌新：</strong>太及时了，周五晚上就要考第四场。</div>
+                </div>
+                <div class="flex items-center gap-2 pt-1">
+                  <input type="text" placeholder="写一句评论..." class="flex-1 px-2.5 py-1 rounded-lg bg-[#f6f7f9] border-0 text-xs" style="outline:none;" />
+                  <button onclick="replyPostComment(this)" class="btn-primary py-1 text-[11px]">回复</button>
+                </div>
+              </div>
+            </article>
+
+            <!-- 帖子 7：我写的私密复盘（仅「我写的」可见） -->
+            <article data-tab="written" data-kind="interview" data-comp="hf" class="hidden comm-card">
+              <div class="flex items-center justify-between text-xs mb-2">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold" style="background:#18181b; color:#ffffff;">K</span>
+                  <div>
+                    <span class="font-semibold" style="color:#18181b;">我（kiki）</span>
+                    <div class="text-[11px]" style="color:#a1a1aa;">仅本机私密可见 · 昨天</div>
+                  </div>
+                </div>
+                <span class="text-[11px] font-medium" style="color:#2f7a6c;">私密复盘 · 幻方量化</span>
+              </div>
+              <div class="text-[14px] font-semibold mb-1.5" style="color:#18181b;">一面没答好的两个问题（明天二面前复习）</div>
+              <p class="text-[13px] leading-6 m-0" style="color:#52525b;">
+                1. Raft 选主脑裂时 lease read 怎么防止读旧数据；2. 实习项目的延迟压测数字记清楚。
+              </p>
+              <div class="mt-3 pt-2.5 border-t flex items-center gap-5 text-xs" style="border-color:#f4f4f5; color:#71717a;">
+                <button onclick="showToast('打开纯净编辑面板')" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">编辑</button>
+                <button onclick="publishPrivatePost(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs font-medium" style="color:#2f7a6c;">脱敏发布到广场</button>
+              </div>
+            </article>
+          </div>
+
+          <div id="comm-empty-state" class="hidden py-12 text-center text-xs bg-white rounded-2xl border" style="border-color:#eceef2; color:#a1a1aa;">
+            当前筛选条件下暂无动态，<button onclick="resetCommAll()" class="border-0 bg-transparent cursor-pointer underline" style="color:#2f7a6c;">回到全部广场</button>
+          </div>
+        </div>
+
+        <!-- 右栏：微博风秋招热搜榜 + 茶水间投票 + 话题 -->
+        <aside class="w-full md:w-64 flex-none p-4 space-y-3.5">
+          <!-- 秋招热搜榜 -->
+          <div class="comm-card space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="text-xs font-semibold" style="color:#18181b;">秋招热搜</div>
+              <div class="flex items-center gap-1 text-[10.5px]" style="color:#2f7a6c;">
+                <span class="status-dot" style="background:#10b981;"></span>
+                <span>1,284 人在线</span>
+              </div>
+            </div>
+            <div class="space-y-1.5 text-xs">
+              <button onclick="filterByCommunityTag('腾讯科技', 'tx')" class="w-full py-1 border-0 bg-transparent cursor-pointer flex items-center justify-between text-left hover:text-[#2f7a6c]" style="color:#27272a;">
+                <span class="flex items-center gap-2"><span class="w-3.5 font-bold" style="color:#ef4444;">1</span><span>腾讯科技校招</span><span class="px-1 rounded text-[10px] font-semibold text-white" style="background:#ef4444;">沸</span></span>
+                <span class="text-[11px]" style="color:#a1a1aa;">128 篇</span>
+              </button>
+              <button onclick="filterByCommunityTag('字节跳动', 'zj')" class="w-full py-1 border-0 bg-transparent cursor-pointer flex items-center justify-between text-left hover:text-[#2f7a6c]" style="color:#27272a;">
+                <span class="flex items-center gap-2"><span class="w-3.5 font-bold" style="color:#f97316;">2</span><span>字节跳动笔试</span><span class="px-1 rounded text-[10px] font-semibold text-white" style="background:#f97316;">热</span></span>
+                <span class="text-[11px]" style="color:#a1a1aa;">96 篇</span>
+              </button>
+              <button onclick="filterByCommunityTag('幻方量化', 'hf')" class="w-full py-1 border-0 bg-transparent cursor-pointer flex items-center justify-between text-left hover:text-[#2f7a6c]" style="color:#27272a;">
+                <span class="flex items-center gap-2"><span class="w-3.5 font-bold" style="color:#f59e0b;">3</span><span>幻方量化面经</span><span class="px-1 rounded text-[10px] font-semibold text-white" style="background:#2f7a6c;">新</span></span>
+                <span class="text-[11px]" style="color:#a1a1aa;">42 篇</span>
+              </button>
+              <button onclick="filterByTopicKeyword('北森')" class="w-full py-1 border-0 bg-transparent cursor-pointer flex items-center justify-between text-left hover:text-[#2f7a6c]" style="color:#27272a;">
+                <span class="flex items-center gap-2"><span class="w-3.5 font-medium" style="color:#a1a1aa;">4</span><span>北森 120 题测评</span></span>
+                <span class="text-[11px]" style="color:#a1a1aa;">89 篇</span>
+              </button>
+              <button onclick="filterByTopicKeyword('国企')" class="w-full py-1 border-0 bg-transparent cursor-pointer flex items-center justify-between text-left hover:text-[#2f7a6c]" style="color:#27272a;">
+                <span class="flex items-center gap-2"><span class="w-3.5 font-medium" style="color:#a1a1aa;">5</span><span>国家电网提前批</span></span>
+                <span class="text-[11px]" style="color:#a1a1aa;">84 篇</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 茶水间每日一投小卡 -->
+          <div class="comm-card space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-semibold" style="color:#18181b;">茶水间每日一投</span>
+              <span class="text-[10.5px]" style="color:#a1a1aa;">892 人已投</span>
+            </div>
+            <div class="text-xs" style="color:#52525b;">做完 120 道北森性格测试你什么心态？</div>
+            <div id="mini-tea-poll" class="space-y-1.5 text-[11.5px]">
+              <button onclick="castMiniPoll(0)" class="poll-opt py-1.5 px-2.5" data-votes="482">
+                <span class="poll-bar-fill"></span>
+                <span class="relative flex justify-between"><span>演完 e 人演 i 人，已麻木</span><span class="poll-pct hidden font-semibold" style="color:#2f7a6c;">54%</span></span>
+              </button>
+              <button onclick="castMiniPoll(1)" class="poll-opt py-1.5 px-2.5" data-votes="268">
+                <span class="poll-bar-fill"></span>
+                <span class="relative flex justify-between"><span>直接随便点，全凭天意</span><span class="poll-pct hidden font-semibold" style="color:#52525b;">30%</span></span>
+              </button>
+              <button onclick="castMiniPoll(2)" class="poll-opt py-1.5 px-2.5" data-votes="142">
+                <span class="poll-bar-fill"></span>
+                <span class="relative flex justify-between"><span>竟然觉得题出得挺准</span><span class="poll-pct hidden font-semibold" style="color:#52525b;">16%</span></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 热门话题 -->
+          <div class="comm-card space-y-2.5">
+            <div class="text-xs font-semibold" style="color:#18181b;">热门话题</div>
+            <div class="flex flex-wrap gap-1.5 text-[11px]">
+              <button onclick="filterByTopicKeyword('北森')" class="px-2.5 py-1 rounded-lg border-0 cursor-pointer" style="background:#f4f4f5; color:#52525b;"># 北森测评</button>
+              <button onclick="setCommNav('square', 'poll', 'wtab-poll')" class="px-2.5 py-1 rounded-lg border-0 cursor-pointer" style="background:#eef2ff; color:#4f46e5;"># Offer帮选</button>
+              <button onclick="setCommNav('square', 'lucky', 'wtab-lucky')" class="px-2.5 py-1 rounded-lg border-0 cursor-pointer" style="background:#fff7ed; color:#c2410c;"># 接好运</button>
+              <button onclick="filterByTopicKeyword('无锁')" class="px-2.5 py-1 rounded-lg border-0 cursor-pointer" style="background:#f4f4f5; color:#52525b;"># 系统研发</button>
+              <button onclick="filterByTopicKeyword('小程序')" class="px-2.5 py-1 rounded-lg border-0 cursor-pointer" style="background:#f4f4f5; color:#52525b;"># 产品复盘</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- 居中高清图片灯箱（点击任意图文配图放大查看） -->
+      <div id="img-lightbox" class="hidden lightbox-backdrop" onclick="if(event.target===this) closeLightbox()">
+        <div class="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl border" style="border-color:#e4e4e7;">
+          <div id="lb-visual" class="p-6 flex flex-col justify-between" style="min-height: 220px;"></div>
+          <div class="px-5 py-3.5 bg-white border-t flex items-center justify-between gap-3" style="border-color:#f1f1f4;">
+            <div class="min-w-0">
+              <div id="lb-title" class="text-xs font-semibold truncate" style="color:#18181b;"></div>
+              <div id="lb-sub" class="text-[11px] truncate mt-0.5" style="color:#71717a;"></div>
+            </div>
+            <button onclick="closeLightbox()" class="btn-ghost py-1 px-2.5 text-xs flex-none">关闭</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 手机 App 形态预览（1:1 映射微博式卡片与底栏 5 入口） -->
+      <div id="jike-mobile-wrap" class="hidden py-4 px-6">
+        <div class="flex items-center justify-center gap-3 mb-3 text-xs" style="color:#71717a;">
+          <span>手机 App 形态预览（与桌面端 1:1 同步图文信息流与 5 个底栏入口）</span>
+          <button onclick="toggleWeiboMobileView()" class="btn-ghost py-1 text-xs">返回桌面 3 栏视图</button>
+        </div>
+        <div class="phone-frame">
+          <div class="px-4 py-3 border-b flex items-center justify-between text-xs" style="border-color:#f1f1f4;">
+            <span class="font-semibold text-sm">社区</span>
+            <button onclick="toggleWeiboMobileView(); document.getElementById('qw-text').focus();" class="border-0 bg-transparent cursor-pointer text-[11px] font-medium" style="color:#2f7a6c;">+ 发动态</button>
+          </div>
+          <div class="p-3 space-y-2.5 text-xs" style="background:#f5f6f8;">
+            <div class="p-3 rounded-xl border space-y-1.5" style="background:#fffaf2; border-color:#f6e4c8;">
+              <div class="flex justify-between text-[11px]"><span class="font-semibold" style="color:#18181b;">南山终于上岸了</span><span style="color:#c2410c;">开奖喜报</span></div>
+              <div style="color:#52525b;">74 投 11 面终收第一份正式 Offer，把好运接力给大家</div>
+              <div class="grid grid-cols-2 gap-1.5 text-[10px]">
+                <div class="p-1.5 rounded font-semibold" style="background:#fed7aa; color:#7c2d12;">74投 → 1 Offer</div>
+                <div class="p-1.5 rounded bg-white border font-medium" style="border-color:#f6e4c8; color:#2f7a6c;">录用意向书.pdf</div>
+              </div>
+            </div>
+            <div class="p-3 rounded-xl bg-white border space-y-1.5" style="border-color:#eceef2;">
+              <div class="flex justify-between text-[11px]"><span class="font-semibold" style="color:#18181b;">Offer 选择困难户</span><span style="color:#4f46e5;">Offer 投票</span></div>
+              <div class="font-medium" style="color:#18181b;">幻方 55w vs 腾讯 42w 怎么选？</div>
+              <div class="px-2 py-1 rounded text-[11px] flex justify-between" style="background:#e6f4f0; color:#235d52;"><span>幻方量化（61%）</span><span>348 人已投</span></div>
+            </div>
+            <div class="p-3 rounded-xl bg-white border space-y-1.5" style="border-color:#eceef2;">
+              <div class="flex justify-between text-[11px]"><span class="font-semibold" style="color:#18181b;">KernelHacker</span><span style="color:#2f7a6c;">面经</span></div>
+              <div style="color:#52525b;">幻方系统研发一二面真题（含 3 张笔记图）</div>
+              <div class="grid grid-cols-3 gap-1 text-[9.5px] text-center">
+                <div class="py-1.5 rounded text-white" style="background:#134e4a;">结构图</div>
+                <div class="py-1.5 rounded" style="background:#f8faf9; color:#2f7a6c;">内存序</div>
+                <div class="py-1.5 rounded" style="background:#f4f4f5; color:#52525b;">零拷贝</div>
+              </div>
+            </div>
+          </div>
+          <!-- 手机端底部 5 Tab：与桌面端顶栏「投递 · 日历 · 通知 · 简历 | 社区」完全一一对应 -->
+          <div class="grid grid-cols-5 text-center py-2.5 border-t text-[11px]" style="border-color:#ececef; background:#ffffff; color:#71717a;">
+            <button onclick="toggleWeiboMobileView(); showPage('jobs');" class="border-0 bg-transparent cursor-pointer text-[11px]" style="color:inherit;">投递</button>
+            <button onclick="toggleWeiboMobileView(); showPage('calendar');" class="border-0 bg-transparent cursor-pointer text-[11px]" style="color:inherit;">日历</button>
+            <button onclick="toggleWeiboMobileView(); showPage('inbox');" class="border-0 bg-transparent cursor-pointer text-[11px]" style="color:inherit;">通知</button>
+            <button onclick="toggleWeiboMobileView(); showPage('resume');" class="border-0 bg-transparent cursor-pointer text-[11px]" style="color:inherit;">简历</button>
+            <button class="border-0 bg-transparent cursor-pointer text-[11px] font-semibold" style="color:#2f7a6c;">社区</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- 页面 5：简历（Apple 极简纯白面板）                                    -->
+    <!-- =================================================================== -->
+    <section id="page-resume" class="hidden p-6" style="min-height: 440px;">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b pb-4" style="border-color:#f1f1f4;">
+        <div class="flex items-center gap-6 text-[13px]">
+          <button onclick="switchResumeTab('templates', this)" class="r-tab border-0 bg-transparent cursor-pointer font-semibold pb-1" style="color:#18181b; border-bottom:2px solid #18181b;">简历模板</button>
+          <button onclick="switchResumeTab('profile', this)" class="r-tab border-0 bg-transparent cursor-pointer font-medium pb-1" style="color:#71717a;">我的信息</button>
+          <button onclick="switchResumeTab('sites', this)" class="r-tab border-0 bg-transparent cursor-pointer font-medium pb-1" style="color:#71717a;">网站回答</button>
+          <button onclick="switchResumeTab('files', this)" class="r-tab border-0 bg-transparent cursor-pointer font-medium pb-1" style="color:#71717a;">附件</button>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="showToast('选择本地 .xlsx / .csv 导入简历模板')" class="btn-ghost">导入 Excel</button>
+          <button onclick="showToast('选择 PDF / DOCX 由 AI 自动拆解为模板')" class="btn-primary">上传 PDF AI 解析</button>
+        </div>
+      </div>
+
+      <div id="rpane-templates" class="divide-y mt-2 text-xs" style="border-color:#f1f1f4;">
+        <div class="py-4 flex items-center justify-between">
+          <div>
+            <div class="font-semibold text-sm">2027 校招 · 系统架构研发版</div>
+            <div class="mt-0.5" style="color:#a1a1aa;">68 个字段 · 更新于今天</div>
+          </div>
+          <span class="font-medium" style="color:#2f7a6c;">当前使用</span>
+        </div>
+        <div class="py-4 flex items-center justify-between">
+          <div>
+            <div class="font-semibold text-sm">产品经理通用模板</div>
+            <div class="mt-0.5" style="color:#a1a1aa;">54 个字段 · 更新于 3 天前</div>
+          </div>
+          <button onclick="showToast('已切换当前模板为「产品经理通用模板」')" class="btn-ghost">设为当前</button>
+        </div>
+      </div>
+
+      <div id="rpane-profile" class="hidden py-5 text-xs space-y-2" style="color:#52525b;">
+        <div class="font-semibold text-sm" style="color:#18181b;">我的信息（通用补充字段）</div>
+        <p class="m-0">统一维护籍贯、户口、政治面貌、紧急联系人等常用资料；模板缺少的字段在填表时自动用这里补齐。</p>
+      </div>
+
+      <div id="rpane-sites" class="hidden py-5 text-xs space-y-2" style="color:#52525b;">
+        <div class="font-semibold text-sm" style="color:#18181b;">网站回答</div>
+        <p class="m-0">按网站域名记住特定回答（如“是否有亲属在本公司工作”），仅在对应网站自动填写。</p>
+      </div>
+
+      <div id="rpane-files" class="hidden py-5 text-xs space-y-2" style="color:#52525b;">
+        <div class="font-semibold text-sm" style="color:#18181b;">附件库</div>
+        <p class="m-0">集中管理 PDF 简历、一寸证件照、成绩单，在 Moka / 北森等网站一键填写时可先自动上传。</p>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- 页面 6：设置（左白导航 + 右浅灰画布居中卡片组，桌面端协调舒展）        -->
+    <!-- =================================================================== -->
+    <section id="page-settings" style="min-height: 440px; background:#fafafa;">
+      <div class="flex flex-col md:flex-row" style="min-height: 440px;">
+        <!-- 左栏：白底 7 项分类导航 -->
+        <aside class="w-full md:w-52 flex-none p-4 bg-white border-b md:border-b-0 md:border-r space-y-1" style="border-color:#eceef2;">
+          <div class="px-2.5 pb-2 text-[11px] font-medium" style="color:#a1a1aa;">应用设置</div>
+          <button onclick="switchSettingsTab('ai', this)" id="stab-ai" class="comm-nav-btn active"><span>AI 服务商</span></button>
+          <button onclick="switchSettingsTab('account', this)" id="stab-account" class="comm-nav-btn"><span>账号与云同步</span></button>
+          <button onclick="switchSettingsTab('browser', this)" id="stab-browser" class="comm-nav-btn"><span>浏览器连接</span></button>
+          <button onclick="switchSettingsTab('mailbox', this)" id="stab-mailbox" class="comm-nav-btn"><span>邮箱</span></button>
+          <button onclick="switchSettingsTab('data', this)" id="stab-data" class="comm-nav-btn"><span>数据与备份</span></button>
+          <button onclick="switchSettingsTab('general', this)" id="stab-general" class="comm-nav-btn"><span>通用与提醒</span></button>
+          <button onclick="switchSettingsTab('privacy', this)" id="stab-privacy" class="comm-nav-btn"><span>隐私与关于</span></button>
+        </aside>
+
+        <!-- 右栏：居中 max-w-2xl 表单卡片组，左右对称留白 -->
+        <div class="flex-1 min-w-0 p-6 md:px-10 md:py-7 text-xs">
+          <!-- 1. AI 服务商（默认展示） -->
+          <div id="spane-ai" class="max-w-2xl mx-auto space-y-4">
+            <div class="bg-white border rounded-xl p-5 space-y-4" style="border-color:#eceef2;">
+              <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b" style="border-color:#f4f4f5;">
+                <div>
+                  <h2 class="text-sm font-semibold m-0" style="color:#18181b;">AI 服务商与 API 配置</h2>
+                  <p class="m-0 mt-1 text-[11px]" style="color:#71717a;">密钥仅保存在本机系统凭据库（或由你主动开启加密同步）</p>
+                </div>
+                <span class="px-2.5 py-0.5 rounded-full text-[11px] font-medium" style="background:#e6f4f0; color:#235d52;">当前可用</span>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-[11px] mr-1" style="color:#a1a1aa;">快捷预设</span>
+                <button onclick="selectAiPreset('DeepSeek', 'https://api.deepseek.com/v1', 'deepseek-chat', this)" class="tag-pill-opt active">DeepSeek</button>
+                <button onclick="selectAiPreset('OpenAI 兼容接口', 'https://api.openai.com/v1', 'gpt-4o-mini', this)" class="tag-pill-opt">OpenAI / 中转</button>
+                <button onclick="selectAiPreset('智谱 GLM', 'https://open.bigmodel.cn/api/paas/v4', 'glm-4-flash', this)" class="tag-pill-opt">智谱 GLM</button>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="space-y-1.5">
+                  <label class="block font-medium" style="color:#52525b;">API 接口地址（Base URL）</label>
+                  <input id="set-ai-url" type="text" value="https://api.deepseek.com/v1" class="w-full px-3 py-2 rounded-lg border text-xs" style="border-color:#e4e4e7; outline:none;" />
+                </div>
+                <div class="space-y-1.5">
+                  <div class="flex justify-between">
+                    <label class="font-medium" style="color:#52525b;">默认填写模型</label>
+                    <button onclick="showToast('已从服务商拉取 6 个可用模型')" class="border-0 bg-transparent cursor-pointer p-0 text-[11px]" style="color:#2f7a6c;">拉取模型列表</button>
+                  </div>
+                  <input id="set-ai-model" type="text" value="deepseek-chat" class="w-full px-3 py-2 rounded-lg border text-xs" style="border-color:#e4e4e7; outline:none;" />
+                </div>
+              </div>
+
+              <div class="space-y-1.5">
+                <label class="block font-medium" style="color:#52525b;">API Key</label>
+                <input id="set-ai-key" type="password" value="sk-demo-4f9a-keep-local" class="w-full px-3 py-2 rounded-lg border text-xs" style="border-color:#e4e4e7; outline:none;" />
+              </div>
+
+              <div class="pt-3 border-t flex flex-wrap items-center justify-between gap-2" style="border-color:#f4f4f5;">
+                <span class="text-[11px]" style="color:#a1a1aa;">插件「一键 AI 填写」将使用此配置解析网页表单</span>
+                <div class="flex items-center gap-2">
+                  <button onclick="showToast('测试请求成功（延迟 420ms）')" class="btn-ghost">测试连通性</button>
+                  <button onclick="saveAiSettings()" class="btn-primary">保存配置</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white border rounded-xl p-5" style="border-color:#eceef2;">
+              <label class="flex items-center justify-between gap-4 cursor-pointer">
+                <div>
+                  <div class="font-semibold text-[13px]" style="color:#18181b;">深度分析页面时启用独立强模型</div>
+                  <div class="text-[11px] mt-0.5" style="color:#71717a;">日常填写走快速模型省费用；遇到复杂长篇多段经历匹配时可单独调用强模型</div>
+                </div>
+                <input type="checkbox" class="accent-[#2f7a6c] flex-none" />
+              </label>
+            </div>
+          </div>
+
+          <!-- 2. 账号与云同步 -->
+          <div id="spane-account" class="hidden max-w-2xl mx-auto space-y-4">
+            <div class="bg-white border rounded-xl p-5 flex flex-wrap items-center justify-between gap-3" style="border-color:#eceef2;">
+              <div class="flex items-center gap-3">
+                <span class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold text-white" style="background:#27272a;">K</span>
+                <div>
+                  <div class="font-semibold text-sm" style="color:#18181b;">kiki@student.edu.cn</div>
+                  <div class="text-[11px] mt-0.5" style="color:#71717a;">本机设备已登录平台账号</div>
+                </div>
+              </div>
+              <button onclick="showToast('已退出登录（演示占位）')" class="btn-ghost">退出登录</button>
+            </div>
+
+            <div class="bg-white border rounded-xl p-5 space-y-4" style="border-color:#eceef2;">
+              <div class="pb-2 border-b" style="border-color:#f4f4f5;">
+                <div class="font-semibold text-[13px]" style="color:#18181b;">端到端加密云同步</div>
+                <div class="text-[11px] mt-0.5" style="color:#71717a;">所有同步内容均在本机加密后再上传，默认不离开本机</div>
+              </div>
+              <label class="flex items-center justify-between gap-4 cursor-pointer">
+                <div>
+                  <div class="font-medium" style="color:#18181b;">同步 AI 接口与密钥</div>
+                  <div class="text-[11px]" style="color:#a1a1aa;">换电脑登录同一账号后自动可用你配置好的 API</div>
+                </div>
+                <input type="checkbox" checked class="accent-[#2f7a6c] flex-none" />
+              </label>
+              <label class="flex items-center justify-between gap-4 cursor-pointer border-t pt-3.5" style="border-color:#f4f4f5;">
+                <div>
+                  <div class="font-medium" style="color:#18181b;">同步简历模板与投递记录</div>
+                  <div class="text-[11px]" style="color:#a1a1aa;">默认关闭；个人姓名、手机号、附件等隐私信息默认仅存本机硬盘</div>
+                </div>
+                <input type="checkbox" class="accent-[#2f7a6c] flex-none" />
+              </label>
+            </div>
+          </div>
+
+          <!-- 3. 浏览器连接 -->
+          <div id="spane-browser" class="hidden max-w-2xl mx-auto space-y-4">
+            <div class="bg-white border rounded-xl p-5 flex flex-wrap items-center justify-between gap-3" style="border-color:#eceef2;">
+              <div>
+                <h2 class="text-sm font-semibold m-0" style="color:#18181b;">浏览器连接状态</h2>
+                <p class="m-0 mt-1 text-[11px]" style="color:#71717a;">用于浏览器侧边栏与桌面端本机安全直连，不经过任何外部服务器</p>
+              </div>
+              <button onclick="showToast('Chrome 与 Edge 原生主机连接检查全部通过')" class="btn-primary">重新检查并修复</button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div class="bg-white border rounded-xl p-4 space-y-1.5" style="border-color:#eceef2;">
+                <div class="flex items-center justify-between">
+                  <span class="font-semibold" style="color:#18181b;">Google Chrome</span>
+                  <span class="text-[11px] font-medium" style="color:#2f7a6c;">已连接正常</span>
+                </div>
+                <div class="text-[11px]" style="color:#71717a;">原生消息宿主机已注册，扩展通信顺畅</div>
+              </div>
+              <div class="bg-white border rounded-xl p-4 space-y-1.5" style="border-color:#eceef2;">
+                <div class="flex items-center justify-between">
+                  <span class="font-semibold" style="color:#18181b;">Microsoft Edge</span>
+                  <span class="text-[11px] font-medium" style="color:#2f7a6c;">已连接正常</span>
+                </div>
+                <div class="text-[11px]" style="color:#71717a;">支持商店扩展及本地解压包手动绑定 ID</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. 邮箱 -->
+          <div id="spane-mailbox" class="hidden max-w-2xl mx-auto space-y-4">
+            <div class="bg-white border rounded-xl p-5 space-y-3" style="border-color:#eceef2;">
+              <div class="flex items-center justify-between pb-2 border-b" style="border-color:#f4f4f5;">
+                <div>
+                  <h2 class="text-sm font-semibold m-0" style="color:#18181b;">已连接的收件邮箱</h2>
+                  <p class="m-0 mt-1 text-[11px]" style="color:#71717a;">仅用只读授权码识别笔面试邀请，绝不删改任何原始邮件</p>
+                </div>
+              </div>
+              <div class="flex items-center justify-between py-1">
+                <div>
+                  <div class="font-semibold text-[13px]" style="color:#18181b;">kiki@qq.com</div>
+                  <div class="text-[11px] mt-0.5" style="color:#2f7a6c;">QQ 邮箱 · IMAP 只读已连接</div>
+                </div>
+                <button onclick="showToast('已触发邮箱增量拉取，暂无新招聘邮件')" class="btn-ghost">立即检查新邮件</button>
+              </div>
+            </div>
+
+            <div class="bg-white border rounded-xl p-5 space-y-3" style="border-color:#eceef2;">
+              <div class="font-semibold text-[13px]" style="color:#18181b;">添加其他招聘邮箱</div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input type="text" placeholder="邮箱地址，如 name@163.com" class="px-3 py-2 rounded-lg border text-xs" style="border-color:#e4e4e7; outline:none;" />
+                <input type="password" placeholder="IMAP 只读授权码（非登录密码）" class="px-3 py-2 rounded-lg border text-xs" style="border-color:#e4e4e7; outline:none;" />
+              </div>
+              <div class="flex justify-end">
+                <button onclick="showToast('请在真实应用中输入邮箱 IMAP 授权码绑定')" class="btn-primary">连接邮箱</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. 数据与备份 -->
+          <div id="spane-data" class="hidden max-w-2xl mx-auto space-y-4">
+            <div class="bg-white border rounded-xl p-5 flex flex-wrap items-center justify-between gap-3" style="border-color:#eceef2;">
+              <div>
+                <h2 class="text-sm font-semibold m-0" style="color:#18181b;">本机完整备份（ZIP）</h2>
+                <p class="m-0 mt-1 text-[11px]" style="color:#71717a;">一键打包全部简历模板、投递记录、邮件与附件，随时恢复</p>
+              </div>
+              <div class="flex gap-2">
+                <button onclick="showToast('请选择历史备份 ZIP 进行恢复预览')" class="btn-ghost">从备份恢复</button>
+                <button onclick="showToast('已生成本地完整备份包')" class="btn-primary">导出完整备份</button>
+              </div>
+            </div>
+
+            <div class="bg-white border rounded-xl p-5 space-y-3" style="border-color:#eceef2;">
+              <div class="font-semibold text-[13px]" style="color:#18181b;">坚果云 WebDAV 独立网盘备份</div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input type="text" placeholder="坚果云账号邮箱" class="px-3 py-2 rounded-lg border text-xs" style="border-color:#e4e4e7; outline:none;" />
+                <input type="password" placeholder="坚果云应用密码" class="px-3 py-2 rounded-lg border text-xs" style="border-color:#e4e4e7; outline:none;" />
+              </div>
+              <div class="flex justify-end">
+                <button onclick="showToast('WebDAV 备份配置已保存')" class="btn-ghost">保存并测试连接</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 6. 通用与提醒 -->
+          <div id="spane-general" class="hidden max-w-2xl mx-auto space-y-4">
+            <div class="bg-white border rounded-xl p-5 space-y-4" style="border-color:#eceef2;">
+              <h2 class="text-sm font-semibold m-0 pb-2 border-b" style="border-color:#f4f4f5; color:#18181b;">通用与待办提醒</h2>
+              <div class="flex flex-wrap items-center justify-between gap-3 py-1">
+                <div>
+                  <div class="font-medium" style="color:#18181b;">关闭主窗口时</div>
+                  <div class="text-[11px]" style="color:#a1a1aa;">最小化到系统托盘可保持扩展连接与面试弹窗提醒</div>
+                </div>
+                <select class="btn-ghost py-1.5 text-xs">
+                  <option>最小化到系统托盘</option>
+                  <option>直接退出应用</option>
+                </select>
+              </div>
+              <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t" style="border-color:#f4f4f5;">
+                <div>
+                  <div class="font-medium" style="color:#18181b;">笔面试系统通知提前时间</div>
+                  <div class="text-[11px]" style="color:#a1a1aa;">到点前由桌面端发出系统级气泡提示</div>
+                </div>
+                <select class="btn-ghost py-1.5 text-xs">
+                  <option>提前 30 分钟提醒</option>
+                  <option>提前 15 分钟提醒</option>
+                  <option>不主动弹窗</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- 7. 隐私与关于 -->
+          <div id="spane-privacy" class="hidden max-w-2xl mx-auto space-y-4">
+            <div class="bg-white border rounded-xl p-5 space-y-2.5" style="border-color:#eceef2;">
+              <h2 class="text-sm font-semibold m-0" style="color:#18181b;">隐私边界声明</h2>
+              <p class="m-0 leading-6" style="color:#52525b;">
+                网申快填采用「本机优先」原则：你的个人资料、求职记录、简历附件与接口密钥默认仅存储在自己电脑的本地数据库中；只有当你主动开启云同步，或点击公开发布帖子时，经加密或脱敏的内容才会上传。
+              </p>
+            </div>
+            <div class="bg-white border rounded-xl p-5 flex flex-wrap items-center justify-between gap-3" style="border-color:#eceef2;">
+              <div>
+                <div class="font-semibold text-[13px]" style="color:#18181b;">网申快填桌面端 v0.5.1</div>
+                <div class="text-[11px] mt-0.5" style="color:#a1a1aa;">出现兼容性或连接故障时可导出脱敏诊断包</div>
+              </div>
+              <div class="flex gap-2">
+                <button onclick="showToast('已导出脱敏诊断日志')" class="btn-ghost">导出诊断信息</button>
+                <button onclick="showToast('已重置并播放新手气泡引导')" class="btn-primary">重看新手引导</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast-bar" class="hidden toast-bar"></div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 二、极简浏览器插件侧边栏（同样去 Emoji、去套娃，纯净留白）               -->
+  <!-- ===================================================================== -->
+  <div id="view-plugin" class="hidden flex justify-center py-2">
+    <div class="window-shell w-[360px]">
+      <div class="px-4 py-3 flex items-center justify-between border-b" style="background:#fafafa; border-color:#ececef;">
+        <div class="flex items-center gap-2">
+          <span class="w-5 h-5 rounded flex items-center justify-center text-white text-[11px] font-semibold" style="background:#2f7a6c;">快</span>
+          <span class="text-xs font-semibold">网申快填</span>
+          <span class="status-dot" style="background:#10b981;" title="已连接桌面端"></span>
+        </div>
+        <button onclick="switchDevice('desktop')" class="text-[11px] border-0 bg-transparent cursor-pointer" style="color:#71717a;">打开桌面 →</button>
+      </div>
+
+      <!-- 3 个纯文字标签 -->
+      <div class="grid grid-cols-3 border-b text-xs text-center" style="border-color:#f1f1f4;">
+        <button onclick="switchPluginTab('fill', this)" class="p-tab py-2.5 font-semibold border-0 bg-transparent cursor-pointer" style="color:#18181b; border-bottom:2px solid #2f7a6c;">填写</button>
+        <button onclick="switchPluginTab('fields', this)" class="p-tab py-2.5 font-medium border-0 bg-transparent cursor-pointer" style="color:#71717a;">简历字段</button>
+        <button onclick="switchPluginTab('mail', this)" class="p-tab py-2.5 font-medium border-0 bg-transparent cursor-pointer" style="color:#71717a;">存邮件</button>
+      </div>
+
+      <!-- 插件页 1：填写 -->
+      <div id="ptab-fill" class="p-5 space-y-5 text-xs">
+        <div class="space-y-1.5">
+          <div class="flex justify-between" style="color:#a1a1aa;">
+            <span>当前简历模板</span>
+            <span>join.qq.com</span>
+          </div>
+          <select class="w-full px-3 py-2 rounded-lg text-xs font-medium" style="background:#fafafa; border:1px solid #e4e4e7;">
+            <option>2027 校招 · 系统架构研发版</option>
+            <option>产品经理通用模板</option>
+          </select>
+        </div>
+
+        <div class="space-y-2.5">
+          <button onclick="this.textContent='已填写 26 项（请核对后提交）'" class="btn-primary w-full py-2.5 text-[13px]">一键 AI 填写</button>
+          <div class="flex justify-between px-1" style="color:#71717a;">
+            <button onclick="this.textContent='已启动深度分析'" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">深度分析本页</button>
+            <button onclick="this.textContent='已扫描可新增分组'" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">辅助新增经历</button>
+          </div>
+        </div>
+
+        <div class="pt-4 border-t flex items-center justify-between" style="border-color:#f1f1f4;">
+          <div>
+            <div class="font-medium" style="color:#18181b;">腾讯科技 · 产品经理</div>
+            <div class="text-[11px] mt-0.5" style="color:#a1a1aa;">填完顺手记录进度</div>
+          </div>
+          <div class="flex gap-1.5">
+            <button onclick="this.textContent='已保存'" class="btn-ghost py-1">保存</button>
+            <button onclick="this.textContent='已标记'" class="btn-ghost py-1" style="color:#2f7a6c; border-color:#b8d9d1;">已投递</button>
+          </div>
+        </div>
+
+        <details class="pt-1 text-center">
+          <summary class="cursor-pointer list-none text-[11px]" style="color:#a1a1aa;">填写异常？查看诊断与反馈</summary>
+          <div class="mt-2 p-2.5 rounded-lg text-left space-y-1.5" style="background:#fafafa; border:1px solid #f1f1f4; color:#71717a;">
+            <div class="flex justify-between"><span>复制诊断摘要</span><span style="color:#2f7a6c;">复制</span></div>
+            <div class="flex justify-between"><span>提交兼容性问题</span><span style="color:#2f7a6c;">反馈</span></div>
+          </div>
+        </details>
+      </div>
+
+      <!-- 插件页 2：简历字段 -->
+      <div id="ptab-fields" class="hidden p-4 space-y-3 text-xs">
+        <input type="search" placeholder="搜索字段名或内容" class="w-full px-3 py-1.5 rounded-lg text-xs" style="background:#f4f4f5; border:0; outline:none;" />
+        <div class="divide-y" style="border-color:#f1f1f4;">
+          <div class="py-2.5 flex justify-between">
+            <span style="color:#71717a;">姓名</span>
+            <span class="font-medium">林同学</span>
+          </div>
+          <div class="py-2.5 flex justify-between">
+            <span style="color:#71717a;">学校</span>
+            <span class="font-medium">示例大学</span>
+          </div>
+          <div class="py-2.5 flex justify-between">
+            <span style="color:#71717a;">专业</span>
+            <span class="font-medium">计算机科学与技术</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 插件页 3：存邮件 -->
+      <div id="ptab-mail" class="hidden p-5 space-y-4 text-xs">
+        <div style="color:#71717a;">打开 QQ / 163 / 126 / Gmail 网页版读信页时，自动切换到此页，一键将原件与附件存入桌面通知箱。</div>
+        <button onclick="this.textContent='已保存当前邮件'" class="btn-primary w-full py-2">保存当前网页邮件</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let toastTimer = null;
+    function showToast(msg) {
+      const el = document.getElementById('toast-bar');
+      if (!el) return;
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.add('hidden'), 2200);
+    }
+
+    function switchDevice(dev) {
+      document.getElementById('view-desktop').classList.toggle('hidden', dev !== 'desktop');
+      document.getElementById('view-plugin').classList.toggle('hidden', dev !== 'plugin');
+      document.getElementById('dev-desktop').style.background = dev === 'desktop' ? '#18181b' : '#f4f4f5';
+      document.getElementById('dev-desktop').style.color = dev === 'desktop' ? '#ffffff' : '#52525b';
+      document.getElementById('dev-plugin').style.background = dev === 'plugin' ? '#18181b' : '#f4f4f5';
+      document.getElementById('dev-plugin').style.color = dev === 'plugin' ? '#ffffff' : '#52525b';
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function showPage(page) {
+      ['jobs', 'calendar', 'inbox', 'community', 'resume', 'settings'].forEach(p => {
+        document.getElementById('page-' + p)?.classList.toggle('hidden', p !== page);
+        document.getElementById('nav-' + p)?.classList.toggle('active', p === page);
+      });
+      if (page === 'jobs') {
+        renderJobsGroupedList();
+      } else if (page === 'calendar') {
+        renderCalAgenda();
+      }
+      document.getElementById('account-sheet').classList.add('hidden');
+    }
+
+    function toggleAccountSheet() {
+      document.getElementById('account-sheet').classList.toggle('hidden');
+    }
+
+    const STAGE_GROUPS = [
+      { key: 'interview', label: '面试中', dot: '#2f7a6c' },
+      { key: 'assessment', label: '待测评', dot: '#f59e0b' },
+      { key: 'submitted', label: '已投递', dot: '#a1a1aa' },
+      { key: 'offer', label: 'Offer', dot: '#16a34a' },
+      { key: 'closed', label: '已结束 / 未通过', dot: '#d4d4d8' }
+    ];
+
+    const STAGE_OPTIONS = [
+      ['interview', '面试中'],
+      ['assessment', '待测评'],
+      ['submitted', '已投递'],
+      ['offer', 'Offer'],
+      ['closed', '已结束']
+    ];
+
+    let jobsData = [
+      {
+        id: 'hf',
+        company: '幻方量化',
+        city: '杭州',
+        role: '量化系统研发专家',
+        stage: 'interview',
+        nextText: '明天 14:30 二面',
+        nextTone: '#2f7a6c',
+        calDay: '11-19',
+        steps: ['11/10 投递', '11/12 一面通过', '11/19 二面'],
+        snapshot: { name: '2027 校招系统架构版（68 项）', core: 'Rust / C++ / 分布式存储', frozenAt: '2026-11-10 21:08' },
+        portalHost: 'jobs.high-flyer.cn',
+        mailIdx: 0,
+        mailCount: 2,
+        commKey: 'hf',
+        memo: '重点复习：无锁队列 Acquire/Release 内存序与 RDMA 零拷贝优化。'
+      },
+      {
+        id: 'tx',
+        company: '腾讯科技',
+        city: '深圳',
+        role: '微信事业群产品经理',
+        stage: 'interview',
+        nextText: '明天 16:30 一面',
+        nextTone: '#2f7a6c',
+        calDay: '11-19',
+        steps: ['11/13 官网投递', '11/19 业务一面'],
+        snapshot: { name: '产品经理通用模板（54 项）', core: '小程序增长 / 商业化转化漏斗', frozenAt: '2026-11-13 19:20' },
+        portalHost: 'join.qq.com',
+        mailIdx: null,
+        mailCount: 1,
+        commKey: 'tx',
+        memo: '梳理实习中提升小程序留存的数据口径与 AB 实验结论。'
+      },
+      {
+        id: 'jf',
+        company: '金发科技',
+        city: '广州',
+        role: '研发工程师 · 材料方向',
+        stage: 'assessment',
+        nextText: '今天 18:00 测评截止',
+        nextTone: '#d97706',
+        calDay: '11-18',
+        steps: ['11/15 已投递', '11/18 收到北森测评'],
+        snapshot: { name: '研发通用简历（58 项）', core: '高分子复合 / 表征测试工程', frozenAt: '2026-11-15 11:02' },
+        portalHost: 'kingfa.zhiye.com',
+        mailIdx: null,
+        mailCount: 1,
+        commKey: '',
+        memo: '今天 18:00 前完成北森性格与能力测评。'
+      },
+      {
+        id: 'zp',
+        company: '智谱 AI',
+        city: '北京',
+        role: '大模型推理加速工程师',
+        stage: 'submitted',
+        nextText: '3 天前投递',
+        nextTone: '#a1a1aa',
+        calDay: '',
+        steps: ['11/16 已提交网申'],
+        snapshot: { name: '2027 校招系统架构版（68 项）', core: 'CUDA Kernel / vLLM 调度优化', frozenAt: '2026-11-16 14:40' },
+        portalHost: 'zhipuai.jobs.feishu.cn',
+        mailIdx: null,
+        mailCount: 0,
+        commKey: '',
+        memo: ''
+      },
+      {
+        id: 'yq',
+        company: '跃迁动力',
+        city: '深圳',
+        role: '嵌入式系统负责人',
+        stage: 'offer',
+        nextText: '已发意向书',
+        nextTone: '#15803d',
+        calDay: '',
+        steps: ['10/28 投递', '11/04 技术面', '11/15 Offer 沟通'],
+        snapshot: { name: '嵌入式全栈版（62 项）', core: 'RTOS / CAN 总线 / 实时控制', frozenAt: '2026-10-28 20:15' },
+        portalHost: 'stepengine.cn/careers',
+        mailIdx: 2,
+        mailCount: 2,
+        commKey: '',
+        memo: '意向书已收到，下周三前确认三方协议邮寄地址。'
+      },
+      {
+        id: 'zj_intern',
+        company: '字节跳动',
+        city: '北京',
+        role: '基础架构后端研发（提前批）',
+        stage: 'closed',
+        nextText: '流程已结束',
+        nextTone: '#a1a1aa',
+        calDay: '',
+        steps: ['09/18 投递', '09/26 笔试', '10/08 一面', '流程结束'],
+        snapshot: { name: '后端提前批版本（64 项）', core: 'Go / 分布式存储', frozenAt: '2026-09-18 16:00' },
+        portalHost: 'jobs.bytedance.com',
+        mailIdx: 1,
+        mailCount: 2,
+        commKey: 'zj',
+        memo: '一面卡在 Raft 快照传输细节，常规秋招已换投笔试通道。'
+      },
+      {
+        id: 'mt_end',
+        company: '美团',
+        city: '上海',
+        role: '客户端研发工程师',
+        stage: 'closed',
+        nextText: '主动撤回',
+        nextTone: '#a1a1aa',
+        calDay: '',
+        steps: ['10/12 投递', '11/05 一面', '11/10 主动撤回'],
+        snapshot: { name: '通用研发模板（60 项）', core: 'Swift / Cross-Platform UI', frozenAt: '2026-10-12 09:30' },
+        portalHost: 'campus.meituan.com',
+        mailIdx: null,
+        mailCount: 1,
+        commKey: '',
+        memo: '优先专注量化系统与后端岗位。'
+      }
+    ];
+
+    const groupExpanded = {
+      interview: true,
+      assessment: true,
+      submitted: true,
+      offer: true,
+      closed: false
+    };
+    let expandedJobId = null;
+    const openSubmittedResumeIds = new Set();
+    const openNoteInputIds = new Set();
+
+    function renderJobsGroupedList() {
+      const kw = (document.getElementById('job-search-input')?.value || '').trim().toLowerCase();
+      const forceExpandGroups = kw !== '';
+
+      const activeCount = jobsData.filter(j => j.stage !== 'closed').length;
+      const closedCount = jobsData.length - activeCount;
+      document.getElementById('job-count-label').textContent = activeCount + ' 家进行中 · ' + closedCount + ' 家已结束';
+
+      const container = document.getElementById('jobs-grouped-list');
+      let html = '';
+      let totalMatched = 0;
+
+      STAGE_GROUPS.forEach(grp => {
+        const items = jobsData.filter(j => {
+          if (j.stage !== grp.key) return false;
+          if (!kw) return true;
+          return (j.company + ' ' + (j.city || '') + ' ' + j.role + ' ' + j.memo).toLowerCase().includes(kw);
+        });
+        if (items.length === 0) return;
+
+        totalMatched += items.length;
+        const isOpenGroup = forceExpandGroups ? true : !!groupExpanded[grp.key];
+
+        html += '<div>' +
+          '<div class="job-group-hdr" onclick="toggleJobGroup(\'' + grp.key + '\')">' +
+            '<div class="flex items-center gap-2">' +
+              '<span class="status-dot" style="background:' + grp.dot + ';"></span>' +
+              '<span class="text-[13px] font-semibold" style="color:#18181b;">' + grp.label + '</span>' +
+              '<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold" style="background:#ececef; color:#52525b;">' + items.length + '</span>' +
+            '</div>' +
+            '<span class="text-[11px]" style="color:#a1a1aa;">' + (isOpenGroup ? '▾ 收起' : '▸ 展开 (' + items.length + ')') + '</span>' +
+          '</div>';
+
+        if (!isOpenGroup) {
+          html += '</div>';
+          return;
+        }
+
+        html += '<div class="job-group-card">';
+
+        items.forEach(job => {
+          const isExp = expandedJobId === job.id;
+          const initial = Array.from(job.company)[0] || '企';
+          const stageOptsHtml = STAGE_OPTIONS.map(([val, lbl]) =>
+            '<option value="' + val + '"' + (job.stage === val ? ' selected' : '') + '>' + lbl + '</option>'
+          ).join('');
+
+          const stageColor = job.stage === 'interview' ? '#2f7a6c'
+            : job.stage === 'assessment' ? '#d97706'
+            : job.stage === 'offer' ? '#15803d'
+            : '#52525b';
+
+          const schedHtml = job.calDay
+            ? '<button onclick="event.stopPropagation(); jumpCalendarFromJob(\'' + job.calDay + '\')" class="border-0 bg-transparent cursor-pointer p-0 text-xs font-medium hover:underline text-left" style="color:' + job.nextTone + ';">' + esc(job.nextText) + '</button>'
+            : '<span class="text-xs" style="color:' + job.nextTone + ';">' + esc(job.nextText) + '</span>';
+
+          html += '<div onclick="toggleJobExpand(\'' + job.id + '\')" class="linear-row' + (isExp ? ' is-active' : '') + '">' +
+            '<div class="flex items-center gap-2.5 min-w-0">' +
+              '<span class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-semibold flex-none" style="background:#f4f4f5; color:#27272a;">' + esc(initial) + '</span>' +
+              '<div class="flex items-baseline gap-1.5 min-w-0 truncate">' +
+                '<span class="text-[13.5px] font-semibold truncate" style="color:#18181b;">' + esc(job.company) + '</span>' +
+                (job.city ? '<span class="text-[11.5px] flex-none" style="color:#a1a1aa;">· ' + esc(job.city) + '</span>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div class="col-role text-[13px] truncate" style="color:#52525b;">' + esc(job.role) + '</div>' +
+            '<div class="col-sched truncate">' + schedHtml + '</div>' +
+            '<div class="flex items-center justify-end gap-3 flex-none">' +
+              '<select onclick="event.stopPropagation()" onchange="changeJobStage(\'' + job.id + '\', this.value)" class="stage-select-inline" style="color:' + stageColor + ';">' + stageOptsHtml + '</select>' +
+              '<span class="text-xs w-3 text-center" style="color:#a1a1aa;">' + (isExp ? '▾' : '▸') + '</span>' +
+            '</div>' +
+          '</div>';
+
+          if (isExp) {
+            const resumeOpen = openSubmittedResumeIds.has(job.id);
+            const noteOpen = openNoteInputIds.has(job.id);
+
+            const stepsHtml = job.steps.map((st, idx) => {
+              const isLast = idx === job.steps.length - 1;
+              return '<span style="color:' + (isLast ? '#18181b' : '#71717a') + '; font-weight:' + (isLast ? '600' : '400') + ';">' + esc(st) + '</span>';
+            }).join('<span class="mx-2" style="color:#d4d4d8;">→</span>');
+
+            const mailLink = job.mailCount > 0
+              ? '<button onclick="openMailFromJob(' + (job.mailIdx === null ? 0 : job.mailIdx) + ')" class="border-0 bg-transparent cursor-pointer p-0 text-xs font-medium hover:underline" style="color:#2f7a6c;">' + job.mailCount + ' 封相关邮件 →</button>'
+              : '<span class="text-[11px]" style="color:#a1a1aa;">暂无相关邮件</span>';
+
+            const commLink = job.commKey
+              ? '<button onclick="openCommunityFromJob(\'' + job.commKey + '\')" class="border-0 bg-transparent cursor-pointer p-0 text-xs font-medium hover:underline" style="color:#2f7a6c;">该公司面经 →</button>'
+              : '';
+
+            html += '<div class="job-inline-expand grid grid-cols-1 md:grid-cols-12 gap-5 text-xs">' +
+              '<!-- 左栏 60%：进度主线与备注 -->' +
+              '<div class="md:col-span-7 space-y-2">' +
+                '<div class="flex flex-wrap items-center justify-between gap-2">' +
+                  '<div class="flex flex-wrap items-center leading-6">' + stepsHtml + '</div>' +
+                  '<button onclick="toggleJobNoteInput(\'' + job.id + '\')" class="border-0 bg-transparent cursor-pointer p-0 text-xs font-medium flex-none" style="color:#2f7a6c;">+ 记进度</button>' +
+                '</div>' +
+                (noteOpen
+                  ? '<div class="flex items-center gap-2 pt-0.5">' +
+                      '<input id="jstep-in-' + job.id + '" type="text" placeholder="输入新进展节点，如：11/19 二面完成" class="flex-1 px-2.5 py-1 rounded-md bg-white border text-xs" style="border-color:#e4e4e7; outline:none;" />' +
+                      '<button onclick="addJobStepNote(\'' + job.id + '\')" class="btn-primary py-1">添加</button>' +
+                    '</div>'
+                  : '') +
+                '<div>' +
+                  '<input type="text" class="memo-inline-input" value="' + esc(job.memo) + '" oninput="updateJobMemo(\'' + job.id + '\', this.value)" placeholder="点击添加一句话备注..." />' +
+                '</div>' +
+              '</div>' +
+
+              '<!-- 右栏 40%：联动跳转与该条资料动作 -->' +
+              '<div class="md:col-span-5 md:border-l md:pl-5 space-y-2.5" style="border-color:#ececef;">' +
+                '<div class="flex flex-wrap items-center gap-4">' +
+                  mailLink +
+                  commLink +
+                '</div>' +
+                '<div class="flex flex-wrap items-center gap-4 text-[11.5px]" style="color:#71717a;">' +
+                  '<button onclick="toggleSubmittedResume(\'' + job.id + '\')" class="border-0 bg-transparent cursor-pointer p-0 hover:underline" style="color:#52525b;">' + (resumeOpen ? '收起交的简历' : '当时交的简历') + '</button>' +
+                  '<button onclick="showToast(\'即将打开网申官网：' + esc(job.portalHost) + '\')" class="border-0 bg-transparent cursor-pointer p-0 hover:underline" style="color:#52525b;">打开官网 ↗</button>' +
+                  '<button onclick="removeJobRow(\'' + job.id + '\')" class="border-0 bg-transparent cursor-pointer p-0 hover:text-[#dc2626]" style="color:#a1a1aa;">移入回收站</button>' +
+                '</div>' +
+                (resumeOpen
+                  ? '<div class="pt-1 text-[11px] leading-5" style="color:#71717a;">' +
+                      '当时交的是：<strong style="color:#18181b;">' + esc(job.snapshot.name) + '</strong>（' + esc(job.snapshot.core) + ' · ' + esc(job.snapshot.frozenAt) + ' 提交）' +
+                    '</div>'
+                  : '') +
+              '</div>' +
+            '</div>';
+          }
+        });
+
+        html += '</div></div>';
+      });
+
+      if (totalMatched === 0) {
+        html = '<div class="py-12 text-center text-xs bg-white rounded-xl border" style="border-color:#ececef; color:#a1a1aa;">没有找到符合条件的投递记录</div>';
+      }
+      container.innerHTML = html;
+    }
+
+    function toggleJobGroup(key) {
+      groupExpanded[key] = !groupExpanded[key];
+      renderJobsGroupedList();
+    }
+
+    function toggleJobExpand(id) {
+      expandedJobId = (expandedJobId === id) ? null : id;
+      renderJobsGroupedList();
+    }
+
+    function toggleSubmittedResume(id) {
+      if (openSubmittedResumeIds.has(id)) openSubmittedResumeIds.delete(id);
+      else openSubmittedResumeIds.add(id);
+      renderJobsGroupedList();
+    }
+
+    function changeJobStage(id, newStage) {
+      const job = jobsData.find(j => j.id === id);
+      if (!job || job.stage === newStage) return;
+      job.stage = newStage;
+      if (newStage === 'closed') job.nextText = '已移入已结束';
+      groupExpanded[newStage] = true;
+      expandedJobId = id;
+      renderJobsGroupedList();
+      const label = (STAGE_OPTIONS.find(o => o[0] === newStage) || ['', ''])[1];
+      showToast(job.company + ' 已移至「' + label + '」分组');
+    }
+
+    function toggleJobNoteInput(id) {
+      if (openNoteInputIds.has(id)) openNoteInputIds.delete(id);
+      else openNoteInputIds.add(id);
+      renderJobsGroupedList();
+      if (openNoteInputIds.has(id)) {
+        document.getElementById('jstep-in-' + id)?.focus();
+      }
+    }
+
+    function addJobStepNote(id) {
+      const inp = document.getElementById('jstep-in-' + id);
+      const txt = (inp?.value || '').trim();
+      if (!txt) return;
+      const job = jobsData.find(j => j.id === id);
+      if (job) {
+        job.steps.push(txt);
+      }
+      openNoteInputIds.delete(id);
+      renderJobsGroupedList();
+      showToast('已记录新进度');
+    }
+
+    function updateJobMemo(id, val) {
+      const job = jobsData.find(j => j.id === id);
+      if (job) job.memo = val;
+    }
+
+    function removeJobRow(id) {
+      const idx = jobsData.findIndex(j => j.id === id);
+      if (idx < 0) return;
+      const name = jobsData[idx].company;
+      jobsData.splice(idx, 1);
+      if (expandedJobId === id) expandedJobId = null;
+      renderJobsGroupedList();
+      showToast('已将「' + name + '」移入回收站');
+    }
+
+    function jumpCalendarFromJob(dayKey) {
+      showPage('calendar');
+      selectCalDay(dayKey);
+    }
+
+    function openMailFromJob(mailIdx) {
+      showPage('inbox');
+      readMail(mailIdx);
+    }
+
+    function openCommunityFromJob(compKey) {
+      const map = { hf: '幻方量化', tx: '腾讯科技', zj: '字节跳动' };
+      showPage('community');
+      filterByCommunityTag(map[compKey] || compKey, compKey);
+    }
+
+    function applyJobFilters() {
+      renderJobsGroupedList();
+    }
+
+    function toggleNewJobForm() {
+      document.getElementById('new-job-bar').classList.toggle('hidden');
+    }
+
+    function addNewJobRow() {
+      const c = (document.getElementById('nj-company').value || '').trim();
+      const r = (document.getElementById('nj-role').value || '').trim();
+      const city = (document.getElementById('nj-city').value || '').trim();
+      if (!c || !r) { showToast('请填写公司名称与岗位'); return; }
+      const newId = 'custom_' + Date.now();
+      jobsData.unshift({
+        id: newId,
+        company: c,
+        city,
+        role: r,
+        stage: 'submitted',
+        nextText: '刚刚投递',
+        nextTone: '#a1a1aa',
+        calDay: '',
+        steps: ['11/19 手动新增投递'],
+        snapshot: { name: '2027 校招通用版（68 项）', core: '当前主用版本提交记录', frozenAt: '刚刚' },
+        portalHost: 'campus.example.cn',
+        mailIdx: null,
+        mailCount: 0,
+        commKey: '',
+        memo: ''
+      });
+      groupExpanded.submitted = true;
+      expandedJobId = null;
+      document.getElementById('nj-company').value = '';
+      document.getElementById('nj-role').value = '';
+      document.getElementById('nj-city').value = '';
+      toggleNewJobForm();
+      renderJobsGroupedList();
+      showToast('已新增投递到「已投递」分组：' + c);
+    }
+
+    const calDayOrder = [
+      '11-02','11-03','11-04','11-05','11-06','11-07','11-08',
+      '11-09','11-10','11-11','11-12','11-13','11-14','11-15',
+      '11-16','11-17','11-18','11-19','11-20','11-21','11-22',
+      '11-23','11-24','11-25','11-26','11-27','11-28','11-29',
+      '11-30','12-01','12-02','12-03','12-04','12-05','12-06'
+    ];
+    const weekdaysCN = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    const calEvents = {
+      '11-05': [{ time: '14:00', type: '面试', title: '美团 · 服务端研发一面', meta: '美团视频面试系统（已结束）', done: true, jobKey: '' }],
+      '11-12': [{ time: '16:00', type: '面试', title: '幻方量化 · 一轮初试', meta: '分布式系统与 Rust 并发（已通过）', done: true, jobKey: 'hf' }],
+      '11-17': [{ time: '15:00', type: '面试', title: '极氪智能科技 · 二面', meta: '视频面试（已完成）', done: true, jobKey: '' }],
+      '11-18': [{ time: '18:00 截止', type: '测评', title: '金发科技 · 在线测评截止', meta: '北森性格与行测链接已就绪（约 45 分钟）', done: false, jobKey: 'jf' }],
+      '11-19': [
+        { time: '14:30 - 15:30', type: '面试', title: '幻方量化 · 二轮技术面试', meta: '腾讯会议 839-291-039（密码 2027）', done: false, jobKey: 'hf' },
+        { time: '16:30 - 17:15', type: '面试', title: '腾讯科技 · 微信产品一面', meta: '与上一场间隔 1 小时，时间无冲突', done: false, jobKey: 'tx' }
+      ],
+      '11-20': [{ time: '19:00 - 21:00', type: '笔试', title: '字节跳动 · 第四场在线笔试', meta: '牛客网在线编程（共 4 题）', done: false, jobKey: '' }],
+      '11-21': [{ time: '10:00', type: '谈薪', title: '美团 · HR 终面谈薪', meta: '电话沟通，提前准备好预期薪资区间', done: false, jobKey: '' }],
+      '11-24': [{ time: '14:00', type: '面试', title: '智谱 AI · 技术一面', meta: '飞书会议链接已同步', done: false, jobKey: 'zp' }],
+      '11-26': [{ time: '20:00', type: '测评', title: '国家电网 · 统一在线测评', meta: '专业综合能力 + 性格测试', done: false, jobKey: '' }],
+      '12-02': [{ time: '15:00', type: '面试', title: '腾讯科技 · 微信产品二面', meta: '总监复试（暂定）', done: false, jobKey: 'tx' }]
+    };
+    let selectedCalDay = '11-19';
+
+    function formatCalTitle(dayKey) {
+      const [m, d] = dayKey.split('-');
+      const idx = calDayOrder.indexOf(dayKey);
+      const wd = idx >= 0 ? weekdaysCN[idx % 7] : '';
+      return parseInt(m, 10) + '月' + parseInt(d, 10) + '日 · ' + wd;
+    }
+
+    function selectCalDay(dayKey) {
+      selectedCalDay = dayKey;
+      document.querySelectorAll('#cal-month-grid .cal-day').forEach(cell => {
+        cell.classList.toggle('selected-day', cell.getAttribute('data-day') === dayKey);
+      });
+      renderCalAgenda();
+    }
+
+    function renderCalAgenda() {
+      const items = calEvents[selectedCalDay] || [];
+      document.getElementById('cal-agenda-date').textContent = formatCalTitle(selectedCalDay);
+      let prefix = '';
+      if (selectedCalDay === '11-18') prefix = '今天 · ';
+      else if (selectedCalDay === '11-19') prefix = '明天 · ';
+      document.getElementById('cal-agenda-sub').textContent = items.length > 0
+        ? prefix + '共 ' + items.length + ' 项待办日程'
+        : prefix + '当日暂无排期，可专注投递或复盘';
+
+      const listEl = document.getElementById('cal-agenda-list');
+      if (items.length === 0) {
+        listEl.innerHTML = '<div class="py-8 text-center text-xs rounded-xl bg-white border" style="border-color:#ececef; color:#a1a1aa;">当天没有面试或测评安排</div>';
+        return;
+      }
+
+      listEl.innerHTML = items.map((ev, idx) => {
+        let badgeBg = '#e6f4f0', badgeColor = '#235d52';
+        if (ev.done) { badgeBg = '#f4f4f5'; badgeColor = '#71717a'; }
+        else if (ev.type === '测评') { badgeBg = '#fef3c7'; badgeColor = '#b45309'; }
+        else if (ev.type === '笔试') { badgeBg = '#e0f2fe'; badgeColor = '#0369a1'; }
+        else if (ev.type === '谈薪') { badgeBg = '#dcfce7'; badgeColor = '#15803d'; }
+
+        return '<div class="p-3.5 rounded-xl bg-white border space-y-2" style="border-color:#ececef;">' +
+          '<div class="flex items-center justify-between gap-2">' +
+            '<span class="text-[11px] font-medium" style="color:' + (ev.done ? '#a1a1aa' : '#2f7a6c') + ';">' + ev.time + '</span>' +
+            '<span class="px-1.5 py-0.5 rounded text-[10px] font-medium" style="background:' + badgeBg + '; color:' + badgeColor + ';">' + (ev.done ? '已完成' : ev.type) + '</span>' +
+          '</div>' +
+          '<div class="font-semibold text-[13px]" style="color:' + (ev.done ? '#71717a' : '#18181b') + ';">' + ev.title + '</div>' +
+          '<div class="text-[11px] leading-5" style="color:#71717a;">' + ev.meta + '</div>' +
+          '<div class="pt-1 flex items-center justify-between text-[11px]">' +
+            '<button onclick="toggleAgendaEventDone(\'' + selectedCalDay + '\',' + idx + ')" class="border-0 bg-transparent cursor-pointer p-0 font-medium" style="color:' + (ev.done ? '#71717a' : '#2f7a6c') + ';">' + (ev.done ? '取消完成' : '标记完成') + '</button>' +
+            (ev.jobKey ? '<button onclick="openJobFromCalendar(\'' + ev.jobKey + '\')" class="border-0 bg-transparent cursor-pointer p-0" style="color:#52525b;">查看对应投递 →</button>' : '') +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function toggleAgendaEventDone(dayKey, idx) {
+      const list = calEvents[dayKey];
+      if (!list || !list[idx]) return;
+      list[idx].done = !list[idx].done;
+      renderCalAgenda();
+      showToast(list[idx].done ? '日程已标记为完成' : '已恢复为待进行状态');
+    }
+
+    function openJobFromCalendar(jobKey) {
+      const job = jobsData.find(j => j.id === jobKey);
+      if (job) {
+        groupExpanded[job.stage] = true;
+        expandedJobId = job.id;
+      }
+      showPage('jobs');
+    }
+
+    function toggleCalAddForm(forceShow) {
+      const form = document.getElementById('cal-add-form');
+      if (forceShow === true) form.classList.remove('hidden');
+      else if (forceShow === false) form.classList.add('hidden');
+      else form.classList.toggle('hidden');
+      if (!form.classList.contains('hidden')) {
+        document.getElementById('cal-new-title').focus();
+      }
+    }
+
+    function addCalEventForSelectedDay() {
+      const time = (document.getElementById('cal-new-time').value || '').trim() || '15:00';
+      const title = (document.getElementById('cal-new-title').value || '').trim();
+      const meta = (document.getElementById('cal-new-meta').value || '').trim() || '桌面端手动添加的日程安排';
+      if (!title) { showToast('请填写面试或日程名称'); return; }
+
+      if (!calEvents[selectedCalDay]) calEvents[selectedCalDay] = [];
+      calEvents[selectedCalDay].push({ time, type: '日程', title, meta, done: false, jobKey: '' });
+
+      const cell = document.querySelector('#cal-month-grid .cal-day[data-day="' + selectedCalDay + '"]');
+      if (cell) {
+        const pill = document.createElement('button');
+        pill.className = 'cal-pill';
+        pill.style.background = '#e6f4f0';
+        pill.style.color = '#235d52';
+        pill.textContent = time + ' ' + title.slice(0, 6);
+        cell.appendChild(pill);
+      }
+
+      document.getElementById('cal-new-time').value = '';
+      document.getElementById('cal-new-title').value = '';
+      document.getElementById('cal-new-meta').value = '';
+      toggleCalAddForm(false);
+      renderCalAgenda();
+      showToast('已添加到 ' + formatCalTitle(selectedCalDay));
+    }
+
+    const inboxData = [
+      {
+        s: '【幻方量化】2027 届量化系统研发专家 - 二轮技术面试邀请',
+        f: 'campus-hr@high-flyer.cn · 2026-11-18 10:14',
+        b: '<p class="m-0">林同学，你好：</p><p class="m-0">恭喜你通过一轮技术初试。现邀请你参加二轮系统设计与性能调优专场视频面试，安排如下：</p><p class="m-0 pl-3" style="border-left:2px solid #2f7a6c;">时间：2026年11月19日（周四）14:30 - 15:30<br/>会议：腾讯会议 839-291-039（密码 2027）</p>'
+      },
+      {
+        s: '【字节跳动】2027 届校园招聘第四场在线笔试通知',
+        f: 'hr@bytedance.com · 2026-11-18 09:20',
+        b: '<p class="m-0">同学你好，请于本周五（11月20日）19:00 - 21:00 登录牛客网参加后端在线编程笔试（共 4 题）。</p>'
+      },
+      {
+        s: '【跃迁动力】录用意向书 Offer Letter',
+        f: 'offer@stepengine.cn · 3天前',
+        b: '<p class="m-0">祝贺你通过跃迁动力全部面试考核，正式录用意向书请见附件 PDF。</p>'
+      }
+    ];
+    function readMail(idx) {
+      [0, 1, 2].forEach(i => {
+        const el = document.getElementById('imail-' + i);
+        if (el) el.style.background = (i === idx) ? '#f8faf9' : 'transparent';
+      });
+      const m = inboxData[idx];
+      document.getElementById('mr-subject').textContent = m.s;
+      document.getElementById('mr-from').textContent = m.f;
+      document.getElementById('mr-body').innerHTML = m.b;
+      const syncBtn = document.getElementById('mr-sync-btn');
+      syncBtn.textContent = '确认并同步到日历';
+      syncBtn.disabled = false;
+    }
+
+    function syncMailToCalendar() {
+      const btn = document.getElementById('mr-sync-btn');
+      btn.textContent = '已写入日历与时间线';
+      btn.disabled = true;
+      showToast('已同步到「日历」与对应申请时间线');
+    }
+
+    let wbMobileOn = false;
+    function toggleWeiboMobileView(forceVal) {
+      wbMobileOn = (typeof forceVal === 'boolean') ? forceVal : !wbMobileOn;
+      document.getElementById('comm-desktop-main').classList.toggle('hidden', wbMobileOn);
+      document.getElementById('jike-mobile-wrap').classList.toggle('hidden', !wbMobileOn);
+      const btn = document.getElementById('btn-wb-mobile');
+      if (btn) btn.textContent = wbMobileOn ? '返回桌面视图' : '预览手机 App';
+    }
+
+    const myStatuses = [
+      { label: '冲刺二面中', bg: '#e6f4f0', color: '#235d52', dot: '#2f7a6c' },
+      { label: '狂投简历中', bg: '#eef2ff', color: '#4338ca', dot: '#6366f1' },
+      { label: '坐等开奖中', bg: '#fff7ed', color: '#c2410c', dot: '#f97316' },
+      { label: '已上岸撒花', bg: '#dcfce7', color: '#15803d', dot: '#16a34a' }
+    ];
+    let myStatusIdx = 0;
+    function cycleMyStatus() {
+      myStatusIdx = (myStatusIdx + 1) % myStatuses.length;
+      const st = myStatuses[myStatusIdx];
+      const btn = document.getElementById('my-status-btn');
+      btn.style.background = st.bg;
+      btn.style.color = st.color;
+      btn.querySelector('.status-dot').style.background = st.dot;
+      document.getElementById('my-status-label').textContent = st.label;
+      showToast('已更新秋招状态：' + st.label);
+    }
+
+    let commTab = 'square';
+    let commKind = 'all';
+    let commCompanyTag = '';
+
+    function setCommNav(tab, kind, topTabId) {
+      if (wbMobileOn) toggleWeiboMobileView(false);
+      commTab = tab;
+      commKind = kind;
+
+      document.querySelectorAll('#page-community .comm-nav-btn').forEach(b => b.classList.remove('active'));
+      const leftId = 'cnav-' + tab + '-' + kind;
+      document.getElementById(leftId)?.classList.add('active');
+
+      document.querySelectorAll('#page-community .wb-tab').forEach(b => b.classList.remove('active'));
+      if (topTabId) {
+        document.getElementById(topTabId)?.classList.add('active');
+      }
+      applyCommFilter();
+    }
+
+    function filterByCommunityTag(name, compKey) {
+      if (wbMobileOn) toggleWeiboMobileView(false);
+      commCompanyTag = (commCompanyTag === compKey) ? '' : compKey;
+      const chip = document.getElementById('comm-filter-chip');
+      if (commCompanyTag) {
+        chip.textContent = name + ' ×';
+        chip.classList.remove('hidden');
+        document.getElementById('comm-search-input').value = '';
+        setCommNav('square', 'all', 'wtab-all');
+      } else {
+        chip.classList.add('hidden');
+        applyCommFilter();
+      }
+    }
+
+    function filterByTopicKeyword(kw) {
+      if (wbMobileOn) toggleWeiboMobileView(false);
+      clearCommCompanyChip(false);
+      document.getElementById('comm-search-input').value = kw;
+      setCommNav('square', 'all', 'wtab-all');
+    }
+
+    function clearCommCompanyChip(rerender) {
+      commCompanyTag = '';
+      document.getElementById('comm-filter-chip')?.classList.add('hidden');
+      if (rerender) applyCommFilter();
+    }
+
+    function resetCommAll() {
+      document.getElementById('comm-search-input').value = '';
+      clearCommCompanyChip(false);
+      setCommNav('square', 'all', 'wtab-all');
+    }
+
+    function applyCommFilter() {
+      const kw = (document.getElementById('comm-search-input')?.value || '').trim().toLowerCase();
+      let shown = 0, writtenCount = 0, savedCount = 0;
+      document.querySelectorAll('#jike-feed article').forEach(a => {
+        const tabs = (a.getAttribute('data-tab') || '').split(' ').filter(Boolean);
+        if (tabs.includes('written')) writtenCount += 1;
+        if (tabs.includes('saved')) savedCount += 1;
+
+        const matchTab = tabs.includes(commTab);
+        let matchKind = true;
+        if (commKind === 'hot') {
+          matchKind = tabs.includes('hot');
+        } else if (commKind !== 'all') {
+          matchKind = a.getAttribute('data-kind') === commKind;
+        }
+        const compAttr = (a.getAttribute('data-comp') || '').toLowerCase();
+        const matchComp = !commCompanyTag || compAttr.split(' ').includes(commCompanyTag) || a.textContent.toLowerCase().includes(commCompanyTag);
+        const matchSearch = kw === '' || a.textContent.toLowerCase().includes(kw);
+        const visible = matchTab && matchKind && matchComp && matchSearch;
+        a.classList.toggle('hidden', !visible);
+        if (visible) shown += 1;
+      });
+      document.getElementById('cnt-written').textContent = String(writtenCount);
+      document.getElementById('cnt-saved').textContent = String(savedCount);
+      document.getElementById('comm-empty-state').classList.toggle('hidden', shown > 0);
+    }
+
+    const draftImgPresets = [
+      {
+        title: '秋招 74 投战绩漏斗图',
+        sub: '74 次投递 → 21 场笔试 → 11 场面试 → 1 份 Offer',
+        style: 'background: linear-gradient(145deg, #fef3c7 0%, #fed7aa 100%); color:#7c2d12;',
+        short: '74投 → 11面 → 1 Offer',
+        theme: 0
+      },
+      {
+        title: '录用意向书截图（隐私已打码）',
+        sub: '校招正式 Offer 意向确认通知 · 隐私字段已遮罩',
+        style: 'background: #ffffff; color:#18181b;',
+        short: '录用意向书.pdf',
+        theme: 1
+      },
+      {
+        title: '手写系统架构知识点笔记',
+        sub: '无锁环形队列 / 内存屏障 / 零拷贝高频考点整理',
+        style: 'background: linear-gradient(145deg, #134e4a, #2f7a6c); color:#ffffff;',
+        short: '架构笔记手绘图',
+        theme: 2
+      },
+      {
+        title: '测评 120 题心态心电图',
+        sub: '前 30 题认真思考，后 60 题放飞自我的真实心电曲线',
+        style: 'background: #fff1f2; color:#be123c;',
+        short: '120 题心理曲线',
+        theme: 3
+      }
+    ];
+    let draftImgIds = [];
+    let selectedQuickTag = '';
+
+    function toggleComposerImages(forceShow) {
+      const el = document.getElementById('qw-img-picker');
+      const show = (typeof forceShow === 'boolean') ? forceShow : el.classList.contains('hidden');
+      el.classList.toggle('hidden', !show);
+      document.getElementById('btn-tool-img').classList.toggle('active', show || draftImgIds.length > 0);
+    }
+
+    function toggleComposerPoll() {
+      const el = document.getElementById('qw-poll-fields');
+      const show = el.classList.contains('hidden');
+      el.classList.toggle('hidden', !show);
+      document.getElementById('btn-tool-poll').classList.toggle('active', show);
+    }
+
+    function toggleComposerTag() {
+      const el = document.getElementById('qw-tag-row');
+      const show = el.classList.contains('hidden');
+      el.classList.toggle('hidden', !show);
+      document.getElementById('btn-tool-tag').classList.toggle('active', show);
+    }
+
+    function toggleDraftImage(id) {
+      const idx = draftImgIds.indexOf(id);
+      if (idx >= 0) {
+        draftImgIds.splice(idx, 1);
+      } else {
+        if (draftImgIds.length >= 3) {
+          showToast('单条最多选择 3 张配图演示');
+          return;
+        }
+        draftImgIds.push(id);
+      }
+      renderDraftImgPreview();
+    }
+
+    function renderDraftImgPreview() {
+      [0, 1, 2, 3].forEach(i => {
+        const btn = document.getElementById('dpick-' + i);
+        if (btn) btn.style.borderColor = draftImgIds.includes(i) ? '#2f7a6c' : '#e4e4e7';
+      });
+      const prev = document.getElementById('qw-img-preview');
+      if (draftImgIds.length === 0) {
+        prev.classList.add('hidden');
+        prev.innerHTML = '';
+        return;
+      }
+      prev.classList.remove('hidden');
+      prev.innerHTML = draftImgIds.map(id => {
+        const p = draftImgPresets[id];
+        return '<div class="relative w-24 h-16 rounded-lg border p-2 flex flex-col justify-between text-[10px] overflow-hidden" style="border-color:#e4e4e7; ' + p.style + '">' +
+          '<button type="button" onclick="toggleDraftImage(' + id + ')" class="absolute top-0.5 right-1 border-0 bg-transparent cursor-pointer text-xs font-bold p-0" style="color:inherit;" title="移除">×</button>' +
+          '<span class="opacity-80">配图</span>' +
+          '<div class="font-semibold truncate">' + esc(p.short) + '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function toggleQuickTag(tag, btn) {
+      const already = selectedQuickTag === tag;
+      document.querySelectorAll('#qw-tag-row .tag-pill-opt').forEach(b => b.classList.remove('active'));
+      if (already) {
+        selectedQuickTag = '';
+      } else {
+        selectedQuickTag = tag;
+        if (btn) btn.classList.add('active');
+      }
+    }
+
+    function castPollHelper(containerEl, pickIdx, suffixText) {
+      if (!containerEl) return;
+      const opts = [...containerEl.querySelectorAll('.poll-opt')];
+      opts.forEach((o, i) => {
+        const base = parseInt(o.getAttribute('data-votes') || '10', 10);
+        o.dataset.curVotes = String(base + (i === pickIdx ? 1 : 0));
+      });
+      containerEl.dataset.picked = String(pickIdx);
+      const total = opts.reduce((s, o) => s + parseInt(o.dataset.curVotes, 10), 0) || 1;
+      opts.forEach((o, i) => {
+        const pct = Math.round((parseInt(o.dataset.curVotes, 10) / total) * 100);
+        o.classList.toggle('is-picked', i === pickIdx);
+        const bar = o.querySelector('.poll-bar-fill');
+        const pctEl = o.querySelector('.poll-pct');
+        if (bar) bar.style.width = pct + '%';
+        if (pctEl) {
+          pctEl.textContent = pct + '%';
+          pctEl.classList.remove('hidden');
+          pctEl.style.color = (i === pickIdx) ? '#2f7a6c' : '#52525b';
+        }
+      });
+      const meta = containerEl.querySelector('.poll-meta span:first-child');
+      if (meta) meta.textContent = '已投票 · 共 ' + total + ' 人' + (suffixText || '参与');
+    }
+
+    function castFeedPoll(pollId, optIdx) {
+      castPollHelper(document.getElementById(pollId), optIdx, '帮选');
+      showToast('已投票帮选，实时占比已更新');
+    }
+
+    function castMiniPoll(optIdx) {
+      castPollHelper(document.getElementById('mini-tea-poll'), optIdx, '参与');
+      showToast('已参与茶水间投票');
+    }
+
+    function submitWeiboPost() {
+      const text = (document.getElementById('qw-text').value || '').trim();
+      if (!text && draftImgIds.length === 0) {
+        showToast('请先写一句话或选择一张配图');
+        return;
+      }
+
+      const pollOpen = !document.getElementById('qw-poll-fields').classList.contains('hidden');
+      const rawComp = (document.getElementById('qw-company')?.value || '').trim();
+      const vis = document.getElementById('qw-vis').value;
+
+      let compKey = rawComp.toLowerCase();
+      if (rawComp.includes('幻方')) compKey = 'hf';
+      else if (rawComp.includes('腾讯')) compKey = 'tx';
+      else if (rawComp.includes('字节')) compKey = 'zj';
+
+      let kind = selectedQuickTag || 'rant';
+      if (pollOpen) kind = 'poll';
+
+      const labelMap = { lucky: '开奖喜报', interview: '面经', rant: '# 吐槽', poll: 'Offer 投票' };
+      let tagText = labelMap[kind] || '';
+      if (rawComp) tagText = tagText ? (tagText + ' · ' + rawComp) : rawComp;
+
+      let pollHtml = '';
+      if (pollOpen) {
+        const opt1 = (document.getElementById('qw-opt1').value || '').trim() || '选项 A';
+        const opt2 = (document.getElementById('qw-opt2').value || '').trim() || '选项 B';
+        const newPollId = 'poll-' + Date.now();
+        pollHtml = '<div id="' + newPollId + '" class="space-y-2 text-xs mt-2.5">' +
+          '<button onclick="castFeedPoll(\'' + newPollId + '\', 0)" class="poll-opt" data-votes="1"><span class="poll-bar-fill"></span><span class="relative flex items-center justify-between font-medium" style="color:#18181b;"><span>' + esc(opt1) + '</span><span class="poll-pct hidden font-semibold"></span></span></button>' +
+          '<button onclick="castFeedPoll(\'' + newPollId + '\', 1)" class="poll-opt" data-votes="1"><span class="poll-bar-fill"></span><span class="relative flex items-center justify-between font-medium" style="color:#18181b;"><span>' + esc(opt2) + '</span><span class="poll-pct hidden font-semibold"></span></span></button>' +
+          '<div class="poll-meta text-[11px] pt-0.5 flex justify-between" style="color:#a1a1aa;"><span>点击选项直接投票 · 刚发起</span></div>' +
+        '</div>';
+      }
+
+      let imgsHtml = '';
+      if (draftImgIds.length > 0) {
+        const cols = draftImgIds.length === 1 ? 'grid-cols-1 max-w-[300px]'
+          : draftImgIds.length === 2 ? 'grid-cols-2 max-w-[440px]'
+          : 'grid-cols-3';
+        imgsHtml = '<div class="grid ' + cols + ' gap-2 mt-2.5">' +
+          draftImgIds.map(id => {
+            const p = draftImgPresets[id];
+            return '<div onclick="openLightbox(\'' + esc(p.title) + '\', \'' + esc(p.sub) + '\', ' + p.theme + ')" class="wb-img-card p-3 h-24 flex flex-col justify-between text-xs border" style="border-color:#eceef2; ' + p.style + '">' +
+              '<span class="text-[10px] opacity-80">配图 · 点击放大</span>' +
+              '<div class="font-semibold text-[12px] truncate">' + esc(p.short) + '</div>' +
+            '</div>';
+          }).join('') +
+        '</div>';
+      }
+
+      const art = document.createElement('article');
+      art.setAttribute('data-tab', vis === 'private' ? 'written' : 'square written');
+      art.setAttribute('data-kind', kind);
+      art.setAttribute('data-comp', compKey);
+      art.className = 'comm-card' + (kind === 'lucky' ? ' comm-card-warm' : '');
+      art.innerHTML =
+        '<div class="flex items-center justify-between text-xs mb-2">' +
+          '<div class="flex items-center gap-2.5">' +
+            '<span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold av-grad-teal">K</span>' +
+            '<div><div class="font-semibold" style="color:#18181b;">我（kiki）</div><div class="text-[11px]" style="color:#a1a1aa;">刚刚 · ' + esc(myStatuses[myStatusIdx].label) + '</div></div>' +
+          '</div>' +
+          '<span class="px-2 py-0.5 rounded-md text-[11px] font-medium" style="background:#f4f4f5; color:#2f7a6c;">' + (vis === 'private' ? '私密 · ' : '') + esc(tagText) + '</span>' +
+        '</div>' +
+        (text ? '<p class="text-[13.5px] leading-6 m-0" style="color:#18181b;">' + esc(text) + '</p>' : '') +
+        imgsHtml +
+        pollHtml +
+        '<div class="mt-3 pt-2.5 border-t flex items-center gap-5 text-xs" style="border-color:#f4f4f5; color:#71717a;">' +
+          '<button onclick="toggleLike(this, 0)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">赞 0</button>' +
+          '<button onclick="toggleComments(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">评论</button>' +
+          '<button onclick="toggleSavePost(this)" class="border-0 bg-transparent cursor-pointer p-0 text-xs" style="color:inherit;">收藏</button>' +
+        '</div>' +
+        '<div class="hidden mt-3 pt-2.5 border-t text-xs space-y-2" style="border-color:#f4f4f5; color:#52525b;">' +
+          '<div class="comm-cmt-list space-y-1.5"></div>' +
+          '<div class="flex items-center gap-2 pt-1">' +
+            '<input type="text" placeholder="写一句评论..." class="flex-1 px-2.5 py-1 rounded-lg bg-[#f6f7f9] border-0 text-xs" style="outline:none;" />' +
+            '<button onclick="replyPostComment(this)" class="btn-primary py-1 text-[11px]">回复</button>' +
+          '</div>' +
+        '</div>';
+
+      document.getElementById('jike-feed').prepend(art);
+      document.getElementById('qw-text').value = '';
+      if (document.getElementById('qw-company')) document.getElementById('qw-company').value = '';
+      document.getElementById('qw-opt1').value = '';
+      document.getElementById('qw-opt2').value = '';
+      draftImgIds = [];
+      selectedQuickTag = '';
+      renderDraftImgPreview();
+      document.getElementById('qw-img-picker').classList.add('hidden');
+      document.getElementById('qw-poll-fields').classList.add('hidden');
+      document.getElementById('qw-tag-row').classList.add('hidden');
+      document.querySelectorAll('#qw-tag-row .tag-pill-opt').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.wb-tool-btn').forEach(b => b.classList.remove('active'));
+      applyCommFilter();
+      showToast(vis === 'private' ? '已保存到「我写的」（仅本机可见）' : '已发布到社区广场');
+    }
+
+    function switchSettingsTab(tab, btn) {
+      document.querySelectorAll('#page-settings .comm-nav-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      ['ai', 'account', 'browser', 'mailbox', 'data', 'general', 'privacy'].forEach(p => {
+        document.getElementById('spane-' + p)?.classList.toggle('hidden', p !== tab);
+      });
+    }
+
+    function selectAiPreset(name, url, model, btn) {
+      document.querySelectorAll('#spane-ai .tag-pill-opt').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      document.getElementById('set-ai-url').value = url;
+      document.getElementById('set-ai-model').value = model;
+      showToast('已切换预设：' + name);
+    }
+
+    function saveAiSettings() {
+      const url = (document.getElementById('set-ai-url').value || '').trim();
+      const model = (document.getElementById('set-ai-model').value || '').trim();
+      if (!url || !model) { showToast('请填写 API 接口地址与默认模型'); return; }
+      showToast('AI 接口配置已保存到本机凭据库：' + model);
+    }
+
+    function toggleLike(btn, base) {
+      const liked = btn.dataset.liked === '1';
+      btn.dataset.liked = liked ? '0' : '1';
+      const label = '赞 ' + (liked ? base : base + 1);
+      const span = btn.querySelector('span');
+      if (span) span.textContent = label;
+      else btn.textContent = label;
+      btn.style.color = liked ? 'inherit' : '#2f7a6c';
+    }
+
+    function toggleBless(btn, base) {
+      const blessed = btn.dataset.blessed === '1';
+      btn.dataset.blessed = blessed ? '0' : '1';
+      const span = btn.querySelector('span');
+      const txt = blessed ? '接好运 ' + base : '已接好运 ' + (base + 1);
+      if (span) span.textContent = txt;
+      else btn.textContent = txt;
+      btn.style.background = blessed ? '#ffedd5' : '#ea580c';
+      btn.style.color = blessed ? '#c2410c' : '#ffffff';
+      if (!blessed) showToast('已接好运！祝早日收获理想 Offer');
+    }
+
+    function toggleEmpathy(btn, base) {
+      const on = btn.dataset.on === '1';
+      btn.dataset.on = on ? '0' : '1';
+      btn.textContent = on ? ('同感 +1 (' + base + ')') : ('已同感 (' + (base + 1) + ')');
+      btn.style.color = on ? 'inherit' : '#e11d48';
+    }
+
+    function toggleComments(btn) {
+      const art = btn.closest('article');
+      const box = art ? art.lastElementChild : null;
+      if (box && box.classList.contains('border-t')) {
+        box.classList.toggle('hidden');
+      }
+    }
+
+    function replyPostComment(btn) {
+      const row = btn.parentElement;
+      const inp = row.querySelector('input');
+      const txt = (inp?.value || '').trim();
+      if (!txt) return;
+      const list = row.parentElement.querySelector('.comm-cmt-list');
+      if (list) {
+        const div = document.createElement('div');
+        div.innerHTML = '<strong style="color:#18181b;">我（kiki）：</strong>' + esc(txt);
+        list.appendChild(div);
+      }
+      inp.value = '';
+      showToast('已发表回复');
+    }
+
+    function toggleSavePost(btn) {
+      const art = btn.closest('article');
+      const tabs = new Set((art.getAttribute('data-tab') || '').split(' ').filter(Boolean));
+      const saved = tabs.has('saved');
+      if (saved) {
+        tabs.delete('saved');
+        btn.textContent = '收藏';
+        btn.style.color = 'inherit';
+      } else {
+        tabs.add('saved');
+        btn.textContent = '已收藏';
+        btn.style.color = '#2f7a6c';
+      }
+      art.setAttribute('data-tab', [...tabs].join(' '));
+      applyCommFilter();
+    }
+
+    function publishPrivatePost(btn) {
+      const art = btn.closest('article');
+      const tabs = new Set((art.getAttribute('data-tab') || '').split(' ').filter(Boolean));
+      tabs.add('square');
+      art.setAttribute('data-tab', [...tabs].join(' '));
+      btn.textContent = '已发布到广场';
+      btn.disabled = true;
+      applyCommFilter();
+      showToast('已脱敏并发布到广场');
+    }
+
+    const lightboxThemes = [
+      {
+        style: 'background: linear-gradient(145deg, #fef3c7 0%, #fed7aa 100%); color:#7c2d12;',
+        html: '<span class="self-start px-2.5 py-0.5 rounded-full text-[11px] font-semibold" style="background:#ffffff; color:#c2410c;">秋招战绩漏斗图</span><div class="space-y-2"><div class="text-2xl font-extrabold">74投 → 21笔 → 11面 → 1 Offer</div><div class="text-xs font-medium" style="color:#9a3412;">坚持到最后，每一场复盘都会算数</div></div>'
+      },
+      {
+        style: 'background: #f8faf9; color:#18181b;',
+        html: '<span class="self-start px-2.5 py-0.5 rounded-full text-[11px] font-semibold" style="background:#dcfce7; color:#15803d;">录用意向书通知 · 已打码隐私</span><div class="p-4 rounded-xl bg-white border space-y-2 text-xs" style="border-color:#e4e4e7;"><div class="font-bold text-sm">跃迁动力 · 嵌入式系统负责人</div><div style="color:#52525b;">亲爱的林同学：祝贺你通过全部面试考核，现正式发出校招录用意向确认……</div><div style="color:#a1a1aa;">薪酬条款与三方签署指引已隐私隐藏</div></div>'
+      },
+      {
+        style: 'background: linear-gradient(145deg, #134e4a, #2f7a6c); color:#ffffff;',
+        html: '<span class="self-start px-2.5 py-0.5 rounded-full text-[11px] font-medium" style="background:rgba(255,255,255,0.18);">幻方系统研发 · 技术手绘笔记</span><div class="space-y-1.5"><div class="text-lg font-bold">Rust 无锁环形队列 &amp; RDMA 零拷贝</div><div class="text-xs opacity-90 leading-6">1. Cache Line 64B 对齐消除 False Sharing<br/>2. SPSC 使用 Acquire/Release 替代 SeqCst<br/>3. 内核旁路直接写入用户态 RingBuffer</div></div>'
+      },
+      {
+        style: 'background: #fff1f2; color:#881337;',
+        html: '<span class="self-start px-2.5 py-0.5 rounded-full text-[11px] font-semibold" style="background:#ffffff; color:#e11d48;">北森 120 题心态实录</span><div class="space-y-2"><svg viewBox="0 0 240 60" class="w-full h-16" fill="none"><polyline points="6,30 42,24 76,34 112,12 148,46 184,18 220,52" stroke="#e11d48" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="text-xs font-medium">从认真审题到第 100 题果断演起来</div></div>'
+      },
+      {
+        style: 'background: linear-gradient(155deg, #eff6ff 0%, #dbeafe 100%); color:#1e3a8a;',
+        html: '<span class="self-start px-2.5 py-0.5 rounded-full text-[11px] font-semibold" style="background:#ffffff; color:#2563eb;">微信 WXG · 二面手绘白板</span><div class="p-4 rounded-xl bg-white border space-y-2 text-xs" style="border-color:#bfdbfe;"><div class="font-bold text-sm" style="color:#1e40af;">小程序搜索入口 ROI 评估树</div><div style="color:#52525b;">核心指标 = 入口点击转化 × 次日留存增量 ÷ 研发总人天</div></div>'
+      }
+    ];
+
+    function openLightbox(title, sub, themeIdx) {
+      const th = lightboxThemes[themeIdx] || lightboxThemes[0];
+      const vis = document.getElementById('lb-visual');
+      vis.setAttribute('style', 'min-height: 220px; ' + th.style);
+      vis.innerHTML = th.html;
+      document.getElementById('lb-title').textContent = title;
+      document.getElementById('lb-sub').textContent = sub;
+      document.getElementById('img-lightbox').classList.remove('hidden');
+    }
+
+    function closeLightbox() {
+      document.getElementById('img-lightbox')?.classList.add('hidden');
+    }
+
+    function switchResumeTab(tab, btn) {
+      document.querySelectorAll('.r-tab').forEach(b => {
+        b.style.color = '#71717a';
+        b.style.fontWeight = '500';
+        b.style.borderBottom = '0';
+      });
+      btn.style.color = '#18181b';
+      btn.style.fontWeight = '600';
+      btn.style.borderBottom = '2px solid #18181b';
+      ['templates', 'profile', 'sites', 'files'].forEach(p => {
+        document.getElementById('rpane-' + p)?.classList.toggle('hidden', p !== tab);
+      });
+    }
+
+    function switchPluginTab(tab, btn) {
+      document.querySelectorAll('.p-tab').forEach(b => {
+        b.style.color = '#71717a';
+        b.style.fontWeight = '500';
+        b.style.borderBottom = '0';
+      });
+      btn.style.color = '#18181b';
+      btn.style.fontWeight = '600';
+      btn.style.borderBottom = '2px solid #2f7a6c';
+      ['fill', 'fields', 'mail'].forEach(p => {
+        document.getElementById('ptab-' + p)?.classList.toggle('hidden', p !== tab);
+      });
+    }
+
+    // 初始化投递分组列表、日历右侧日程面板与社区计数
+    renderJobsGroupedList();
+    renderCalAgenda();
+    applyCommFilter();
+  </script>
+</body>
+</html>
