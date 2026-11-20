@@ -907,8 +907,33 @@
     const own = usefulSegments(textSegments(box, ctx, new Set()), placeholders).filter((segment) => !inside(segment));
     if (own.length) return null;
     const texts = members.filter((el) => isTextBox(el));
-    if (texts.length !== 1) return null;
-    return { box, members, main: texts[0] };
+    if (texts.length === 1) return { box, members, main: texts[0] };
+    // #301 中铁「生源地」：省、市、县三个下拉并排，题目只写一次。各取下拉自己的占位（「省级」「请选择市」），
+    // 叫「题目 - 省级」；有一个说不出、或说法重复，就不取（同名的三个框会被当成三条重复记录）。
+    if (texts.length || !members.every((el) => el.tagName === "SELECT" || hasComboSignal(el))) return null;
+    const names = members.map(selectPartName);
+    // valid：每个下拉都说得出自己是什么、而且互不相同。扫描时不满足就不取；填写前核对时看控件扫描时记下的名字（clusterPart），见 clusterLabel。
+    return { box, members, main: null, names, valid: names.every(Boolean) && new Set(names).size === names.length };
+  }
+
+  // 下拉的选项会跟着上一级重新生成（中铁选了省以后，市的提示项从「市级」变成「请选择」）：先看不会变的 name、id，
+  // 认得出是省、市、区县就用它；认不出才看提示项。名字变了，填写前核对题目时会当成页面已变化，所以认出的名字要记在控件上（clusterPart）。
+  // name、id 按词拆开再对整词（province、cityId、area_code），不按子串：approver 里有 prov、capacity 里有 city、textarea 里有 area 都不算。
+  // 中文的省、市、区、县在 name、id 里本来就少见，照旧按字认。
+  const REGION_WORDS = [[/^(?:prov|province)$/, "省"], [/^(?:city|cities)$/, "市"], [/^(?:county|district|area|town)$/, "区县"]];
+  const REGION_CHARS = [[/省/, "省"], [/市/, "市"], [/区|县/, "区县"]];
+  function regionOfNames(own) {
+    const words = own.replace(/([a-z\d])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z\d]+/).filter(Boolean);
+    const level = REGION_WORDS.find(([pattern]) => words.some((word) => pattern.test(word))) || REGION_CHARS.find(([pattern]) => pattern.test(own));
+    return level ? level[1] : "";
+  }
+  function selectPartName(el) {
+    const level = regionOfNames(`${attr(el, "name")} ${attr(el, "id")}`);
+    if (level) return level;
+    if (el.tagName !== "SELECT") return partName(el);
+    const empty = Array.from(el.options || []).find((option) => !String(option.value ?? "").trim());
+    const text = squash(empty?.textContent).replace(/^(?:请(?:选择)?|选择)/, "").replace(/[-—.。…:：\s]+$/, "").trim();
+    return text && text.length <= MAX_PART_CHARS ? text : "";
   }
 
   function clusterLabel(control, ctx) {
@@ -916,13 +941,20 @@
     if (!cluster) return null;
     if (!cluster.members.some((el) => control.elements.includes(el))) return null;
     // 前缀、后缀下拉：认出来、不填，也不算「对不上题目」。
-    if (!control.elements.includes(cluster.main)) return { text: "", source: "affix", labelEl: null, affix: true };
+    if (cluster.main && !control.elements.includes(cluster.main)) return { text: "", source: "affix", labelEl: null, affix: true };
     let item = cluster.box;
     while (item.parentElement && item.parentElement !== ctx.body && item.parentElement.tagName !== "HTML"
       && !hasForeignControl(item.parentElement, cluster.box, ctx)) item = item.parentElement;
-    const whole = { kind: "element", controlKind: "text", element: cluster.main, elements: cluster.members, root: cluster.box };
+    const whole = { kind: "element", controlKind: "text", element: cluster.main || cluster.members[0], elements: cluster.members, root: cluster.box };
     const found = itemLabel(whole, item, ctx) || siblingLabel(whole, item, ctx);
-    return found ? { ...found, question: item } : null;
+    if (!found) return null;
+    if (cluster.main) return { ...found, question: item };
+    const index = cluster.members.findIndex((el) => control.elements.includes(el));
+    if (index < 0) return null;
+    // 扫描时认出来的名字就是这个下拉的身份：之后网站重新生成选项、提示项换了说法（「市级」→「请选择」），题目也不变。
+    // 没有记下的（这次扫描才第一次认）要求整簇都说得出、互不相同。
+    const part = control.clusterPart || (cluster.valid ? cluster.names[index] : "");
+    return part ? { ...found, text: `${found.text} - ${part}`, question: item, part } : null;
   }
 
   // 控件和题目是同一层的兄弟：只看紧挨着的前文，碰到别的控件就停。
@@ -1130,6 +1162,7 @@
         control.labelEl = resolved.labelEl;
         control.tableRow = resolved.row || null;
         control.question = resolved.question || null;
+        control.clusterPart = resolved.part || "";
         control.searchLike = control.controlKind === "text" && control.elements.some(looksSearchLike);
         control.chrome = isPageChrome(control.root);
         // 禁用的控件和文件框只用来划分表单项边界，不填写。
@@ -1308,6 +1341,7 @@
       offerLabel: control.offerLabel || "",
       pickerType: control.pickerType || "",
       rangePart: control.rangePart || "",
+      clusterPart: control.clusterPart || "",
       mixed: Boolean(control.mixed),
       placeholder: attr(control.element, "placeholder"),
       // Local-only anchors: field descriptors and reports do not include these.
@@ -1452,6 +1486,7 @@
         control.labelSource = resolved.source;
         control.labelEl = resolved.labelEl;
         control.question = resolved.question || null;
+        control.clusterPart = resolved.part || "";
         control.disabled = isDisabledControl(control, ctx) || Boolean(resolved.affix);
         control.chrome = isPageChrome(control.root);
         control.searchLike = control.controlKind === "text" && control.elements.some(looksSearchLike);

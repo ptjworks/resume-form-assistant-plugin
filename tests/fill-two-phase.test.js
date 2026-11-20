@@ -980,3 +980,27 @@ test("#528 bare repeated 获奖 rows are matched in order locally, and repeated 
   const result = await running;
   assert.equal(result.filledCount, 4);
 });
+
+// #301 中铁「生源地」：省、市、县并排三个原生下拉，题目只写一次。选了省以后网站重新生成市的选项，
+// 提示项从「市级」换成「请选择」。这不是用户改了市，填写不能因此停下，市要接着选上。
+test("#301 a city select whose options the page rebuilds after the province is picked is still filled, and the fill goes on", async (t) => {
+  const body = input("name", "姓名") + `<div class="form-item"><p>生源地：</p><ul class="origin">
+    <li><select id="province" name="province"><option value="">省级</option><option value="北京市">北京市</option><option value="江苏省">江苏省</option></select></li>
+    <li><select id="city" name="city"><option value="">市级</option></select></li>
+    <li><select id="county" name="county"><option value="">县级</option></select></li></ul></div>` + input("school", "毕业院校");
+  const resume = [["基本信息", "高考生源地省", "江苏"], ["基本信息", "高考生源地市", "南通"], ...RESUME];
+  const p = page(t, body, { resume });
+  const doc = p.w.document;
+  doc.getElementById("province").addEventListener("change", () => {
+    doc.getElementById("city").innerHTML = doc.getElementById("province").value === "江苏省"
+      ? `<option value="">请选择</option><option value="南京市">南京市</option><option value="南通市">南通市</option>` : `<option value="">请选择</option>`;
+  });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1), "the AI is asked");
+  p.worker.calls[0].reply();
+  const result = await running;
+  assert.notEqual(result.outcome, "failed", p.ui.diag.value);
+  assert.doesNotMatch(p.ui.status.textContent, /字段内容变化/);
+  assert.deepEqual(["province", "city"].map(p.value), ["江苏省", "南通市"]);
+  assert.equal(p.value("school"), "示例大学");
+});

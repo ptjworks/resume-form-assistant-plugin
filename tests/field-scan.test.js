@@ -453,3 +453,75 @@ test("#301 a number box with a unit select after it is one question, and a numbe
   assert.equal(result.skipped.merged, 1);
   assert.equal(result.skipped.noLabel, 2, "two unlabelled boxes with no question text stay unlabelled");
 });
+
+test("#301 中铁 生源地: three side-by-side selects under one question are named by their own placeholder option", (t) => {
+  const doc = load(`<form><div class="basic_table"><h3>用户基本信息</h3><ul class="basic_per">
+    <li><p><span></span>姓&nbsp;&nbsp;名：</p><input type="text" name="name"></li>
+    <li><p><span></span>生&nbsp;源&nbsp;地：</p><ul class="originOfStudent">
+      <li><select name="province"><option value="">省级</option><option value="北京市">北京市</option></select></li>
+      <li><select name="city"><option value="">市级</option></select></li>
+      <li><select name="county"><option value="">县级</option></select></li></ul></li>
+    <li><p><span></span>手&nbsp;机&nbsp;号&nbsp;码：</p><input type="text" name="phone" maxlength="11"></li></ul></div></form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(labels(result), ["姓 名", "生 源 地 - 省", "生 源 地 - 市", "生 源 地 - 区县", "手 机 号 码"]);
+  assert.equal(result.skipped.noLabel, 0);
+  assert.ok(result.controls.every((control) => !control.repeatIndex), "the three parts are not taken as repeated records");
+  // 选了省以后网站重新生成市的选项，提示项变成「请选择」：题目不变，填市之前的核对照样通过。
+  const city = result.controls.find((control) => control.label === "生 源 地 - 市");
+  doc.querySelector("select[name=city]").innerHTML = `<option value="">请选择</option><option value="南通市">南通市</option>`;
+  assert.equal(scanner.isBindingCurrent(city, doc, { isVisible }), true);
+});
+
+test("#301 side-by-side selects without region names fall back to their placeholder option", (t) => {
+  const doc = load(`<form><ul><li><p>出生日期：</p><ul><li><select name="y"><option value="">年</option></select></li>
+    <li><select name="m"><option value="">月</option></select></li></ul></li><li><p>姓名：</p><input></li></ul></form>`);
+  t.after(() => doc.defaultView.close());
+  assert.deepEqual(labels(scan(doc)), ["出生日期 - 年", "出生日期 - 月", "姓名"]);
+});
+
+// PR #540 审查（B1/C1/A6）：name、id 认不出省市县时，名字取自提示项，选了省以后市的提示项会换。认出的名字记在控件上，核对时不重读。
+test("#540 side-by-side selects named by their placeholder keep their name after the site regenerates the options", (t) => {
+  const doc = load(`<form><ul><li><p>生源地：</p><ul>
+    <li><select name="sel1"><option value="">省级</option><option value="江苏省">江苏省</option></select></li>
+    <li><select name="sel2"><option value="">市级</option></select></li>
+    <li><select name="sel3"><option value="">县级</option></select></li></ul></li></ul></form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(labels(result), ["生源地 - 省级", "生源地 - 市级", "生源地 - 县级"]);
+  const [province, city, county] = result.controls;
+  // 市的提示项换成「请选择」（名字读不出来），县的换成另一种说法（「请选择县」会读成「县」）：都还是原来的题目。
+  doc.querySelector("select[name=sel2]").innerHTML = `<option value="">请选择</option><option value="南通市">南通市</option>`;
+  doc.querySelector("select[name=sel3]").innerHTML = `<option value="">请选择县</option>`;
+  assert.equal(scanner.isBindingCurrent(city, doc, { isVisible }), true);
+  assert.equal(scanner.isBindingCurrent(county, doc, { isVisible }), true);
+  assert.equal(scanner.isBindingCurrent(province, doc, { isVisible }), true);
+  // 题目本身变了仍然要认出来。
+  doc.querySelector("p").textContent = "出生地：";
+  assert.equal(scanner.isBindingCurrent(city, doc, { isVisible }), false);
+});
+
+test("#540 region names are matched as whole words: approver, capacity and textarea are not 省, 市 or 区县", (t) => {
+  const doc = load(`<form><ul><li><p>出生日期：</p><ul>
+    <li><select name="approver"><option value="">年</option></select></li>
+    <li><select name="capacity"><option value="">月</option></select></li>
+    <li><select id="textarea"><option value="">日</option></select></li></ul></li></ul></form>`);
+  t.after(() => doc.defaultView.close());
+  assert.deepEqual(labels(scan(doc)), ["出生日期 - 年", "出生日期 - 月", "出生日期 - 日"]);
+});
+
+test("#540 province, cityId and area_code are still recognised as 省, 市 and 区县", (t) => {
+  const doc = load(`<form><ul><li><p>现居地：</p><ul>
+    <li><select name="province"><option value="">请选择</option></select></li>
+    <li><select name="cityId"><option value="">请选择</option></select></li>
+    <li><select name="area_code"><option value="">请选择</option></select></li></ul></li></ul></form>`);
+  t.after(() => doc.defaultView.close());
+  assert.deepEqual(labels(scan(doc)), ["现居地 - 省", "现居地 - 市", "现居地 - 区县"]);
+});
+
+test("#301 side-by-side selects without telling placeholders stay unlabelled", (t) => {
+  const doc = load(`<form><ul><li><p>地址：</p><ul><li><select><option value="">请选择</option></select></li>
+    <li><select><option value="">请选择</option></select></li></ul></li><li><p>姓名：</p><input></li></ul></form>`);
+  t.after(() => doc.defaultView.close());
+  assert.equal(scan(doc).skipped.noLabel, 2);
+});
