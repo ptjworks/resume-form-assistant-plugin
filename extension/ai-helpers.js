@@ -195,6 +195,9 @@
     isSafeResumeField,
     localRuleMatches,
     bossEducationOptionMatches,
+    educationChoice,
+    educationSearchTerms,
+    educationLevelWithoutQualifier,
     cetLevel,
     workRole,
     workRecords,
@@ -1321,34 +1324,54 @@
     return level && level !== full ? level : "";
   }
 
+  // #301 问学历的下拉该选哪一项（只在这一处判断）。返回选项文字；"" 是有歧义不选；undefined 是没判断出来，交调用方照原值；
+  // null 是不归它管（题目不问学历、没有真实选项）。顺序：原文完全相同 → 去掉附注后的写法（含同义）→ 同一层次里唯一不带附注的选项。
+  // 带「在读」「未毕业」等状态的、学位（「理学学士」）归不成层次，后两步都不命中，不换；另一种附注（「普博」）不是纯层次，也不换。
+  function educationChoice(label, value, options) {
+    if (!isEducationLevelLabel(label) || !Array.isArray(options)) return null;
+    const available = options.filter(option => !isPlaceholderOption(option));
+    if (!available.length) return null;
+    const names = option => [option?.text ?? option, option?.value].filter(text => text !== undefined && text !== null);
+    const textOf = option => String(option?.text ?? option);
+    const full = normalizeText(String(value ?? ""));
+    const exact = available.find(option => names(option).some(text => normalizeText(text) === full));
+    if (exact) return textOf(exact);
+    const core = educationLevelWithoutQualifier(label, value);
+    if (core) {
+      const same = available.filter(option => names(option).some(text => isSameOptionText(text, core)));
+      if (same.length === 1) return textOf(same[0]);
+      if (same.length > 1) return "";
+    }
+    const kind = educationLevelKind(value);
+    if (kind) {
+      const plain = available.filter(option => names(option).some(text => PLAIN_EDUCATION_LEVEL.test(normalizeText(text)) && educationLevelKind(text) === kind));
+      if (plain.length === 1) return textOf(plain[0]);
+      if (plain.length > 1) return "";
+    }
+    return undefined;
+  }
+
+  // 学历下拉搜索时打的字：取该层次各种写法都包含的词（博士研究生、博士研究生（直博）都含「博士」），搜出来再由 educationChoice 选。
+  const EDUCATION_SEARCH_TERMS = { 博士: ["博士"], 硕士: ["硕士"], 本科: ["本科"], 大专: ["专科", "大专"] };
+  function educationSearchTerms(label, value) {
+    if (!isEducationLevelLabel(label)) return null;
+    const kind = educationLevelKind(value);
+    // 大专：资料写「大专」先搜「大专」（和原来一样），写「大学专科」先搜「专科」。
+    if (kind === "大专" && /大专/.test(normalizeText(value))) return ["大专", "专科"];
+    return EDUCATION_SEARCH_TERMS[kind] || null;
+  }
+
   function choiceValue(field, value) {
     if (isEnglishLevelLabel(field?.label) || isEnglishScoreLabel(field?.label)) {
       const result = cetResult(value);
       if (result) return isEnglishScoreLabel(field.label) ? result.score : result.level;
     }
-    const level = educationLevelWithoutQualifier(field?.label, value);
-    if (level && hasRealOptions(field)) {
-      const full = normalizeText(value);
-      const available = field.options.filter(option => !isPlaceholderOption(option));
-      const names = option => [option?.text ?? option, option?.value];
-      if (available.some(option => names(option).some(text => normalizeText(text) === full))) return value;
-      const equivalent = available.filter(option => names(option).some(text => isSameOptionText(text, level)));
-      if (equivalent.length === 1) return level;
-      if (equivalent.length > 1) return "";
-    }
-    // #301 问学历的下拉，选项只写层次（飞书招聘：博士、硕士、本科）：资料写「博士研究生（直博）」「硕士研究生」，
-    // 按同一个层次换成选项里正好一项的写法。只在题目问学历时这样换：「硕士」「博士」也是学位，别的题不混；
-    // 带「在读」「未毕业」这类状态的不换（没取得的学历不能当成取得了），学位（「理学学士」）也不当学历。
-    if (isEducationLevelLabel(field?.label) && hasRealOptions(field)) {
-      const kind = educationLevelKind(value);
-      const available = field.options.filter(option => !isPlaceholderOption(option));
-      const names = option => [option?.text ?? option, option?.value].filter(text => text !== undefined && text !== null);
-      const full = normalizeText(value);
-      if (kind && !available.some(option => names(option).some(text => normalizeText(text) === full))) {
-        // 只换成不带附注的层次选项（「博士」），不换成另一种附注（「博士研究生（普博）」不是「直博」）。
-        const same = available.filter(option => names(option).some(text => PLAIN_EDUCATION_LEVEL.test(normalizeText(text)) && educationLevelKind(text) === kind));
-        if (same.length === 1) return String(same[0]?.text ?? same[0]);
-      }
+    // #301 问学历的下拉：该选哪一项统一由 educationChoice 判断，没判断出来才往下走别的规则。
+    const education = educationChoice(field?.label, value, hasRealOptions(field) ? field.options : null);
+    if (typeof education === "string") {
+      // 去掉附注后和选项是同义写法（专科）时，仍交回去掉附注的层次（大专），由 findSelectOptionIndex 认同义，和原来一致。
+      const core = educationLevelWithoutQualifier(field?.label, value);
+      return education && core && normalizeText(education) !== normalizeText(value) && isSameOptionText(education, core) ? core : education;
     }
     // #301 问学习形式的下拉（学历类型：统招全日制 / 统招非全日制 / 自考）：资料只在学历里带着「全日制」「非全日制」。
     if (STUDY_MODE_LABEL.test(normalizeText(field?.label)) && hasRealOptions(field)) {

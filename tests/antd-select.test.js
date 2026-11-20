@@ -207,7 +207,8 @@ test('#481 a searchable education-level select falls back to the level if the or
   t.after(() => h.w.close());
   const result = await h.api.operate({ ...h.target, binding: h.found }, '博士研究生（直博）');
   assert.equal(result.ok, true, result.reason);
-  assert.deepEqual(h.searches, ['博士研究生（直博）', '博士研究生']);
+  // #301 学历先搜原文，没有再搜层次词「博士」（旧的是「博士研究生」，带附注的和纯层次的写法都含「博士」）。
+  assert.deepEqual(h.searches, ['博士研究生（直博）', '博士']);
   assert.deepEqual(h.picked, ['博士研究生']);
 });
 
@@ -227,7 +228,8 @@ test('#481 a searchable education multi-select also tries the original query bef
   t.after(() => h.w.close());
   const result = await h.api.operate({ ...h.target, binding: h.found }, value);
   assert.equal(result.ok, true, result.reason);
-  assert.deepEqual(h.searches.filter(Boolean), [value, '博士研究生']);
+  // #301 同上：先搜原文，再搜层次词「博士」。
+  assert.deepEqual(h.searches.filter(Boolean), [value, '博士']);
   assert.deepEqual(h.picked, ['博士研究生']);
 });
 
