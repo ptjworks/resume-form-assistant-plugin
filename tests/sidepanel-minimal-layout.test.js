@@ -44,6 +44,12 @@ test('填写 tab: template on top, full-width 一键 AI 填写, then two light t
   assert.doesNotMatch(css, /gradient/, 'no gradients anywhere in the side panel');
 });
 
+test('投递区两个按钮的悬停说明用 data-tip 自绘，不依赖浏览器原生 title', () => {
+  assert.match(html, /id="job-save-button"[^>]*data-tip="[^"]+"/);
+  assert.match(html, /id="submit-confirm-button"[^>]*data-tip="[^"]+"/);
+  assert.match(css, /\.job-save-button\[data-tip\]:hover::after/);
+});
+
 test('#task-panel and #template-editor keep every node and id', () => {
   const taskPanel = ids(section('<section id="task-panel"', '<div id="feedback-preview-root">'));
   const editor = ids(section('<section id="template-editor"', 'id="mail-view"'));
