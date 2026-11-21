@@ -198,6 +198,7 @@
     educationChoice,
     educationSearchTerms,
     educationLevelWithoutQualifier,
+    isEducationLevelLabel,
     cetLevel,
     workRole,
     workRecords,
@@ -456,7 +457,17 @@
     const asksAttained = /^(?:最高)?已(?:取得|获得|完成)/.test(normalizeText(label));
     const raw = String(value ?? "").normalize("NFKC").trim();
     const level = asksAttained ? raw : raw.replace(/(?:\s*\(\s*在读\s*\)|\s*在读)$/, "");
-    return educationLevelKind(level) || (educationDegree(raw)?.[2] === "学士" ? "本科" : "");
+    // 学士学位带全日制等附注（理学学士（全日制））照样是本科；完成状态（在读、未毕业）不去，保持保守。
+    return educationLevelKind(level) || (educationDegreeCore(raw, false)?.[2] === "学士" ? "本科" : "");
+  }
+
+  // 去掉首尾的附注再认学位：理学硕士（全日制）、理学硕士在读都是「理学硕士」。withStatus 为 false 时只去学习形式一类的附注，不去在读、未毕业。
+  function educationDegreeCore(value, withStatus = true) {
+    const notes = withStatus ? `${EDUCATION_QUALIFIER}|${EDUCATION_COMPLETION_NOTE.source}` : EDUCATION_QUALIFIER;
+    const text = normalizeText(String(value ?? "").normalize("NFKC"))
+      .replace(new RegExp(`^(?:(?:${notes})[,，、]?)+`), "")
+      .replace(new RegExp(`(?:[,，、]?(?:${notes}))+$`), "");
+    return educationDegree(text);
   }
 
   function educationDegree(value) {
@@ -1342,8 +1353,10 @@
     const full = normalizeText(String(value ?? ""));
     const exact = available.find(option => names(option).some(text => normalizeText(text) === full));
     if (exact) return textOf(exact);
-    // 学历栏写了硕士、博士学位（理学硕士）不推成层次（同等学力也能拿学位）：明确不选，免得被唯一包含的兜底认成「硕士」。
-    if (!educationLevelOf(label, value) && /^(?:硕士|博士)$/.test(educationDegree(value)?.[2] || "")) return "";
+    // 学历栏写了硕士、博士学位（理学硕士、理学硕士（全日制）、理学硕士在读）不推成层次（同等学力也能拿学位）：明确不选，免得被唯一包含的兜底认成「硕士」。
+    // 只认带学科或「学位」二字的写法；光写「硕士在读」是层次词加状态，不在这里拦。
+    const degree = educationLevelOf(label, value) ? null : educationDegreeCore(value);
+    if (degree && (degree[1] || degree[3]) && /^(?:硕士|博士)$/.test(degree[2])) return "";
     const core = educationLevelWithoutQualifier(label, value);
     if (core) {
       const same = available.filter(option => names(option).some(text => isSameOptionText(text, core)));

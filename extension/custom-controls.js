@@ -1216,16 +1216,19 @@
     if (!h.stop(ctx)) await h.waitUntil(ctx, doc.documentElement, gone, Boolean, POPUP_LEAVE_MS);
   }
   function optionSearchPlan(helpers, value, label, englishLevel) {
-    // 学历：资料带附注时先搜原文（前缀筛选的站点只有原文搜得到带附注的整项，只认同名），再搜层次词（博士）交 educationChoice 选；
-    // 不带附注只搜层次词（#301）。queries 是搜索队列，original 是其中要按原文同名认的那一个。
+    // 学历：资料原文和层次词（terms[0]）写法不一样（带附注、大学专科、硕士在读……）时先搜原文（前缀筛选的站点只有原文搜得到整项，只认同名），
+    // 再搜层次词（博士）交 educationChoice 选；资料就是层次词本身只搜层次词（#301）。queries 是搜索队列，original 是其中要按原文同名认的那一个。
+    // 问学历的题（含推不出层次的：理学硕士、本科（未毕业））education 一律为 true，多选也由此走 educationChoice 的判断。
     const terms = label && helpers.educationSearchTerms?.(label, value);
+    const education = Boolean(terms) || Boolean(label && helpers.isEducationLevelLabel?.(label));
     if (terms) {
-      const original = helpers.educationLevelWithoutQualifier?.(label, value) ? String(value).trim() : undefined;
-      return { queries: original ? [original, ...terms] : terms, original, education: true };
+      const text = String(value).trim();
+      const original = helpers.normalizeText(text.normalize('NFKC')) !== helpers.normalizeText(terms[0]) ? text : undefined;
+      return { queries: original ? [original, ...terms] : terms, original, education };
     }
     const first = helpers.optionSearchText?.(value) ?? value;
     const alternate = englishLevel && helpers.englishLevelSearchAlternative?.(value);
-    return { queries: [first, alternate].filter(Boolean), education: false };
+    return { queries: [first, alternate].filter(Boolean), education };
   }
 
   async function perform(ctx, raw, h, state) {
@@ -1752,7 +1755,7 @@
         if (!value) return { reason: 'ambiguous_option' };
         if (info.library === 'boss') return insistOriginal(items)
           ? sameOption(items, value, h.helpers) : bossOption(items, value, bossLabel, h.helpers);
-        return match(items, value, h.helpers, partial(items), englishLevel);
+        return match(items, value, h.helpers, insistOriginal(items) || partial(items), englishLevel);
       };
       const listReady = list => (!loading() && list.length > 0 && (!generic || Date.now() - steadySince >= 300) && (!typedAntd || sameName(list) || typedSettled(steadySince)))
         || (eagerSearch && list.length === 0) || (typedAntd && noSuggestions(list));

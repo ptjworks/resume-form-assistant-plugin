@@ -28,6 +28,13 @@ test('educationChoice picks the one option that stands for the level, and says w
     ['博士学位', ['博士', '硕士', '本科'], ''],
     ['理学博士', ['博士', '硕士', '本科'], ''],
     ['理学博士', ['博士'], ''],
+    // 带括号附注、完成状态的硕士、博士学位同样不选；学士带学习形式附注仍是本科，带完成状态不推。
+    ['理学硕士（全日制）', ['博士', '硕士', '本科'], ''],
+    ['理学硕士在读', ['博士', '硕士', '本科'], ''],
+    ['全日制理学博士（在读）', ['博士', '硕士', '本科'], ''],
+    ['理学硕士（全日制）', ['理学硕士（全日制）', '硕士'], '理学硕士（全日制）'],
+    ['理学学士（全日制）', ['博士', '硕士', '本科'], '本科'],
+    ['理学学士在读', ['博士', '硕士', '本科'], undefined],
     ['本科（结业）', ['本科'], undefined],
     ['大专（肄业）', ['大专'], undefined],
     ['博士研究生（联合培养）', ['博士'], undefined]
@@ -54,6 +61,8 @@ test('choiceValue goes through educationChoice for 学历 only', () => {
   assert.equal(helpers.choiceValue(field, '博士研究生（直博）'), '博士');
   assert.equal(helpers.choiceValue({ ...field, label: '学位' }, '博士研究生（直博）'), '博士研究生（直博）');
   assert.equal(helpers.choiceValue({ ...field, options: ['本科', '大学本科'] }, '本科（全日制）'), '');
+  assert.equal(helpers.choiceValue(field, '理学硕士（全日制）'), '');
+  assert.equal(helpers.choiceValue(field, '理学硕士在读'), '');
 });
 
 test('educationSearchTerms gives the words every way of writing a level shares', () => {
@@ -66,6 +75,9 @@ test('educationSearchTerms gives the words every way of writing a level shares',
   // 「在读」不影响层次；学历栏只写了学士就是本科；硕士、博士学位不推；未毕业、肄业不去掉。
   assert.deepEqual(terms('学历', '硕士在读'), ['硕士']);
   assert.deepEqual(terms('学历', '理学学士'), ['本科']);
+  assert.deepEqual(terms('学历', '理学学士（全日制）'), ['本科']);
+  assert.equal(terms('学历', '理学硕士（全日制）'), null);
+  assert.equal(terms('学历', '理学学士在读'), null);
   assert.equal(terms('学历', '理学硕士'), null);
   assert.equal(terms('学历', '理学博士'), null);
   assert.equal(terms('学历', '本科（未毕业）'), null);
@@ -243,9 +255,14 @@ const CASES = [
   { name: 'remote search: same name among the results wins', build: () => antd4(['博士研究生（直博）', '博士'], { mode: 'remote' }), value: '博士研究生（直博）', picked: '博士研究生（直博）', searches: ['博士研究生（直博）'] },
   // 前缀筛选（#481）：搜层次词搜不到带附注的整项，所以先搜原文，原文搜出来的只认同名。
   { name: 'remote prefix-filtered search: qualified original is searched first and picked by name', build: () => antd4(['硕士研究生', '全日制硕士研究生'], { mode: 'remote', prefix: true }), value: '全日制硕士研究生', picked: '全日制硕士研究生', searches: ['全日制硕士研究生'] },
-  { name: 'remote search: synonym value', build: () => antd4(['本科', '硕士'], { mode: 'remote' }), value: '大学本科', picked: '本科', searches: ['本科'] },
-  { name: 'remote search: 在读 searches the level word', build: () => antd4(['硕士', '本科'], { mode: 'remote' }), value: '硕士在读', picked: '硕士', searches: ['硕士'] },
-  { name: 'remote search: bachelor degree searches 本科', build: () => antd4(['本科', '硕士'], { mode: 'remote' }), value: '理学学士', picked: '本科', searches: ['本科'] },
+  // 资料写法和层次词不一样（大学本科、硕士在读、理学学士）时也先搜原文（只认同名，搜不到再搜层次词）：只认开头几个字的站点（#481 前缀筛选）
+  // 才搜得到「大学专科」。原来这三条只搜层次词，预期按新规则改成原文在前。
+  { name: 'remote search: synonym value searches the original first', build: () => antd4(['本科', '硕士'], { mode: 'remote' }), value: '大学本科', picked: '本科', searches: ['大学本科', '本科'] },
+  { name: 'remote search: 在读 searches the original, then the level word', build: () => antd4(['硕士', '本科'], { mode: 'remote' }), value: '硕士在读', picked: '硕士', searches: ['硕士在读', '硕士'] },
+  { name: 'remote search: bachelor degree searches the original, then 本科', build: () => antd4(['本科', '硕士'], { mode: 'remote' }), value: '理学学士', picked: '本科', searches: ['理学学士', '本科'] },
+  { name: 'remote prefix-filtered search: 大学专科 is searched as written', build: () => antd4(['大学专科', '硕士'], { mode: 'remote', prefix: true }), value: '大学专科', picked: '大学专科', searches: ['大学专科'] },
+  { name: 'remote search: the level word itself is searched once', build: () => antd4(['博士', '硕士'], { mode: 'remote' }), value: '博士', picked: '博士', searches: ['博士'] },
+  { name: 'remote search: 本科 is searched once', build: () => antd4(['本科', '硕士'], { mode: 'remote' }), value: '本科', picked: '本科', searches: ['本科'] },
   // 未毕业不转成层次：搜的是资料原文，搜不到就不选（和改动前一致）。
   { name: 'remote search: unfinished status is never converted', build: () => antd4(['本科', '本科生'], { mode: 'remote' }), value: '本科（未毕业）', reason: 'options_not_rendered', searches: ['本科（未毕业）'] },
   { name: 'virtual partial list: searches the level word', build: () => antd4(LEVELS, { mode: 'search', filler: 100 }), value: '博士研究生（直博）', picked: '博士', searches: ['博士研究生（直博）', '博士'] },
@@ -285,4 +302,26 @@ test('education multi-select: a full list is picked from by level, a partial lis
   assert.equal(b.ok, true, b.reason);
   assert.deepEqual(remote.searches.filter(Boolean), ['博士研究生（直博）', '博士']);
   assert.deepEqual(remote.picked, ['博士研究生']);
+});
+
+test('education multi-select: a master degree in the level field is not picked from a level list', async t => {
+  const full = antd3(LEVELS, { multiple: true });
+  const remote = antd3(['博士', '硕士'], { multiple: true, remote: true, initial: ['本科'] });
+  t.after(() => { full.w.close(); remote.w.close(); });
+  for (const h of [full, remote]) {
+    const result = await h.api.operate(h.target, '理学硕士');
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.deepEqual(h.picked, []);
+  }
+});
+
+test('education select: after searching the original, a near item in the results is not taken for it', async t => {
+  // 资料「理学学士」搜原文只搜出一项包含它的「理学学士学位」：这一轮只认同名，不能当成它选上（改前会被「唯一包含」的兜底选上）。
+  // 原文这一轮不选，再搜「本科」，列表里没有，最后不选。
+  const h = antd4(['理学学士学位', '硕士'], { mode: 'remote' });
+  t.after(() => h.w.close());
+  const result = await h.api.operate(h.target, '理学学士');
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.deepEqual(h.picked, []);
+  assert.deepEqual(h.searches.filter(Boolean), ['理学学士', '本科']);
 });
