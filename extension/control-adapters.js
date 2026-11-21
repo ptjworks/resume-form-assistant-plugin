@@ -436,7 +436,7 @@
         // 只读日期框也走 custom-controls 的日历路径（#301 智联 Element 日期一聚焦就打开）。
         if (custom || (ctx.kind === 'date' && ctx.el?.readOnly)) ctx.popupsBeforeFocus = scope.ResumeProCustomControls?.visiblePopups?.(ctx.entry, visible) || null;
         // #429 区间日期的两个框由 operateRange 自己去点：先不聚焦，Element 一聚焦就打开日历，两头已经填好时只核对、不该打开。
-        if (!direct && !(ctx.kind === 'date' && (rangeBoxes(ctx) || ctx.entry.pickerType === 'boss'))) focus(ctx.el);
+        if (!direct && !(ctx.kind === 'date' && (rangeBoxes(ctx) || ['boss', 'period'].includes(ctx.entry.pickerType)))) focus(ctx.el);
         await delay(0);
         const afterFocus = stop(ctx, true);
         if (afterFocus) return result(false, afterFocus, ctx);
@@ -563,6 +563,9 @@
     const dateHint = ctx => [ctx.entry?.binding?.label, ctx.el?.getAttribute?.('placeholder'), ctx.el?.getAttribute?.('aria-label')].filter(Boolean).join(' ');
     async function operateDate(ctx, raw) {
       if (ctx.entry.pickerType === 'boss') return await scope.ResumeProCustomControls?.pickBossDate?.(ctx, raw, host)
+        || { reason: 'unsupported_control' };
+      // #301 小米的年月区间（标签 + 年份 / 月份两列面板），见 custom-controls.js 的 pickPeriod。
+      if (ctx.entry.pickerType === 'period') return await scope.ResumeProCustomControls?.pickPeriod?.(ctx, raw, host)
         || { reason: 'unsupported_control' };
       const boxes = rangeBoxes(ctx);
       const ranged = boxes ? await operateRange(ctx, raw, boxes) : null;

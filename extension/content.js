@@ -2189,18 +2189,27 @@
     }
     const byElement = new Map();
     const descriptors = new Map(scanned.fields.map(field => [field.fieldId, field]));
+    // #301 一个元素可能管着两道题（小米年月区间的开始、结束共用一个隐藏输入框）：按元素加上是哪一头对上。
     for (const [id, entry] of scanned.fieldMap) {
       const key = entry.kind === "radio" ? entry.elements?.[0] : entry.element;
-      if (key) byElement.set(key, { entry, field: descriptors.get(id) });
+      if (!key) continue;
+      if (!byElement.has(key)) byElement.set(key, new Map());
+      byElement.get(key).set(entry.binding?.rangePart || "", { entry, field: descriptors.get(id) });
     }
     for (const field of prepared.fields) {
       const entry = prepared.fieldMap.get(field.fieldId);
       if (!entry) continue;
-      const scannedControl = byElement.get(entry.kind === "radio" ? entry.elements?.[0] : entry.element);
+      const sameElement = byElement.get(entry.kind === "radio" ? entry.elements?.[0] : entry.element);
+      const scannedControl = sameElement?.get(entry.rangePart || "") || (sameElement?.size === 1 ? [...sameElement.values()][0] : null);
       const known = scannedControl?.entry;
       if (!known?.binding) continue;
       Object.assign(entry, { binding: known.binding, offerable: known.offerable, offerLabel: known.offerLabel });
       const descriptor = scannedControl.field;
+      // #301 小米：AI 给的分组只写「实习经历」，不带第几条；扫描认得这个框，分组带着序号（「实习经历 1」）。
+      // 同一种分组（去掉序号后相同，或 AI 没给）就用扫描的，插件才分得清两个描述框各属于哪一条经历。
+      const scanGroup = String(descriptor?.group ?? "").trim();
+      const base = text => String(text ?? "").replace(/\s*\d+$/, "").replace(/\s+/g, "");
+      if (scanGroup && scanGroup !== field.group && (!field.group || base(scanGroup) === base(field.group))) field.group = scanGroup;
       // 深度分析的文字推测不能覆盖 BOSS 已识别的级联或日历。
       if (isBossScanField(descriptor, known)) {
         Object.assign(entry, { root: known.root, controlKind: known.controlKind, pickerType: known.pickerType, pickerInputType: known.pickerInputType });
@@ -3602,6 +3611,8 @@
     if (entry.kind === "radio") return entry.elements.some(radioChecked);
     const el = entry.element;
     if (!el?.isConnected) return true;
+    // #301 小米的年月区间：值显示在标签上，隐藏输入框一直是空的。
+    if (entry.pickerType === "period") return Boolean(self.ResumeProCustomControls?.periodShown?.(entry));
     if (["custom-select", "cascader"].includes(entry.controlKind) && self.ResumeProCustomControls) {
       return self.ResumeProCustomControls.hasExistingValue(entry)
         || Boolean(entry.binding && self.ResumeProFieldScan?.hasDisplayedValue(entry.binding, { isVisible }));
@@ -3615,12 +3626,18 @@
       && Boolean(self.ResumeProFieldScan?.hasDisplayedValue(entry.binding, { isVisible }));
   }
 
+  // #301 网页上有哪几种经历栏（只说种类，不带网页文字），判断见 form-agent.js 的 pageSections。
+  function pageExperienceSections() {
+    try { return self.ResumeProFormAgent?.pageSections?.(document, isVisibleInOwnDocument) || []; } catch { return []; }
+  }
+
   // 只在本次填写期间比较网页值，不保存或发送到桌面/AI。
   function fillValueSnapshot(entry) {
     if (entry.kind === "radio") return entry.elements.every(el => el.isConnected)
       ? JSON.stringify(entry.elements.map(el => [isInputElement(el) ? el.value : el.textContent.trim(), radioChecked(el)])) : null;
     const el = entry.element;
     if (!el?.isConnected) return null;
+    if (entry.pickerType === "period") return JSON.stringify(["period", self.ResumeProCustomControls?.periodShown?.(entry) || ""]);
     if (["custom-select", "cascader"].includes(entry.controlKind) && self.ResumeProCustomControls) {
       const state = self.ResumeProCustomControls.snapshot(entry);
       return state === null ? null : JSON.stringify([state,
@@ -4305,6 +4322,7 @@
         requestId,
         formFields: fields,
         resumeFields,
+        pageSections: pageExperienceSections(),
         // 辅助填写只发选中区域的字段：同名的题要和整张表一起数（#429）。
         ...(assisted ? { pageLabels: scanned.fields.map(field => String(field.label ?? "")) } : {}),
         ...(deep?.tier ? { tier: deep.tier, maxCalls: deep.maxCalls } : {})
@@ -4487,7 +4505,7 @@
           catchUpRequestId = `${requestId}-more-${catchUpRounds}`;
           try {
             // pageLabels：页面上已知的全部题目（首轮扫到的整张表加上后来冒出来的），worker 数同名的题要和这一批以外的一起数（#429）。
-            reply = await self.ResumeProAIClient.send({ type: "AI_FILL", requestId: catchUpRequestId, formFields: batch, resumeFields,
+            reply = await self.ResumeProAIClient.send({ type: "AI_FILL", requestId: catchUpRequestId, formFields: batch, resumeFields, pageSections: pageExperienceSections(),
               pageLabels: [...scanned.fields, ...grownFields].map(field => String(field.label ?? "")) });
           } catch {
             reply = null;
