@@ -47,6 +47,7 @@
 
   const COUNTER_WORDS = /^(?:已输入|已填写?|还可(?:以)?输入|还能输入|剩余|最多(?:输入)?|限)\s*\d*\s*(?:[\/／]\s*\d+)?\s*个?(?:字|字符|词)?$/;
   const GENERIC_PROMPT = /^(?:请)?(?:选择|输入|填写|上传|搜索|选取|点击选择)(?:日期|时间|内容|文件)?$|^(?:请选择日期|请选择时间|全部|暂无数据|无匹配数据|加载中|no data|loading|select|please select|search|choose)$/i;
+  const PLACEHOLDER_PROMPT_PREFIX = /^(?:请(?:输入|选择|填写|上传)|输入|选择|填写)/;
   const ERROR_TAIL = /(?:不能为空|不可为空|不能为空白|为必填项?|是必填项|必须填写|必填项|格式不正确|格式错误|不合法|超出字数限制|超过最大长度)[!！。.]?$/;
   const MARKER = /^(?:必填|选填|可选|非必填|optional|required)$/i;
   const NO_WORDS = /^[\d\s\/／\\|.,，。、:：;；*＊()（）\[\]【】<>《》+\-_~#%·…!！?？'"“”‘’]+$/;
@@ -714,19 +715,28 @@
     if (item === control.root) return null;
     const placeholders = placeholdersOf(control);
     const skip = new Set([control.root, ...optionLabelElements(control)]);
-    // Moka 等表单会在已标记的题目和输入框占位里重复同一句话。只在取未标记的邻近文字时排除占位。
     const segments = usefulSegments(textSegments(item, ctx, skip), []);
     const before = segments.filter((segment) => isBefore(segment.node, control.root));
     const pool = before.length ? before
       : (control.controlKind === "checkbox" ? segments : []);
     if (!pool.length) return null;
 
+    let repeatedTitle = null;
     for (let index = pool.length - 1; index >= 0; index -= 1) {
       const labelEl = labelLikeAncestor(pool[index].el, item);
       if (!labelEl) continue;
-      const text = cleanLabel(joinSegments(pool.filter((segment) => labelEl.contains(segment.node))));
+      const marked = pool.filter((segment) => labelEl.contains(segment.node));
+      const text = cleanLabel(joinSegments(usefulSegments(marked, placeholders)), placeholders);
       if (text) return { text, source: "item", labelEl };
+      // Moka 会把明确标记的题目（如「姓名」）也用作占位。只保留整段重复的题目，优先取其他可靠题目。
+      if (!repeatedTitle) {
+        const repeated = cleanLabel(joinSegments(marked));
+        if (repeated && !PLACEHOLDER_PROMPT_PREFIX.test(repeated) && placeholders.some(value => squash(value) === repeated)) {
+          repeatedTitle = { text: repeated, source: "item", labelEl };
+        }
+      }
     }
+    if (repeatedTitle) return repeatedTitle;
 
     const looseBefore = usefulSegments(before, placeholders);
     const loosePool = looseBefore.length ? looseBefore
@@ -987,7 +997,7 @@
   // 占位文字只用来判断能不能填，不当字段名，也不进「加到我的信息」。
   function placeholderHint(control) {
     for (const value of placeholdersOf(control)) {
-      const rest = squash(value).replace(/^(?:请(?:输入|选择|填写|上传)|输入|选择|填写)/, "").replace(/[.。…:：]+$/, "").trim();
+      const rest = squash(value).replace(PLACEHOLDER_PROMPT_PREFIX, "").replace(/[.。…:：]+$/, "").trim();
       if (rest.length >= 2 && !isNoiseText(value)) return { text: "", source: "placeholder", labelEl: null };
     }
     return null;

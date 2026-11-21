@@ -60,6 +60,20 @@ test("#570 a structured form question still counts when its input repeats it as 
   assert.ok(result.controls.every(control => scanner.isBindingCurrent(control, doc, { isVisible })));
 });
 
+test("a repeated placeholder hint cannot replace or join the marked question", (t) => {
+  const doc = load(`<form>
+    <div><div class="title">专业</div><div class="label-wrap"><span>请选择学校</span></div><input placeholder="请选择学校"></div>
+    <div><div class="label-wrap"><span>请选择学校</span></div><input placeholder="请选择学校"></div>
+    <div><div class="title">教育背景<span>请填写学校</span></div><input placeholder="请填写学校"></div>
+  </form>`);
+  t.after(() => doc.defaultView.close());
+  assert.deepEqual(scan(doc).controls.map(({ label, labelSource }) => [label, labelSource]), [
+    ["专业", "item"],
+    ["", "placeholder"],
+    ["教育背景", "item"]
+  ]);
+});
+
 test("#479 only an id that is unique in its document becomes a redraw anchor", (t) => {
   const doc = load(`<form>
     <div><label for="name">姓名</label><input id="name" name="name"></div>

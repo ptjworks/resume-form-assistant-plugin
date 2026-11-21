@@ -1412,8 +1412,9 @@
       const added = popups(doc, h.visible).filter(node => !before.has(node));
       return added.length > 1 ? { reason: 'ambiguous_popup' } : added.length === 1 ? { popup: added[0] } : null;
     };
+    // ARIA 联想框也可能在点击后异步加载列表。等完通常的打开时间，再试输入查询词。
     let opened = await h.waitUntil(ctx, doc.documentElement, findOpened, Boolean,
-      info.freeText || ariaTypeAhead ? Math.min(FREE_TEXT_OPEN_MS, h.timeoutMs ?? FREE_TEXT_OPEN_MS) : undefined);
+      info.freeText ? Math.min(FREE_TEXT_OPEN_MS, h.timeoutMs ?? FREE_TEXT_OPEN_MS) : undefined);
     // 通用路径和 AntD：点开后没有弹层、输入框又能打字（学校、专业这类边输边搜的下拉）：输入要找的值再等弹层。
     // AntD 的输入框在组件根里（3.x 点开后才显示）；AntD 的 combobox 模式输入就是改值，不这样做（AutoComplete 按联想框打字）。
     // 联想框（#404 51job 的 el-autocomplete）聚焦后没弹建议：像打字一样输入要填的字，再等它自己的建议框。

@@ -144,6 +144,26 @@ test('a linked ARIA autocomplete can open after typing, and selects only an exac
     });
   }
 });
+test('linked ARIA autocomplete gives slow click-triggered options the usual time before typing', async (t) => {
+  const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="list">', { timeoutMs: 1500 });
+  t.after(() => h.w.close());
+  let typing = 0;
+  let timer;
+  t.after(() => clearTimeout(timer));
+  h.el.onclick = () => {
+    timer = setTimeout(() => {
+      const list = addOptions(h, ['复旦大学', '北京大学']);
+      list.lastElementChild.onclick = () => {
+        h.el.value = '北京大学';
+        h.el.setAttribute('aria-valuetext', '北京大学');
+        list.remove();
+      };
+    }, 850);
+  };
+  h.el.oninput = () => { typing += 1; };
+  assert.equal((await h.api.operate(h.target, '北京大学')).ok, true);
+  assert.equal(typing, 0);
+});
 test('#481 English level search tries the alternate spelling once and restores the query on failure', async (t) => {
   const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="list" value="原搜索词">');
   t.after(() => h.w.close());
