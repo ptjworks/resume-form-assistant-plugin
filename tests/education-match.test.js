@@ -19,10 +19,14 @@ test('educationChoice picks the one option that stands for the level, and says w
     ['大学本科', ['博士', '硕士', '本科'], '本科'],
     ['本科（全日制、统招）', ['大学本科', '硕士研究生'], '大学本科'],
     ['本科（全日制）', ['本科', '大学本科'], ''],
-    ['硕士在读', ['硕士', '本科'], undefined],
+    ['硕士在读', ['硕士', '本科'], '硕士'],
     ['本科（未毕业）', ['本科'], undefined],
-    ['理学学士', ['本科', '硕士'], undefined],
+    ['理学学士', ['本科', '硕士'], '本科'],
+    ['理学学士', ['博士', '硕士', '本科'], '本科'],
+    ['理学硕士', ['硕士', '本科'], undefined],
     ['理学博士', ['博士'], undefined],
+    ['本科（结业）', ['本科'], undefined],
+    ['大专（肄业）', ['大专'], undefined],
     ['博士研究生（联合培养）', ['博士'], undefined]
   ];
   for (const label of ['学历', '最高学历']) {
@@ -33,6 +37,9 @@ test('educationChoice picks the one option that stands for the level, and says w
   // 选项也可以是 { text, value } 的写法，占位项不算。
   assert.equal(helpers.educationChoice('学历', '博士研究生（直博）', [{ text: '请选择', value: '' }, { text: '博士', value: '3' }]), '博士');
   assert.equal(helpers.educationChoice('学位', '博士研究生', ['博士']), null);
+  assert.equal(helpers.educationChoice('学位', '理学学士', ['本科']), null);
+  // 题目问已取得的学历：在读的不换。
+  assert.equal(helpers.educationChoice('最高已取得学历', '硕士在读', ['硕士', '本科']), undefined);
   assert.equal(helpers.educationChoice('学历', '博士研究生', []), null);
   assert.equal(helpers.educationChoice('学历', '博士研究生', null), null);
 });
@@ -51,8 +58,14 @@ test('educationSearchTerms gives the words every way of writing a level shares',
   assert.deepEqual(terms('学历', '大学本科'), ['本科']);
   assert.deepEqual(terms('学历', '大学专科'), ['专科', '大专']);
   assert.deepEqual(terms('学历', '大专'), ['大专', '专科']);
-  assert.equal(terms('学历', '硕士在读'), null);
-  assert.equal(terms('学历', '理学学士'), null);
+  // 「在读」不影响层次；学历栏只写了学士就是本科；硕士、博士学位不推；未毕业、肄业不去掉。
+  assert.deepEqual(terms('学历', '硕士在读'), ['硕士']);
+  assert.deepEqual(terms('学历', '理学学士'), ['本科']);
+  assert.equal(terms('学历', '理学硕士'), null);
+  assert.equal(terms('学历', '理学博士'), null);
+  assert.equal(terms('学历', '本科（未毕业）'), null);
+  assert.equal(terms('学历', '大专（肄业）'), null);
+  assert.equal(terms('最高已取得学历', '硕士在读'), null);
   assert.equal(terms('学位', '博士研究生'), null);
 });
 
@@ -213,8 +226,10 @@ const CASES = [
   { name: 'full list, qualified value', build: () => antd4(LEVELS), value: '博士研究生（直博）', picked: '博士', searches: [] },
   { name: 'full list, synonym value', build: () => antd4(LEVELS, { mode: 'search' }), value: '大学本科', picked: '本科', searches: [] },
   { name: 'full list, long options, qualified value', build: () => antd4(LONG, { mode: 'search' }), value: '硕士研究生（非全日制）', picked: '硕士研究生', searches: [] },
-  { name: 'full list, status value is never converted', build: () => antd4(LEVELS, { mode: 'search' }), value: '硕士在读', reason: 'no_option_match', searches: null },
-  { name: 'full list, degree value is not a level', build: () => antd4(LEVELS, { mode: 'search' }), value: '理学学士', reason: 'no_option_match', searches: null },
+  { name: 'full list, 在读 does not change the level', build: () => antd4(LEVELS, { mode: 'search' }), value: '硕士在读', picked: '硕士', searches: [] },
+  // 小米（四川大学）：学历栏写的是学位「理学学士」，选项是博士/硕士/本科 —— 选「本科」，不搜索。
+  { name: 'xiaomi: bachelor degree in the level field is 本科', build: () => antd4(LEVELS, { mode: 'search' }), value: '理学学士', picked: '本科', searches: [] },
+  { name: 'full list, unfinished status is never converted', build: () => antd4(['本科', '硕士'], { mode: 'search' }), value: '本科（未毕业）', reason: 'no_option_match', searches: null },
   { name: 'full list, other qualifier option is not taken', build: () => antd4(['博士研究生（普博）', '硕士', '本科'], { mode: 'search' }), value: '博士研究生（直博）', reason: 'no_option_match', searches: null },
   { name: 'remote search: searches the level word and picks from the results', build: () => antd4(['博士', '博士研究生', '硕士'], { mode: 'remote' }), value: '博士研究生（直博）', picked: '博士研究生', searches: ['博士研究生（直博）', '博士'] },
   { name: 'remote search: only the plain level among the results', build: () => antd4(['博士', '硕士'], { mode: 'remote' }), value: '博士研究生（直博）', picked: '博士', searches: ['博士研究生（直博）', '博士'] },
@@ -222,16 +237,18 @@ const CASES = [
   // 前缀筛选（#481）：搜层次词搜不到带附注的整项，所以先搜原文，原文搜出来的只认同名。
   { name: 'remote prefix-filtered search: qualified original is searched first and picked by name', build: () => antd4(['硕士研究生', '全日制硕士研究生'], { mode: 'remote', prefix: true }), value: '全日制硕士研究生', picked: '全日制硕士研究生', searches: ['全日制硕士研究生'] },
   { name: 'remote search: synonym value', build: () => antd4(['本科', '硕士'], { mode: 'remote' }), value: '大学本科', picked: '本科', searches: ['本科'] },
-  // 状态不转成层次：搜的是资料原文，搜不到就不选（和改动前一致）。
-  { name: 'remote search: status value is never converted', build: () => antd4(['硕士', '硕士研究生'], { mode: 'remote' }), value: '硕士在读', reason: 'options_not_rendered', searches: ['硕士在读'] },
+  { name: 'remote search: 在读 searches the level word', build: () => antd4(['硕士', '本科'], { mode: 'remote' }), value: '硕士在读', picked: '硕士', searches: ['硕士'] },
+  { name: 'remote search: bachelor degree searches 本科', build: () => antd4(['本科', '硕士'], { mode: 'remote' }), value: '理学学士', picked: '本科', searches: ['本科'] },
+  // 未毕业不转成层次：搜的是资料原文，搜不到就不选（和改动前一致）。
+  { name: 'remote search: unfinished status is never converted', build: () => antd4(['本科', '本科生'], { mode: 'remote' }), value: '本科（未毕业）', reason: 'options_not_rendered', searches: ['本科（未毕业）'] },
   { name: 'virtual partial list: searches the level word', build: () => antd4(LEVELS, { mode: 'search', filler: 100 }), value: '博士研究生（直博）', picked: '博士', searches: ['博士研究生（直博）', '博士'] },
   { name: 'virtual partial list: same name on the screen is picked without searching', build: () => antd4(LEVELS, { mode: 'search', filler: 100, tail: true }), value: '本科', picked: '本科', searches: [] },
   { name: 'antd3 full list, qualified value', build: () => antd3(LEVELS), value: '硕士研究生（全日制）', picked: '硕士', searches: [] },
-  { name: 'antd3 full list, status value is never converted', build: () => antd3(LEVELS), value: '本科（未毕业）', reason: 'no_option_match', searches: [] },
+  { name: 'antd3 full list, unfinished status is never converted', build: () => antd3(LEVELS), value: '本科（未毕业）', reason: 'no_option_match', searches: [] },
   { name: 'antd3 remote search, qualified value', build: () => antd3(['博士', '博士研究生'], { remote: true }), value: '博士研究生（直博）', picked: '博士研究生', searches: ['博士研究生（直博）', '博士'] },
   { name: 'element full list, qualified value', build: () => elementUi(LEVELS), value: '博士研究生（直博）', picked: '博士', searches: [] },
   { name: 'element full list, synonym value', build: () => elementUi(LEVELS), value: '大学本科', picked: '本科', searches: [] },
-  { name: 'element full list, degree value is not a level', build: () => elementUi(LEVELS), value: '理学学士', reason: 'no_option_match', searches: [] }
+  { name: 'element full list, bachelor degree is 本科', build: () => elementUi(LEVELS), value: '理学学士', picked: '本科', searches: [] }
 ];
 for (const item of CASES) {
   test(`education select: ${item.name}`, async t => {

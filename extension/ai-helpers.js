@@ -450,6 +450,15 @@
     return "";
   }
 
+  // 资料里的学历算哪个层次（唯一判断）。题目不问已取得的学历时，「在读」「（在读）」不影响层次；
+  // 学历栏只写了学士（理学学士）就是本科（学士学位只授予本科毕业）。硕士、博士学位不推（同等学力也能拿），未毕业、肄业、结业不去掉。
+  function educationLevelOf(label, value) {
+    const asksAttained = /^(?:最高)?已(?:取得|获得|完成)/.test(normalizeText(label));
+    const raw = String(value ?? "").normalize("NFKC").trim();
+    const level = asksAttained ? raw : raw.replace(/(?:\s*\(\s*在读\s*\)|\s*在读)$/, "");
+    return educationLevelKind(level) || (educationDegree(raw)?.[2] === "学士" ? "本科" : "");
+  }
+
   function educationDegree(value) {
     return /^(哲学|经济学|法学|教育学|文学|历史学|理学|工学|农学|医学|军事学|管理学|艺术学|交叉学科|工程)?(学士|硕士|博士)(学位)?$/
       .exec(normalizeText(String(value ?? "").normalize("NFKC")));
@@ -459,10 +468,7 @@
     if (isEducationLevelLabel(label)) {
       // 可以选无附注的学历。两个带附注的选项已经在前面的原文匹配中比过。
       // 普通学历问层级，允许把「本科（在读）」匹配到「本科」；已取得学历和未毕业等状态保持原样。
-      const asksAttained = /^(?:最高)?已(?:取得|获得|完成)/.test(normalizeText(label));
-      const raw = String(value ?? "").normalize("NFKC").trim();
-      const level = asksAttained ? raw : raw.replace(/(?:\s*\(\s*在读\s*\)|\s*在读)$/, "");
-      const kind = educationLevelKind(level);
+      const kind = educationLevelOf(label, value);
       return Boolean(kind && kind === educationLevelKind(option) && !educationLevelWithoutQualifier(label, option));
     }
     if (!/^(?:最高)?(?:学位|所获学位|授予学位)$/.test(normalizeText(label))) return false;
@@ -1342,7 +1348,7 @@
       if (same.length === 1) return textOf(same[0]);
       if (same.length > 1) return "";
     }
-    const kind = educationLevelKind(value);
+    const kind = educationLevelOf(label, value);
     if (kind) {
       const plain = available.filter(option => names(option).some(text => PLAIN_EDUCATION_LEVEL.test(normalizeText(text)) && educationLevelKind(text) === kind));
       if (plain.length === 1) return textOf(plain[0]);
@@ -1355,7 +1361,7 @@
   const EDUCATION_SEARCH_TERMS = { 博士: ["博士"], 硕士: ["硕士"], 本科: ["本科"], 大专: ["专科", "大专"] };
   function educationSearchTerms(label, value) {
     if (!isEducationLevelLabel(label)) return null;
-    const kind = educationLevelKind(value);
+    const kind = educationLevelOf(label, value);
     // 大专：资料写「大专」先搜「大专」（和原来一样），写「大学专科」先搜「专科」。
     if (kind === "大专" && /大专/.test(normalizeText(value))) return ["大专", "专科"];
     return EDUCATION_SEARCH_TERMS[kind] || null;
