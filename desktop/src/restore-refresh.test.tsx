@@ -103,7 +103,7 @@ test("leaving the data panel, by another settings category or another page, tell
   const left = vi.fn();
   document.getElementById("settings-data")!.addEventListener("backup-leave", left);
   const click = (selector: string) => document.querySelector<HTMLButtonElement>(selector)!.click();
-  click('.nav button[data-route="settings"]');
+  click('.topbar button[data-route="settings"]');
   await Promise.resolve();
   click('[data-settings-tab="data"]');
   expect(left).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ test("an unsaved note keeps the draft in the editor when the user tries to open 
   title.value = "尚未保存的复盘";
   title.dispatchEvent(new Event("input", { bubbles: true }));
 
-  document.querySelector<HTMLButtonElement>('.nav button[data-route="settings"]')!.click();
+  document.querySelector<HTMLButtonElement>('.topbar button[data-route="settings"]')!.click();
   const cancel = await vi.waitFor(() => {
     const button = Array.from(document.querySelectorAll("dialog button"))
       .find(button => button.textContent === "继续编辑");

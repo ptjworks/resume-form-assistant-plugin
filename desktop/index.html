@@ -12,32 +12,24 @@
       <header class="topbar">
         <div class="brand">
           <img class="brand-mark" src="./src-tauri/icons/64x64.png" alt="" width="32" height="32" />
-          <div class="brand-lockup">
-            <div class="brand-product">
-              <span class="brand-name">网申快填</span>
-              <span id="app-version" class="brand-version" hidden></span>
-            </div>
-            <div class="brand-publisher">
-              <img src="./src/assets/ptj-works.png" alt="" width="14" height="14" />
-              <span>PTJ Works</span>
-            </div>
-          </div>
+          <span class="brand-name">网申快填</span>
+          <span id="app-version" class="brand-version" hidden></span>
         </div>
         <nav class="nav" aria-label="主导航">
-          <button type="button" data-route="applications" class="active" aria-current="page">申请</button>
+          <button type="button" data-route="applications" class="active" aria-current="page">投递</button>
+          <button type="button" data-route="todos">日历</button>
+          <button type="button" data-route="inbox">通知<span class="nav-dot" data-inbox-dot aria-hidden="true" hidden></span></button>
           <button type="button" data-route="resume">简历</button>
-          <button type="button" data-route="inbox">招聘通知</button>
-          <button type="button" data-route="todos">待办</button>
+          <span class="nav-sep" aria-hidden="true"></span>
           <button type="button" data-route="notes">心得</button>
-          <button type="button" data-route="settings">设置<span class="update-dot" data-update-dot aria-hidden="true" hidden></span></button>
+          <span class="nav-indicator" aria-hidden="true"></span>
         </nav>
         <div class="topbar-status">
-          <button type="button" id="nav-support" data-route="support" aria-controls="view-support">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Zm13 1h1.5a2.5 2.5 0 0 1 0 5H17M3 21h16M8 3v2m5-2v2"/></svg>
-            <span>支持开发</span>
+          <button type="button" id="runtime-pill" class="status-pill" data-tone="pending">正在读取浏览器注册…</button>
+          <button type="button" class="topbar-gear" data-route="settings" aria-label="设置" title="设置">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+            <span class="update-dot" data-update-dot aria-hidden="true" hidden></span>
           </button>
-          <p id="runtime-pill" class="status-pill" data-tone="pending">正在读取浏览器注册…</p>
-          <button type="button" id="nav-install-extension">安装扩展</button>
         </div>
       </header>
       <div id="update-notice" class="update-notice" role="status" hidden>
@@ -671,7 +663,8 @@
                 <div class="settings-card">
                   <div class="about-head">
                     <img class="about-mark" src="./src-tauri/icons/64x64.png" alt="" width="48" height="48" />
-                    <div class="about-title"><h2>网申快填 <span id="settings-version-tag" class="settings-chip" hidden></span></h2><p id="settings-version">正在读取版本…</p></div>
+                    <div class="about-title"><h2>网申快填 <span id="settings-version-tag" class="settings-chip" hidden></span></h2><p id="settings-version">正在读取版本…</p>
+                      <div class="about-publisher"><img src="./src/assets/ptj-works.png" alt="" width="14" height="14" /><span>PTJ Works</span></div></div>
                     <div class="settings-actions"><button type="button" id="update-check" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>检查更新</button><button type="button" id="update-download" class="primary" hidden>下载更新</button><button type="button" id="update-open" hidden>去下载页</button></div>
                   </div>
                   <div id="update-msg" class="settings-callout" data-tone="info" role="status" hidden><div><p id="update-msg-text"></p><progress id="update-progress" class="update-progress" max="100" hidden></progress></div></div>
@@ -682,6 +675,28 @@
                   <button type="button" id="btn-diag"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>导出诊断</button>
                   <p id="diag-msg" class="settings-inline-msg" role="status"></p>
                 </div>
+                <section class="settings-card support-card" aria-labelledby="support-payment-title">
+                  <div class="support-card-head">
+                    <h2 id="support-payment-title">支持开发</h2>
+                    <p>如果网申快填帮你省下了一点时间，欢迎请开发者喝杯咖啡。选择你常用的支付方式，金额随意。</p>
+                  </div>
+                  <div class="support-methods">
+                    <figure class="support-method">
+                      <figcaption><span class="payment-dot wechat" aria-hidden="true"></span>微信支付</figcaption>
+                      <img src="./src/assets/support-wechat.png" alt="微信支付收款二维码" width="184" height="184" loading="lazy" />
+                      <span class="support-method-hint">打开微信扫一扫</span>
+                    </figure>
+                    <figure class="support-method">
+                      <figcaption><span class="payment-dot alipay" aria-hidden="true"></span>支付宝</figcaption>
+                      <img src="./src/assets/support-alipay.png" alt="支付宝收款二维码" width="184" height="184" loading="lazy" />
+                      <span class="support-method-hint">打开支付宝扫一扫</span>
+                    </figure>
+                  </div>
+                  <footer class="support-note">
+                    <p><strong>支持完全自愿，所有功能照常使用。</strong></p>
+                    <p>款项由开发者收取，用于开发和日常维护。付款前请在支付 App 中确认收款信息和金额。</p>
+                  </footer>
+                </section>
                 <details class="settings-card settings-card-fold technical-details">
                   <summary><span class="settings-fold-title">技术详情</span><span class="settings-fold-hint">运行状态、数据位置与浏览器注册信息</span></summary>
                   <div class="settings-fold-body"><div id="facts"></div></div>
@@ -689,34 +704,6 @@
               </section>
             </div>
           </div>
-        </section>
-        <section id="view-support" class="support-view hidden" aria-labelledby="support-title">
-          <header class="support-heading">
-            <h1 id="support-title">支持开发</h1>
-            <p>如果网申快填帮你省下了一点时间，欢迎请开发者喝杯咖啡。</p>
-          </header>
-          <section class="support-card" aria-labelledby="support-payment-title">
-            <div class="support-card-head">
-              <h2 id="support-payment-title">手机扫码支持</h2>
-              <p>选择你常用的支付方式，金额随意。</p>
-            </div>
-            <div class="support-methods">
-              <figure class="support-method">
-                <figcaption><span class="payment-dot wechat" aria-hidden="true"></span>微信支付</figcaption>
-                <img src="./src/assets/support-wechat.png" alt="微信支付收款二维码" width="184" height="184" loading="lazy" />
-                <span class="support-method-hint">打开微信扫一扫</span>
-              </figure>
-              <figure class="support-method">
-                <figcaption><span class="payment-dot alipay" aria-hidden="true"></span>支付宝</figcaption>
-                <img src="./src/assets/support-alipay.png" alt="支付宝收款二维码" width="184" height="184" loading="lazy" />
-                <span class="support-method-hint">打开支付宝扫一扫</span>
-              </figure>
-            </div>
-            <footer class="support-note">
-              <p><strong>支持完全自愿，所有功能照常使用。</strong></p>
-              <p>款项由开发者收取，用于开发和日常维护。付款前请在支付 App 中确认收款信息和金额。</p>
-            </footer>
-          </section>
         </section>
       </main>
     </div>

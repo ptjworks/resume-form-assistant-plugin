@@ -296,12 +296,22 @@ test("an empty archive gives the whole page to the empty state", async () => {
   expect(document.getElementById("apps-msg")!.textContent).toBe("");
 });
 
-test("the top bar shows the workspace routes, publisher, support and install entries", () => {
-  const routes = Array.from(document.querySelectorAll<HTMLElement>(".topbar [data-route]"), (node) => node.textContent?.trim());
-  expect(routes).toEqual(["申请", "简历", "招聘通知", "待办", "心得", "设置", "支持开发"]);
-  expect(document.querySelector(".brand-publisher")?.textContent?.trim()).toBe("PTJ Works");
-  expect(document.getElementById("nav-support")!.getAttribute("aria-controls")).toBe("view-support");
-  expect(document.getElementById("nav-install-extension")).toBeTruthy();
+test("the top bar shows the five tabs, the status button and the settings gear", () => {
+  const routes = Array.from(document.querySelectorAll<HTMLElement>(".topbar [data-route]"), (node) => node.getAttribute("aria-label") ?? node.textContent?.trim());
+  expect(routes).toEqual(["投递", "日历", "通知", "简历", "心得", "设置"]);
+  // 内部 route 名不变，只换界面文字。
+  expect(Array.from(document.querySelectorAll<HTMLElement>(".topbar [data-route]"), (node) => node.dataset.route))
+    .toEqual(["applications", "todos", "inbox", "resume", "notes", "settings"]);
+  expect(document.getElementById("nav-support")).toBeNull();
+  expect(document.getElementById("view-support")).toBeNull();
+  expect(document.getElementById("nav-install-extension")).toBeNull();
+  expect(document.getElementById("runtime-pill")!.tagName).toBe("BUTTON");
+  expect(document.querySelector(".topbar [data-inbox-dot]")!.hasAttribute("hidden")).toBe(true);
+  expect(document.querySelector(".topbar [data-route=settings] [data-update-dot]")).toBeTruthy();
+  // 支持开发的支付卡片并入「设置 → 关于」，发布者小字也搬到那里。
+  expect(document.querySelector("#settings-about .support-card")).toBeTruthy();
+  expect(document.querySelector("#settings-about .about-publisher")?.textContent?.trim()).toBe("PTJ Works");
+  expect(document.querySelector(".brand-publisher")).toBeNull();
   const version = document.getElementById("app-version")!;
   expect(version.hidden).toBe(true);
   expect(version.textContent).toBe("");

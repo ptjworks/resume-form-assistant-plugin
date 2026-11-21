@@ -5,14 +5,14 @@
 #view-settings h1 { font-size: 24px; }
 /* 首次说明在主窗口内始终可见，不随设置分类切换而隐藏。 */
 #feedback-consent:empty, #usage-notice:empty { display: none; }
-#feedback-consent .feedback-choice { margin: 16px 28px; }
+/* 首次说明收敛成顶栏下方的细条：去掉卡片的圆角、阴影，只留下边线。 */
+#feedback-consent .feedback-choice, #usage-notice .usage-notice { margin: 0; padding: 8px 20px; border-width: 0 0 1px; border-color: var(--ui-line); border-radius: 0; background: var(--ui-canvas); box-shadow: none; }
 #feedback-consent .feedback-choice .settings-dialog-head { padding: 0; }
-#feedback-consent .feedback-choice .settings-dialog-body { padding: 14px 0 4px; }
-#feedback-consent .feedback-choice .settings-dialog-actions { padding: 16px 0 0; }
-.usage-notice { margin: 16px 28px; }
-.usage-notice h2 { margin: 0 0 10px; font-size: 18px; }
-.usage-notice p { margin: 8px 0; font-size: 13px; line-height: 1.7; color: var(--muted); }
-.usage-notice .settings-dialog-actions { padding: 10px 0 0; border: 0; }
+#feedback-consent .feedback-choice h2, #usage-notice .usage-notice h2 { margin: 0 0 4px; font-size: 14px; }
+#feedback-consent .feedback-choice .settings-dialog-body { padding: 4px 0 0; }
+#feedback-consent .feedback-choice .settings-dialog-actions { padding: 8px 0 0; }
+#usage-notice .usage-notice p { margin: 4px 0; font-size: 12.5px; line-height: 1.6; color: var(--ui-muted); }
+#usage-notice .usage-notice .settings-dialog-actions { padding: 6px 0 0; border: 0; }
 .settings-heading p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1040px); gap: 24px; padding-top: 20px; align-items: start; }
 
@@ -229,6 +229,8 @@
 .about-head { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 16px; }
 .about-mark { width: 48px; height: 48px; border-radius: 12px; }
 .about-title p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.about-publisher { display: flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1; }
+.about-publisher img { display: block; border-radius: 3px; }
 .about-head + .settings-callout { margin-top: 16px; }
 .update-checked-at { float: right; margin-left: 16px; }
 .facts-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
