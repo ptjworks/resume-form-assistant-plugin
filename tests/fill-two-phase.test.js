@@ -240,6 +240,26 @@ test("#569 a job title is not written if the matching company is rejected by the
   }
 });
 
+test("#569 an existing company on another card also prevents an ambiguous title completion", async (t) => {
+  const group = "工作经历";
+  const resume = [[group, "工作经历1-公司", "虚构单位"], [group, "工作经历1-职位", "研发工程师"]];
+  const cards = '<h2>工作经历</h2>'
+    + `<div class="experience-card">${input("company-a", "公司名称", { value: "虚构单位" })}${input("title-a", "职位")}</div>`
+    + `<div class="experience-card">${input("company-b", "公司名称")}${input("title-b", "职位")}</div>`;
+  const p = page(t, cards, { resume });
+  const run = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  const call = p.worker.calls[0];
+  const company = call.fields.find(field => field.label === "公司名称" && field.repeatIndex === 2);
+  const option = catalogOf(call.prompt).find(item => item.key === "工作经历1-公司");
+  call.replyFields([{ fieldId: company.fieldId, ref: option.ref }]);
+  await run;
+  assert.equal(p.value("company-a"), "虚构单位");
+  assert.equal(p.value("company-b"), "虚构单位");
+  assert.equal(p.value("title-a"), "");
+  assert.equal(p.value("title-b"), "");
+});
+
 test("the fields local rules can fill are on the page before the AI answers; the AI's are filled after it does", async (t) => {
   const p = page(t, BASIC);
   const running = p.run();

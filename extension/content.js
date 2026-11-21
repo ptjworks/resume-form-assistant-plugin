@@ -4560,16 +4560,28 @@
           if (match.bossSchool && !bossEducationSchoolMatches(element.element, match.bossSchool)) return "education_school_unconfirmed";
           if (match.bossCompany && !bossWorkCompanyMatches(element.element, match.bossCompany)) return "work_company_unconfirmed";
           if (match.workTitleCompany) {
-            const previous = confirmedCompanyEntry || fieldMap.get(match.workTitleCompany.fieldId);
+            const { fieldId: companyId, value: expected } = match.workTitleCompany;
+            const previous = confirmedCompanyEntry || fieldMap.get(companyId);
             const anchor = previous && (isFieldBindingCurrent(previous) ? previous : rebindFieldEntry(previous));
             const row = element.binding?.workTitleRow;
             const company = anchor?.element;
             const shown = String(company?.value ?? "");
             if (!row || !company || row !== anchor.binding?.workTitleRow || !row.contains(element.element) || !row.contains(company)
-              || shown.trim() !== match.workTitleCompany.value
+              || shown.trim() !== expected
               || company.validity?.valid === false || !inspectTextCommit(company, shown, true).ok) {
               return "work_company_unconfirmed";
             }
+            // 页面上原有的公司也要参与核对，不能只看本次模型返回的匹配。
+            const internship = /^(?:实习|internship)/i;
+            const isInternship = internship.test(anchor.binding.section);
+            const duplicate = [...fieldMap].some(([fieldId, entry]) => {
+              if (fieldId === companyId || entry.binding?.workTitleRole !== "company"
+                || internship.test(entry.binding.section) !== isInternship) return false;
+              const other = isFieldBindingCurrent(entry) ? entry : rebindFieldEntry(entry);
+              const otherRow = other?.binding?.workTitleRow;
+              return otherRow && otherRow !== row && String(other.element.value ?? "").trim() === expected;
+            });
+            if (duplicate) return "work_company_unconfirmed";
             confirmedCompanyEntry = anchor;
           }
           if (!match.blocked && fieldMeta?.bossCet?.role === "score") {
