@@ -115,11 +115,8 @@ test("direct browser navigation and category switching preserve unsaved fields a
 test("every category starts with a card, so their first cards line up", () => {
   const { root } = setup();
   for (const panel of root.querySelectorAll<HTMLElement>("[data-settings-panel]")) {
-    // 每个分类先是卡片外的标题，再是卡片（邮箱的标题带「添加邮箱」按钮，后面先是状态行）。
-    const head = panel.firstElementChild!;
-    expect(head.classList.contains("settings-page-head"), panel.id).toBe(true);
-    if (panel.id === "settings-mailbox") continue;
-    const first = head.nextElementSibling!;
+    const first = panel.firstElementChild!;
+    if (panel.id === "settings-mailbox") { expect(first.classList.contains("mailbox-page-heading")).toBe(true); continue; }
     // AI 与隐私设置由 React 挂进容器，容器本身不占位（display: contents）。
     expect(first.classList.contains("settings-card") || ["ai-settings", "desktop-feedback", "desktop-usage"].includes(first.id)).toBe(true);
   }

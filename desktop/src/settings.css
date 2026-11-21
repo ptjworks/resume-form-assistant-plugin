@@ -224,11 +224,6 @@
 #orphan-report > .settings-callout { margin-top: 14px; }
 .orphan-list { margin-top: 12px; }
 
-/* 每个分类顶部的标题：放在卡片外面，让第一张卡片不贴着画布顶边。 */
-#view-settings .settings-page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 -4px; padding: 0 4px; }
-#view-settings .settings-page-head h2 { margin: 0; font-size: 22px; line-height: 1.35; font-weight: 650; letter-spacing: -.015em; color: var(--ui-ink); }
-#view-settings .settings-page-head p { margin: 4px 0 0; color: var(--ui-muted); font-size: 13.5px; line-height: 1.6; }
-
 /* 账号与云同步（Phase 2 才显示，这里只放占位结构） */
 .account-card { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px 16px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
 .account-avatar { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--ui-brand-pale); color: var(--ui-brand); }
