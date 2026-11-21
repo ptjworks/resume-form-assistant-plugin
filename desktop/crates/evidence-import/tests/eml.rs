@@ -127,6 +127,22 @@ fn an_html_only_message_is_flattened_to_text_without_anything_executable() {
 }
 
 #[test]
+fn a_chinese_html_email_preserves_literal_and_encoded_ampersands() {
+    let raw = wrap(
+        "From: hr@example.test\r\n\
+         Subject: 面试通知\r\n\
+         Content-Type: text/html; charset=\"utf-8\"",
+        "<p>面试安排&招聘团队 &amp;人事部门</p>",
+    );
+    let mail = parse_eml(&raw).expect("this is an email");
+    assert_eq!(mail.subject.as_deref(), Some("面试通知"));
+    assert_eq!(
+        mail.body_extract.as_deref(),
+        Some("面试安排&招聘团队 &人事部门")
+    );
+}
+
+#[test]
 fn a_forwarded_and_quoted_thread_stays_readable() {
     let raw = wrap(
         "From: me@example.test\r\n\
