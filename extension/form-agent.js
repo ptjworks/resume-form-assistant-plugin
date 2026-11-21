@@ -211,6 +211,7 @@
   // 从按钮往上（最多 4 层）找到第一个装着看得见的输入框的祖先，就是按钮所在的那一条；
   // 它的同层、结构相同、也装着输入框的兄弟都是条目。里面混进别的分组的按钮或条目、或者找不到，就返回 null（照旧按没有条目算）。
   const INFER_DEPTH = 4;
+  const ADD_ENTRY = /^(?:添加|新增|增加|继续添加)(?:一条|一段|一个)?(?:教育|工作|实习|项目|校园|科研|论文|获奖)?(?:经历|经验|背景|记录)?$/;
   function inferRows(button, others, isVisible) {
     const top = button.ownerDocument?.body;
     let row = button.parentElement;
@@ -220,8 +221,9 @@
     }
     if (!row || row === top || !Array.from(row.querySelectorAll(editable)).some(isVisible)) return null;
     // 往上找到的这一块里还有别的「添加 / 新增」：它跨过了别的分组（小米空的实习经历一栏往上就是整张表），不能当成条目。
+    // 只算新增一条经历的按钮（「添加」「添加一条」「添加实习经历」）；字段自己的「添加附件」「新增地址」不算（PR #543 审查）。
     const otherAdds = Array.from(row.querySelectorAll("*")).filter(el => el !== button && !button.contains(el) && !el.contains(button)
-      && /^(?:添加|新增)/.test(bare(el.textContent)) && !Array.from(el.children).some(child => /^(?:添加|新增)/.test(bare(child.textContent))));
+      && ADD_ENTRY.test(bare(el.textContent)) && !Array.from(el.children).some(child => ADD_ENTRY.test(bare(child.textContent))));
     if (otherAdds.length) return null;
     const hasInputs = el => Array.from(el.querySelectorAll(editable)).some(isVisible);
     // 按钮在条目外面、和条目列表是兄弟（北森式「列表 + 底部添加」）：第一个装着输入框的祖先是整组，条目是列表里的每一项。
@@ -578,7 +580,8 @@
   // 误认成两栏会让实习资料一条都填不进去。所以：导航、侧栏、标签页、菜单、链接里的不算；从标题往上找，
   // 先碰到装着输入框或「添加」的那一块才算，先碰到别的栏目标题（导航里的下一项）就不算。
   const SECTION_HEADINGS = [[/^(?:实习经历|实习经验)$/, "internship"], [/^(?:工作经历|工作经验)$/, "employment"]];
-  const SECTION_SKIP = "nav, aside, menu, header, footer, a[href], [role='navigation'], [role='tablist'], [role='tab'], [role='menu'], [role='menubar'], [role='menuitem']";
+  // header、footer 不在名单里：很多卡片的标题就写在 <header class="card-header"> 里，后面跟着输入框（PR #543 审查）。
+  const SECTION_SKIP = "nav, aside, menu, a[href], [role='navigation'], [role='tablist'], [role='tab'], [role='menu'], [role='menubar'], [role='menuitem']";
   const MODULE_TITLE = /^(?:基本信息|个人信息|求职意向|教育(?:经历|背景)|实习(?:经历|经验)|工作(?:经历|经验)|项目(?:经历|经验)|校园(?:经历|经验)|社会实践|获奖(?:经历|情况)?|荣誉|证书|技能|语言能力|自我评价|家庭(?:成员|情况)|附件)$/;
   const SECTION_FIELDS = "input:not([type='hidden']), select, textarea, [contenteditable]:not([contenteditable='false']), [role='combobox'], [role='textbox']";
   const ADD_TEXT = /^[+＋]?(?:添加|新增|增加|继续添加)/;

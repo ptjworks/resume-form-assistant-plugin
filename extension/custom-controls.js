@@ -1027,15 +1027,23 @@
     const itemIn = (list, text) => Array.from(list?.querySelectorAll(antd(list, '.ant-date-picker-period-month-panel-list-item')) || [])
       .filter(item => trim(item.textContent) === text);
     ctx.observed = { ...ctx.observed, popupRole: 'calendar' };
-    let autoOpened = null;
+    // 点开过面板以后失败：把还开着的期间面板都收起来，不留在页面上挡住、干扰后面的字段（PR #543 审查）。用户停止时不再动页面。
+    const failWith = async reason => {
+      if (!h.stop(ctx)) for (const layer of panels()) await leaveCalendar(ctx, ctx.el, root, layer, h);
+      return { reason };
+    };
+    let autoOpened = null, pickedStart = false;
     for (const index of [0, 1]) {
       if (!want[index] || periodText(label(index)) === want[index]) { autoOpened = null; continue; }
       let layer = autoOpened && autoOpened.isConnected && h.visible(autoOpened) ? autoOpened : null;
+      // 刚选完开始：网站会自动打开结束的面板，只是可能比上面等的时间慢一点才画出来。这时页面上正好开着一块就是它，直接用；
+      // 再去点结束的标签，标签是开关，会把它点关。
+      if (!layer && index === 1 && pickedStart && panels().length === 1) layer = panels()[0];
       if (!layer) {
         const before = new Set(panels());
         const reason = h.click(label(index), ctx); if (reason) return { reason };
         const opened = await h.waitUntil(ctx, doc.documentElement, () => { const fresh = panels().filter(item => !before.has(item)); return fresh.length === 1 ? fresh[0] : null; }, Boolean, 1500);
-        if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
+        if (opened.reason) return await failWith(opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason);
         layer = opened.value;
       }
       ctx.popup = layer;
@@ -1043,13 +1051,14 @@
       const years = itemIn(lists(layer)[0], year);
       if (years.length !== 1) { await leaveCalendar(ctx, ctx.el, root, layer, h); return { reason: 'no_option_match' }; }
       years[0].scrollIntoView?.({ block: 'nearest' });
-      let reason = h.click(years[0], ctx, true); if (reason) return { reason };
+      let reason = h.click(years[0], ctx, true); if (reason) return await failWith(reason);
       const months = await h.waitUntil(ctx, doc.documentElement, () => { const found = itemIn(lists(layer)[1], mm); return found.length === 1 ? found[0] : null; }, Boolean, 1500);
       if (months.reason) { await leaveCalendar(ctx, ctx.el, root, layer, h); return { reason: months.reason === 'verification_timeout' ? 'no_option_match' : months.reason }; }
       months.value.scrollIntoView?.({ block: 'nearest' });
-      reason = h.click(months.value, ctx, true); if (reason) return { reason };
+      reason = h.click(months.value, ctx, true); if (reason) return await failWith(reason);
       const shown = await h.waitUntil(ctx, doc.documentElement, () => periodText(label(index)) === want[index], Boolean, 1500);
-      if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'selection_not_committed' : shown.reason };
+      if (shown.reason) return await failWith(shown.reason === 'verification_timeout' ? 'selection_not_committed' : shown.reason);
+      if (index === 0) pickedStart = true;
       // 选完开始，网站自动打开结束的面板（可能就是同一块换了内容）：要接着选结束就用它，不要再去点结束的标签（再点会收起）。
       // 等开始的面板退场（200ms）再看：那时开着的唯一一块就是结束的面板。
       const pickedAt = Date.now();

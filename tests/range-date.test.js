@@ -558,7 +558,7 @@ test("#301 an unknown range that only takes whole days still gets them when the 
 
 // #301 小米（飞书招聘旧版 atsx 组件，这里用 ant- 前缀）的年月区间：两个「YYYY-MM」标签，背后只有一个不存值的隐藏输入框。
 // 点标签打开「年份列 | 月份列」的面板；点年份、再点月份就选好；选完开始，网站自动打开结束的面板。
-function periodPicker(title = "起止时间", { rerender = false } = {}) {
+function periodPicker(title = "起止时间", { rerender = false, reject = false } = {}) {
   const label = (part) => `<div class="ant-date-picker-period-month-label" data-part="${part}"><span>YYYY</span><span>-</span><span>MM</span></div>`;
   const h = load(`<div class="row"><label class="row-label">${title}</label>
     <div class="ant-date-picker ant-date-picker-period-month">${label(0)}<div class="ant-date-picker-period-line"></div>${label(1)}
@@ -586,6 +586,7 @@ function periodPicker(title = "起止时间", { rerender = false } = {}) {
       months.innerHTML = Array.from({ length: 12 }, (_, i) => `<div class="ant-date-picker-period-month-panel-list-item">${String(i + 1).padStart(2, "0")}</div>`).join("");
       panel.append(months);
       months.querySelectorAll(".ant-date-picker-period-month-panel-list-item").forEach((m) => m.addEventListener("click", () => {
+        if (reject) return; // 网站没收下这次选择：标签不变，面板也不收
         if (rerender) {
           // 组件选完重画标签：换成新的节点，旧节点脱离页面（PR #543 审查 B3）。
           const fresh = labels[part].cloneNode(false);
@@ -626,6 +627,18 @@ test("#543 a period picker that re-renders its labels after each pick is still r
   const result = await h.api.operate(start, value, { range: { entry: end, value } });
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(h.shown(), ["2022-09", "2027-06"]);
+});
+
+// PR #543 审查（A10）：网站没收下选择时，面板不能留在页面上，下一个字段会把它当成自己的弹层。
+test("#543 a period pick the site does not take leaves no panel open on the page", async () => {
+  const h = periodPicker("起止时间", { reject: true });
+  const { start, end } = parts(h.doc, "起止时间");
+  const value = "2022.09 - 2027.06";
+  const result = await h.api.operate(start, value, { range: { entry: end, value } });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "selection_not_committed");
+  assert.equal(h.isOpen(), false);
+  assert.equal(h.doc.querySelectorAll(".ant-date-picker-dropdown").length, 0);
 });
 
 test("#301 a lone start closes the end panel the page opened, and a year off the list is not guessed", async () => {
