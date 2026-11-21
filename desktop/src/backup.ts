@@ -16,7 +16,7 @@ export interface Message {
 
 /** 导出按钮旁边常驻的说明。三句话，一句都不能少；界面上逐条列出。 */
 export const EXPORT_POINTS = [
-  "备份是一个 ZIP 文件，包含全部申请（含回收站）、时间线记录、待办、回复证据（含附件）和简历快照。",
+  "备份是一个 ZIP 文件，包含全部申请（含回收站）、时间线记录、待办、回复证据（含附件）和当时交的简历。",
   "文件不加密，里面有简历和邮件内容，请放在自己控制的位置。",
   "API Key、日志和这台机器专属的配置不会进备份。",
 ];
@@ -92,7 +92,7 @@ export function restoreRows(preview: RestorePreview): RestoreRow[] {
     row("时间线记录", current.events, incoming.events),
     row("待办", current.todos, incoming.todos),
     row("回复证据", current.evidence, incoming.evidence),
-    row("简历快照", current.snapshots, incoming.snapshots),
+    row("当时交的简历", current.snapshots, incoming.snapshots),
     row("附件", current.attachments, incoming.attachments),
   ];
 }
@@ -188,7 +188,7 @@ export function purgeRows(preview: PurgePreview): Array<[string, string]> {
     ["时间线记录", `${preview.events} 条`],
     ["待办", `${preview.todos} 条`],
     ["回复证据", `${preview.evidence} 份`],
-    ["简历快照", `${preview.snapshots} 份`],
+    ["当时交的简历", `${preview.snapshots} 份`],
   ];
 }
 

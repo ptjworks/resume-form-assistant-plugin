@@ -133,7 +133,7 @@ test("restore preview is one dialog with every count; refreshing the category ke
   expect(box.getByText("example-backup.zip")).toBeTruthy();
   expect(box.getByText(/来自另一个档案/)).toBeTruthy();
   const rows = Array.from(dialog()!.querySelectorAll("tbody tr"), (tr) => Array.from(tr.children, (cell) => cell.textContent));
-  expect(rows.map((row) => row[0])).toEqual(["申请", "回收站里的申请", "时间线记录", "待办", "回复证据", "简历快照", "附件"]);
+  expect(rows.map((row) => row[0])).toEqual(["申请", "回收站里的申请", "时间线记录", "待办", "回复证据", "当时交的简历", "附件"]);
   expect(rows[0].slice(1)).toEqual(["1", "2"]);
   expect(rows[1].slice(1)).toEqual(["0", "1"]);
   expect(box.getByText(/时间线记录是每条申请「时间线」里的条目/)).toBeTruthy();
