@@ -1,8 +1,8 @@
 /* 设置页（#265）：左侧分类导航 + 右侧白色圆角卡片，与申请页、简历页同一套工作区。
    规则都挂在 #view-settings 或 .settings-dialog 下，不改全局 button / dialog / h2 / row。 */
 
-#view-settings { max-width: none; margin: 0; padding: 24px 28px 40px; background: var(--surface); }
-#view-settings h1 { font-size: 24px; }
+/* 整页分两栏：左边 208px 纯白分类导航，右边 #fafafa 画布，卡片在画布里居中、最宽 672px（#549）。画布自己滚动，导航不动。 */
+#view-settings { height: 100%; min-height: 0; max-width: none; margin: 0; padding: 0; overflow: hidden; background: var(--ui-surface); font-family: var(--ui-font); }
 /* 首次说明在主窗口内始终可见，不随设置分类切换而隐藏。 */
 #feedback-consent:empty, #usage-notice:empty { display: none; }
 /* 首次说明收敛成顶栏下方的细条：去掉卡片的圆角、阴影，只留下边线。 */
@@ -13,26 +13,30 @@
 #feedback-consent .feedback-choice .settings-dialog-actions { padding: 8px 0 0; }
 #usage-notice .usage-notice p { margin: 4px 0; font-size: 12.5px; line-height: 1.6; color: var(--ui-muted); }
 #usage-notice .usage-notice .settings-dialog-actions { padding: 6px 0 0; border: 0; }
-.settings-heading p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
-.settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1040px); gap: 24px; padding-top: 20px; align-items: start; }
+.settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1fr); height: 100%; min-height: 0; }
 
 /* 左侧分类 */
-.settings-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 4px; }
-.settings-nav button { position: relative; display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 9px 14px; border: 0; border-radius: 10px; background: transparent; color: #4a5361; font-size: 14px; text-align: left; }
-.settings-nav button .icon { width: 18px; height: 18px; color: #7b8494; }
-.settings-nav button:hover:not(:disabled) { background: #eceff3; border-color: transparent; color: var(--ink); }
-.settings-nav button[aria-selected="true"], .settings-nav button[aria-selected="true"]:hover:not(:disabled) { background: var(--accent-pale); color: var(--accent); font-weight: 600; }
-.settings-nav button[aria-selected="true"] .icon { color: var(--accent); }
-.settings-nav button[aria-selected="true"]::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--accent); }
+.settings-nav { display: flex; flex-direction: column; gap: 2px; min-height: 0; padding: 16px 12px; overflow-y: auto; background: var(--ui-surface); border-right: 1px solid var(--ui-line); }
+.settings-nav button { position: relative; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--ui-sub); font-size: 14px; text-align: left; }
+.settings-nav button .icon { width: 17px; height: 17px; color: var(--ui-faint); }
+.settings-nav button:hover:not(:disabled) { background: var(--ui-line-soft); border-color: transparent; color: var(--ui-ink); }
+.settings-nav button[aria-selected="true"], .settings-nav button[aria-selected="true"]:hover:not(:disabled) { background: var(--ui-brand-pale); color: var(--ui-brand); font-weight: 600; }
+.settings-nav button[aria-selected="true"] .icon { color: var(--ui-brand); }
+.settings-nav button .update-dot { margin-left: auto; vertical-align: baseline; background: var(--ui-dot-error); }
 
 /* 右侧内容 */
-.settings-content { min-width: 0; }
-.settings-section { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.settings-content { min-width: 0; min-height: 0; padding: 40px clamp(24px, 5vw, 56px) 64px; overflow-y: auto; background: var(--ui-surface); }
+.settings-section { display: flex; flex-direction: column; gap: 0; min-width: 0; max-width: 672px; margin: 0 auto; }
 .settings-section:focus-visible { outline-offset: 6px; border-radius: 16px; }
 #ai-settings, #desktop-feedback, #desktop-usage { display: contents; }
 
-.settings-card { min-width: 0; padding: 20px 24px; border: 1px solid var(--card-line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); }
-.settings-card-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+/* 无框：右侧整块白底，各组之间只靠留白和一条细分割线分开；每个分类的第一组不画上线。 */
+.settings-card { min-width: 0; padding: 32px 0; border: 0; border-top: 1px solid var(--ui-line); border-radius: 0; background: transparent; box-shadow: none; }
+.settings-section > .settings-card:first-child, #ai-settings > .settings-card:first-child, #desktop-usage > .settings-card:first-child, #settings-mailbox .settings-card { padding-top: 0; border-top: 0; }
+.settings-section > .settings-card:first-child { padding-top: 0; }
+#settings-mailbox .settings-card { padding-top: 0; }
+.settings-section .settings-card.provider-editor { margin: 8px 0; padding: 24px; border: 1px solid var(--ui-brand-line); border-radius: 12px; }
+.settings-card-head { padding-bottom: 12px; }
 .settings-card-head.has-aside { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .settings-card-head.has-aside > div:first-child { min-width: 0; flex: 1 1 280px; }
 #view-settings .settings-card h2 { margin: 0; font-size: 17px; line-height: 1.4; font-weight: 650; letter-spacing: -.01em; }
@@ -116,14 +120,14 @@
 .settings-fold > summary { width: fit-content; color: var(--ink); font-weight: 500; }
 .settings-fold[open] > summary { margin-bottom: 10px; }
 .settings-card-fold { padding: 0; }
-.settings-card-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; list-style: none; border-radius: 16px; }
+.settings-card-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px 0; list-style: none; border-radius: 14px; }
 .settings-card-fold > summary::-webkit-details-marker { display: none; }
 .settings-card-fold > summary:focus-visible { outline-offset: -2px; }
 .settings-fold-title { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
 .settings-fold-title::before { content: ""; width: 7px; height: 7px; border-right: 2px solid #7b8494; border-bottom: 2px solid #7b8494; transform: rotate(-45deg); transition: transform 140ms; }
 .settings-card-fold[open] > summary .settings-fold-title::before { transform: rotate(45deg); }
 .settings-fold-hint { color: var(--muted); font-size: 12px; text-align: right; }
-.settings-fold-body { padding: 16px 24px 20px; border-top: 1px solid var(--line); }
+.settings-fold-body { padding: 0 0 28px; }
 .settings-fold-body > :first-child { margin-top: 0; }
 .settings-count { color: var(--muted); font-size: 13px; font-weight: 400; }
 .settings-note-fold { margin-top: 14px; padding: 10px 14px; border: 1px solid #d6e7e1; border-radius: 10px; background: #f4f8f6; font-size: 13px; }
@@ -153,7 +157,7 @@
 .settings-divider { margin: 20px 0 16px; border-top: 1px solid var(--line); }
 .settings-subhead { margin: 0 0 12px !important; }
 .install-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
-.install-steps li { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border: 1px solid var(--card-line); border-radius: 12px; background: #fafbfc; }
+.install-steps li { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
 .install-steps span { color: var(--accent); font-size: 12px; font-weight: 600; }
 .install-steps strong { font-size: 14px; }
 .install-steps p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
@@ -184,9 +188,9 @@
 .provider-add label { flex-direction: row; color: var(--muted); font-size: 12px; white-space: nowrap; }
 #view-settings .provider-add select { min-height: 36px; padding: 4px 32px 4px 10px; }
 .provider-list { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
-.provider-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 16px; padding: 14px 16px; border: 1px solid var(--card-line); border-radius: 12px; background: var(--panel); }
-.provider-item.active { border-color: #9fcabe; background: #f4faf8; box-shadow: inset 3px 0 var(--accent); }
-.provider-item.editing { border-style: dashed; }
+.provider-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 16px; padding: 14px 16px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
+.provider-item.active { background: var(--ui-brand-pale); box-shadow: inset 3px 0 var(--ui-brand); }
+.provider-item.editing { border: 1px dashed var(--ui-brand-line); background: var(--ui-surface); }
 .provider-main { display: grid; gap: 6px; min-width: 0; }
 .provider-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .provider-title strong { font-size: 14px; overflow-wrap: anywhere; }
@@ -204,28 +208,37 @@
 .settings-empty { margin-top: 16px; padding: 20px; border: 1px dashed var(--card-line); border-radius: 12px; background: #fbfcfc; text-align: center; }
 .settings-empty strong { font-size: 14px; }
 .settings-empty p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
-.provider-editor { border-color: #b9d7cf; }
+.provider-editor { border: 1px solid var(--ui-brand-line); }
 .model-candidates { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 0; padding: 0; list-style: none; }
 #view-settings .model-candidates button { min-height: 28px; padding: 2px 10px; border-radius: 999px; font: 12px/1.5 Menlo, Consolas, monospace; }
 #view-settings .model-candidates button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-pale); color: var(--accent); }
 
 /* 数据与备份 */
-.settings-points { margin: 14px 0 16px; padding: 12px 16px 12px 32px; border: 1px solid var(--card-line); border-radius: 10px; background: #f8faf9; color: #4a5361; font-size: 13px; line-height: 1.7; }
+.settings-points { margin: 14px 0 16px; padding: 12px 16px 12px 32px; border: 0; border-radius: 10px; background: var(--ui-canvas); color: #4a5361; font-size: 13px; line-height: 1.7; }
 .settings-points li + li { margin-top: 4px; }
 .settings-points li:nth-child(2) { color: #7c5a12; }
 .settings-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.settings-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--card-line); border-radius: 10px; background: #fafbfc; }
+.settings-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 0; border-radius: 10px; background: var(--ui-canvas); }
 .settings-list li > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .settings-list li strong { font-size: 14px; overflow-wrap: anywhere; }
 .settings-list li span, .settings-list li code { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .settings-list li > button, .settings-list-actions { flex: none; }
 .settings-list-actions { display: flex; gap: 8px; }
-.settings-list li.settings-list-empty { display: block; border-style: dashed; background: transparent; color: var(--muted); font-size: 13px; }
-.settings-list li.settings-list-empty.is-error { border-style: solid; border-color: #edc5c5; background: #fcf1f1; color: var(--danger); }
+.settings-list li.settings-list-empty { border: 1px dashed var(--ui-line); display: block; border-style: dashed; background: transparent; color: var(--muted); font-size: 13px; }
+.settings-list li.settings-list-empty.is-error { border: 1px solid #edc5c5; border-color: #edc5c5; background: #fcf1f1; color: var(--danger); }
 #orphan-report > .settings-callout { margin-top: 14px; }
 .orphan-list { margin-top: 12px; }
 
-/* 关于与诊断 */
+/* 账号与云同步（Phase 2 才显示，这里只放占位结构） */
+.account-card { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px 16px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
+.account-avatar { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--ui-brand-pale); color: var(--ui-brand); }
+.account-avatar .icon { width: 20px; height: 20px; }
+.account-card p { margin: 0; }
+.account-name { color: var(--ui-ink); font-size: 14px; font-weight: 600; }
+.account-sub { color: var(--ui-muted); font-size: 12.5px; }
+.settings-card > .setting-row:last-child { padding-bottom: 0; }
+
+/* 隐私与关于 */
 .about-head { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 16px; }
 .about-mark { width: 48px; height: 48px; border-radius: 12px; }
 .about-title p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
@@ -234,7 +247,7 @@
 .about-head + .settings-callout { margin-top: 16px; }
 .update-checked-at { float: right; margin-left: 16px; }
 .facts-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
-.facts-group { min-width: 0; padding: 12px 14px; border: 1px solid var(--card-line); border-radius: 12px; background: #fafbfc; }
+.facts-group { min-width: 0; padding: 12px 14px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
 #view-settings .facts-group h3 { margin: 0 0 8px; font-size: 13px; }
 #view-settings .facts-group .facts { grid-template-columns: minmax(84px, 128px) minmax(0, 1fr); gap: 6px 12px; padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; }
 #view-settings .facts-group code { font-size: 11.5px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -275,9 +288,10 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 .settings-dialog textarea { padding: 10px 12px; resize: vertical; }
 .settings-dialog .settings-callout { margin: 0; }
 /* 「备份到本机」「备份到坚果云」整张卡可收起：标题和说明在折叠栏里，收起后仍看得出是做什么的。 */
-.backup-fold > summary { align-items: flex-start; padding: 20px 24px; }
+.backup-fold > summary { align-items: flex-start; padding: 28px 0 20px; }
 .backup-fold > summary > div { min-width: 0; }
-.backup-fold > summary p { margin: 4px 0 0 17px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.settings-section > .settings-card-fold:first-child > summary { padding-top: 0; }
+.backup-fold > summary p { margin: 4px 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.65; }
 .backup-fold > summary .settings-fold-hint { flex: none; padding-top: 3px; }
 .backup-fold > .settings-fold-body > .settings-callout:last-child { margin-top: 14px; }
 /* 坚果云备份（#315）：先看状态和主操作，三个设置分组折叠在下面，按钮紧挨所控制的字段。 */
@@ -317,18 +331,20 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 .cloud-form-actions { justify-content: flex-start; }
 .feedback-preview { max-height: 280px; margin: 0; padding: 12px 14px; overflow: auto; border: 1px solid var(--card-line); border-radius: 8px; background: #f4f7f6; font: 12px/1.6 Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 1180px) {
-  #view-settings { padding: 20px 20px 32px; }
-  .settings-layout { grid-template-columns: 176px minmax(0, 1fr); gap: 20px; }
   .install-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 960px) {
   .facts-groups { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
   .settings-form-grid { grid-template-columns: minmax(0, 1fr); }
 }
-@media (max-width: 900px) {
-  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; padding-top: 12px; }
-  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }
-  .settings-nav button[aria-selected="true"]::before { display: none; }
+@media (max-width: 720px) {
+  /* 窗口最小 860，窄到这里只可能是被外部缩放；导航改到顶部，免得挤掉内容。 */
+  #view-settings { overflow-y: auto; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 100%; }
+  .settings-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--ui-line); }
+  .settings-content { overflow: visible; }
   .setting-row { flex-wrap: wrap; }
   .provider-item { grid-template-columns: minmax(0, 1fr); }
   .provider-actions { justify-content: flex-start; }
@@ -344,6 +360,21 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 }
 #view-settings button[aria-busy="true"], .settings-dialog button[aria-busy="true"] { cursor: progress; opacity: .7; }
 #view-settings input[aria-busy="true"] { cursor: progress; opacity: .7; }
+
+/* 邮箱页（#549）：这一页的标题、状态行和说明不在卡片里，无框版面下要自己撑开间距。 */
+#settings-mailbox { gap: 28px; }
+#settings-mailbox .mailbox-page-heading { margin: 0; }
+#settings-mailbox .mailbox-page-heading h2 { font-size: 17px; line-height: 1.4; font-weight: 650; letter-spacing: -.01em; }
+#settings-mailbox .mailbox-page-heading p { margin: 4px 0 0; font-size: 13px; line-height: 1.65; }
+#settings-mailbox > .settings-inline-msg { margin: 0; }
+#settings-mailbox #mailbox-retry-read { align-self: flex-start; }
+#settings-mailbox .mailbox-empty { min-height: 280px; padding: 40px 0; }
+#settings-mailbox > .settings-caption { margin: 0; padding-top: 24px; border-top: 1px solid var(--ui-line); }
+#settings-mailbox > .settings-fold { margin: -16px 0 0; }
+#settings-mailbox .mailbox-account { padding: 20px 0; }
+#settings-mailbox .mailbox-account:first-child { padding-top: 12px; border-top: 0; }
+#settings-mailbox .mailbox-list-toolbar { padding-bottom: 4px; }
+#settings-mailbox .settings-card { padding-bottom: 0; }
 
 /* 邮箱设置页；招聘通知里的候选列表样式归 workspace stylesheet。 */
 .mailbox-candidates { list-style: none; }

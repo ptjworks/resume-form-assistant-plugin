@@ -122,7 +122,7 @@ label.button-like.disabled { cursor: default; opacity: .45; }
 .update-notice .update-notice-close:hover:not(:disabled) { background: #d4ece5; border-color: transparent; }
 .update-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: #d9a53c; vertical-align: 2px; }
 main { min-width: 0; min-height: 0; overflow: auto; }
-.view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos):not(#view-notes) { padding: 28px 32px 40px; max-width: 1160px; margin: auto; }
+.view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos):not(#view-notes):not(#view-settings) { padding: 28px 32px 40px; max-width: 1160px; margin: auto; }
 h1 { margin: 0; font-size: 24px; line-height: 30px; font-weight: 650; letter-spacing: -.025em; }
 h2 { margin: 28px 0 8px; font-size: 18px; }
 h3 { font-size: 14px; font-weight: 600; }
@@ -150,7 +150,7 @@ main > #banner { margin: 0; padding: 6px 20px; border-width: 0 0 1px; border-rad
 .support-card-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 .support-card-head p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
 .support-methods { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
-.support-method { margin: 0; padding: 14px 12px 12px; display: grid; justify-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; }
+.support-method { margin: 0; padding: 14px 12px 12px; display: grid; justify-items: center; gap: 9px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
 .support-method figcaption { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; }
 .payment-dot { width: 7px; height: 7px; border-radius: 50%; }
 .payment-dot.wechat { background: #07a75d; }
@@ -334,7 +334,7 @@ dialog .row:last-child { justify-content: flex-end; margin-top: 8px; }
 @media (max-width: 960px) {
   .brand-version { display: none; }
   #view-applications { height: 100%; }
-  .view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos) { padding: 24px; }
+  .view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos):not(#view-settings) { padding: 24px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
