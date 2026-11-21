@@ -53,6 +53,7 @@ import {
   QUIT_WARNING,
   describeCapability,
 } from "./todos.ts";
+import { bootPlatform } from "./platform/boot.ts";
 import { describeDialogError, factList, fragment, openSettingsDialog, paragraph } from "./settings-dialog.ts";
 
 const invoke: Invoke | undefined = window.__TAURI__?.core?.invoke;
@@ -676,29 +677,34 @@ const refreshCloudBackup = mountCloudBackup(backupCommand, async () => {
 const showBackup = async () => { await Promise.all([refreshLocalBackup(), refreshCloudBackup()]); };
 void renderReminderSettings().catch(() => {});
 
-showRoute("applications");
-// 插件要打开的页面由桌面记着，这里取。冷启动时请求比页面先到，光靠事件会丢（#183）。
-// 放在默认页之后，免得取到的页面又被切回首页。
-const listenForViews = events?.listen;
-if (invoke && listenForViews) {
-  void followRequestedViews({
-    listen: (name, handler) => listenForViews(name, () => handler()),
-    take: () => invoke<string | null>("take_requested_view_cmd"),
-    show: async (target) => {
-      if (!(await navigate(target.route))) return;
-      if (target.settingsTab) settingsNavigation.select(target.settingsTab);
-    },
-  }).catch(() => {});
+/** 启动：先过平台步骤（显示开关、启动闸门），再走原有的启动流程。不用顶层 await。 */
+async function boot() {
+  await bootPlatform(document);
+  showRoute("applications");
+  // 插件要打开的页面由桌面记着，这里取。冷启动时请求比页面先到，光靠事件会丢（#183）。
+  // 放在默认页之后，免得取到的页面又被切回首页。
+  const listenForViews = events?.listen;
+  if (invoke && listenForViews) {
+    void followRequestedViews({
+      listen: (name, handler) => listenForViews(name, () => handler()),
+      take: () => invoke<string | null>("take_requested_view_cmd"),
+      show: async (target) => {
+        if (!(await navigate(target.route))) return;
+        if (target.settingsTab) settingsNavigation.select(target.settingsTab);
+      },
+    }).catch(() => {});
+  }
+  refreshStatus().catch((err: unknown) => {
+    showPill({ tone: "error", text: "读不到运行状态", title: String(err) });
+  });
+  applications.refreshList().catch((err: unknown) => {
+    must("apps-msg").textContent = String(err);
+  });
+  setInterval(() => {
+    refreshStatus().catch(() => {});
+  }, 4000);
 }
-refreshStatus().catch((err: unknown) => {
-  showPill({ tone: "error", text: "读不到运行状态", title: String(err) });
-});
-applications.refreshList().catch((err: unknown) => {
-  must("apps-msg").textContent = String(err);
-});
-setInterval(() => {
-  refreshStatus().catch(() => {});
-}, 4000);
+void boot();
 
 // --- 版本与更新 ---------------------------------------------------------------------------
 

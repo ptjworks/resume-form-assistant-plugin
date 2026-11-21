@@ -1063,3 +1063,7 @@ dialog.ai-review-dialog.is-wide { max-width: 860px; }
 /* Cloud backup reuses the native settings card/dialog hierarchy. */
 
 .evidence-recycled-note { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+
+/* 平台入口（登录、云同步、社区广场、新手引导）：能力开关关闭时隐藏。见 src/platform/README.md。
+   不用 hidden 属性，因为设置面板本来就靠它切分类。 */
+[data-platform][data-platform-off] { display: none !important; }
