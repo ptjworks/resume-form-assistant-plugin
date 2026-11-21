@@ -1585,7 +1585,7 @@
         .map((candidate) => ({ applicationId: candidate.applicationId, company: candidate.company, title: candidate.title, label: copy.describeApplicationChoice(candidate) }));
       if (!candidates.length) {
         const empty = copy.describeFillArchiveEmpty();
-        setRowUi(key, { busy: false, mode: "", message: { tone: empty.tone, text: `${empty.text}请先点「保存」把岗位存到桌面，再回来选择。` } });
+        setRowUi(key, { busy: false, mode: "", message: { tone: empty.tone, text: `${empty.text}请先点「保存岗位」存到桌面，再回来选择。` } });
         return;
       }
       setRowUi(key, { busy: false, mode: "choices", candidates, allowNew: false, prompt: copy.FILL_ARCHIVE_CHOOSE, message: null });
@@ -1718,7 +1718,7 @@
   function applyJobSave(snapshot, tabId = currentTabId) {
     const next = snapshot && snapshot.draftId ? snapshot : null;
     if (!next && jobSave && snapshot?.discarded === "page-changed") {
-      toast("网页已经换成别的页面，刚才的岗位内容已作废。请重新点「保存」。");
+      toast("网页已经换成别的页面，刚才的岗位内容已作废。请重新点「保存岗位」。");
     }
     // An older answer for the same draft (a poll that left before a click) is not news.
     if (next && jobSave && next.draftId === jobSave.draftId && next.version < jobSave.version && jobSave.tabId === tabId) return;
@@ -1964,7 +1964,7 @@
     submitSeen = { tabId, epoch: snapshot.epoch, version: snapshot.version };
     const next = snapshot.confirmId ? snapshot : null;
     if (!next && submitConfirm && snapshot.discarded === "page-changed") {
-      toast("网页已经换成别的页面，刚才核对的内容已作废。请重新点「已投递」。");
+      toast("网页已经换成别的页面，刚才核对的内容已作废。请重新点「我已投递」。");
     }
     submitConfirm = next ? { ...next, tabId } : null;
     if (!next) submitLocalError = "";
@@ -2062,7 +2062,7 @@
     elements.jobSaveButton.disabled = noPage || jobPending;
     elements.jobSaveButton.title = noPage ? "当前网页没有连接填表助手，无法保存岗位。" : "";
     elements.jobHint.hidden = !noPage || active;
-    elements.jobSaveButton.textContent = "保存";
+    elements.jobSaveButton.textContent = "保存岗位";
 
     elements.jobProgress.hidden = !(phase === "extracting" || phase === "assist");
     if (phase === "extracting") {

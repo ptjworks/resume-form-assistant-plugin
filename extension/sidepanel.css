@@ -170,21 +170,21 @@ button:disabled { cursor: not-allowed; }
 .upload-row__note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .upload-row__note button { margin-left: 4px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; text-decoration: underline; }
 
-/* 投递流转条：公司 · 岗位 + 保存 + 已投递，一行放下 */
-.flow-bar { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
-.flow-bar__row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.flow-bar__info { display: grid; gap: 2px; min-width: 0; }
-.flow-bar__label { margin: 0; color: var(--muted); font-size: 12px; font-weight: 500; }
-.flow-bar__row:has(.job-summary:not([hidden])) .flow-bar__label { display: none; }
-.flow-bar__info > .chip { display: none; }
+/* 投递记录条：说清楚「存到桌面投递页」，两个按钮各带一句说明 */
+.flow-bar { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.flow-bar__label { margin: 0; color: var(--ink); font-size: 13px; font-weight: 650; }
+.flow-bar > .chip { display: none; }
 .job-summary { min-width: 0; }
 .job-summary p { margin: 0; }
 .job-summary__title { color: var(--ink); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .job-summary__meta { margin-top: 1px !important; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.flow-actions { display: flex; flex: none; gap: 6px; }
-.job-save-button { min-height: 30px; padding: 3px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.flow-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.job-save-button { --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3.5h10a1 1 0 0 1 1 1V20l-6-3.5L6 20V4.5a1 1 0 0 1 1-1z'/%3E%3C/svg%3E"); display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.job-save-button::before { content: ""; width: 15px; height: 15px; flex: none; background: currentColor; -webkit-mask: var(--glyph) center / contain no-repeat; mask: var(--glyph) center / contain no-repeat; }
+.job-submit-button { --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='m8.5 12.3 2.4 2.4 4.8-5'/%3E%3C/svg%3E"); }
 .job-save-button:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-pale); color: var(--accent-strong); }
 .job-save-button:disabled { border-color: var(--line); color: var(--faint); }
+.flow-bar__help { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .desktop-status { margin-top: 10px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--ink); font-size: 12px; white-space: pre-wrap; }
 .queue-center { margin-top: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .queue-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 6px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); font-size: 13px; font-weight: 600; text-align: left; }
@@ -499,8 +499,6 @@ button:disabled { cursor: not-allowed; }
   .view-scroll { padding: 10px 10px 16px; }
   .dock-header, .dock-tabs { padding-left: 10px; padding-right: 10px; }
   .status-strip { margin-left: 10px; margin-right: 10px; }
-  .flow-bar__row { flex-wrap: wrap; }
-  .flow-actions { margin-left: auto; }
   .card { padding: 12px; }
   .field-row__actions { grid-template-columns: repeat(3, 28px); gap: 3px; }
   .field-group__body { padding: 2px 10px 10px; }

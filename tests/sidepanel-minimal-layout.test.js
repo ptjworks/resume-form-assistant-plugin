@@ -37,8 +37,8 @@ test('填写 tab: template on top, full-width 一键 AI 填写, then two light t
   assert.match(fill, /id="fill-button" type="button">一键 AI 填写<\/button>/);
   assert.match(fill, /id="deep-button"[^>]*>深度分析本页<\/button>/);
   assert.match(fill, /id="repeat-button" type="button">辅助新增经历<\/button>/);
-  assert.match(fill, /id="job-save-button"[^>]*>保存<\/button>/);
-  assert.match(fill, /id="submit-confirm-button"[^>]*>已投递<\/button>/);
+  assert.match(fill, /id="job-save-button"[^>]*>保存岗位<\/button>/);
+  assert.match(fill, /id="submit-confirm-button"[^>]*>我已投递<\/button>/);
   assert.ok(at('id="queue-toggle"') > at('id="submit-confirm-button"'), '待同步 sits under the flow bar');
   assert.match(css, /\.fill-button \{[^}]*background: var\(--accent\)/);
   assert.doesNotMatch(css, /gradient/, 'no gradients anywhere in the side panel');

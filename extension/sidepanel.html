@@ -127,20 +127,17 @@
             </div>
 
             <section id="job-save" class="flow-bar" aria-labelledby="flow-title">
-              <div class="flow-bar__row">
-                <div class="flow-bar__info">
-                  <h2 id="flow-title" class="flow-bar__label">投递流转</h2>
-                  <div id="job-summary" class="job-summary" hidden>
-                    <p id="job-summary-title" class="job-summary__title"></p>
-                    <p id="job-summary-meta" class="job-summary__meta"></p>
-                  </div>
-                  <span id="job-summary-badge" class="chip chip--ok" hidden>已读取岗位</span>
-                </div>
-                <div class="flow-actions">
-                  <button class="job-save-button" id="job-save-button" type="button" title="保存岗位到桌面端" aria-label="保存岗位到桌面端">保存</button>
-                  <button class="job-save-button job-submit-button" id="submit-confirm-button" type="button" title="你已经在招聘网站投递之后，在这里告诉桌面。插件不会替你提交申请。" aria-label="确认已投递">已投递</button>
-                </div>
+              <h2 id="flow-title" class="flow-bar__label">记录到桌面投递页</h2>
+              <div id="job-summary" class="job-summary" hidden>
+                <p id="job-summary-title" class="job-summary__title"></p>
+                <p id="job-summary-meta" class="job-summary__meta"></p>
               </div>
+              <span id="job-summary-badge" class="chip chip--ok" hidden>已读取岗位</span>
+              <div class="flow-actions">
+                <button class="job-save-button" id="job-save-button" type="button" title="把当前网页的岗位保存到桌面「投递」页" aria-label="保存岗位到桌面端">保存岗位</button>
+                <button class="job-save-button job-submit-button" id="submit-confirm-button" type="button" title="你已经在招聘网站投递之后，在这里告诉桌面。插件不会替你提交申请。" aria-label="确认已投递">我已投递</button>
+              </div>
+              <p class="flow-bar__help">「保存岗位」把这个岗位存到桌面；你在网站上提交后，点「我已投递」把桌面里的状态更新为已投递。</p>
               <p id="job-save-hint" class="card-hint" hidden>当前网页没有连接填表助手，无法保存岗位。请在招聘网页里打开侧栏。</p>
               <div id="desktop-status" class="desktop-status" role="status" hidden></div>
               <section id="queue-center" class="queue-center" aria-label="待同步">
