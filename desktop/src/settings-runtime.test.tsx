@@ -372,3 +372,15 @@ test("in-app download streams progress, verifies SHA-256, and requires user conf
     args: { version: "0.5.0", sha256: sha },
   });
 });
+
+test("opening settings marks <main> so the page takes only the height left under the first-run notices", async () => {
+  await start();
+  const main = document.querySelector("main")!;
+  expect(main.dataset.view).toBe("applications");
+  fireEvent.click(document.querySelector<HTMLElement>('.topbar [data-route="settings"]')!);
+  await settle();
+  expect(main.dataset.view).toBe("settings");
+  fireEvent.click(document.querySelector<HTMLElement>('.topbar [data-route="todos"]')!);
+  await settle();
+  expect(main.dataset.view).toBe("todos");
+});
