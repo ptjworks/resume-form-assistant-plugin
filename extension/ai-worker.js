@@ -27,7 +27,8 @@ const AI_SYSTEM_PROMPT = [
   "14. 匹配考虑同义词：手机=电话=联系方式=mobile=phone；学历=最高学历=培养层次；aka 是这项资料别的叫法；英文题目按意思对应中文字段名",
   "15. 补充字段、本网站回答两组的 key 是用户以前答过的题目原文：网页上的题意思相同（换了说法也算）就用它",
   "16. shape 是插件按值算出的形态（几位数字、邮箱、日期这类），字段名看不出意思时参考它",
-  "17. 带 maxLength 的字段照常对应：资料太长时插件不填，会告诉用户字数上限，不要因为它跳过，也不要换一项不相干的资料"
+  "17. 带 maxLength 的字段照常对应：资料太长时插件不填，会告诉用户字数上限，不要因为它跳过，也不要换一项不相干的资料",
+  "18. 请求里写明网页上实习经历、工作经历是分开的两栏时，资料里的实习经历只填网页实习经历一栏的字段，工作经历只填工作经历一栏；没写就是只有一栏，照常对应"
 ].join("\n");
 
 // 插件状态页打开「AI 填写时发送资料原文」时（请求里 sendValues === true）：目录里每项带上值（value），AI 照旧回编号，值仍由插件按编号填，
@@ -251,7 +252,8 @@ function safeResumeField(field) {
 
 function promptBytes(fields, candidates, partial = false, withValues = false) {
   // The user text is JSON-escaped again inside the Native Messaging envelope.
-  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates, partial, withValues))).length;
+  // 按带着「两栏分开」那一行算（多的一行是固定长度），实际不带时只会略有富余，不会超出预算。
+  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates, partial, withValues, true))).length;
 }
 
 // 整份资料目录装得下时，按题目分批，每批带整份目录。装不下时（资料项太多），每批题目最多占一半预算，
@@ -416,6 +418,9 @@ async function handleAiFill(message, controller = new AbortController()) {
   // 补填新出现的字段时网页带上整张表的题目（pageLabels），同名的题和页面上原有的一起数。
   const pageFields = Array.isArray(message.pageLabels)
     ? message.pageLabels.filter(label => typeof label === "string").map(label => ({ label })) : formFields;
+  // #301 网页上有哪几种经历栏：网页带来的（还没有输入框的空栏也算，小米的实习经历），加上这次字段自己所在的栏。
+  const pageSections = new Set([...(Array.isArray(message.pageSections) ? message.pageSections : []),
+    ...formFields.map(field => experienceSection(String(field.group ?? "").replace(/\s*\d+$/, "")))].filter(type => type === "internship" || type === "employment"));
   const ruleMatches = ResumeProAIHelpers.localRuleMatches(formFields, resumeFields, ResumeProProfile, pageFields);
   const matchedFieldIds = new Set(ruleMatches.map(match => match.fieldId));
   const remainingFormFields = formFields.filter(field => !matchedFieldIds.has(field.fieldId));
@@ -466,7 +471,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       }
       if (maxCalls !== undefined) diagnostics.calls += 1;
       diagnostics.requests += 1;
-      const user = buildUserPrompt(batch.fields, batch.candidates, batch.partial, withValues);
+      const user = buildUserPrompt(batch.fields, batch.candidates, batch.partial, withValues, pageSections.has("internship") && pageSections.has("employment"));
       diagnostics.promptBytes += new TextEncoder().encode(user).length;
       const result = await sendToDesktop({ purpose: "fill", tier, system: withValues ? VALUES_SYSTEM_PROMPT : AI_SYSTEM_PROMPT, user, signal: controller.signal });
       if (tier && (result?.tier === "strong" || result?.tier === "default")) diagnostics.tierUsed = result.tier;
@@ -490,7 +495,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       if (controller.signal.aborted) break;
       if (batch.partial) batch.fields.forEach(field => trimmedFields.add(field.fieldId));
       try {
-        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)), withValues, rejectedReasons);
+        const found = refMatches(parseJsonContent(result.text), batch.fields, catalog, new Set(batch.candidates.map(entry => entry.ref)), withValues, rejectedReasons, pageSections);
         const valid = ResumeProAIHelpers.filterValidMatches(batch.fields, found);
         const validIds = new Set(valid.map(match => match.fieldId));
         for (const match of found) {
@@ -560,7 +565,9 @@ async function handleAiFill(message, controller = new AbortController()) {
 
 // 第一行之后是字段列表（测试按行取），之后是资料目录。目录装不下、只发了和这批题目有关的一部分时（partial）说明一句。
 // withValues：插件状态页打开了「AI 填写时发送资料原文」，目录里每项带着值。
-function buildUserPrompt(formFields, entries, partial = false, withValues = false) {
+// #301 网页上实习经历、工作经历分开两栏时告诉 AI（规则 18）。只说是不是两栏，不带网页文字（PR #543 审查：规则提到了，请求里却没有）。
+const SPLIT_SECTIONS_NOTE = "网页上实习经历、工作经历是分开的两栏。";
+function buildUserPrompt(formFields, entries, partial = false, withValues = false, splitSections = false) {
   const what = withValues ? "编号、分组、字段名和值" : "只有编号、分组和字段名，不含值";
   return [
     "表单字段列表：",
@@ -570,6 +577,7 @@ function buildUserPrompt(formFields, entries, partial = false, withValues = fals
       : `简历资料目录（${what}）：`,
     JSON.stringify(entries),
     "",
+    ...(splitSections ? [SPLIT_SECTIONS_NOTE] : []),
     "填写原则：基本信息优先对应基本信息分组；教育背景不要给邮箱、电话、出生日期、籍贯等基础字段；低置信度时跳过。"
   ].join("\n");
 }
@@ -859,7 +867,7 @@ function promptFields(fields, catalog, withValues = false) {
 // 条目里自己写了值的，整条不要；多选只去掉这样的几项，剩下的照拼。
 // withValues（发资料原文）时，没有 fits 的下拉、单选的「编号 + 选项」先按 optionMatch 核对，对得上就填那个选项；对不上的照只有编号处理。
 // 带 fits 的不看 AI 给的选项：fits 被裁空的题整题不发（trimmedOut），本批里带 fits 的 fits 都不空，编号要在 fits 里，值按编号映射到选项。
-function refMatches(payload, fields, catalog, allowed, withValues = false, rejectedReasons = null) {
+function refMatches(payload, fields, catalog, allowed, withValues = false, rejectedReasons = null, pageSections = new Set()) {
   const source = Array.isArray(payload) ? payload : payload?.matches;
   if (!Array.isArray(source)) throw new Error("结果不是 JSON 数组。");
   const byId = new Map(fields.map(field => [field.fieldId, field]));
@@ -916,6 +924,18 @@ function refMatches(payload, fields, catalog, allowed, withValues = false, rejec
       return [];
     }
     if (!tokens.length) return [];
+    // #301 网页上工作经历、实习经历分开两栏时，实习的资料不进工作经历一栏，工作的资料不进实习一栏。
+    const ownSection = experienceSection(String(field.group ?? "").replace(/\s*\d+$/, ""));
+    if ((ownSection === "employment" && pageSections.has("internship")) || (ownSection === "internship" && pageSections.has("employment"))) {
+      const otherSection = tokens.some(token => {
+        const type = experienceSection(catalog.items.get(REF_TOKEN.exec(token)?.[1])?.group);
+        return (type === "internship" || type === "employment") && type !== ownSection;
+      });
+      if (otherSection) {
+        noteReject(field.fieldId, "wrong_section");
+        return [];
+      }
+    }
     if (isTextAnswer(field) && !answersOnTopic(field, tokens, catalog)) {
       noteReject(field.fieldId, "off_topic");
       return [];

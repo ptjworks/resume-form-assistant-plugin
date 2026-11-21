@@ -26,11 +26,12 @@ function load(label, control) {
 // loadAfter：点开后过一会儿才有选项。没有选项时弹层里是一个禁用条目（加载圈、「暂无数据」或一段文字），
 // 弹层带 --empty；emptyClass=false 时不带。remote：输入前没有弹层，输入后按搜索词给选项。
 // stale：输入前发出的请求晚到，先显示这份旧列表，再显示搜索结果。combobox：mode=combobox（AutoComplete 也是），输入框一直显示。
-function antd3(choices, { label = '学历', loadAfter = 0, multiple = false, selected = '', remote = false, emptyClass = true, notFound = 'spin', stale = null, combobox = false, initialOptions } = {}) {
+// searchField：单选下拉自带一个藏着的行内搜索框（小米 antd 3，showSearch 时一样），选项点开就有。
+function antd3(choices, { label = '学历', loadAfter = 0, multiple = false, selected = '', remote = false, emptyClass = true, notFound = 'spin', stale = null, combobox = false, initialOptions, searchField = false } = {}) {
   const mode = multiple ? 'multiple' : 'single';
   const field = '<div class="ant-select-search__field__wrap"><input autocomplete="off" class="ant-select-search__field" value=""></div>';
   const search = multiple ? `<ul><li class="ant-select-search ant-select-search--inline">${field}</li></ul>`
-    : remote || combobox ? `<div class="ant-select-search ant-select-search--inline"${combobox ? '' : ' hidden'}>${field}</div>` : '';
+    : remote || combobox || searchField ? `<div class="ant-select-search ant-select-search--inline"${combobox ? '' : searchField ? ' style="display: none;"' : ' hidden'}>${field}</div>` : '';
   const shown = selected ? `<div class="ant-select-selection-selected-value" title="${selected}">${selected}</div>` : '';
   const h = load(label, `<div class="ant-select${combobox ? ' ant-select-combobox' : ''} ant-select-enabled"><div class="ant-select-selection ant-select-selection--${mode}" role="combobox"
     aria-autocomplete="list" aria-haspopup="true" aria-controls="menu-1" aria-expanded="false" tabindex="0"><div class="ant-select-selection__rendered">
@@ -93,11 +94,12 @@ function antd3(choices, { label = '学历', loadAfter = 0, multiple = false, sel
     if (loadAfter && !items.length) setTimeout(() => { items = choices; if (open) render(); }, loadAfter);
   });
   input?.addEventListener('input', () => {
-    if (!remote && !combobox) return;
+    if (!remote && !combobox && !searchField) return;
     const query = input.value;
     searches.push(query);
     if (stale) setTimeout(() => { items = stale; if (open) render(); }, 10);
-    setTimeout(() => { items = query ? choices.filter(text => text.includes(query)) : []; if (open) render(); }, stale ? 80 : 30);
+    // 带搜索框的普通下拉（searchField）：按输入的字筛选已有的选项，清空就是全部（antd 默认的 filterOption）。
+    setTimeout(() => { items = query ? choices.filter(text => text.includes(query)) : searchField ? choices : []; if (open) render(); }, stale ? 80 : 30);
   });
   return { ...h, root, input, picked, searches };
 }
@@ -319,12 +321,14 @@ test('an AntD 3 search whose results hold only a longer name still picks it afte
   assert.deepEqual(h.picked, ['北京大学（本部）']);
 });
 
-test('AntD 3 combobox mode without suggestions is not typed into', async () => {
-  const h = antd3(['北京大学', '清华大学'], { label: '毕业院校', combobox: true });
+// #301 小米的学校名称：antd 3 combobox 模式（框里的字就是值，下面只是建议），按联想框填：打字，有同名建议就点它。
+test('AntD 3 combobox mode is typed like an autocomplete and picks the same-name suggestion', async () => {
+  const h = antd3(['北京大学', '北京大学医学部', '清华大学'], { label: '毕业院校', combobox: true });
+  assert.equal(h.w.ResumeProCustomControls.acceptsFreeText({ kind: 'custom-select', el: h.input, entry: h.target }), true);
   const result = await h.api.operate(h.target, '北京大学');
-  assert.equal(result.reason, 'options_not_rendered');
-  assert.deepEqual(h.searches, []);
-  assert.equal(h.input.value, '');
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.searches, ['北京大学']);
+  assert.deepEqual(h.picked, ['北京大学'], 'the exact name, not the longer one');
 });
 
 test('#481 an English level select can choose the only matching grade on its list', async (t) => {

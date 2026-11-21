@@ -739,3 +739,67 @@ test("#539 the count is already enough after unchecking: that is not a skipped f
   assert.deepEqual(result.notFollowed, []);
   dom.window.close();
 });
+
+// #301 小米：「添加」外面一层是带手形的区域，点击处理挂在里面那层；空的实习经历一栏里的「添加」不显示手形。
+test("#301 a click on the outer area reaches the inner add handler, and an add without a hand cursor is still listed as a button", async () => {
+  const dom = new JSDOM(`<!doctype html><body><form>
+    <div class="sec" id="edu"><p class="title">教育经历</p><div class="item"><label>学校名称<input class="school"></label>
+      <div class="formOperate" style="cursor:pointer"><div class="formOperate-addBtn-container" style="cursor:pointer"><div class="formOperate-addBtn" style="cursor:pointer"><i class="addMore-plus"></i><span class="addMore-add">添加</span></div></div><div></div></div></div></div>
+    <div class="sec" id="intern"><p class="title">实习经历</p><div class="createFormSection-right"><div class="createFormSection-addBtn"><i class="anticon"></i><span>添加</span></div></div></div>
+  </form></body>`, { url: "https://xiaomi.jobs.example.test/apply" });
+  const doc = dom.window.document;
+  const clicks = [];
+  doc.querySelector(".formOperate-addBtn").addEventListener("click", () => clicks.push("edu"));
+  doc.querySelector(".createFormSection-addBtn").addEventListener("click", () => clicks.push("intern"));
+  const built = outline.build(doc, { isVisible, fieldScan });
+  const buttons = [...built.nodes.values()].filter((node) => node.type === "button" && /添加/.test(node.text));
+  assert.equal(buttons.length, 2, "both adds are listed");
+  assert.ok(buttons.some((node) => doc.getElementById("intern").contains(node.element)));
+  for (const node of buttons) assert.equal(actions.press(node.element), "");
+  assert.deepEqual(clicks.sort(), ["edu", "intern"]);
+  dom.window.close();
+});
+
+// PR #543 审查（A7/C5）：类名要正好是 add / btn / button / plus 那一段，以 add 开头的别的词（address、additional）不算按钮。
+test("#543 an add-like text without a hand cursor counts only when its class names an add button, not address or additional", () => {
+  const dom = new JSDOM(`<!doctype html><body><form><div class="sec"><p class="title">联系方式</p>
+    <div class="address-item"><span>添加地址</span></div><div class="additional"><span>添加附加信息</span></div>
+    <div class="add-btn"><span>添加</span></div><div class="plusIcon"><span>新增一条</span></div></div></form></body>`);
+  const doc = dom.window.document;
+  const built = outline.build(doc, { isVisible, fieldScan });
+  const listed = [...built.nodes.values()].filter((node) => node.type === "button").map((node) => node.element.className).sort();
+  assert.deepEqual(listed, ["add-btn", "plusIcon"]);
+  dom.window.close();
+});
+
+test("#301 pressing a button whose text sits in an inner span still has its submit default blocked", () => {
+  const dom = new JSDOM(`<!doctype html><body><form id="f"><button id="b"><span>添加</span></button></form></body>`);
+  const doc = dom.window.document;
+  let submitted = false, clicked = false;
+  doc.getElementById("f").addEventListener("submit", (event) => { submitted = true; event.preventDefault(); });
+  doc.getElementById("b").addEventListener("click", () => { clicked = true; });
+  assert.equal(actions.press(doc.getElementById("b")), "");
+  assert.equal(clicked, true);
+  assert.equal(submitted, false);
+  dom.window.close();
+});
+
+// #301 小米：空栏只有一个类名带 title 的短标题和一个「添加」。标题要写进大纲，模型才分得清每个「添加」属于哪一栏。
+test("#301 the outline lists the short title of an empty section before its add button", () => {
+  const dom = new JSDOM(`<!doctype html><body><form>
+    <div class="sec"><div class="createFormSection-title"><p class="createFormSection-text">工作经历</p></div><label>公司名称<input></label></div>
+    <div class="sec"><div class="createFormSection-title"><p class="createFormSection-text">实习经历</p></div>
+      <div class="createFormSection-addBtn"><i class="anticon"></i><span>添加</span></div></div>
+    <div class="sec"><div class="createFormSection-title"><p class="createFormSection-text">项目经历</p></div>
+      <div class="createFormSection-addBtn"><i class="anticon"></i><span>添加</span></div></div>
+    <div class="page-header"><a href="/jobs">返回岗位列表</a></div>
+  </form></body>`, { url: "https://xiaomi.jobs.example.test/apply" });
+  const built = outline.build(dom.window.document, { isVisible, fieldScan });
+  const text = built.parts.map((part) => part.text).join("\n");
+  const intern = text.indexOf("实习经历"), project = text.indexOf("项目经历");
+  assert.ok(intern > 0 && project > intern, text);
+  const firstAdd = text.indexOf('"添加"', intern);
+  assert.ok(firstAdd > intern && firstAdd < project, "the internship title sits right before its own add button");
+  assert.doesNotMatch(text, /标题.*返回岗位列表/, "a header holding a link is not taken as a title");
+  dom.window.close();
+});

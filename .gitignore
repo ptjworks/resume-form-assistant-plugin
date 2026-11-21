@@ -33,7 +33,8 @@ __pycache__/
 .idea/
 
 # 根目录的类型检查工具链（扩展本身仍然零构建、零依赖）
-/node_modules/
+# 末尾不加斜杠：本地 worktree 常把 node_modules 做成符号链接，带斜杠只忽略目录，链接会被提交（PR #543 审查）。
+/node_modules
 services/usage-metrics/node_modules
 tsc-files.txt
 

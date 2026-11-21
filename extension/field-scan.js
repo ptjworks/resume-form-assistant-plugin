@@ -190,7 +190,8 @@
       if (!visibility.has(el)) {
         let visible = true;
         try {
-          visible = options.isVisible ? Boolean(options.isVisible(el)) : true;
+          // #301 小米的年月区间：存值的隐藏输入框是 0×0，看不看得见按组件本身（两个「YYYY-MM」标签）算。
+          visible = options.isVisible ? Boolean(options.isVisible(periodCarrierRoot(el) || el)) : true;
         } catch {
           visible = false;
         }
@@ -358,7 +359,18 @@
     return best;
   }
 
+  const PERIOD_PICKER = ".ant-date-picker-period-month";
+  function periodRootOk(root) {
+    return Boolean(root) && root.querySelectorAll(antdCss(root, ":scope > .ant-date-picker-period-month-label")).length === 2;
+  }
+  // 组件里唯一的输入框（只存值、不显示）：返回组件根，别的元素返回 null。
+  function periodCarrierRoot(el) {
+    if (el?.tagName !== "INPUT") return null;
+    const root = el.parentElement?.closest?.(antdCss(el, PERIOD_PICKER));
+    return root && periodRootOk(root) && root.querySelectorAll("input").length === 1 ? root : null;
+  }
   function pickerTypeOf(root, ctx) {
+    if (root.matches(antdCss(root, PERIOD_PICKER)) && periodRootOk(root)) return "period";
     const bossDates = ".ui-date-editor-date, .ui-date-editor-month";
     if (bossItem(root, ctx) && (root.matches(bossDates)
       || (root.matches(".date-picker-range-wrapper") && root.querySelector(bossDates)))) return "boss";
@@ -475,6 +487,11 @@
 
     pickerInputs.forEach((inputs, root) => {
       const pickerType = pickerTypeOf(root, ctx);
+      // #301 小米的年月区间：只有一个隐藏输入框，开始、结束是两个标签，拆成两道题（填法见 custom-controls.js 的 pickPeriod）。
+      if (pickerType === "period" && inputs.length === 1) {
+        for (const part of ["开始", "结束"]) controls.push({ kind: "element", controlKind: "date-picker", element: inputs[0], elements: [inputs[0]], root, pickerType, rangePart: part });
+        return;
+      }
       inputs.forEach((input, index) => {
         controls.push({ kind: "element", controlKind: "date-picker", element: input, elements: [input], root, pickerType,
           rangePart: inputs.length > 1 ? rangePart(input, index) : "" });
@@ -690,7 +707,10 @@
     }
 
     for (const el of [primary, control.root]) {
-      const aria = check(attr(el, "aria-label"), "explicit");
+      // #301 组件库自带的英文 aria-label（rc-select 搜索框的「filter select」）说的是控件类型，不是题目。
+      const own = attr(el, "aria-label");
+      if (COMPONENT_ARIA.test(squash(own))) continue;
+      const aria = check(own, "explicit");
       if (aria) return aria;
     }
 
@@ -702,6 +722,7 @@
     return null;
   }
 
+  const COMPONENT_ARIA = /^(?:filter\s*select|select|search|search\s*input|input|combobox|listbox|textbox|date\s*picker|picker)$/i;
   function labelledByText(el, ctx, control) {
     const ids = attr(el, "aria-labelledby").split(/\s+/).filter(Boolean);
     if (!ids.length) return null;
@@ -723,8 +744,14 @@
 
     let repeatedTitle = null;
     for (let index = pool.length - 1; index >= 0; index -= 1) {
-      const labelEl = labelLikeAncestor(pool[index].el, item);
+      let labelEl = labelLikeAncestor(pool[index].el, item);
       if (!labelEl) continue;
+      // #301 小米：题目一栏里除了 <label>，还有一行不带类名的说明（「无准确的毕业时间可填写预计毕业时间」）。
+      // 一栏里正好有一个带字的 <label>，就只取它的字，说明不算题目。
+      if (labelEl.tagName !== "LABEL") {
+        const inner = Array.from(labelEl.querySelectorAll("label")).filter((label) => pool.some((segment) => label.contains(segment.node)));
+        if (inner.length === 1 && pool.some((segment) => labelEl.contains(segment.node) && !inner[0].contains(segment.node))) labelEl = inner[0];
+      }
       const marked = pool.filter((segment) => labelEl.contains(segment.node));
       const text = cleanLabel(joinSegments(usefulSegments(marked, placeholders)), placeholders);
       if (text) return { text, source: "item", labelEl };

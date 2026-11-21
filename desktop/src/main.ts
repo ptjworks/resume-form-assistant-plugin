@@ -85,9 +85,30 @@ const views: Record<string, HTMLElement> = {
   todos: must("view-todos"),
   notes: must("view-notes"),
   settings: must("view-settings"),
-  support: must("view-support"),
 };
 const routeButtons = document.querySelectorAll<HTMLButtonElement>(".topbar button[data-route]");
+
+/**
+ * 顶栏选中指示条：滑到当前选中的 Tab 文字下方。
+ * 第一次摆放、或从「没有选中」（比如在设置页）回到某个 Tab 时直接就位不滑动，之后在 Tab 之间切换才有滑动动画。
+ */
+const navIndicator = document.querySelector<HTMLElement>(".nav-indicator");
+function placeNavIndicator(animate: boolean) {
+  if (!navIndicator) return;
+  const active = document.querySelector<HTMLElement>(".nav button.active");
+  if (!active) {
+    navIndicator.classList.remove("is-visible");
+    return;
+  }
+  const inset = parseFloat(getComputedStyle(active).paddingLeft) || 0;
+  const wasVisible = navIndicator.classList.contains("is-visible");
+  navIndicator.classList.toggle("is-animated", animate && wasVisible);
+  navIndicator.style.setProperty("--nav-x", `${active.offsetLeft + inset}px`);
+  navIndicator.style.width = `${Math.max(0, active.offsetWidth - inset * 2)}px`;
+  navIndicator.classList.add("is-visible");
+}
+window.addEventListener("resize", () => placeNavIndicator(false));
+void document.fonts?.ready.then(() => placeNavIndicator(false));
 
 function showRoute(name: string | undefined) {
   views.notes.parentElement?.classList.toggle("notes-workspace-active", name === "notes");
@@ -99,6 +120,7 @@ function showRoute(name: string | undefined) {
     if (btn.dataset.route === name) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
   });
+  placeNavIndicator(true);
 }
 
 /**
@@ -125,10 +147,6 @@ async function navigate(route: string | undefined, refreshApplications = true): 
   const enteringResume = route === "resume" && !onResume;
   const enteringApplications = route === "applications" && views.applications.classList.contains("hidden");
   showRoute(route);
-  if (route === "support") {
-    const main = views.support.closest("main");
-    if (main) main.scrollTop = 0;
-  }
   if (route !== "settings") leaveBackup();
   if (enteringResume) resumeView.refresh();
   if (enteringApplications && refreshApplications) void applications.refreshView();
@@ -225,9 +243,15 @@ function showPill(state: { tone: string; text: string; title: string }) {
   pill.dataset.tone = state.tone;
 }
 
-async function goToExtensionInstall() {
-  if (!(await navigate("settings"))) return;
+/** 顶栏状态点与安装入口共用：进「设置 → 浏览器连接」。 */
+async function goToBrowserSettings(): Promise<boolean> {
+  if (!(await navigate("settings"))) return false;
   settingsNavigation.select("browser");
+  return true;
+}
+
+async function goToExtensionInstall() {
+  if (!(await goToBrowserSettings())) return;
   const target = must("link-install-section");
   target.scrollIntoView({ block: "nearest" });
   (must("link-install") as HTMLButtonElement).focus();
@@ -285,7 +309,7 @@ function say(id: string, message: { tone: string; text: string } | null) {
   else delete line.dataset.tone;
 }
 
-must("nav-install-extension").addEventListener("click", () => void goToExtensionInstall());
+must("runtime-pill").addEventListener("click", () => void goToBrowserSettings());
 must("btn-empty-install").addEventListener("click", () => void goToExtensionInstall());
 
 must("link-install").addEventListener("click", async () => {

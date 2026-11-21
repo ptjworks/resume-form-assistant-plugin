@@ -25,6 +25,9 @@
   // 像「编辑 / 展开 / 添加」、并且看得出能点（手形光标、onclick、可聚焦）的元素；别的文字不会因此变成按钮。
   const ACTION_TEXT = /^(?:编辑|修改|完善|展开|收起|更多|查看更多|新增|添加|增加|继续添加|edit|modify|add|more|expand)/i;
   const MAX_TEXT_CLIMB = 3;
+  // 类名里以 title / header / heading 为一段的短标题（见下面空栏标题那一段）。
+  const TITLE_CLASS = /(?:^|[\s_-])(?:title|header|heading)(?:$|[\s_-])/i;
+  const MAX_TITLE_CHARS = 12;
   const ARIA_CONTROL_SELECTOR = "[contenteditable]:not([contenteditable='false']), [role='textbox'], [role='listbox'], [role='radiogroup'], [role='switch'], [role='spinbutton'], [role='checkbox']";
   const TEXT_CLUE_SELECTOR = "label, legend, th, dt, [role='heading'], h1, h2, h3, h4, h5, h6, caption";
   const HEADING_SELECTOR = "h1, h2, h3, h4, h5, h6, legend, caption, [role='heading']";
@@ -215,6 +218,17 @@
       return false;
     }
   }
+  // #301 小米空栏里的「添加」：鼠标移上去之前不显示手形，按光标认不出。写着「添加 / 新增」、类名带 add / btn / button / plus
+  // 或者里面有图标的，也算看得出能点。只给新增类的字用，「编辑」「展开」照旧按光标认。
+  const ADD_WORD = /^(?:新增|添加|增加|继续添加|add)/i;
+  function addLike(el) {
+    if (!ADD_WORD.test(bare(el.textContent))) return false;
+    const cls = String(el.getAttribute?.("class") || "");
+    // 类名里正好是 add / btn / button / plus 的一段（createFormSection-addBtn、addMore、add-btn）：后面要么结束、要么是分隔符或大写字母。
+    // padding（夹在中间）、address、additional（以 add 开头的别的词）都不认（PR #543 审查）。
+    return /(?:^|[\s_-])(?:[Aa]dd|[Bb]tn|[Bb]utton|[Pp]lus)(?=$|[\s_\-A-Z\d])/.test(cls) || Boolean(el.querySelector?.(":scope > i, :scope > svg, :scope > [class*='icon' i]"));
+  }
+
 
   // 按钮的结构描述：大纲生成时用它，#225 点击前也用它按网页当前的样子重新判断一次（文字、提交、跨页、跨站）。
   function describeButton(el) {
@@ -297,11 +311,14 @@
       const startText = bare(start.textContent);
       if (!ACTION_TEXT.test(startText)) continue;
       // 文字相同的祖先链（「＋」图标和文字常分在几层里）里，取最外层看得出能点的那个。
-      let el = null;
+      let el = null, added = null;
       for (let current = start, depth = 0; current && depth <= MAX_TEXT_CLIMB; current = current.parentElement, depth += 1) {
         if (current !== start && bare(current.textContent) !== startText) break;
         if (pointerLike(current)) el = current;
+        else if (!el && !added && addLike(current)) added = current;
       }
+      // 整条链上都看不出手形时，才用最里面那个像「添加」按钮的。
+      el = el || added;
       if (!el) continue;
       const label = squash(el.textContent);
       if (seenClickable.has(el) || chars(label).length > MAX_BUTTON_TEXT || !ACTION_TEXT.test(bare(label))) continue;
@@ -322,6 +339,20 @@
       if (!text || chars(text).length > MAX_SEGMENT * 2) continue;
       const heading = el.matches(HEADING_SELECTOR) || Boolean(campusTitle && el.matches(campusTitle));
       add(el, { type: heading ? "heading" : "text", element: el, text });
+    }
+    // #301 小米：还没有输入框的空栏（实习经历、项目经历……）只有一个类名带 title 的短标题和一个「添加」，
+    // 不写进来，模型看到的是一串分不清属于哪一栏的「添加」。类名里有 title / header / heading 一段、字很短、
+    // 里面没有输入框和按钮的，按标题列出（已经列过的不重复）。
+    const listed = new Set(Array.from(root.querySelectorAll(clueSelector)));
+    for (const el of Array.from(root.querySelectorAll("[class*='title' i], [class*='header' i], [class*='heading' i]"))) {
+      if (listed.has(el) || !TITLE_CLASS.test(String(el.getAttribute("class") || ""))) continue;
+      if (Array.from(listed).some(other => other.contains(el) || el.contains(other))) continue;
+      if (ctx.exclude(el) || !ctx.isVisible(el) || insideClaimed(el) || editableHere(el)) continue;
+      if (el.querySelector?.("input, select, textarea, button, a[href], [role='combobox'], [role='button']")) continue;
+      const text = squash(el.textContent);
+      if (!text || chars(text).length > MAX_TITLE_CHARS) continue;
+      listed.add(el);
+      add(el, { type: "heading", element: el, text });
     }
 
     // 文档顺序：querySelectorAll("*") 本身就按顺序；宿主元素后面接着展开它的 Shadow root 或框架。

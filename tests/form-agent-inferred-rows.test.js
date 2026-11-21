@@ -156,3 +156,87 @@ test("#301 an add whose new card is not recognised reports the stop detail and t
   assert.equal(result.grew, 1);
   assert.match(result.message, /多出了 1 个输入框/);
 });
+
+// #301 小米：每组经历只有一条，「添加」在这一条最下面；AI 指出了已有的那一条。按整条来数，不因按钮在条目里就数不清。
+// 实习经历一栏是空的、只有「添加」：往上找会碰到整张表，不能把整张表当成一条。
+test("#301 an existing entry the model points at is counted as a whole when the add button sits inside it, and an empty section stays at zero", (t) => {
+  const { window } = new JSDOM(`<form>
+    <div class="sec"><p>教育经历</p><div class="item"><div class="col"><input class="school"></div><div class="col"><input class="major"></div>
+      <div class="col"><div class="period"><input class="hidden"></div></div><div class="op"><div class="addBtn" id="edu-add"><span>添加</span></div></div></div></div>
+    <div class="sec" id="intern"><p>实习经历</p><div class="addBtn" id="intern-add"><span>添加</span></div></div>
+    <div class="sec"><p>项目经历</p><div class="addBtn" id="proj-add"><span>添加</span></div></div></form>`);
+  t.after(() => window.close());
+  const doc = window.document;
+  const edu = { domain: "education", button: doc.getElementById("edu-add"), rows: [doc.querySelector(".school")], others: [] };
+  const fields = [...records(2)];
+  const counted = agent.collectSpec([edu], fields, { isVisible: visible });
+  assert.deepEqual(counted.problems, []);
+  assert.deepEqual(counted.candidates.map(({ current, target }) => [current, target]), [[1, 2]]);
+  const intern = { domain: "internship", button: doc.getElementById("intern-add"), rows: [], others: [] };
+  const internships = [{ group: "实习经历", key: "A实习经历-公司", value: "a" }, { group: "实习经历", key: "B实习经历-公司", value: "b" }];
+  const empty = agent.collectSpec([intern], internships, { isVisible: visible });
+  assert.deepEqual(empty.candidates.map(({ current, target }) => [current, target]), [[0, 2]]);
+});
+
+// #301 小米：网页上有单独的实习经历一栏（空栏也算）时，工作经历只按真正的工作经历数，不拿实习凑数。
+test("#301 a work group is not filled up with internships when the page has its own internship section", (t) => {
+  const { window } = new JSDOM(`<form><div class="sec"><p>工作经历</p><div class="addw"><span>添加</span></div></div>
+    <div class="sec"><p>实习经历</p><div class="addi"><span>添加</span></div></div></form>`);
+  t.after(() => window.close());
+  const doc = window.document;
+  assert.deepEqual(agent.pageSections(doc, visible).sort(), ["employment", "internship"]);
+  const work = { domain: "work", button: doc.querySelector(".addw"), rows: [], others: [doc.querySelector(".addi")] };
+  const internships = [{ group: "实习经历", key: "A实习经历-公司", value: "a" }, { group: "实习经历", key: "B实习经历-公司", value: "b" }];
+  assert.deepEqual(agent.collectSpec([work], internships, { isVisible: visible, pageSections: ["employment", "internship"] }).candidates, []);
+  assert.deepEqual(agent.collectSpec([work], internships, { isVisible: visible, pageSections: ["employment"] }).candidates.map(({ target }) => target), [2]);
+});
+
+// PR #543 审查（A3/C2）：左边的步骤导航、标签页也写着「实习经历」，表单里却只有一栏工作经历（实习也填在这里）。
+// 只认真正当栏目标题的那一个，导航里的不算，不然实习资料会被当成「填错栏」，一条都填不进去。
+test("#543 a step list or tab that names 实习经历 is not taken as a separate internship section", (t) => {
+  const form = `<form><div class="sec"><p>工作经历</p><div class="row"><label>公司</label><input></div><div class="addw"><span>添加</span></div></div></form>`;
+  const { window } = new JSDOM(`<div class="steps"><div class="step">基本信息</div><div class="step">教育经历</div><div class="step">实习经历</div><div class="step">工作经历</div></div>
+    <ul role="tablist"><li role="tab"><span>实习经历</span></li></ul><nav><span>实习经历</span></nav>${form}`);
+  t.after(() => window.close());
+  assert.deepEqual(agent.pageSections(window.document, visible), ["employment"]);
+});
+
+test("#543 an empty internship section with only an add button still counts", (t) => {
+  const { window } = new JSDOM(`<form><div class="sec"><p>工作经历</p><div class="row"><input></div></div>
+    <div class="sec"><div class="head"><h3>实习经历</h3></div><div class="body"><div class="addBtn"><i></i><span>添加</span></div></div></div></form>`);
+  t.after(() => window.close());
+  assert.deepEqual(agent.pageSections(window.document, visible).sort(), ["employment", "internship"]);
+});
+
+// PR #543 审查（B5）：卡片的标题常写在 <header> 里，后面跟着输入框。header 不是导航，不能因此认不出这一栏。
+test("#543 a section title written inside a card <header> is still a section, a title inside the site's <nav> is not", (t) => {
+  const { window } = new JSDOM(`<header class="site"><nav><span>实习经历</span></nav></header>
+    <form><div class="card"><header class="card-header"><h3>实习经历</h3></header><div class="row"><label>公司</label><input></div></div></form>`);
+  t.after(() => window.close());
+  assert.deepEqual(agent.pageSections(window.document, visible), ["internship"]);
+  const navOnly = new JSDOM(`<header class="site"><nav><span>实习经历</span></nav></header><form><div class="card"><p>基本信息</p><input></div></form>`);
+  t.after(() => navOnly.window.close());
+  assert.deepEqual(agent.pageSections(navOnly.window.document, visible), []);
+});
+
+// PR #543 审查（B6/C7）：卡片里有字段自己的「添加附件」按钮，不能因此认不出已有几张卡片、退回当成 0 条。
+// 别的分组的「添加」（新增一条经历）照旧拦住。
+test("#543 an 添加附件 button inside a card does not stop the cards from being counted, another section's 添加 still does", (t) => {
+  const dom = new JSDOM(page([0, 1]).replace(/<input><\/div>\s*<div class="ud-formily-item"><label>专业/g, '<input><button class="upload" type="button">添加附件</button></div><div class="ud-formily-item"><label>专业'));
+  t.after(() => dom.window.close());
+  const { document } = dom.window;
+  assert.ok(document.querySelector(".upload"), "the attachment button is on the card");
+  const group = { domain: "education", button: document.querySelector(".module .add"), rows: [], others: [document.querySelector(".add2")] };
+  const counted = agent.collectSpec([group], records(3), { isVisible: visible });
+  assert.deepEqual(counted.problems, []);
+  assert.deepEqual(counted.candidates.map(({ current, target }) => [current, target]), [[2, 3]]);
+
+  // 空的实习经历一栏往上就是整张表（里面有教育经历的输入框和它的「添加」）：不能把整张表当成一条，照旧算 0 条。
+  const { window } = new JSDOM(`<form><div class="all"><div class="sec"><p>教育经历</p><div class="item"><input class="school"><div class="addBtn" id="edu-add"><span>添加</span></div></div></div>
+    <div class="sec2"><p>实习经历</p><div class="addBtn" id="intern-add"><span>添加实习经历</span></div></div></div></form>`);
+  t.after(() => window.close());
+  const intern = { domain: "internship", button: window.document.getElementById("intern-add"), rows: [], others: [] };
+  const internships = [{ group: "实习经历", key: "A实习经历-公司", value: "a" }, { group: "实习经历", key: "B实习经历-公司", value: "b" }];
+  const crossed = agent.collectSpec([intern], internships, { isVisible: visible });
+  assert.deepEqual(crossed.candidates.map(({ current, target }) => [current, target]), [[0, 2]]);
+});

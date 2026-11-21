@@ -169,6 +169,28 @@ test("BOSS deep analysis supplies locally recognized dates and cascaders even wh
   }
 });
 
+// #301 小米：AI 给的分组只写「实习经历」、不带第几条；扫描认得这个框，分组带着序号。深度填写用扫描的分组，
+// 插件才分得清两个描述框各属于哪一条经历。分组不是同一种的（AI 另有说法）不换。
+test("deep fields take the scanned group with its entry number when it names the same section", async () => {
+  const scanner = fakeFieldScan();
+  const fieldScan = { ...scanner, scanPage(doc, options) {
+    const scanned = scanner.scanPage(doc, options);
+    scanned.controls.forEach((control, index) => { control.group = index === 0 ? "实习经历 1" : "项目经历 1"; });
+    return scanned;
+  } };
+  const page = deepPage({
+    fieldScan, labels: ["描述", "名称"],
+    analyze: () => ({ success: true, spec: { pageState: "editing", fields: [
+      { ref: "e1", label: "描述", group: "实习经历", control: "text" }, { ref: "e2", label: "名称", group: "我的作品", control: "text" }] } }),
+    fill: () => ({ success: true, matches: [] })
+  });
+  await page.ask({ action: "start" });
+  await page.settle(finished);
+  const [request] = page.aiCalls("AI_FILL");
+  assert.ok(request);
+  assert.deepEqual(Array.from(request.formFields, (field) => [field.label, field.group]), [["描述", "实习经历 1"], ["名称", "我的作品"]]);
+});
+
 test("a failed BOSS supplement scan leaves independent fields available and withholds the unbound English score", async () => {
   const scanner = fakeFieldScan();
   const page = deepPage({

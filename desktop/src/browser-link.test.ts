@@ -122,7 +122,9 @@ test("商店审核期间的提示要指向同一发布页里的插件 zip", () =
 
 test("侧边栏、空状态和设置页都有安装入口，按钮默认不 hidden", () => {
   const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "index.html"), "utf8");
-  assert.match(html, /id="nav-install-extension"/);
+  // 顶栏的「安装扩展」按钮已并入状态点：点它进「设置 → 浏览器连接」。
+  assert.doesNotMatch(html, /id="nav-install-extension"/);
+  assert.match(html, /<button[^>]*id="runtime-pill"/);
   assert.match(html, /id="btn-empty-install"/);
   assert.match(html, /id="link-install"/);
   assert.match(html, /id="link-download"/);

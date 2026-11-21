@@ -1692,3 +1692,34 @@ test("#518 local rule matches block a month-only birth date on a native date inp
     { fieldId: "birth", value: "2001-05-12" }
   ]);
 });
+
+// #301 小米：网页上工作经历、实习经历分开两栏（实习那栏还没有输入框也算），实习的资料不进工作经历一栏。
+test("#301 internship records are not put into the work-experience section when the page has a separate internship section", async () => {
+  const resumeFields = [{ group: "实习经历", key: "药明康德实习经历-公司", value: "药明康德" }, { group: "实习经历", key: "药明康德实习经历-职位", value: "实习研究员" }];
+  const formFields = [{ fieldId: "company", label: "公司名称", group: "工作经历" }, { fieldId: "title", label: "职位名称", group: "工作经历" }];
+  const refOf = (catalog, word) => catalog.find((entry) => entry.key.includes(word))?.ref;
+  const respond = (message, catalog) => [{ fieldId: "company", ref: refOf(catalog, "公司") }, { fieldId: "title", ref: refOf(catalog, "职位") }];
+  const split = await worker(respond).run({ formFields, resumeFields, pageSections: ["employment", "internship"] });
+  assert.equal(valueOf(split, "company"), undefined);
+  assert.equal(valueOf(split, "title"), undefined);
+  // 网页只有工作经历一栏：照常填（没有工作经历时用实习）。
+  const single = await worker(respond).run({ formFields, resumeFields, pageSections: ["employment"] });
+  assert.equal(valueOf(single, "company"), "药明康德");
+  // 实习那栏有字段时，实习的资料照常进实习一栏。
+  const own = await worker((message, catalog) => [{ fieldId: "ic", ref: refOf(catalog, "公司") }])
+    .run({ formFields: [...formFields, { fieldId: "ic", label: "公司名称", group: "实习经历" }], resumeFields });
+  assert.equal(valueOf(own, "ic"), "药明康德");
+});
+
+// PR #543 审查（C4）：规则 18 说「请求里写明两栏分开时」，请求里就要真的写明，AI 才会一开始就按栏挑资料，而不是挑完被插件丢掉。
+test("#543 the request tells the model when internship and work are separate sections, and says nothing otherwise", async () => {
+  const resumeFields = [{ group: "实习经历", key: "药明康德实习经历-公司", value: "药明康德" }];
+  const formFields = [{ fieldId: "company", label: "公司名称", group: "工作经历" }];
+  const users = [];
+  const record = (message) => { users.push(message.user); return []; };
+  await worker(record).run({ formFields, resumeFields, pageSections: ["employment", "internship"] });
+  await worker(record).run({ formFields, resumeFields, pageSections: ["employment"] });
+  assert.match(users[0], /网页上实习经历、工作经历是分开的两栏。/);
+  assert.doesNotMatch(users[1], /分开的两栏/);
+  assert.doesNotMatch(users.join("\n"), /pageSections/, "the request never names an internal field");
+});

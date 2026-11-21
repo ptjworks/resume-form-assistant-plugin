@@ -211,6 +211,7 @@
   // 从按钮往上（最多 4 层）找到第一个装着看得见的输入框的祖先，就是按钮所在的那一条；
   // 它的同层、结构相同、也装着输入框的兄弟都是条目。里面混进别的分组的按钮或条目、或者找不到，就返回 null（照旧按没有条目算）。
   const INFER_DEPTH = 4;
+  const ADD_ENTRY = /^(?:添加|新增|增加|继续添加)(?:一条|一段|一个)?(?:教育|工作|实习|项目|校园|科研|论文|获奖)?(?:经历|经验|背景|记录)?$/;
   function inferRows(button, others, isVisible) {
     const top = button.ownerDocument?.body;
     let row = button.parentElement;
@@ -219,6 +220,11 @@
       if (Array.from(row.querySelectorAll(editable)).some(isVisible)) break;
     }
     if (!row || row === top || !Array.from(row.querySelectorAll(editable)).some(isVisible)) return null;
+    // 往上找到的这一块里还有别的「添加 / 新增」：它跨过了别的分组（小米空的实习经历一栏往上就是整张表），不能当成条目。
+    // 只算新增一条经历的按钮（「添加」「添加一条」「添加实习经历」）；字段自己的「添加附件」「新增地址」不算（PR #543 审查）。
+    const otherAdds = Array.from(row.querySelectorAll("*")).filter(el => el !== button && !button.contains(el) && !el.contains(button)
+      && ADD_ENTRY.test(bare(el.textContent)) && !Array.from(el.children).some(child => ADD_ENTRY.test(bare(child.textContent))));
+    if (otherAdds.length) return null;
     const hasInputs = el => Array.from(el.querySelectorAll(editable)).some(isVisible);
     // 按钮在条目外面、和条目列表是兄弟（北森式「列表 + 底部添加」）：第一个装着输入框的祖先是整组，条目是列表里的每一项。
     const branch = Array.from(row.children).find(child => child.contains(button));
@@ -245,10 +251,17 @@
     let anchors = group.rows || [];
     if (!button?.isConnected || !isVisible(button)) return { reason: "target_changed" };
     const top = button.ownerDocument?.body;
-    let inferred = null;
+    let inferred = inferRows(button, others, isVisible);
     if (!anchors.length) {
-      inferred = inferRows(button, others, isVisible);
       if (inferred) anchors = inferred.anchors;
+    } else if (inferred) {
+      // #301 小米：AI 指出了已有条目，「添加」又在条目里面。按结构认出的条目和 AI 指的一一对上（每条正好一个），就按整条来数；
+      // 对不上就照原来的办法，数不清就不加。
+      const owner = el => inferred.rows.find(row => row.contains(el));
+      const owners = anchors.map(owner);
+      if (owners.every(Boolean) && new Set(owners).size === anchors.length && owners.length === inferred.rows.length) {
+        anchors = inferred.rows.map(row => anchors[owners.indexOf(row)]);
+      } else inferred = null;
     }
     let scope;
     if (!anchors.length) {
@@ -311,7 +324,11 @@
     const helpers = root.ResumeProAIHelpers || (typeof require === "function" ? require("./ai-helpers.js") : null);
     // BOSS uses the same source records for planning rows and filling them.
     // #301 网页上工作经历和实习经历是两个分开的分组时，各数各的；只有一个「工作 / 实习」分组时，实习记录算在工作里（targetCounts）。
-    const splitWork = groups.some(group => group.domain === "internship" && !group.workKind);
+    // 页面上「工作经历」「实习经历」两栏都有（还没有输入框的空栏也算）也是分开的：工作经历不拿实习凑数。
+    // 只有一栏叫「实习经历」的（北森），它就是这一组本身，照旧按实习数。
+    const shown = Array.isArray(options.pageSections) ? options.pageSections : [];
+    const splitWork = groups.some(group => group.domain === "internship" && !group.workKind)
+      || (shown.includes("internship") && shown.includes("employment"));
     const targetFor = group => group.workKind && helpers?.workRecords
       ? helpers.workRecords(fields, group.workKind).length
       : helpers?.workRecords && group.domain === "internship" ? helpers.workRecords(fields, "internship").length
@@ -557,8 +574,48 @@
       return count > 0 ? [{ ...item, count }] : [];
     });
   }
+  // #301 网页上有哪几种经历栏（只说种类）：看得见的、整段字就是「实习经历」「工作经历」的栏目标题。
+  // 还没有输入框的空栏也算（小米的实习经历只有一个「添加」）。填写时告诉 AI、新增时决定工作经历要不要拿实习凑数，都用它。
+  // 只认真正当栏目标题的那一个（PR #543 审查）：左边的步骤导航、标签页也写着「实习经历」，可表单里可能只有一栏工作经历，
+  // 误认成两栏会让实习资料一条都填不进去。所以：导航、侧栏、标签页、菜单、链接里的不算；从标题往上找，
+  // 先碰到装着输入框或「添加」的那一块才算，先碰到别的栏目标题（导航里的下一项）就不算。
+  const SECTION_HEADINGS = [[/^(?:实习经历|实习经验)$/, "internship"], [/^(?:工作经历|工作经验)$/, "employment"]];
+  // header、footer 不在名单里：很多卡片的标题就写在 <header class="card-header"> 里，后面跟着输入框（PR #543 审查）。
+  const SECTION_SKIP = "nav, aside, menu, a[href], [role='navigation'], [role='tablist'], [role='tab'], [role='menu'], [role='menubar'], [role='menuitem']";
+  const MODULE_TITLE = /^(?:基本信息|个人信息|求职意向|教育(?:经历|背景)|实习(?:经历|经验)|工作(?:经历|经验)|项目(?:经历|经验)|校园(?:经历|经验)|社会实践|获奖(?:经历|情况)?|荣誉|证书|技能|语言能力|自我评价|家庭(?:成员|情况)|附件)$/;
+  const SECTION_FIELDS = "input:not([type='hidden']), select, textarea, [contenteditable]:not([contenteditable='false']), [role='combobox'], [role='textbox']";
+  const ADD_TEXT = /^[+＋]?(?:添加|新增|增加|继续添加)/;
+  const MAX_SECTION_CLIMB = 6;
+  function headsSection(heading, isVisible) {
+    const shown = el => { try { return isVisible(el); } catch { return false; } };
+    let box = heading;
+    for (let depth = 0; depth < MAX_SECTION_CLIMB; depth += 1) {
+      box = box.parentElement;
+      if (!box || box === heading.ownerDocument.body) return false;
+      if (Array.from(box.querySelectorAll(SECTION_FIELDS)).some(shown)) return true;
+      const leaves = Array.from(box.querySelectorAll("*")).filter(el => el.childElementCount === 0 && el !== heading);
+      if (leaves.some(el => ADD_TEXT.test(bare(el.textContent)) && shown(el))) return true;
+      if (leaves.some(el => MODULE_TITLE.test(bare(el.textContent)))) return false;
+    }
+    return false;
+  }
+  function pageSections(doc, isVisible = visible) {
+    const found = new Set();
+    try {
+      for (const el of doc.querySelectorAll("h1, h2, h3, h4, h5, h6, legend, p, span, div, label")) {
+        if (found.size === SECTION_HEADINGS.length) break;
+        if (el.childElementCount > 0) continue;
+        const kind = SECTION_HEADINGS.find(([pattern]) => pattern.test(bare(el.textContent)))?.[1];
+        if (!kind || found.has(kind) || el.closest(SECTION_SKIP) || !isVisible(el)) continue;
+        if (headsSection(el, isVisible)) found.add(kind);
+      }
+    } catch {
+      // 读不到就不带。
+    }
+    return [...found];
+  }
   const labels = Object.fromEntries([...domains, internshipDomain].map(domain => [domain.id, domain.label]));
-  const api = { targetCounts, collect, collectSpec, emptyToggles, campusGroups, campusRows, campusWorkScope, campusWorkKind, validatePlan, execute, labels };
+  const api = { targetCounts, collect, collectSpec, emptyToggles, pageSections, campusGroups, campusRows, campusWorkScope, campusWorkKind, validatePlan, execute, labels };
   root.ResumeProFormAgent = api;
   try { if (typeof module === "object" && module && typeof module.exports === "object") module.exports = api; } catch { /* a page element or frame named "module" (#275) */ }
 })(typeof self !== "undefined" ? self : globalThis);
