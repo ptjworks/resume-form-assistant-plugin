@@ -48,6 +48,7 @@
   const COUNTER_WORDS = /^(?:已输入|已填写?|还可(?:以)?输入|还能输入|剩余|最多(?:输入)?|限)\s*\d*\s*(?:[\/／]\s*\d+)?\s*个?(?:字|字符|词)?$/;
   const GENERIC_PROMPT = /^(?:请)?(?:选择|输入|填写|上传|搜索|选取|点击选择)(?:日期|时间|内容|文件)?$|^(?:请选择日期|请选择时间|全部|暂无数据|无匹配数据|加载中|no data|loading|select|please select|search|choose)$/i;
   const PLACEHOLDER_PROMPT_PREFIX = /^(?:请(?:输入|选择|填写|上传)|输入|选择|填写)/;
+  const EXAMPLE_PROMPT = /^(?:示例|例如|例|如|格式)(?:\s*[:：]|$)/;
   const PLACEHOLDER_EXAMPLE = /^(?:[dmyhs]{1,4}(?:[-./: ]+[dmyhs]{1,4})+|[^\s@]+@[^\s@]+\.[^\s@]+|男\s*[/／]\s*女|女\s*[/／]\s*男)$/i;
   const ERROR_TAIL = /(?:不能为空|不可为空|不能为空白|为必填项?|是必填项|必须填写|必填项|格式不正确|格式错误|不合法|超出字数限制|超过最大长度)[!！。.]?$/;
   const MARKER = /^(?:必填|选填|可选|非必填|optional|required)$/i;
@@ -759,8 +760,9 @@
       // Moka 会把明确标记的题目（如「姓名」）也用作占位。只保留整段重复的题目，优先取其他可靠题目。
       if (!repeatedTitle) {
         const repeated = cleanLabel(joinSegments(marked));
-        if (repeated && !PLACEHOLDER_PROMPT_PREFIX.test(repeated) && !PLACEHOLDER_EXAMPLE.test(repeated)
-          && placeholders.some(value => squash(value) === repeated)) {
+        const isHint = PLACEHOLDER_PROMPT_PREFIX.test(repeated) || EXAMPLE_PROMPT.test(repeated)
+          || PLACEHOLDER_EXAMPLE.test(repeated) || SEARCH_HINT.test(repeated);
+        if (repeated && !isHint && placeholders.some(value => cleanLabel(value) === repeated)) {
           repeatedTitle = { text: repeated, source: "item", labelEl };
         }
       }

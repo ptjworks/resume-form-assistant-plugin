@@ -47,6 +47,7 @@ test("#570 a structured form question still counts when its input repeats it as 
       <div class="title-IWWQ0Xa4L7"><span><span>姓名</span></span></div>
       <div class="ctrl-CICMG4Fr4_"><label class="sd-Input-container-2S_vM string_info"><input placeholder="姓名"></label></div>
     </div>
+    <div><div class="title">手机号：</div><input placeholder="手机号："></div>
     <div><span>手机号码</span><input placeholder="手机号码"></div>
     <div><div class="title-IWWQ0Xa4L7">请选择</div><input placeholder="请选择"></div>
   </form>`);
@@ -54,6 +55,7 @@ test("#570 a structured form question still counts when its input repeats it as 
   const result = scan(doc);
   assert.deepEqual(result.controls.map(({ label, labelSource, offerable }) => [label, labelSource, offerable]), [
     ["姓名", "item", true],
+    ["手机号", "item", true],
     ["", "placeholder", false]
   ]);
   assert.equal(result.skipped.noLabel, 1);
@@ -81,11 +83,15 @@ test("a marked placeholder example stays a hint even when the same text is shown
     <div><div class="title">YYYY-MM-DD</div><input placeholder="YYYY-MM-DD"></div>
     <div><div class="title">example@example.test</div><input placeholder="example@example.test"></div>
     <div><div class="title">男／女</div><input placeholder="男／女"></div>
+    <div><div class="title">示例：北京大学</div><input placeholder="示例：北京大学"></div>
+    <div><div class="title">搜索学校</div><input placeholder="搜索学校"></div>
   </form>`);
   t.after(() => doc.defaultView.close());
-  assert.deepEqual(scan(doc).controls.map(({ labelSource, offerable }) => [labelSource, offerable]), [
-    ["placeholder", false], ["placeholder", false], ["placeholder", false]
+  const result = scan(doc);
+  assert.deepEqual(result.controls.map(({ labelSource, offerable }) => [labelSource, offerable]), [
+    ["placeholder", false], ["placeholder", false], ["placeholder", false], ["placeholder", false]
   ]);
+  assert.equal(result.skipped.siteSearch, 1);
 });
 
 test("#479 only an id that is unique in its document becomes a redraw anchor", (t) => {
