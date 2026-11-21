@@ -28,7 +28,7 @@ const AI_SYSTEM_PROMPT = [
   "15. 补充字段、本网站回答两组的 key 是用户以前答过的题目原文：网页上的题意思相同（换了说法也算）就用它",
   "16. shape 是插件按值算出的形态（几位数字、邮箱、日期这类），字段名看不出意思时参考它",
   "17. 带 maxLength 的字段照常对应：资料太长时插件不填，会告诉用户字数上限，不要因为它跳过，也不要换一项不相干的资料",
-  "18. 网页上工作经历和实习经历是分开的两栏时（请求里的 pageSections 两样都有），资料里的实习经历只填网页实习经历一栏的字段，工作经历只填工作经历一栏；网页只有一栏时照常对应"
+  "18. 请求里写明网页上实习经历、工作经历是分开的两栏时，资料里的实习经历只填网页实习经历一栏的字段，工作经历只填工作经历一栏；没写就是只有一栏，照常对应"
 ].join("\n");
 
 // 插件状态页打开「AI 填写时发送资料原文」时（请求里 sendValues === true）：目录里每项带上值（value），AI 照旧回编号，值仍由插件按编号填，
@@ -252,7 +252,8 @@ function safeResumeField(field) {
 
 function promptBytes(fields, candidates, partial = false, withValues = false) {
   // The user text is JSON-escaped again inside the Native Messaging envelope.
-  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates, partial, withValues))).length;
+  // 按带着「两栏分开」那一行算（多的一行是固定长度），实际不带时只会略有富余，不会超出预算。
+  return new TextEncoder().encode(JSON.stringify(buildUserPrompt(fields, candidates, partial, withValues, true))).length;
 }
 
 // 整份资料目录装得下时，按题目分批，每批带整份目录。装不下时（资料项太多），每批题目最多占一半预算，
@@ -470,7 +471,7 @@ async function handleAiFill(message, controller = new AbortController()) {
       }
       if (maxCalls !== undefined) diagnostics.calls += 1;
       diagnostics.requests += 1;
-      const user = buildUserPrompt(batch.fields, batch.candidates, batch.partial, withValues);
+      const user = buildUserPrompt(batch.fields, batch.candidates, batch.partial, withValues, pageSections.has("internship") && pageSections.has("employment"));
       diagnostics.promptBytes += new TextEncoder().encode(user).length;
       const result = await sendToDesktop({ purpose: "fill", tier, system: withValues ? VALUES_SYSTEM_PROMPT : AI_SYSTEM_PROMPT, user, signal: controller.signal });
       if (tier && (result?.tier === "strong" || result?.tier === "default")) diagnostics.tierUsed = result.tier;
@@ -564,7 +565,9 @@ async function handleAiFill(message, controller = new AbortController()) {
 
 // 第一行之后是字段列表（测试按行取），之后是资料目录。目录装不下、只发了和这批题目有关的一部分时（partial）说明一句。
 // withValues：插件状态页打开了「AI 填写时发送资料原文」，目录里每项带着值。
-function buildUserPrompt(formFields, entries, partial = false, withValues = false) {
+// #301 网页上实习经历、工作经历分开两栏时告诉 AI（规则 18）。只说是不是两栏，不带网页文字（PR #543 审查：规则提到了，请求里却没有）。
+const SPLIT_SECTIONS_NOTE = "网页上实习经历、工作经历是分开的两栏。";
+function buildUserPrompt(formFields, entries, partial = false, withValues = false, splitSections = false) {
   const what = withValues ? "编号、分组、字段名和值" : "只有编号、分组和字段名，不含值";
   return [
     "表单字段列表：",
@@ -574,6 +577,7 @@ function buildUserPrompt(formFields, entries, partial = false, withValues = fals
       : `简历资料目录（${what}）：`,
     JSON.stringify(entries),
     "",
+    ...(splitSections ? [SPLIT_SECTIONS_NOTE] : []),
     "填写原则：基本信息优先对应基本信息分组；教育背景不要给邮箱、电话、出生日期、籍贯等基础字段；低置信度时跳过。"
   ].join("\n");
 }

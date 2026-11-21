@@ -224,8 +224,9 @@
   function addLike(el) {
     if (!ADD_WORD.test(bare(el.textContent))) return false;
     const cls = String(el.getAttribute?.("class") || "");
-    // 类名里以 add / btn / button / plus 开头的一段（createFormSection-addBtn、addMore），不认 padding、address 这类夹在中间的。
-    return /(?:^|[\s_-])(?:add|btn|button|plus)/i.test(cls) || Boolean(el.querySelector?.(":scope > i, :scope > svg, :scope > [class*='icon' i]"));
+    // 类名里正好是 add / btn / button / plus 的一段（createFormSection-addBtn、addMore、add-btn）：后面要么结束、要么是分隔符或大写字母。
+    // padding（夹在中间）、address、additional（以 add 开头的别的词）都不认（PR #543 审查）。
+    return /(?:^|[\s_-])(?:[Aa]dd|[Bb]tn|[Bb]utton|[Pp]lus)(?=$|[\s_\-A-Z\d])/.test(cls) || Boolean(el.querySelector?.(":scope > i, :scope > svg, :scope > [class*='icon' i]"));
   }
 
 

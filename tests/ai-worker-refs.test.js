@@ -1710,3 +1710,16 @@ test("#301 internship records are not put into the work-experience section when 
     .run({ formFields: [...formFields, { fieldId: "ic", label: "公司名称", group: "实习经历" }], resumeFields });
   assert.equal(valueOf(own, "ic"), "药明康德");
 });
+
+// PR #543 审查（C4）：规则 18 说「请求里写明两栏分开时」，请求里就要真的写明，AI 才会一开始就按栏挑资料，而不是挑完被插件丢掉。
+test("#543 the request tells the model when internship and work are separate sections, and says nothing otherwise", async () => {
+  const resumeFields = [{ group: "实习经历", key: "药明康德实习经历-公司", value: "药明康德" }];
+  const formFields = [{ fieldId: "company", label: "公司名称", group: "工作经历" }];
+  const users = [];
+  const record = (message) => { users.push(message.user); return []; };
+  await worker(record).run({ formFields, resumeFields, pageSections: ["employment", "internship"] });
+  await worker(record).run({ formFields, resumeFields, pageSections: ["employment"] });
+  assert.match(users[0], /网页上实习经历、工作经历是分开的两栏。/);
+  assert.doesNotMatch(users[1], /分开的两栏/);
+  assert.doesNotMatch(users.join("\n"), /pageSections/, "the request never names an internal field");
+});

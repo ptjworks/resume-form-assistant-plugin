@@ -760,6 +760,18 @@ test("#301 a click on the outer area reaches the inner add handler, and an add w
   dom.window.close();
 });
 
+// PR #543 审查（A7/C5）：类名要正好是 add / btn / button / plus 那一段，以 add 开头的别的词（address、additional）不算按钮。
+test("#543 an add-like text without a hand cursor counts only when its class names an add button, not address or additional", () => {
+  const dom = new JSDOM(`<!doctype html><body><form><div class="sec"><p class="title">联系方式</p>
+    <div class="address-item"><span>添加地址</span></div><div class="additional"><span>添加附加信息</span></div>
+    <div class="add-btn"><span>添加</span></div><div class="plusIcon"><span>新增一条</span></div></div></form></body>`);
+  const doc = dom.window.document;
+  const built = outline.build(doc, { isVisible, fieldScan });
+  const listed = [...built.nodes.values()].filter((node) => node.type === "button").map((node) => node.element.className).sort();
+  assert.deepEqual(listed, ["add-btn", "plusIcon"]);
+  dom.window.close();
+});
+
 test("#301 pressing a button whose text sits in an inner span still has its submit default blocked", () => {
   const dom = new JSDOM(`<!doctype html><body><form id="f"><button id="b"><span>添加</span></button></form></body>`);
   const doc = dom.window.document;

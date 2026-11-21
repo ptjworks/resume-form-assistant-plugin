@@ -190,3 +190,20 @@ test("#301 a work group is not filled up with internships when the page has its 
   assert.deepEqual(agent.collectSpec([work], internships, { isVisible: visible, pageSections: ["employment", "internship"] }).candidates, []);
   assert.deepEqual(agent.collectSpec([work], internships, { isVisible: visible, pageSections: ["employment"] }).candidates.map(({ target }) => target), [2]);
 });
+
+// PR #543 审查（A3/C2）：左边的步骤导航、标签页也写着「实习经历」，表单里却只有一栏工作经历（实习也填在这里）。
+// 只认真正当栏目标题的那一个，导航里的不算，不然实习资料会被当成「填错栏」，一条都填不进去。
+test("#543 a step list or tab that names 实习经历 is not taken as a separate internship section", (t) => {
+  const form = `<form><div class="sec"><p>工作经历</p><div class="row"><label>公司</label><input></div><div class="addw"><span>添加</span></div></div></form>`;
+  const { window } = new JSDOM(`<div class="steps"><div class="step">基本信息</div><div class="step">教育经历</div><div class="step">实习经历</div><div class="step">工作经历</div></div>
+    <ul role="tablist"><li role="tab"><span>实习经历</span></li></ul><nav><span>实习经历</span></nav>${form}`);
+  t.after(() => window.close());
+  assert.deepEqual(agent.pageSections(window.document, visible), ["employment"]);
+});
+
+test("#543 an empty internship section with only an add button still counts", (t) => {
+  const { window } = new JSDOM(`<form><div class="sec"><p>工作经历</p><div class="row"><input></div></div>
+    <div class="sec"><div class="head"><h3>实习经历</h3></div><div class="body"><div class="addBtn"><i></i><span>添加</span></div></div></div></form>`);
+  t.after(() => window.close());
+  assert.deepEqual(agent.pageSections(window.document, visible).sort(), ["employment", "internship"]);
+});

@@ -572,9 +572,30 @@
       return count > 0 ? [{ ...item, count }] : [];
     });
   }
-  // #301 网页上有哪几种经历栏（只说种类）：看得见的、整段字就是「实习经历」「工作经历」的标题。
+  // #301 网页上有哪几种经历栏（只说种类）：看得见的、整段字就是「实习经历」「工作经历」的栏目标题。
   // 还没有输入框的空栏也算（小米的实习经历只有一个「添加」）。填写时告诉 AI、新增时决定工作经历要不要拿实习凑数，都用它。
+  // 只认真正当栏目标题的那一个（PR #543 审查）：左边的步骤导航、标签页也写着「实习经历」，可表单里可能只有一栏工作经历，
+  // 误认成两栏会让实习资料一条都填不进去。所以：导航、侧栏、标签页、菜单、链接里的不算；从标题往上找，
+  // 先碰到装着输入框或「添加」的那一块才算，先碰到别的栏目标题（导航里的下一项）就不算。
   const SECTION_HEADINGS = [[/^(?:实习经历|实习经验)$/, "internship"], [/^(?:工作经历|工作经验)$/, "employment"]];
+  const SECTION_SKIP = "nav, aside, menu, header, footer, a[href], [role='navigation'], [role='tablist'], [role='tab'], [role='menu'], [role='menubar'], [role='menuitem']";
+  const MODULE_TITLE = /^(?:基本信息|个人信息|求职意向|教育(?:经历|背景)|实习(?:经历|经验)|工作(?:经历|经验)|项目(?:经历|经验)|校园(?:经历|经验)|社会实践|获奖(?:经历|情况)?|荣誉|证书|技能|语言能力|自我评价|家庭(?:成员|情况)|附件)$/;
+  const SECTION_FIELDS = "input:not([type='hidden']), select, textarea, [contenteditable]:not([contenteditable='false']), [role='combobox'], [role='textbox']";
+  const ADD_TEXT = /^[+＋]?(?:添加|新增|增加|继续添加)/;
+  const MAX_SECTION_CLIMB = 6;
+  function headsSection(heading, isVisible) {
+    const shown = el => { try { return isVisible(el); } catch { return false; } };
+    let box = heading;
+    for (let depth = 0; depth < MAX_SECTION_CLIMB; depth += 1) {
+      box = box.parentElement;
+      if (!box || box === heading.ownerDocument.body) return false;
+      if (Array.from(box.querySelectorAll(SECTION_FIELDS)).some(shown)) return true;
+      const leaves = Array.from(box.querySelectorAll("*")).filter(el => el.childElementCount === 0 && el !== heading);
+      if (leaves.some(el => ADD_TEXT.test(bare(el.textContent)) && shown(el))) return true;
+      if (leaves.some(el => MODULE_TITLE.test(bare(el.textContent)))) return false;
+    }
+    return false;
+  }
   function pageSections(doc, isVisible = visible) {
     const found = new Set();
     try {
@@ -582,7 +603,8 @@
         if (found.size === SECTION_HEADINGS.length) break;
         if (el.childElementCount > 0) continue;
         const kind = SECTION_HEADINGS.find(([pattern]) => pattern.test(bare(el.textContent)))?.[1];
-        if (kind && !found.has(kind) && isVisible(el)) found.add(kind);
+        if (!kind || found.has(kind) || el.closest(SECTION_SKIP) || !isVisible(el)) continue;
+        if (headsSection(el, isVisible)) found.add(kind);
       }
     } catch {
       // 读不到就不带。

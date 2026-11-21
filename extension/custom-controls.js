@@ -1003,7 +1003,9 @@
   async function pickPeriod(ctx, raw, h) {
     const root = periodRoot(ctx.entry);
     if (!root) return { reason: 'unsupported_control' };
-    const doc = root.ownerDocument, labels = periodLabels(root);
+    const doc = root.ownerDocument;
+    // 每次都重新取标签（PR #543 审查）：组件选完一头可能重画标签，开头拿到的旧节点脱离页面后一直显示占位，会把选上了的当成没收下。
+    const label = index => periodLabels(periodRoot(ctx.entry) || root)[index];
     const own = (ctx.entry.binding?.rangePart || ctx.entry.rangePart) === '结束' ? 1 : 0, other = 1 - own;
     const part = index => (index ? '结束' : '开始');
     const month = (text, index) => {
@@ -1027,11 +1029,11 @@
     ctx.observed = { ...ctx.observed, popupRole: 'calendar' };
     let autoOpened = null;
     for (const index of [0, 1]) {
-      if (!want[index] || periodText(labels[index]) === want[index]) { autoOpened = null; continue; }
+      if (!want[index] || periodText(label(index)) === want[index]) { autoOpened = null; continue; }
       let layer = autoOpened && autoOpened.isConnected && h.visible(autoOpened) ? autoOpened : null;
       if (!layer) {
         const before = new Set(panels());
-        const reason = h.click(labels[index], ctx); if (reason) return { reason };
+        const reason = h.click(label(index), ctx); if (reason) return { reason };
         const opened = await h.waitUntil(ctx, doc.documentElement, () => { const fresh = panels().filter(item => !before.has(item)); return fresh.length === 1 ? fresh[0] : null; }, Boolean, 1500);
         if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
         layer = opened.value;
@@ -1046,7 +1048,7 @@
       if (months.reason) { await leaveCalendar(ctx, ctx.el, root, layer, h); return { reason: months.reason === 'verification_timeout' ? 'no_option_match' : months.reason }; }
       months.value.scrollIntoView?.({ block: 'nearest' });
       reason = h.click(months.value, ctx, true); if (reason) return { reason };
-      const shown = await h.waitUntil(ctx, doc.documentElement, () => periodText(labels[index]) === want[index], Boolean, 1500);
+      const shown = await h.waitUntil(ctx, doc.documentElement, () => periodText(label(index)) === want[index], Boolean, 1500);
       if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'selection_not_committed' : shown.reason };
       // 选完开始，网站自动打开结束的面板（可能就是同一块换了内容）：要接着选结束就用它，不要再去点结束的标签（再点会收起）。
       // 等开始的面板退场（200ms）再看：那时开着的唯一一块就是结束的面板。
@@ -1056,7 +1058,7 @@
     }
     // 只填了一头、网站自己打开的另一头面板还开着：收起它，不留半开的面板。
     for (const layer of panels()) await leaveCalendar(ctx, ctx.el, root, layer, h);
-    return { accepted: () => periodText(labels[own]) === want[own] };
+    return { accepted: () => periodText(label(own)) === want[own] };
   }
 
   async function pickPresent(ctx, h, layer, info) {
