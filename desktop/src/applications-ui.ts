@@ -13,6 +13,7 @@ import {
   createApplicationsController,
   eventLabel,
   fillSummary,
+  readableLocalDateTime,
   stageLabel,
   timelineTimeLabel,
   snapshotStateLabel,
@@ -134,6 +135,17 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
   const toast = must("apps-undo");
   const progressKinds: Record<string, string> = { interview: "面试", assessment: "测评", offer: "Offer", rejected: "未通过", withdrawn: "撤回", closed: "结束申请" };
 
+  /** 操作成功的提示：几秒后自己消失，免得一直挂在页头。错误提示不走这里，会一直留着直到下一次成功读取。 */
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  function notice(text: string) {
+    if (noticeTimer) clearTimeout(noticeTimer);
+    msg.textContent = text;
+    noticeTimer = setTimeout(() => {
+      noticeTimer = null;
+      if (msg.textContent === text) msg.textContent = "";
+    }, 6000);
+  }
+
   let progressContext: { act: string; id: string } | null = null;
   let progressSaving = false;
   let actionBusy = false;
@@ -213,7 +225,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       progressDialog.close();
       progressContext = null;
       await refreshView();
-      msg.textContent = "已保存记录。";
+      notice("已保存记录。");
     } catch (error) { status.textContent = invokeError(error); }
     finally { progressSaving = false; progressForm.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button").forEach((field) => { field.disabled = false; }); }
   });
@@ -308,8 +320,10 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     if (!items.length) return "";
     const open = groupIsOpen(def, items.length);
     const expandedIndex = ctl.selectedId ? items.findIndex((app) => app.id === ctl.selectedId) : -1;
-    const shown = Math.min(items.length, Math.max(shownCount.get(def.id) ?? GROUP_PAGE_SIZE, expandedIndex + 1));
-    shownCount.set(def.id, shown);
+    // 记下的是「想看多少」，不是「这次画了多少」：组里行数暂时变少（有一行被挪走）再变回来时，不能少画。
+    const wanted = Math.max(shownCount.get(def.id) ?? GROUP_PAGE_SIZE, expandedIndex + 1);
+    shownCount.set(def.id, wanted);
+    const shown = Math.min(items.length, wanted);
     const rest = items.length - shown;
     return `<section class="app-group" data-group="${def.id}">
       <h2 class="app-group-head"><button type="button" class="app-group-toggle" data-group-toggle="${def.id}" aria-expanded="${open}" aria-controls="app-group-body-${def.id}">${ICON.chevron}<span class="app-group-dot" aria-hidden="true"></span><span class="app-group-name">${escapeHtml(def.label)}</span><span class="app-group-count">${items.length}</span></button></h2>
@@ -525,7 +539,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       const version = snap.template_version ? `（${escapeHtml(snap.template_version)}）` : "";
       const meta = [
         count === undefined || count === null ? "" : `${count} 个字段`,
-        `留档于 ${escapeHtml(formatTime(snap.created_at))}`,
+        `留档于 ${escapeHtml(readableLocalDateTime(snap.created_at) || formatTime(snap.created_at))}`,
       ].filter(Boolean).join(" · ");
       return `<li>
         <span class="app-snapshot-name">${escapeHtml(snap.template_name)}${version}</span>
@@ -652,7 +666,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
         : "";
       body.innerHTML = `
         <p class="banner">${escapeHtml(SNAPSHOT_DISCLAIMER)}</p>
-        <p class="muted">模板：${escapeHtml(snap.templateName)}${snap.templateVersion ? `（${escapeHtml(snap.templateVersion)}）` : ""} · 留档于 ${escapeHtml(formatTime(snap.capturedAt || snap.createdAt))}</p>
+        <p class="muted">模板：${escapeHtml(snap.templateName)}${snap.templateVersion ? `（${escapeHtml(snap.templateVersion)}）` : ""} · 留档于 ${escapeHtml(readableLocalDateTime(snap.capturedAt || snap.createdAt) || formatTime(snap.capturedAt || snap.createdAt))}</p>
         ${omitted}
         ${(snap.groups || []).map((group) => `
           <h4>${escapeHtml(group.name)}</h4>
@@ -693,7 +707,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     const call = recordCall(entry.id, entry.to, entry.date, now());
     try {
       await invoke(call.command, { args: call.args });
-      msg.textContent = `已记录「${stageLabel(entry.to)}」。`;
+      notice(`已记录「${stageLabel(entry.to)}」。`);
     } catch (err) {
       msg.textContent = `没能记录「${stageLabel(entry.to)}」：${invokeError(err)}`;
     }
@@ -722,7 +736,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     if (entry.timer) clearTimeout(entry.timer);
     overlay.delete(entry.id);
     hideToast();
-    msg.textContent = "已撤销，没有写入任何记录。";
+    notice("已撤销，没有写入任何记录。");
     render();
   }
 
@@ -749,7 +763,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     render();
     try {
       await invoke("correct_stage_cmd", { args: { id, from, to, reason: autoCorrectReason(from, to) } });
-      msg.textContent = `已把阶段改为「${stageLabel(to)}」，时间线上留有纠正记录。`;
+      notice(`已把阶段改为「${stageLabel(to)}」，时间线上留有纠正记录。`);
     } catch (err) {
       msg.textContent = invokeError(err);
     } finally {
@@ -841,7 +855,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
         await invoke("set_recycle_cmd", { id, recycled: true });
         collapseRow(false);
         await refreshList();
-        msg.textContent = "已移入回收站。可在「设置 → 数据与备份 → 回收站」恢复。";
+        notice("已移入回收站。可在「设置 → 数据与备份 → 回收站」恢复。");
       } catch (err) {
         msg.textContent = invokeError(err);
       } finally { actionBusy = false; }
@@ -953,7 +967,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       await invoke("add_note_cmd", { args: { id, text } });
       noteForm.reset();
       noteForm.hidden = true;
-      msg.textContent = "已记一条备注。";
+      notice("已记一条备注。");
       await loadDetail(id, true);
     } catch (err) {
       msg.textContent = invokeError(err);

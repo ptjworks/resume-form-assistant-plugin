@@ -303,6 +303,18 @@ test("stage change forward: 撤销 writes nothing and puts the row back", async 
   expect(writes()).toHaveLength(0);
 });
 
+test("stage change forward: undoing a move brings the row back even if its old group briefly shrank to one row", async () => {
+  await mount({ apps: [app("A", "assessment"), app("B", "assessment"), app("C", "assessment")] }, { undoMs: 60_000 });
+  fireEvent.change(stageSelect("B"), { target: { value: "interview" } });
+  await waitFor(() => expect(group("interview")!.contains(row("B"))).toBe(true));
+  fireEvent.change(stageSelect("C"), { target: { value: "interview" } });
+  await waitFor(() => expect(group("interview")!.contains(row("C"))).toBe(true));
+  expect(group("assessment")!.querySelectorAll("li[data-id]").length).toBe(1);
+  fireEvent.click(document.getElementById("apps-undo-cancel")!);
+  expect(group("assessment")!.querySelectorAll("li[data-id]").length).toBe(2);
+  expect(group("assessment")!.contains(row("C"))).toBe(true);
+});
+
 test("stage change forward: 改日期 asks for a date, then writes with the chosen date and not before", async () => {
   const { writes } = await mount({ apps: [app("A", "submitted")] }, { undoMs: 30 });
   fireEvent.change(stageSelect("A"), { target: { value: "assessment" } });

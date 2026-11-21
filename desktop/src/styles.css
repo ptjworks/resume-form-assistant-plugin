@@ -214,6 +214,7 @@ main > #banner { margin: 0; padding: 6px 20px; border-width: 0 0 1px; border-rad
 .app-group-head { margin: 0; font-size: inherit; font-weight: inherit; line-height: inherit; }
 .app-group-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: var(--ui-ink); text-align: left; }
 .app-group-toggle:hover:not(:disabled) { background: var(--ui-canvas); border-color: transparent; }
+.app-group-toggle:focus-visible, .app-more:focus-visible { outline-offset: -2px; }
 .app-group-toggle[aria-expanded="true"] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .app-group-toggle .app-chevron { width: 14px; height: 14px; color: var(--ui-faint); stroke-width: 1.75; transition: transform 140ms; }
 .app-group-toggle[aria-expanded="true"] .app-chevron { transform: rotate(90deg); }
@@ -291,7 +292,7 @@ button.app-hint:hover:not(:disabled) { background: transparent; border-color: tr
 .app-timeline-fold .fold-open { display: none; }
 .app-timeline-fold[open] .fold-open { display: inline; }
 .app-timeline-fold[open] .fold-closed { display: none; }
-.app-timeline-body { max-height: 340px; margin-top: 10px; padding-right: 6px; overflow: auto; }
+.app-timeline-body { margin-top: 10px; }
 .app-note-field { flex-direction: row; align-items: center; gap: 8px; margin-top: 10px; }
 .app-note-input { flex: 1; min-width: 0; min-height: 30px; padding: 3px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; font-size: 13px; }
 .app-note-input::placeholder { color: var(--ui-faint); }
@@ -388,7 +389,6 @@ dialog h2, dialog h3 { margin-top: 0; }
 dialog .row:last-child { justify-content: flex-end; margin-top: 8px; }
 @media (max-width: 1180px) {
   .topbar { gap: 12px; }
-  #view-applications { padding: 16px; }
 }
 /* 窄窗口：状态只留圆点（完整说明在 title 里），Tab 收紧。Tauri 最小宽度是 860px。 */
 @media (max-width: 1040px) {
