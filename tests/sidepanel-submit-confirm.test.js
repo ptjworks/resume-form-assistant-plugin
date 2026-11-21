@@ -86,7 +86,7 @@ test('"确认已投递" is a visible button in the 填写 view beside the save-j
   const html = read('sidepanel.html');
   const fillView = html.slice(html.indexOf('id="fill-view"'), html.indexOf('id="fields-view"'));
   const menu = html.slice(html.indexOf('class="dock-tools__menu"'), html.indexOf('</details>'));
-  assert.match(fillView, /<button[^>]*id="submit-confirm-button"[^>]*>确认已投递<\/button>/);
+  assert.match(fillView, /<button[^>]*id="submit-confirm-button"[^>]*>我已投递<\/button>/);
   const saveAt = fillView.indexOf('id="job-save-button"');
   const submitAt = fillView.indexOf('id="submit-confirm-button"');
   assert.ok(saveAt > 0 && submitAt > saveAt && submitAt - saveAt < 600, 'placed right after the save-job button');

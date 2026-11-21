@@ -351,7 +351,7 @@ test('group titles are bold with an icon and a secondary count; each field is it
   assert.ok(Number(title['font-weight']) >= 700);
   assert.ok(parseInt(title['font-size']) > parseInt(rule('.field-group small')['font-size']), 'the count is secondary text');
   assert.notEqual(rule('.field-group small').color, undefined);
-  assert.equal(resolve(rule('.field-group[open] .group-icon').background), '#e9f3f0', 'the open group is marked');
+  assert.equal(resolve(rule('.field-group[open] .group-icon').background), '#e6f4f0', 'the open group is marked');
   assert.equal(resolve(rule('.field-group__body').background), '#fff');
   assert.match(rule('.field-row').border, /1px solid/);
   assert.ok(parseInt(rule('.field-row')['border-radius']) >= 8, 'a field reads as a card');

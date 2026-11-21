@@ -90,7 +90,7 @@ const view = (phase, extra = {}) => ({ phase, requestId: "deep-1", message: "", 
 test("the entry is a quiet button on the 填写 page under 一键 AI 填写, plus an offer that only shows after a poor fill", () => {
   const html = fs.readFileSync(path.join(root, "sidepanel.html"), "utf8");
   const fillView = html.slice(html.indexOf('id="fill-view"'), html.indexOf('id="fields-view"'));
-  assert.ok(fillView.indexOf('id="deep-button"') > fillView.indexOf('id="repeat-button"'));
+  assert.ok(fillView.indexOf('id="deep-button"') < fillView.indexOf('id="repeat-button"'), "深度分析本页在左，辅助新增经历在右");
   assert.match(fillView, /id="deep-offer"[^>]*hidden/);
   const consent = html.slice(html.indexOf('id="deep-consent"'), html.indexOf('id="deep-card"'));
   assert.match(consent, /不发送输入框里已有的内容/);
@@ -264,23 +264,22 @@ test("#225 a malformed plan never renders and cannot be confirmed", async () => 
   assert.equal(ui.get("deep-confirm").hidden, true, "only a preview can be confirmed");
 });
 
-// --- #226 本站配方：侧栏只显示「有没有、是否过期」，删除和重新分析都交给页面；配方模式沿用同一张任务卡。
-test("#226 the 本站配方 row shows only when the page reports a saved recipe; stale is marked, stray data is ignored", async () => {
+// --- #226 本站配方（侧栏说法：已记住本站填法）：侧栏只显示「有没有、是否过期」，删除和重新分析都交给页面；配方模式沿用同一张任务卡。
+test("#226 the 已记住本站填法 row shows only when the page reports a saved recipe; stale is marked, stray data is ignored", async () => {
   const html = fs.readFileSync(path.join(root, "sidepanel.html"), "utf8");
   const fillView = html.slice(html.indexOf('id="fill-view"'), html.indexOf('id="fields-view"'));
   assert.match(fillView, /id="recipe-line"[^>]*hidden/);
-  assert.match(fillView, /本站配方：<\/span><span id="recipe-state" class="chip chip--ok">已保存<\/span><button id="recipe-reanalyze"[^>]*>重新分析<\/button><button id="recipe-delete"[^>]*>删除<\/button>/);
+  assert.match(fillView, /已记住本站填法<\/span><span id="recipe-state" class="chip chip--warn" hidden>可能已过期<\/span><button id="recipe-reanalyze"[^>]*>重新识别<\/button><button id="recipe-delete"[^>]*>忘掉<\/button>/);
   const ui = await sidePanel();
   assert.equal(ui.get("recipe-line").hidden, true);
   ui.state.status = { ...ui.state.status, recipe: { saved: true, stale: false, url: "https://jobs.example.test/x", fields: 9 } };
   await ui.poll();
   assert.equal(ui.get("recipe-line").hidden, false);
-  assert.equal(ui.get("recipe-state").textContent, "已保存");
-  assert.ok(ui.get("recipe-state").classes.has("chip--ok"));
+  assert.equal(ui.get("recipe-state").hidden, true, "没过期时只说「已记住本站填法」");
   ui.state.status = { ...ui.state.status, recipe: { saved: true, stale: true } };
   await ui.poll();
+  assert.equal(ui.get("recipe-state").hidden, false);
   assert.equal(ui.get("recipe-state").textContent, "可能已过期");
-  assert.ok(ui.get("recipe-state").classes.has("chip--warn"));
   ui.state.status = { ...ui.state.status, recipe: { saved: "yes" } };
   await ui.poll();
   assert.equal(ui.get("recipe-line").hidden, true, "only an explicit saved: true shows the row");
@@ -309,7 +308,7 @@ test("#226 recipe mode uses the same task card with its own title and steps, and
   const ui = await sidePanel();
   ui.state.status = { ...ui.state.status, deep: view("preview", { mode: "recipe", planId: "plan-1", plan: [{ text: "基本信息：编辑" }], canConfirm: true, canCancel: true }) };
   await ui.poll();
-  assert.equal(ui.get("task-title").textContent, "按本站配方填写");
+  assert.equal(ui.get("task-title").textContent, "按本站填法填写");
   assert.match(ui.get("task-steps").innerHTML, /核对网页.*确认操作.*填写网页.*结束/);
   assert.doesNotMatch(ui.get("task-steps").innerHTML, /分析页面/);
   await ui.click("deep-confirm");
@@ -317,5 +316,5 @@ test("#226 recipe mode uses the same task card with its own title and steps, and
   ui.state.status = { ...ui.state.status, deep: view("completed", { mode: "recipe", message: "按本站配方填写：已填写 2 项。", result: { fields: 2, filled: 2, unfilled: 0, unconfirmed: 0 },
     budget: { used: 1, limit: 6 } }) };
   await ui.poll();
-  assert.equal(ui.get("deep-meta").textContent, "按本站配方填写，没有做页面分析；匹配简历调用模型 1 次。");
+  assert.equal(ui.get("deep-meta").textContent, "按本站填法填写，没有做页面分析；匹配简历调用模型 1 次。");
 });

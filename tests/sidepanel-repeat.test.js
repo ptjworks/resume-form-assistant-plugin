@@ -106,7 +106,7 @@ test('the entry sits on the 填写 page next to 一键 AI 填写, not in the ·�
   const html = fs.readFileSync(path.join(root, 'sidepanel.html'), 'utf8');
   const fillView = html.slice(html.indexOf('id="fill-view"'), html.indexOf('id="fields-view"'));
   const menu = html.slice(html.indexOf('dock-tools__menu'), html.indexOf('</details>'));
-  assert.match(fillView, /<button class="repeat-button" id="repeat-button" type="button">AI 辅助新增条目<\/button>/);
+  assert.match(fillView, /<button class="repeat-button" id="repeat-button" type="button">辅助新增经历<\/button>/);
   assert.ok(fillView.indexOf('id="repeat-button"') > fillView.indexOf('id="fill-button"'));
   assert.ok(fillView.indexOf('id="repeat-button"') < fillView.indexOf('id="feedback-notice-root"'), 'next to the fill button, above the feedback notice');
   assert.ok(!menu.includes('辅助新增'));

@@ -14,12 +14,12 @@ test("the copy button copies the diagnostics text and confirms with a toast", as
 test("the copy button is a plain button inside the collapsible diagnostics block", () => {
   // 测试用的假页面会凭空造出任何 id，所以按钮真的在 HTML 里，要单独检查。
   const html = read("sidepanel.html");
-  const start = html.indexOf('<details id="fill-diagnostics"');
+  const start = html.indexOf('<details id="support-details"');
   assert.notEqual(start, -1);
   const block = html.slice(start, html.indexOf("</details>", start));
   assert.equal(html.split('id="copy-diagnostics"').length, 2, "exactly one copy button");
-  const button = block.match(/<button[^>]*id="copy-diagnostics"[^>]*>复制诊断<\/button>/);
-  assert.ok(button, "the button sits inside #fill-diagnostics");
+  const button = block.match(/<button[^>]*id="copy-diagnostics"[^>]*>复制诊断摘要<\/button>/);
+  assert.ok(button, "the button sits inside the folded 诊断与反馈 block");
   assert.match(button[0], /type="button"/);
   assert.ok(block.indexOf('id="fill-diagnostics-text"') < block.indexOf('id="copy-diagnostics"'), "after the text it copies");
 });
