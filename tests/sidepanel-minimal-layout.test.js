@@ -31,6 +31,7 @@ test('填写 tab: template on top, full-width 一键 AI 填写, then two light t
   const fill = section('id="fill-view"', 'id="fields-view"');
   const at = (marker) => { const index = fill.indexOf(marker); assert.notEqual(index, -1, marker); return index; };
   assert.ok(!fill.includes('page-domain'), '网站域名标签已去掉');
+  assert.ok(!fill.includes('template-edit'), '「编辑字段」只留在简历字段页的「管理字段」');
   assert.ok(at('id="fill-button"') < at('id="deep-button"'));
   assert.ok(at('id="deep-button"') < at('id="repeat-button"'));
   assert.match(fill, /id="fill-button" type="button">一键 AI 填写<\/button>/);

@@ -99,8 +99,6 @@ button:disabled { cursor: not-allowed; }
 .fill-top__row .template-picker { flex: 1; min-width: 0; }
 .template-picker .dock-select { min-height: 38px; padding-right: 30px; border-radius: 8px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") right 8px center / 16px no-repeat; font-size: 14px; font-weight: 600; text-overflow: ellipsis; -webkit-appearance: none; appearance: none; cursor: pointer; }
 .template-picker .dock-select:disabled { color: var(--muted); cursor: not-allowed; }
-.fill-top__sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.fill-top__sub:not(:has(.template-meta:not(:empty))) { justify-content: flex-end; }
 .template-meta { margin: 0; color: var(--muted); font-size: 12px; }
 .template-meta:empty { display: none; }
 .page-state { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0; color: var(--subtle); font-size: 12px; }

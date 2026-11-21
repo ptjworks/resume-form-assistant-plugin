@@ -145,7 +145,6 @@
     submitCopyId: document.getElementById("submit-confirm-copy-id"),
     submitDismiss: document.getElementById("submit-confirm-dismiss"),
     templateEmpty: document.getElementById("template-empty"),
-    templateEdit: document.getElementById("template-edit"),
     fieldsManage: document.getElementById("fields-manage"),
     fillProgress: document.getElementById("fill-progress"),
     fillProgressPhase: document.getElementById("fill-progress-phase"),
@@ -423,8 +422,6 @@
     elements.templateEmpty.hidden = desktopMode !== "ready" || Boolean(currentStore?.templates?.length);
     // 字段编辑（#273）只对桌面里的当前模板开放；没有模板、没连上桌面时不给入口。
     const editable = Boolean(templateEditor) && !copy && Boolean(selectedTemplate());
-    elements.templateEdit.disabled = !editable;
-    elements.templateEdit.hidden = !templateEditor;
     elements.fieldsManage.hidden = !editable;
     elements.fieldSearch.disabled = Boolean(copy);
     elements.desktopConnectionAction.dataset.kind = connectionCopy?.kind || "";
@@ -2586,7 +2583,6 @@
       elements.fieldGroups.querySelectorAll(".field-group").forEach((group) => { if (group !== event.target) group.open = false; });
     }
   }, true);
-  elements.templateEdit.addEventListener("click", () => { openTemplateEditor().catch(() => toast("无法打开字段编辑。")); });
   elements.fieldsManage.addEventListener("click", () => { openTemplateEditor().catch(() => toast("无法打开字段编辑。")); });
   elements.templateSelect.addEventListener("change", async () => {
     // A plan made for the old template must not run with the new one.
