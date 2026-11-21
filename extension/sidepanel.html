@@ -63,8 +63,8 @@
                   <select id="template-select" class="dock-select"><option value="">正在加载…</option></select>
                 </div>
               </div>
-              <p id="template-meta" class="template-meta"></p>
-              <p class="page-state is-unavailable" id="page-state">正在连接当前网页…</p>
+              <p id="template-meta" class="template-meta" hidden></p>
+              <p class="page-state is-unavailable" id="page-state" hidden>正在连接当前网页…</p>
               <p id="page-ready" class="page-ready" data-tone="idle"></p>
               <p id="site-hint" class="card-hint" hidden></p>
               <p id="template-empty" class="card-hint" hidden>桌面里还没有简历模板。可以到桌面「简历」页创建，侧栏的资料都来自桌面程序。</p>
@@ -101,7 +101,6 @@
                 <p class="deep-offer__text">常规填写效果不理想？可以让 AI 先看懂这个页面的结构，再重新匹配和填写。</p>
                 <button id="deep-offer-start" type="button">深度分析本页</button>
               </div>
-              <p class="safety-note"><span>填写后请核对网页内容，插件<strong>不会自动提交</strong>表单，提交由你在招聘网站上完成。</span></p>
             </section>
             <div id="feedback-notice-root" hidden></div>
             <div id="usage-notice-root" hidden></div>
@@ -137,7 +136,6 @@
                 <button class="job-save-button" id="job-save-button" type="button" title="把当前网页的岗位保存到桌面「投递」页" aria-label="保存岗位到桌面端">保存岗位</button>
                 <button class="job-save-button job-submit-button" id="submit-confirm-button" type="button" title="你已经在招聘网站投递之后，在这里告诉桌面。插件不会替你提交申请。" aria-label="确认已投递">我已投递</button>
               </div>
-              <p class="flow-bar__help">「保存岗位」把这个岗位存到桌面；你在网站上提交后，点「我已投递」把桌面里的状态更新为已投递。</p>
               <p id="job-save-hint" class="card-hint" hidden>当前网页没有连接填表助手，无法保存岗位。请在招聘网页里打开侧栏。</p>
               <div id="desktop-status" class="desktop-status" role="status" hidden></div>
               <section id="queue-center" class="queue-center" aria-label="待同步">
@@ -149,8 +147,6 @@
                 </div>
               </section>
             </section>
-
-            <p class="dock-help">需要手动补填？到 <button id="show-fields" class="dock-help-link" type="button">简历字段</button> 页，先点网页输入框，再点字段；输入框已有内容时，用「添加」「替换」「删除」。</p>
 
             <details id="support-details" class="dock-support">
               <summary><span>填写异常？查看诊断与反馈</span><svg class="icon dock-support__chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>

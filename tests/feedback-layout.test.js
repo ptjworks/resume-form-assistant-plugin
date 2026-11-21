@@ -14,7 +14,6 @@ test('the template and 一键 AI 填写 come first; the notice only follows the 
   assert.ok(!main.includes('feedback'), 'nothing is mounted above the fill view');
   assert.ok(at(fillView, 'id="template-select"') < at(fillView, 'id="fill-button"'));
   assert.ok(at(fillView, 'id="fill-button"') < at(fillView, 'id="feedback-notice-root"'));
-  assert.ok(at(fillView, 'class="safety-note"') < at(fillView, 'id="feedback-notice-root"'));
   assert.equal(sidepanel.split('id="feedback-notice-root"').length, 2);
 });
 
@@ -55,7 +54,6 @@ test('the duplicated 常用字段 list is gone; the 简历字段 tab and manual 
   assert.match(fieldsView, /<strong>添加<\/strong>在光标处插入/);
   assert.match(fieldsView, /<strong>替换<\/strong>覆盖整个输入框/);
   assert.match(fieldsView, /<strong>删除<\/strong>只去掉这个字段/);
-  // A pointer from the 填写 page to the field tab, not a second list.
-  assert.match(fillView, /<button id="show-fields"[^>]*>简历字段<\/button>/);
-  assert.match(read('sidepanel.js'), /getElementById\("show-fields"\)\.addEventListener\("click"/);
+  // #555: the 填写 page no longer carries a pointer line to the field tab; the tab itself is the way in.
+  assert.ok(!sidepanel.includes('show-fields'));
 });
