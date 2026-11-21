@@ -27,10 +27,10 @@ test('top bar: app icon, 网申快填, a connection dot and 打开桌面 →', (
   assert.ok(!html.includes('dock-footer'), 'the old footer buttons are gone');
 });
 
-test('填写 tab: template + domain on top, full-width 一键 AI 填写, then two light text actions', () => {
+test('填写 tab: template on top, full-width 一键 AI 填写, then two light text actions', () => {
   const fill = section('id="fill-view"', 'id="fields-view"');
   const at = (marker) => { const index = fill.indexOf(marker); assert.notEqual(index, -1, marker); return index; };
-  assert.ok(at('id="template-select"') < at('id="page-domain"'));
+  assert.ok(!fill.includes('page-domain'), '网站域名标签已去掉');
   assert.ok(at('id="fill-button"') < at('id="deep-button"'));
   assert.ok(at('id="deep-button"') < at('id="repeat-button"'));
   assert.match(fill, /id="fill-button" type="button">一键 AI 填写<\/button>/);

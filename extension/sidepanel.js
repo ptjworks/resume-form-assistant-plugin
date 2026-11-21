@@ -155,7 +155,6 @@
     aiConfigHintAction: document.getElementById("ai-config-hint-action"),
     targetState: document.getElementById("target-state"),
     desktopPill: document.getElementById("desktop-pill"),
-    pageDomain: document.getElementById("page-domain"),
     pageReady: document.getElementById("page-ready"),
     siteHint: document.getElementById("site-hint"),
     templateMeta: document.getElementById("template-meta"),
@@ -464,8 +463,6 @@
   function renderPageCard() {
     elements.pageState.textContent = pageConnected ? "当前网页已连接填表助手" : pageChecked ? "当前页面无法使用填表助手" : "正在连接当前网页…";
     elements.pageState.classList.toggle("is-unavailable", !pageConnected);
-    elements.pageDomain.hidden = !pageConnected || !pageHost;
-    elements.pageDomain.textContent = pageConnected ? pageHost : "";
     const hasData = Boolean(selectedTemplate() || self.ResumeProProfile?.hasProfileContent(currentStore?.profile));
     const [tone, text] = !pageChecked ? ["idle", "正在读取当前网页…"]
       : !pageConnected ? ["idle", "请切换到招聘网页，或刷新网页后再使用侧栏。浏览器自带页面不能填写。"]
