@@ -1342,6 +1342,8 @@
     const full = normalizeText(String(value ?? ""));
     const exact = available.find(option => names(option).some(text => normalizeText(text) === full));
     if (exact) return textOf(exact);
+    // 学历栏写了硕士、博士学位（理学硕士）不推成层次（同等学力也能拿学位）：明确不选，免得被唯一包含的兜底认成「硕士」。
+    if (!educationLevelOf(label, value) && /^(?:硕士|博士)$/.test(educationDegree(value)?.[2] || "")) return "";
     const core = educationLevelWithoutQualifier(label, value);
     if (core) {
       const same = available.filter(option => names(option).some(text => isSameOptionText(text, core)));

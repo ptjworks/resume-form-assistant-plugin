@@ -1045,7 +1045,8 @@ test("#301 an education-level select that lists bare levels takes the same level
   // 「在读」不影响层次，学历栏只写了学士就是本科（学士学位只授予本科毕业）；硕士、博士学位不推。
   assert.equal(helpers.choiceValue(levels, "硕士在读"), "硕士");
   assert.equal(helpers.choiceValue(levels, "理学学士"), "本科");
-  assert.equal(helpers.choiceValue(levels, "理学博士"), "理学博士");
+  // 硕士、博士学位不是学历层次：明确不选（不会被唯一包含认成「博士」）。
+  assert.equal(helpers.choiceValue(levels, "理学博士"), "");
   assert.equal(helpers.choiceValue({ ...levels, label: "最高已取得学历" }, "硕士在读"), "硕士在读");
   assert.equal(helpers.choiceValue({ ...levels, label: "学位" }, "博士研究生"), "博士研究生");
   assert.equal(helpers.choiceValue({ ...levels, options: ["博士", "博士后"] }, "博士研究生"), "博士");

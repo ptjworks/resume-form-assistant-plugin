@@ -23,8 +23,11 @@ test('educationChoice picks the one option that stands for the level, and says w
     ['本科（未毕业）', ['本科'], undefined],
     ['理学学士', ['本科', '硕士'], '本科'],
     ['理学学士', ['博士', '硕士', '本科'], '本科'],
-    ['理学硕士', ['硕士', '本科'], undefined],
-    ['理学博士', ['博士'], undefined],
+    ['理学硕士', ['硕士', '本科'], ''],
+    ['理学硕士', ['理学硕士', '硕士'], '理学硕士'],
+    ['博士学位', ['博士', '硕士', '本科'], ''],
+    ['理学博士', ['博士', '硕士', '本科'], ''],
+    ['理学博士', ['博士'], ''],
     ['本科（结业）', ['本科'], undefined],
     ['大专（肄业）', ['大专'], undefined],
     ['博士研究生（联合培养）', ['博士'], undefined]
@@ -38,6 +41,8 @@ test('educationChoice picks the one option that stands for the level, and says w
   assert.equal(helpers.educationChoice('学历', '博士研究生（直博）', [{ text: '请选择', value: '' }, { text: '博士', value: '3' }]), '博士');
   assert.equal(helpers.educationChoice('学位', '博士研究生', ['博士']), null);
   assert.equal(helpers.educationChoice('学位', '理学学士', ['本科']), null);
+  assert.equal(helpers.educationChoice('学位', '理学硕士', ['硕士']), null);
+  assert.equal(helpers.isValueValidForField({ label: '学历', inputType: 'select', options: ['博士', '硕士', '本科'] }, '理学硕士'), false);
   // 题目问已取得的学历：在读的不换。
   assert.equal(helpers.educationChoice('最高已取得学历', '硕士在读', ['硕士', '本科']), undefined);
   assert.equal(helpers.educationChoice('学历', '博士研究生', []), null);
@@ -229,6 +234,8 @@ const CASES = [
   { name: 'full list, 在读 does not change the level', build: () => antd4(LEVELS, { mode: 'search' }), value: '硕士在读', picked: '硕士', searches: [] },
   // 小米（四川大学）：学历栏写的是学位「理学学士」，选项是博士/硕士/本科 —— 选「本科」，不搜索。
   { name: 'xiaomi: bachelor degree in the level field is 本科', build: () => antd4(LEVELS, { mode: 'search' }), value: '理学学士', picked: '本科', searches: [] },
+  // 硕士、博士学位不推成层次，也不被「唯一包含」认成「硕士」：不选。
+  { name: 'full list, master degree is not a level', build: () => antd4(LEVELS, { mode: 'search' }), value: '理学硕士', reason: 'ambiguous_option', searches: null },
   { name: 'full list, unfinished status is never converted', build: () => antd4(['本科', '硕士'], { mode: 'search' }), value: '本科（未毕业）', reason: 'no_option_match', searches: null },
   { name: 'full list, other qualifier option is not taken', build: () => antd4(['博士研究生（普博）', '硕士', '本科'], { mode: 'search' }), value: '博士研究生（直博）', reason: 'no_option_match', searches: null },
   { name: 'remote search: searches the level word and picks from the results', build: () => antd4(['博士', '博士研究生', '硕士'], { mode: 'remote' }), value: '博士研究生（直博）', picked: '博士研究生', searches: ['博士研究生（直博）', '博士'] },
