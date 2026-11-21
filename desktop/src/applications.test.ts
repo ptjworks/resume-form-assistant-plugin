@@ -75,7 +75,7 @@ test('a fill event says what was written into the page, never that it was submit
 test('a snapshot that is not stored is never offered as if it were', async () => {
   const { snapshotStateLabel, SNAPSHOT_DISCLAIMER } = await import('./applications.ts');
   assert.equal(snapshotStateLabel('stored'), null);
-  assert.match(snapshotStateLabel('uploading') ?? "", /上传中/);
+  assert.match(snapshotStateLabel('uploading') ?? "", /还在上传/);
   assert.match(snapshotStateLabel('missing') ?? "", /不可用/);
   assert.match(snapshotStateLabel(undefined) ?? "", /不可用/);
   assert.match(SNAPSHOT_DISCLAIMER, /不能/);
@@ -95,7 +95,7 @@ test('a fill line shows how long it took and which revision of the template it u
 
 test('a missing snapshot points at the list where a re-uploaded copy would be', async () => {
   const { snapshotStateLabel } = await import('./applications.ts');
-  assert.match(snapshotStateLabel('missing') ?? "", /快照列表/);
+  assert.match(snapshotStateLabel('missing') ?? "", /当时交的简历/);
 });
 
 test('a fill line does not invent a count the plugin did not send', async () => {

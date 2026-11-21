@@ -1548,7 +1548,7 @@
   async function handleRepeatFillClick(event) {
     const button = event.currentTarget;
     if (state.nativeSidePanel) {
-      showStatus("请在浏览器侧栏的「填写」页使用「AI 辅助新增条目」。", "error");
+      showStatus("请在浏览器侧栏的「填写」页使用「辅助新增经历」。", "error");
       return;
     }
     const fillButton = shadowRoot.querySelector("#resume-pro-ai-fill");
@@ -4555,19 +4555,22 @@
         }
         const fieldMeta = fieldMetaMap.get(match.fieldId);
         if (assisted && (!isAssistedField(element, fieldMeta) || hasExistingValue(element) || !assisted.scopes.some(scope => scope.isConnected && scope.contains(element.element)))) continue;
+        let confirmedCompanyEntry = null;
         const recordFailure = () => {
           if (match.bossSchool && !bossEducationSchoolMatches(element.element, match.bossSchool)) return "education_school_unconfirmed";
           if (match.bossCompany && !bossWorkCompanyMatches(element.element, match.bossCompany)) return "work_company_unconfirmed";
           if (match.workTitleCompany) {
-            const anchor = fieldMap.get(match.workTitleCompany.fieldId);
+            const previous = confirmedCompanyEntry || fieldMap.get(match.workTitleCompany.fieldId);
+            const anchor = previous && (isFieldBindingCurrent(previous) ? previous : rebindFieldEntry(previous));
             const row = element.binding?.workTitleRow;
             const company = anchor?.element;
             const shown = String(company?.value ?? "");
             if (!row || !company || row !== anchor.binding?.workTitleRow || !row.contains(element.element) || !row.contains(company)
-              || !isFieldBindingCurrent(anchor) || shown.trim() !== match.workTitleCompany.value
+              || shown.trim() !== match.workTitleCompany.value
               || company.validity?.valid === false || !inspectTextCommit(company, shown, true).ok) {
               return "work_company_unconfirmed";
             }
+            confirmedCompanyEntry = anchor;
           }
           if (!match.blocked && fieldMeta?.bossCet?.role === "score") {
             const selected = bossCetSelection(element.element.closest(".group-part-item")).selected;
@@ -4776,7 +4779,7 @@
         + (grownLeft.length ? `新出现的 ${grownLeft.length} 项没有补填：${summarizeLabels(grownLeft.map(field => field.label))}，请手动补上。`
           + (grownWarning !== response.warning ? grownWarning : '') : '')
         + (kept.length ? `等 AI 时有改动的 ${kept.length} 项没有覆盖：${summarizeLabels(kept)}，请核对。` : '')
-        + (missingWorkRows ? `工作/实习经历还差 ${missingWorkRows} 条，可点「AI 辅助新增条目」预览并添加。` : "");
+        + (missingWorkRows ? `工作/实习经历还差 ${missingWorkRows} 条，可点「辅助新增经历」预览并添加。` : "");
       const emptyHint = viewModeHint();
       const recipeLead = !deep && recipeUse?.status === "hit" ? "已按本站配方定位字段。" : "";
       const recipeTail = !deep && recipeUse?.status === "stale" ? "本站配方可能已过期，可以重新深度分析。" : "";

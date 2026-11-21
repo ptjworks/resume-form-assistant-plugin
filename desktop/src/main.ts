@@ -113,6 +113,8 @@ void document.fonts?.ready.then(() => placeNavIndicator(false));
 
 function showRoute(name: string | undefined) {
   views.notes.parentElement?.classList.toggle("notes-workspace-active", name === "notes");
+  // 设置页要让出首次使用提示条占的高度，样式按这个标记切换（见 settings.css）。
+  if (views.notes.parentElement) views.notes.parentElement.dataset.view = name ?? "";
   Object.entries(views).forEach(([key, el]) => {
     el.classList.toggle("hidden", key !== name);
   });
@@ -146,7 +148,10 @@ async function navigate(route: string | undefined, refreshApplications = true): 
     }
   }
   const enteringResume = route === "resume" && !onResume;
+  const leavingApplications = route !== "applications" && !views.applications.classList.contains("hidden");
   const enteringApplications = route === "applications" && views.applications.classList.contains("hidden");
+  // 投递页里「往后改阶段」的那一条在提示条里等着撤销：切走就算确认，写进库，不能丢。
+  if (leavingApplications) void applications.flushPending();
   showRoute(route);
   if (route !== "settings") leaveBackup();
   if (enteringResume) resumeView.refresh();
@@ -530,6 +535,9 @@ if (events?.listen) void events.listen("note-quit-requested", async () => {
 });
 const applications = mountApplications(command, {
   openNotes: application => void openNotes(application),
+  // 跨页入口这一项只负责切到目标页；定位到具体日期、邮件分别留给 #551、#552。
+  openTodos: () => void navigate("todos").then((moved) => { if (moved) void showTodos().catch(() => {}); }),
+  openInbox: () => void navigate("inbox"),
   listen: events?.listen
     ? (name, handler) => events.listen?.(name, (event) => handler({ payload: event?.payload }))
     : undefined,
@@ -649,7 +657,7 @@ const showTodos = mountTodos(command, undefined, {
   writeNote: (application, suggested) => void openNotes(application, suggested),
   createApplication: () => {
     void navigate("applications").then((moved) => {
-      if (moved) must("btn-new-app").click();
+      if (moved) applications.openNewBar();
     });
   },
 });

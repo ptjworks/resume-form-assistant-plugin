@@ -26,7 +26,7 @@ vi.mock("./usage-metrics.ts", () => ({ installUsageSignals: vi.fn() }));
 vi.mock("./react/runtime-status-mount.tsx", () => ({ mountRuntimeStatus: () => ({ update: vi.fn(), fail: vi.fn() }) }));
 vi.mock("./ai/mount.tsx", () => ({ mountAiSettings: vi.fn(), mountAiReview: vi.fn() }));
 vi.mock("./applications-ui.ts", () => ({
-  mountApplications: () => ({ refreshList: views.refreshList, refreshView: views.refreshView, reloadArchive: views.reloadArchive }),
+  mountApplications: () => ({ refreshList: views.refreshList, refreshView: views.refreshView, reloadArchive: views.reloadArchive, flushPending: async () => {}, openNewBar: vi.fn() }),
 }));
 vi.mock("./inbox-ui.ts", () => ({ mountInbox: () => ({ refresh: views.inboxRefresh }) }));
 vi.mock("./todos-ui.ts", () => ({ mountTodos: () => async () => {} }));

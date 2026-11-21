@@ -537,6 +537,9 @@ async function handleAiFill(message, controller = new AbortController()) {
   for (const match of completeWorkTitles(formFields, matches, catalog, seenMatchIds)) {
     matches.push(match);
     seenMatchIds.add(match.fieldId);
+    // 公司可能由模型找到，职位是本地按同一条经历补上的。
+    matchedFieldIds.add(match.fieldId);
+    diagnostics.ruleMatches += 1;
   }
   // 拦下不填、只报原因的（blocked：日期不对、同一个回复里给了不同的值）不算 AI 填上的，另记 aiBlocked：网页把它们记作没写上。
   const aiAnswered = matches.filter(match => !matchedFieldIds.has(match.fieldId));

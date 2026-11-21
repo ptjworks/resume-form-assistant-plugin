@@ -183,6 +183,38 @@ test("#569 job titles follow the confirmed company in their own experience card,
   assert.equal(p.value("title-c"), "");
 });
 
+test("#569 a redrawn experience card keeps a committed company as evidence only if its value still matches", async (t) => {
+  const group = "工作经历";
+  const resume = [[group, "工作经历1-公司", "虚构单位"], [group, "工作经历1-职位", "研发工程师"],
+    [group, "工作经历1-工作部门", "研发部"]];
+  for (const companyChanged of [false, true]) {
+    await t.test(`company changed=${companyChanged}`, async (t) => {
+      const card = `<fieldset><legend>工作经历 1</legend>${input("company", "公司名称")}
+        ${input("team", "工作部门")}${input("title", "职位")}</fieldset>`;
+      const p = page(t, card, { resume });
+      let redrawn = false;
+      p.w.document.getElementById("team").addEventListener("change", (event) => {
+        const original = event.target.closest("fieldset");
+        const replacement = original.cloneNode(true);
+        if (companyChanged) replacement.querySelector("#company").value = "另一家单位";
+        original.replaceWith(replacement);
+        redrawn = true;
+      }, { once: true });
+      const run = p.run();
+      assert.ok(await p.until(() => p.worker.calls.length === 1));
+      const call = p.worker.calls[0];
+      const catalog = catalogOf(call.prompt);
+      call.replyFields([["公司名称", "工作经历1-公司"], ["工作部门", "工作经历1-工作部门"]].map(([label, key]) => ({
+        fieldId: call.fields.find(field => field.label === label).fieldId, ref: catalog.find(item => item.key === key).ref
+      })));
+      await run;
+      assert.equal(redrawn, true);
+      assert.equal(p.value("company"), companyChanged ? "另一家单位" : "虚构单位");
+      assert.equal(p.value("title"), companyChanged ? "" : "研发工程师");
+    });
+  }
+});
+
 test("#569 a job title is not written if the matching company is rejected by the page", async (t) => {
   const resume = [["工作经历", "工作经历1-公司", "虚构单位"], ["工作经历", "工作经历1-职位", "研发工程师"]];
   const cards = `<fieldset><legend>工作经历 1</legend>${input("company", "公司名称")}${input("title", "职位")}</fieldset>`;

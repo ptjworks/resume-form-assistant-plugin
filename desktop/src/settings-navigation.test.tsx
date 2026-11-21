@@ -16,27 +16,84 @@ function setup() {
   return { root, query: within(root), onSelect, nav: mountSettingsNavigation(root, onSelect) };
 }
 
-test("general is the default, diagnostics remain folded and each settings control appears once", () => {
+const visibleTabs = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLButtonElement>("[data-settings-tab]")).filter((tab) => !tab.hasAttribute("data-platform-off"));
+
+test("AI providers is the default; six categories show in the agreed order and cloud sync stays off the list", () => {
   const { query, root, onSelect } = setup();
-  expect(query.getByRole("tabpanel").id).toBe("settings-general");
-  expect(query.getByRole("checkbox", { name: "自动检查更新" })).toBeTruthy();
-  expect(root.querySelector<HTMLDetailsElement>(".technical-details")!.open).toBe(false);
-  expect(root.querySelector("#facts")!.closest("[data-settings-panel]")!.id).toBe("settings-about");
-  const ids = Array.from(root.querySelectorAll("[id]"), (node) => node.id);
-  expect(new Set(ids).size).toBe(ids.length);
+  expect(query.getByRole("tabpanel").id).toBe("settings-ai");
+  expect(visibleTabs(root).map((tab) => [tab.dataset.settingsTab, tab.textContent])).toEqual([
+    ["ai", "AI 服务商"], ["browser", "浏览器连接"], ["mailbox", "邮箱"], ["data", "数据与备份"], ["general", "通用与提醒"], ["about", "隐私与关于"],
+  ]);
+  const cloud = root.querySelector<HTMLElement>("#settings-tab-cloud-sync")!;
+  expect(cloud.dataset.platform).toBe("cloud-sync");
+  expect(cloud.hasAttribute("data-platform-off")).toBe(true);
+  const cloudPanel = root.querySelector<HTMLElement>("#settings-cloud-sync")!;
+  expect(cloudPanel.dataset.platform).toBe("cloud-sync");
+  expect(cloudPanel.hasAttribute("data-platform-off")).toBe(true);
+  expect(Array.from(root.querySelectorAll<HTMLInputElement>("#settings-cloud-sync input[type=checkbox]"), (box) => box.checked)).toEqual([false, false]);
   expect(onSelect).not.toHaveBeenCalled();
 });
 
-test("keyboard changes category with one focus stop and a single visible panel", () => {
-  const { query, onSelect } = setup();
-  const general = query.getByRole("tab", { name: "通用" });
-  fireEvent.keyDown(general, { key: "ArrowDown" });
+test("general keeps its controls and the merged privacy-and-about panel holds every former privacy and about control once", () => {
+  const { query, root, nav } = setup();
+  nav.select("general");
+  expect(query.getByRole("checkbox", { name: "自动检查更新" })).toBeTruthy();
+  const about = root.querySelector<HTMLElement>("#settings-about")!;
+  expect(root.querySelector("#settings-privacy")).toBeNull();
+  expect(root.querySelector("[data-settings-tab=privacy]")).toBeNull();
+  for (const selector of ["#desktop-usage", "#desktop-feedback", "#update-check", "#btn-diag", ".support-card", "#facts"]) {
+    expect(about.querySelector(selector), selector).toBeTruthy();
+  }
+  expect(root.querySelector("#settings-tab-about [data-update-dot]")).toBeTruthy();
+  expect(about.querySelector<HTMLDetailsElement>(".technical-details")!.open).toBe(false);
+  const replay = about.querySelector<HTMLElement>("#btn-replay-onboarding")!;
+  expect(replay.dataset.platform).toBe("onboarding");
+  expect(replay.hasAttribute("data-platform-off")).toBe(true);
+  const ids = Array.from(root.querySelectorAll("[id]"), (node) => node.id);
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+test("keyboard changes category with one focus stop, a single visible panel, and skips categories turned off by the platform", () => {
+  const { query, root, onSelect } = setup();
+  const ai = query.getByRole("tab", { name: "AI 服务商" });
+  fireEvent.keyDown(ai, { key: "ArrowDown" });
+  // 账号与云同步带 data-platform-off，方向键直接越过它。
   expect(query.getByRole("tabpanel").id).toBe("settings-browser");
   expect(document.activeElement).toBe(query.getByRole("tab", { name: "浏览器连接" }));
   fireEvent.keyDown(document.activeElement!, { key: "End" });
   expect(query.getByRole("tabpanel").id).toBe("settings-about");
-  expect(query.getAllByRole("tab").filter((tab) => tab.tabIndex === 0)).toHaveLength(1);
-  expect(onSelect.mock.calls).toEqual([["browser"], ["about"]]);
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+  expect(query.getByRole("tabpanel").id).toBe("settings-ai");
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
+  expect(query.getByRole("tabpanel").id).toBe("settings-about");
+  fireEvent.keyDown(document.activeElement!, { key: "Home" });
+  expect(query.getByRole("tabpanel").id).toBe("settings-ai");
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
+  expect(query.getByRole("tabpanel").id).toBe("settings-about");
+  expect(Array.from(root.querySelectorAll<HTMLButtonElement>("[data-settings-tab]")).filter((tab) => tab.tabIndex === 0)).toHaveLength(1);
+  expect(onSelect.mock.calls.map((call) => call[0])).toEqual(["browser", "about", "ai", "about", "ai", "about"]);
+});
+
+test("select() and keys skip hidden categories too, and a turned-on platform category joins the cycle", () => {
+  const { query, root, nav, onSelect } = setup();
+  nav.select("cloud-sync");
+  expect(query.getByRole("tabpanel").id).toBe("settings-ai");
+  expect(onSelect).not.toHaveBeenCalled();
+  // resume-pro://navigate 的 settings-ai 走的就是 select("ai")：从别的分类也能回到 AI 服务商。
+  nav.select("general"); nav.select("ai");
+  expect(query.getByRole("tabpanel").id).toBe("settings-ai");
+  onSelect.mockClear();
+  root.querySelector<HTMLElement>("#settings-tab-mailbox")!.hidden = true;
+  fireEvent.keyDown(query.getByRole("tab", { name: "浏览器连接" }), { key: "ArrowDown" });
+  expect(query.getByRole("tabpanel").id).toBe("settings-data");
+  nav.select("mailbox");
+  expect(query.getByRole("tabpanel").id).toBe("settings-data");
+  // Phase 2 打开开关后，分类自然进入循环。
+  for (const el of root.querySelectorAll("[data-platform]")) el.removeAttribute("data-platform-off");
+  fireEvent.keyDown(query.getByRole("tab", { name: "AI 服务商" }), { key: "ArrowDown" });
+  expect(query.getByRole("tabpanel").id).toBe("settings-cloud-sync");
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+  expect(query.getByRole("tabpanel").id).toBe("settings-browser");
 });
 
 test("direct browser navigation and category switching preserve unsaved fields and page feedback", () => {
@@ -52,6 +109,7 @@ test("direct browser navigation and category switching preserve unsaved fields a
   nav.select("data"); expect(status.hidden).toBe(false);
   expect(query.getByText("已选择备份 example.zip，等待确认。")).toBeTruthy();
   nav.select("unknown"); expect(query.getByRole("tabpanel").id).toBe("settings-data");
+  nav.select("privacy"); expect(query.getByRole("tabpanel").id).toBe("settings-data");
 });
 
 test("every category starts with a card, so their first cards line up", () => {
@@ -59,7 +117,7 @@ test("every category starts with a card, so their first cards line up", () => {
   for (const panel of root.querySelectorAll<HTMLElement>("[data-settings-panel]")) {
     const first = panel.firstElementChild!;
     if (panel.id === "settings-mailbox") { expect(first.classList.contains("mailbox-page-heading")).toBe(true); continue; }
-    // AI 与隐私由 React 挂进容器，容器本身不占位（display: contents）。
+    // AI 与隐私设置由 React 挂进容器，容器本身不占位（display: contents）。
     expect(first.classList.contains("settings-card") || ["ai-settings", "desktop-feedback", "desktop-usage"].includes(first.id)).toBe(true);
   }
 });
@@ -133,7 +191,7 @@ test("restore preview is one dialog with every count; refreshing the category ke
   expect(box.getByText("example-backup.zip")).toBeTruthy();
   expect(box.getByText(/来自另一个档案/)).toBeTruthy();
   const rows = Array.from(dialog()!.querySelectorAll("tbody tr"), (tr) => Array.from(tr.children, (cell) => cell.textContent));
-  expect(rows.map((row) => row[0])).toEqual(["申请", "回收站里的申请", "时间线记录", "待办", "回复证据", "简历快照", "附件"]);
+  expect(rows.map((row) => row[0])).toEqual(["申请", "回收站里的申请", "时间线记录", "待办", "回复证据", "当时交的简历", "附件"]);
   expect(rows[0].slice(1)).toEqual(["1", "2"]);
   expect(rows[1].slice(1)).toEqual(["0", "1"]);
   expect(box.getByText(/时间线记录是每条申请「时间线」里的条目/)).toBeTruthy();

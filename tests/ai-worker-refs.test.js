@@ -779,13 +779,19 @@ test("#569 work title completion requires a unique company record and respects e
     { group, key: "工作经历2-职位", value: "产品经理" }
   ];
   const unique = { formFields, resumeFields: resume.slice(0, 2) };
-  assert.equal(valueOf(await onlyCompany.run(unique), "title"), "设计师");
+  const completed = await onlyCompany.run(unique);
+  assert.equal(valueOf(completed, "title"), "设计师");
+  assert.equal(completed.diagnostics.aiMatches, 1);
+  assert.equal(completed.diagnostics.ruleMatches, 1);
+  assert.deepEqual(completed.diagnostics.unansweredIds, []);
   assert.equal(valueOf(await onlyCompany.run({ formFields, resumeFields: resume }), "title"), undefined);
   assert.equal(valueOf(await onlyCompany.run({ formFields, resumeFields: [...resume,
     { group, key: "工作经历2-单位名称", value: "另一家虚构单位" }] }), "title"), undefined);
   const answered = worker(() => [{ fieldId: "company", ref: "r1" }, { fieldId: "title", ref: "r2" }]);
   const result = await answered.run(unique);
   assert.deepEqual(result.matches.find(match => match.fieldId === "title"), { fieldId: "title", value: "设计师" });
+  assert.equal(result.diagnostics.aiMatches, 2);
+  assert.equal(result.diagnostics.ruleMatches, 0);
 });
 
 test("a view question takes no item that shares only a common word like 工作 with it", async () => {

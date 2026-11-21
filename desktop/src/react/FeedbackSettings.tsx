@@ -97,12 +97,12 @@ export function FeedbackSettings({ invoke, consentContainer }: { invoke: Invoke 
   const choice = consent === null ? <section className="settings-card feedback-choice" aria-labelledby="feedback-choice-title">
     <div className="settings-dialog-head">
       <h2 id="feedback-choice-title">帮我们改进网申快填</h2>
-      <p>是否开启自动错误报告？请选择一项，之后可以在“设置 → 隐私”里更改。</p>
+      <p>是否开启自动错误报告？请选择一项，之后可以在“设置 → 隐私与关于”里更改。</p>
     </div>
     <div className="settings-dialog-body">
       <p>我们在用户群和社交平台上收到过不少反馈，但很多只有一句「用不了」，看不出卡在哪一步，很难找到原因。开启自动错误报告后，程序出错时会把当时的技术情况发给我们，帮我们更快找到问题、把它修好。</p>
       <p>报告里只有技术信息：错误类型、出错的代码位置、程序版本、系统、发送时间和一个随机生成的安装编号。不包含你的简历、个人资料、填写的内容、Cookie 或密钥。发送前会先去掉可能的个人信息。报告最多保存 90 天；部分内容可能会公开在网申快填的 GitHub 项目里，方便复现问题，公开的内容会长期保留；安装编号不会公开。</p>
-      <p>你同意后才开始发送，同意前出的错不会补发。以后可以在“设置 → 隐私”里关闭，关闭后删除安装编号，不影响正常使用。桌面程序和插件分开设置。</p>
+      <p>你同意后才开始发送，同意前出的错不会补发。以后可以在“设置 → 隐私与关于”里关闭，关闭后删除安装编号，不影响正常使用。桌面程序和插件分开设置。</p>
       {consentError && <p className="settings-dialog-error" role="alert">{consentError}</p>}
     </div>
     <div className="settings-dialog-actions">
