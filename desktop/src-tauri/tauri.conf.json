@@ -16,6 +16,7 @@
       {
         "label": "main",
         "title": "网申快填",
+        "hiddenTitle": true,
         "width": 1100,
         "height": 740,
         "minWidth": 860,
