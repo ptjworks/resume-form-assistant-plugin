@@ -38,8 +38,8 @@ function picker(t, { transfer = false, label = '毕业时间', editable = false 
   return { api, target, input, popup, helpers: window.ResumeProAIHelpers };
 }
 
-function harness(t, { transfer = false, disabledDay, range = false } = {}) {
-  const { api, target, input, popup } = picker(t, { transfer });
+function harness(t, { transfer = false, disabledDay, range = false, label } = {}) {
+  const { api, target, input, popup } = picker(t, { transfer, label });
 
   // iView uses spans wrapping <em> for all three views. The single header
   // switches year/month views, and the double arrows page through year lists.
@@ -125,6 +125,20 @@ test('#544 skips disabled dates and an iView range that requires two dates', asy
     assert.equal(popup.hidden, true);
     assert.deepEqual(clicks, []);
   }
+});
+
+test('#544 a single-date iView panel does not write only the start of an unresolved range', async t => {
+  const raw = '2026-05-23 - 至今';
+  const whole = harness(t, { label: '起止时间' });
+  const result = await whole.api.operate(whole.target, raw);
+  assert.equal(result.ok, false);
+  assert.equal(whole.input.value, '');
+  assert.deepEqual(whole.clicks, []);
+  assert.equal(whole.popup.hidden, true);
+
+  const start = harness(t, { label: '起止时间（开始）' });
+  assert.equal((await start.api.operate(start.target, raw)).ok, true);
+  assert.equal(start.input.value, '2026-05-23');
 });
 
 function rangePicker(t, { disabledDate = '', confirm = false, monthPanels = false, transfer = false, editable = false, submittedRange } = {}) {

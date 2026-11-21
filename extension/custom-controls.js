@@ -1001,7 +1001,11 @@
     ctx.popup = layer; info.popup = layer;
     // 带确认按钮的日期时间或多选日历不按普通日期提交。
     if (layer.querySelector('.ivu-picker-confirm, .ivu-picker-panel-body-time')) return { reason: 'unsupported_control' };
-    if (!range) return await pickDate(ctx, raw, h, layer, info);
+    if (!range) {
+      const date = h.helpers.rangeDateValue(raw, dateHint(ctx));
+      if (h.helpers.rangeDateParts(date)) return { reason: 'unsupported_control' };
+      return await pickDate(ctx, date, h, layer, info);
+    }
     const outcome = await pickIviewRange(ctx, raw, h, layer, info);
     // iView 只会在面板关闭后的失焦事件中重置还没提交的半段。
     if (outcome.reason && !h.stop(ctx)) await leaveCalendar(ctx, info.el, info.root, layer, h);
