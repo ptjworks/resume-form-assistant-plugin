@@ -457,7 +457,8 @@
     const asksAttained = /^(?:最高)?已(?:取得|获得|完成)/.test(normalizeText(label));
     const raw = String(value ?? "").normalize("NFKC").trim();
     const level = asksAttained ? raw : raw.replace(/(?:\s*\(\s*在读\s*\)|\s*在读)$/, "");
-    // 学士学位带全日制等附注（理学学士（全日制））照样是本科；完成状态（在读、未毕业）不去，保持保守。
+    // 「在读」只在层次词后面去掉（硕士在读 → 硕士，题目不问已取得时）；学位写法（理学学士）只认学士本身和全日制等学习形式附注，
+    // 带在读、未毕业的学位（理学学士在读）归不成层次，保持保守不选。
     return educationLevelKind(level) || (educationDegreeCore(raw, false)?.[2] === "学士" ? "本科" : "");
   }
 
@@ -1378,7 +1379,7 @@
     if (!isEducationLevelLabel(label)) return null;
     const kind = educationLevelOf(label, value);
     // 大专：资料写「大专」先搜「大专」（和原来一样），写「大学专科」先搜「专科」。
-    if (kind === "大专" && /大专/.test(normalizeText(value))) return ["大专", "专科"];
+    if (kind === "大专" && /大专/.test(normalizeText(String(value ?? "")))) return ["大专", "专科"];
     return EDUCATION_SEARCH_TERMS[kind] || null;
   }
 
