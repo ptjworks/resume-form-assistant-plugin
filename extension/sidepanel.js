@@ -467,8 +467,6 @@
           : ["warn", "网页已连接；桌面简历可用后即可填写。"];
     elements.pageReady.dataset.tone = tone;
     elements.pageReady.textContent = text;
-    // 一切正常时不占地方：只在连不上网页、桌面不可用等需要处理时才出现。
-    elements.pageReady.hidden = tone === "ok";
   }
   function addressOf(url) {
     try {
