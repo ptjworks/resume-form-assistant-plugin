@@ -1,34 +1,11 @@
-/** Presentation-only tabs and disclosure menus; application commands stay in the controller. */
-export function bindDetailControls(root: HTMLElement, initialTab: string, onTab: (tab: string) => void) {
-  const tabs = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-detail-tab]"));
-  const panels = root.querySelectorAll<HTMLElement>("[data-detail-panel]");
+/**
+ * 展开区里「+ 记进度」这类小菜单的开合：同时只开一个，Esc 或点选项后收起并把焦点还回去，
+ * 点菜单外面也收起。只管显示；写库的命令都在 applications-ui.ts。
+ */
+let outsideClickBound = false;
+
+export function bindDetailControls(root: HTMLElement) {
   const menus = root.querySelectorAll<HTMLDetailsElement>(".action-menu");
-  function select(tab: HTMLButtonElement) {
-    const name = tab.dataset.detailTab!;
-    tabs.forEach((item) => {
-      const selected = item === tab;
-      item.setAttribute("aria-selected", String(selected));
-      item.tabIndex = selected ? 0 : -1;
-    });
-    panels.forEach((panel) => { panel.hidden = panel.dataset.detailPanel !== name; });
-    onTab(name);
-  }
-  tabs.forEach((tab, index) => {
-    tab.addEventListener("click", () => select(tab));
-    tab.addEventListener("keydown", (event) => {
-      let next: number;
-      if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
-      else if (event.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
-      else if (event.key === "Home") next = 0;
-      else if (event.key === "End") next = tabs.length - 1;
-      else return;
-      event.preventDefault();
-      select(tabs[next]);
-      tabs[next].focus();
-    });
-  });
-  const initial = tabs.find((tab) => tab.dataset.detailTab === initialTab) ?? tabs[0];
-  if (initial) select(initial);
   menus.forEach((menu) => {
     menu.addEventListener("toggle", () => {
       if (menu.open) menus.forEach((other) => { if (other !== menu) other.open = false; });
@@ -41,6 +18,13 @@ export function bindDetailControls(root: HTMLElement, initialTab: string, onTab:
     });
     menu.querySelectorAll("button").forEach((button) => {
       button.addEventListener("click", () => { menu.open = false; });
+    });
+  });
+  if (outsideClickBound) return;
+  outsideClickBound = true;
+  document.addEventListener("click", (event) => {
+    document.querySelectorAll<HTMLDetailsElement>("details.action-menu[open]").forEach((menu) => {
+      if (!menu.contains(event.target as Node)) menu.open = false;
     });
   });
 }
