@@ -779,6 +779,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     const picker = input("apps-undo-date-input");
     picker.max = localDay(now());
     picker.value = localDay(now());
+    must("apps-undo-text").textContent = `已记为「${stageLabel(pending.to)}」，发生在`;
     must("apps-undo-dateform").hidden = false;
     must("apps-undo-date").hidden = true;
     armTimer(DATE_PICK_MS);
