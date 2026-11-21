@@ -685,6 +685,60 @@ test("new bar: possible duplicates ask first; declining keeps the input and crea
   confirm.mockRestore();
 });
 
+test("a half-written timeline note survives a full redraw of the list", async () => {
+  const { ui } = await mount({ apps: [app("A", "interview"), app("B", "submitted")] });
+  toggleRow("A");
+  await waitFor(() => expect(row("A").querySelector('[data-act="note"]')).toBeTruthy());
+  fireEvent.click(row("A").querySelector('[data-act="note"]')!);
+  const field = () => row("A").querySelector<HTMLInputElement>("[data-note-add] input")!;
+  fireEvent.change(field(), { target: { value: "HR 说周五给回复" } });
+  // 别处改阶段、或插件提交，都会让列表整体重画。
+  await ui.refreshView();
+  expect(row("A").querySelector<HTMLFormElement>("[data-note-add]")!.hidden).toBe(false);
+  expect(field().value).toBe("HR 说周五给回复");
+  // 另一行的阶段提示条超时写库后的重画也一样。
+  fireEvent.change(stageSelect("B"), { target: { value: "interview" } });
+  await waitFor(() => expect(toast().hidden).toBe(false));
+  await ui.flushPending();
+  await waitFor(() => expect(group("interview")!.contains(row("B"))).toBe(true));
+  expect(field().value).toBe("HR 说周五给回复");
+});
+
+test("opening an application that sits in the folded ended group unfolds that group and expands the row", async () => {
+  const { ui } = await mount({ apps: [app("A", "interview"), app("R", "rejected")] });
+  expect(group("ended")!.querySelectorAll("li[data-id]").length).toBe(0);
+  await ui.openFromNotes("R", false);
+  await waitFor(() => expect(row("R")?.classList.contains("is-expanded")).toBe(true));
+  expect(document.querySelector('[data-group-toggle="ended"]')!.getAttribute("aria-expanded")).toBe("true");
+  expect(row("R").querySelector(".app-chain")).toBeTruthy();
+});
+
+test("a newly created application expands even when its group was folded by hand", async () => {
+  const apps = [app("A", "saved"), app("B", "saved")];
+  const b = backend({ apps });
+  const invoke: Invoke = async <T,>(name: string, args?: Record<string, unknown>) => {
+    if (name === "create_application_cmd") { apps.push(app("NEW", "saved", { company: "新公司" })); return { created: true, application: { id: "NEW" } } as T; }
+    return b.invoke<T>(name, args);
+  };
+  const ui = mountApplications(invoke, { now: () => NOW });
+  await ui.refreshList();
+  fireEvent.click(document.querySelector('[data-group-toggle="pending"]')!);
+  expect(group("pending")!.querySelectorAll("li[data-id]").length).toBe(0);
+  fireEvent.click(document.getElementById("btn-new-app")!);
+  fireEvent.change(document.getElementById("nb-company")!, { target: { value: "新公司" } });
+  fireEvent.change(document.getElementById("nb-title")!, { target: { value: "工程师" } });
+  fireEvent.submit(document.getElementById("new-job-bar")!);
+  await waitFor(() => expect(row("NEW")?.classList.contains("is-expanded")).toBe(true));
+});
+
+test("if the open-todos read fails the list still shows, and the page says the schedule column is a fallback", async () => {
+  const { view } = await mount({ apps: [app("A", "interview", { updated_at: new Date(2026, 10, 18, 9).toISOString() })], fail: { list_todos_cmd: { code: "STORE", message: "读不到" } } });
+  expect(row("A")).toBeTruthy();
+  expect(row("A").querySelector(".app-cell-hint")!.textContent).toBe("3 天前更新");
+  expect(document.getElementById("apps-msg")!.textContent).toContain("日程没读到");
+  void view;
+});
+
 test("a committed change from the plugin refreshes the list and the expanded row", async () => {
   let changed: ((event: { payload?: unknown }) => void) | undefined;
   const state = { notes: "旧备注" };

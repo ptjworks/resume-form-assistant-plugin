@@ -44,7 +44,7 @@ export const TIMELINE_NOTE =
 
 /** 旧版本（0.4.3 及更早）导出的备份没记回收站数量。未知就说未知，不当成 0。 */
 export const LEGACY_RECYCLE_NOTE =
-  "这份备份由旧版本导出，没有记录回收站里的申请数量。恢复后可以在「申请」的回收站里查看。";
+  "这份备份由旧版本导出，没有记录回收站里的申请数量。恢复后可以在「设置 → 数据与备份 → 回收站」里查看。";
 
 /** 正在用的申请。列表上的「删除」只是移进回收站，总数不变，要拆开才看得出变化。 */
 const activeApplications = (counts: ArchiveCounts) => counts.applications - counts.recycledApplications;

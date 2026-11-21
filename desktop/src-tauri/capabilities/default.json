@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window can query host status and request hide/quit. It cannot write the archive.",
+  "description": "Main window can query host status and request hide/quit. It cannot write the archive. It may open http(s) links in the system browser (e.g. 投递页「打开官网」).",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -11,6 +11,10 @@
     "core:window:allow-unminimize",
     "core:window:allow-is-visible",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    }
   ]
 }

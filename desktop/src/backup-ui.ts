@@ -359,7 +359,7 @@ export function mountBackup(
       void guarded(restore, async () => {
         try {
           await invoke("set_recycled_cmd", { id: restore.dataset.recycleRestore, recycled: false });
-          show(recycleStatus, { tone: "success", text: "已从回收站恢复，可以在「申请」里看到它。" });
+          show(recycleStatus, { tone: "success", text: "已从回收站恢复，可以在「投递」里看到它。" });
           await refreshRecycle();
         } catch (error) {
           show(recycleStatus, { tone: "error", text: `恢复失败：${invokeError(error)}` });

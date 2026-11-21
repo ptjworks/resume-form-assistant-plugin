@@ -224,3 +224,35 @@ test('no other desktop source still reads the removed controls', () => {
   }
   assert.deepEqual(stray, []);
 });
+
+test('the notes autosave sends only id + notes, which the Rust side accepts because every other field is optional', () => {
+  const rust = read('../src-tauri/src/commands.rs');
+  const block = rust.match(/pub struct UpdateApplicationArgs \{([\s\S]*?)\n\}/)?.[1] ?? '';
+  assert.match(block, /pub id: String,/);
+  for (const field of ['company', 'title', 'source_url', 'location', 'notes']) {
+    assert.match(block, new RegExp(`pub ${field}: Option<String>,`), field);
+  }
+  const ui = read('./applications-ui.ts');
+  assert.match(ui, /update_application_cmd", \{ args: \{ id, notes: field\.value \} \}/);
+});
+
+test('the recycle bin the applications page points to really exists in settings → 数据与备份, and nothing still points at a bin on this page', () => {
+  const html = read('../index.html');
+  assert.match(html, /<details id="backup-recycle"[^>]*>[\s\S]*?id="recycle-list"/);
+  assert.match(read('./backup-ui.ts'), /data-recycle-restore/);
+  assert.match(read('./applications-ui.ts'), /设置 → 数据与备份 → 回收站/);
+  for (const file of ['./backup.ts', './backup-ui.ts', './applications-ui.ts']) {
+    assert.doesNotMatch(read(file), /「申请」的回收站|在「申请」里看到/, file);
+  }
+});
+
+test('opening 官网 goes through the opener plugin, and the window may only open http(s) links', () => {
+  const capability = JSON.parse(read('../src-tauri/capabilities/default.json'));
+  const entry = capability.permissions.find((p: unknown) => typeof p === 'object' && (p as { identifier?: string }).identifier === 'opener:allow-open-url');
+  assert.ok(entry, '缺少 opener:allow-open-url');
+  assert.deepEqual(entry.allow, [{ url: 'https://*' }, { url: 'http://*' }]);
+  // 不放行 mailto / tel / 文件路径，也不给 opener 的其他命令。
+  assert.ok(!capability.permissions.includes('opener:default'));
+  assert.ok(!capability.permissions.some((p: unknown) => typeof p === 'string' && /^opener:/.test(p)));
+  assert.match(read('./applications-ui.ts'), /target="_blank" rel="noopener noreferrer"/);
+});

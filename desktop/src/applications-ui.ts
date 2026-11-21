@@ -25,6 +25,7 @@ import {
   STAGE_OPTIONS,
   autoCorrectReason,
   buildGroups,
+  groupOf,
   headerSummary,
   nearestTodoByApplication,
   pendingNotice,
@@ -111,7 +112,7 @@ export interface ApplicationsOptions {
   openTodos?: () => void;
   /** 点「N 封相关邮件」：只负责切到通知页（定位留给 #552）。 */
   openInbox?: () => void;
-  /** 用系统浏览器打开官网；没传就退回 `window.open`。 */
+  /** 用系统浏览器打开官网。没传就走链接自己的 `target="_blank"`，由桌面的 opener 插件接手（只放行 http/https，见 capabilities）。 */
   openUrl?: (url: string) => void;
 }
 
@@ -252,6 +253,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       return;
     }
     const token = ctl.beginList();
+    let todosFailed = false;
     if (!listLoaded) { listMsg = "正在读取投递…"; msg.textContent = listMsg; }
     try {
       // 一次读全（后端单次上限 1000），分组、搜索、计数都在前端；日程另读一次，按申请取最近一项。
@@ -261,7 +263,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
         }),
         Promise.resolve(invoke<TodoView[]>("list_todos_cmd", { applicationId: null, status: "open" }))
           .then((rows) => (Array.isArray(rows) ? rows : []))
-          .catch(() => [] as TodoView[]),
+          .catch(() => { todosFailed = true; return [] as TodoView[]; }),
       ]);
       if (!ctl.isCurrent(token)) return;
       all = Array.isArray(page.items) ? page.items : [];
@@ -269,6 +271,8 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       nearest = nearestTodoByApplication(todos, now());
       if (msg.textContent === listMsg) msg.textContent = "";
       listMsg = "";
+      // 日程读失败不拦住列表，但要说一声：不然第 3 列全是「N 天前更新」，会让人以为没有日程。
+      if (todosFailed) { listMsg = "日程没读到，第 3 列暂按更新时间显示。"; msg.textContent = listMsg; }
       listLoaded = true;
       if (ctl.selectedId && !appById(ctl.selectedId)) collapseRow();
       render();
@@ -341,6 +345,11 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       ? { id: noteInput.dataset.noteFor ?? "", value: noteInput.value }
       : null;
     const scrollTop = list.scrollTop;
+    // 展开区里「记一条备注」写了一半的内容也一样：列表整体重画会把整个展开区换掉。
+    const noteForm = list.querySelector<HTMLFormElement>("[data-note-add]");
+    const noteDraft = noteForm && !noteForm.hidden
+      ? { id: noteForm.closest<HTMLElement>("li[data-id]")?.dataset.id ?? "", text: noteForm.querySelector("input")?.value ?? "", focused: document.activeElement === noteForm.querySelector("input") }
+      : null;
 
     const groups = buildGroups(all, query || null, nearest, stageOf);
     const hits = groups.reduce((sum, group) => sum + group.items.length, 0);
@@ -368,6 +377,15 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     else if (ctl.selectedId) {
       const panel = panelFor(ctl.selectedId);
       if (panel) panel.innerHTML = '<p class="app-expand-loading muted">加载中…</p>';
+    }
+    if (noteDraft && noteDraft.id === ctl.selectedId) {
+      const restoredForm = list.querySelector<HTMLFormElement>(`li[data-id="${attrValue(noteDraft.id)}"] [data-note-add]`);
+      const field = restoredForm?.querySelector("input");
+      if (restoredForm && field) {
+        restoredForm.hidden = false;
+        field.value = noteDraft.text;
+        if (noteDraft.focused) field.focus();
+      }
     }
     if (draft) {
       const restored = list.querySelector<HTMLInputElement>(`.app-note-input[data-note-for="${attrValue(draft.id)}"]`);
@@ -443,6 +461,10 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       expandedView = null;
     }
     ctl.setSelected(id);
+    // 程序化展开（从心得页跳来、刚新建的那条）时，它所在的组要先展开：已结束组默认折叠，
+    // 用户手动折叠过的组也一样，否则 render 会把这一行当成「藏在折叠组里」立刻收起。
+    const target = appById(id);
+    if (target) groupOpen.set(groupOf(stageOf(target)), true);
     render();
     list.querySelector<HTMLElement>(`li[data-id="${attrValue(id)}"] .app-select`)?.focus();
     return loadDetail(id, false);
