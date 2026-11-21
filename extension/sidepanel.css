@@ -398,7 +398,8 @@ button:disabled { cursor: not-allowed; }
 .search-box .icon { position: absolute; top: 11px; left: 12px; color: var(--muted); pointer-events: none; }
 .search-box #field-search { min-height: 38px; padding-left: 36px; border-radius: 8px; }
 #field-search:disabled { background: var(--soft); cursor: not-allowed; }
-.guide-card { padding: 12px 14px; }
+.fields-head { padding: 0 0 2px; border: 0; background: transparent; }
+.guide-card { padding: 12px 14px; background: var(--bg); }
 .guide-card .card-head { margin-bottom: 6px; }
 .guide-card:has(.guide-body[hidden]) .card-head { margin-bottom: 0; }
 .guide-tools { display: flex; align-items: center; gap: 6px; min-width: 0; }
