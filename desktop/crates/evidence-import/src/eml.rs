@@ -235,7 +235,8 @@ pub(crate) fn decode_entities(text: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        let Some(end) = rest[..rest.len().min(12)].find(';') else {
+        let search_end = rest.floor_char_boundary(12);
+        let Some(end) = rest[..search_end].find(';') else {
             out.push('&');
             rest = &rest[1..];
             continue;
