@@ -5,6 +5,8 @@ import type { PlatformServices } from "./registry.ts";
  * Phase 1 不要求登录，直接返回，进入投递页。
  * Phase 2 在 `requireAuthOnLaunch` 为 true 时：先播启动动效，若 `auth.getSession()` 不是
  * authenticated 就显示登录卡片，等登录成功后再 resolve。
+ * 闸门失败（离线、钥匙串读不出等）时是放行还是拦住，到 Phase 2（#556）再定；
+ * 现在 main.ts 的 boot() 没有兜底，因为 Phase 1 的闸门不会失败。
  */
 export async function runLaunchGate(platform: PlatformServices): Promise<void> {
   if (!platform.capabilities.requireAuthOnLaunch) return;

@@ -30,5 +30,9 @@ export interface CommunityService {
   getDailyTeaPoll(): Promise<CommunityPost["poll"]>;
   /** 将本地 #490 心得先脱敏预览，经用户确认后再发布到广场 */
   previewDesensitizedNote(noteId: string): Promise<DesensitizedDraftPreview>;
+  /**
+   * 实现方不得信任调用方传来的 preview 里的脱敏文本：发布前要按 originalNoteId 从本机原文重新脱敏，
+   * 再与 preview 比对。签名留给 #558 社区实现时再定。
+   */
   publishDesensitizedNote(preview: DesensitizedDraftPreview): Promise<CommunityPost>;
 }

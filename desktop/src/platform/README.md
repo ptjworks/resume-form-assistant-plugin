@@ -36,8 +36,9 @@ Phase 2 只换实现、不改界面。
    <button type="button" data-platform="auth" data-platform-off>账号</button>
    ```
 
-   默认关闭是为了避免启动时闪一下。`tests/` 里有守卫：`index.html` 里只要有 `data-platform`
-   而没有 `data-platform-off` 的元素，测试就会失败。
+   默认关闭是为了避免启动时闪一下。`src/platform/platform.test.ts` 里有守卫：`index.html` 里只要有 `data-platform`
+   而没有 `data-platform-off` 的元素，测试就会失败（只扫 `index.html`；用 JS/React 动态渲染的入口要自己在模板里写
+   `data-platform-off`，或挂载后对其根节点调一次 `applyPlatformVisibility`）。
 2. 不要用 `hidden` 属性做这个开关。设置面板靠 `hidden` 切分类，两者会冲突。
    隐藏靠 `styles.css` 里的 `[data-platform][data-platform-off] { display: none !important; }`。
 3. 启动时 `applyPlatformVisibility` 按能力开关切 `data-platform-off`，页面代码不需要自己判断。
