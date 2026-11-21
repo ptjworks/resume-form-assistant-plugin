@@ -59,6 +59,7 @@ function aiWorker(clock, resume = RESUME) {
       call.reply = (values = null) => answer({ ok: true, text: refsFor(message.user, lastResume, JSON.stringify(fields
         .map((field) => ({ fieldId: field.fieldId, value: (values || Object.fromEntries(resume.map(([, key, value]) => [key, value])))[field.label] }))
         .filter((item) => item.value))) });
+      call.replyFields = (fields) => answer({ ok: true, text: JSON.stringify(fields) });
       call.fail = (reply) => answer({ ok: false, ...reply });
       calls.push(call);
     }
@@ -155,6 +156,57 @@ function page(t, body, { confirm = () => true, onGender = null, resume = RESUME,
 
 const BASIC = input("name", "姓名") + input("email", "邮箱", { type: "email" }) + input("phone", "手机号码", { type: "tel" })
   + input("school", "毕业院校") + input("major", "专业");
+
+test("#569 job titles follow the confirmed company in their own experience card, even with a missing title above", async (t) => {
+  const group = "工作经历";
+  const resume = [[group, `虚构甲单位${group}-公司`, "虚构甲单位"], [group, `虚构甲单位${group}-职位`, "编辑"],
+    [group, `虚构乙单位${group}-公司`, "虚构乙单位"], [group, `虚构乙单位${group}-职位`, "研发工程师"]];
+  const cards = '<h2>工作经历</h2>'
+    + `<div class="experience-card">${input("company-a", "公司名称")}</div>`
+    + `<div class="experience-card">${input("company-b", "公司名称")}${input("title-b", "职位")}</div>`
+    + `<div class="experience-card">${input("title-c", "职位")}</div>`;
+  const p = page(t, cards, { resume });
+  const run = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  const call = p.worker.calls[0];
+  assert.ok(!call.prompt.includes("workTitleRow"), "row evidence stays in local matching");
+  // Company B has occurrence 2, but title B has occurrence 1. Respond only for company B.
+  const b = call.fields.find(field => field.label === "公司名称" && field.repeatIndex === 2);
+  assert.ok(b);
+  const option = catalogOf(call.prompt).find(item => item.key === `${group}2-公司`);
+  assert.ok(option);
+  call.replyFields([{ fieldId: b.fieldId, ref: option.ref }]);
+  await run;
+  assert.equal(p.value("company-a"), "");
+  assert.equal(p.value("company-b"), "虚构乙单位");
+  assert.equal(p.value("title-b"), "研发工程师");
+  assert.equal(p.value("title-c"), "");
+});
+
+test("#569 a job title is not written if the matching company is rejected by the page", async (t) => {
+  const resume = [["工作经历", "工作经历1-公司", "虚构单位"], ["工作经历", "工作经历1-职位", "研发工程师"]];
+  const cards = `<fieldset><legend>工作经历 1</legend>${input("company", "公司名称")}${input("title", "职位")}</fieldset>`;
+  for (const [label, reject, shown] of [
+    ["clears the company", company => { company.value = ""; }, ""],
+    ["leaves the company text visible but invalid", company => company.setAttribute("aria-invalid", "true"), "虚构单位"]
+  ]) {
+    await t.test(label, async (t) => {
+      const p = page(t, cards, { resume });
+      const company = p.w.document.getElementById("company");
+      company.addEventListener("input", () => reject(company));
+      const run = p.run();
+      assert.ok(await p.until(() => p.worker.calls.length === 1));
+      const call = p.worker.calls[0];
+      const companyField = call.fields.find(field => field.label === "公司名称");
+      const option = catalogOf(call.prompt).find(item => item.key === "工作经历1-公司");
+      call.replyFields([{ fieldId: companyField.fieldId, ref: option.ref }]);
+      await run;
+      assert.equal(p.value("company"), shown);
+      assert.equal(p.value("title"), "");
+      assert.match((await p.report()).diagnosticsReport, /work_company_unconfirmed/);
+    });
+  }
+});
 
 test("the fields local rules can fill are on the page before the AI answers; the AI's are filled after it does", async (t) => {
   const p = page(t, BASIC);

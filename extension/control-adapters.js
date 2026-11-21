@@ -433,8 +433,8 @@
           ctx.alreadyOpen = doc.activeElement === ctx.el && ctx.popupsBefore.size === 1;
         }
         // 聚焦之前记下看得见的弹层（见 custom-controls.js 的 shownLayers）：有的下拉、日历一聚焦就展开，聚焦后再记就把它算成了原有的。
-        // 只读日期框也走 custom-controls 的日历路径（#301 智联 Element 日期一聚焦就打开）。
-        if (custom || (ctx.kind === 'date' && ctx.el?.readOnly)) ctx.popupsBeforeFocus = scope.ResumeProCustomControls?.visiblePopups?.(ctx.entry, visible) || null;
+        // 只读日期框和 iView 日期区间也走 custom-controls 的日历路径，弹层可能在聚焦时就打开。
+        if (custom || (ctx.kind === 'date' && (ctx.el?.readOnly || ctx.entry.pickerType === 'iview'))) ctx.popupsBeforeFocus = scope.ResumeProCustomControls?.visiblePopups?.(ctx.entry, visible) || null;
         // #429 区间日期的两个框由 operateRange 自己去点：先不聚焦，Element 一聚焦就打开日历，两头已经填好时只核对、不该打开。
         if (!direct && !(ctx.kind === 'date' && (rangeBoxes(ctx) || ['boss', 'period'].includes(ctx.entry.pickerType)))) focus(ctx.el);
         await delay(0);
@@ -508,6 +508,7 @@
           const date = await operateDate(ctx, desiredValue);
           if (date.typeText) return await text(ctx, desiredValue);
           if (date.reason) return result(false, date.reason, ctx, date.observed);
+          typedDate = Boolean(date.typedDate);
           if (date.dayDefaulted) ctx.observed = { ...ctx.observed, dayDefaulted: true };
           accepted = date.accepted || (() => {
             const display = String(ctx.el.value ?? '');
@@ -589,9 +590,8 @@
       if (ctx.entry.pickerType === 'antd') return await antDate(ctx, raw);
       if (ctx.entry.pickerType === 'jiandaoyun') return await jdyDate(ctx, raw);
       // #269 只读的日期框（智联 Element 日期选择器）：不能打字，按日历逐级点，和北森的日历共用一套。
-      if (ctx.el.readOnly && scope.ResumeProCustomControls?.run) {
-        const outcome = await scope.ResumeProCustomControls.run(ctx, raw, host);
-        return outcome.reason ? { reason: outcome.reason } : { accepted: outcome.accepted, dayDefaulted: outcome.dayDefaulted };
+      if ((ctx.el.readOnly || ctx.entry.pickerType === 'iview' && helpers?.rangeDateParts?.(raw)) && scope.ResumeProCustomControls?.run) {
+        return await scope.ResumeProCustomControls.run(ctx, raw, host);
       }
       const expected = helpers?.normalizeDateValue?.(raw, ctx.entry.pickerInputType || 'date') ?? String(raw ?? '');
       if (ctx.el.readOnly) return { reason: 'unsupported_control' };

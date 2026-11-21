@@ -79,7 +79,7 @@
   const DATE_VALUE = /^\s*\d{4}\s*[-./年]\s*\d{1,2}/;
   // 通用路径交还前等自己的弹层退场的上限。
   const POPUP_LEAVE_MS = 1000;
-  // 通用路径点开后弹层里一直显示加载图标：第一轮等选项最多等到平常的这么多倍（正式 8 秒）。
+  // 通用路径弹层里持续显示加载图标：没有新选项时最多等到平常的这么多倍（正式 8 秒）。
   const GENERIC_LOADING_WAITS = 4;
   // 失败收尾按了 Esc 以后等弹层退场的上限，过了还在才在页面空白处按一下。
   const ESC_LEAVE_MS = 600;
@@ -994,11 +994,42 @@
     if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
     const layer = opened.value;
     state.openMs = alreadyOpen ? 0 : Date.now() - started;
-    ctx.popup = layer; info.popup = layer;
     ctx.observed.popupRole = 'calendar';
-    // 双面板区间和带确认按钮的时间/多选日历不能按单个日期提交。
-    if (layer.querySelector('.ivu-date-picker-with-range, .ivu-picker-confirm')) return { reason: 'unsupported_control' };
-    return await pickDate(ctx, raw, h, layer, info);
+    const range = layer.querySelector('.ivu-date-picker-with-range');
+    // 已经打开的区间可能正在等用户点第二头，不能接着点日期，也不收起它。
+    if (range && info.before.has(layer)) return { reason: 'ambiguous_popup' };
+    ctx.popup = layer; info.popup = layer;
+    // 带确认按钮的日期时间或多选日历不按普通日期提交。
+    if (layer.querySelector('.ivu-picker-confirm, .ivu-picker-panel-body-time')) return { reason: 'unsupported_control' };
+    if (!range) return await pickDate(ctx, raw, h, layer, info);
+    const outcome = await pickIviewRange(ctx, raw, h, layer, info);
+    // iView 只会在面板关闭后的失焦事件中重置还没提交的半段。
+    if (outcome.reason && !h.stop(ctx)) await leaveCalendar(ctx, info.el, info.root, layer, h);
+    return outcome;
+  }
+  async function pickIviewRange(ctx, raw, h, layer, info) {
+    const parts = h.helpers.rangeDateParts(raw);
+    if (!parts) return { reason: 'unsupported_control' };
+    const want = parts.map(part => dateTarget(part, h.helpers));
+    if (want.some(part => !part?.m || part.y < 1900 || part.y > 2100
+      || new Date(part.y, part.m - 1, part.d ?? 1).getMonth() !== part.m - 1)) return { reason: 'invalid_date' };
+    const expected = want.map(({ y, m, d }) => `${y}-${pad2(m)}-${pad2(d || 1)}`);
+    if (expected[0] > expected[1]) return { reason: 'invalid_date' };
+    // ViewUI 的日期区间有一个输入框和两个日期面板，点完日期才收起并提交。
+    const panelsOf = (popup, host) => {
+      const range = popup.querySelector('.ivu-picker-panel-body-wrapper.ivu-date-picker-with-range');
+      const panels = Array.from(range?.querySelectorAll('.ivu-picker-panel-content-left, .ivu-picker-panel-content-right') || []).filter(host.visible);
+      return panels.length === 2 && panels[0].matches('.ivu-picker-panel-content-left') && panels[1].matches('.ivu-picker-panel-content-right') ? panels : null;
+    };
+    const chosen = await clickRange(ctx, want, h, layer, { panelsOf, dateOnly: true });
+    if (chosen.reason) return chosen;
+    const accepted = () => {
+      const displayed = h.helpers.rangeDateParts(info.el.value);
+      return displayed?.every((value, index) => shownDate(value, 'date') === expected[index]) && !calendarNear(info, h);
+    };
+    const done = await h.waitUntil(ctx, info.el.ownerDocument.documentElement, accepted, Boolean);
+    return done.reason ? { reason: done.reason === 'verification_timeout' ? 'selection_not_committed' : done.reason }
+      : { accepted, dayDefaulted: want.some(date => !date.d) };
   }
   function bossCalendar(info, h) {
     const local = Array.from(info.root.querySelectorAll(BOSS_CALENDAR)).filter(h.visible);
@@ -1287,13 +1318,15 @@
     if (outcome.reason && !h.stop(ctx)) await leaveCalendar(ctx, boxes[0], ctx.entry.root, layer, h);
     return outcome;
   }
-  async function clickRange(ctx, want, h, layer) {
+  async function clickRange(ctx, want, h, layer, { panelsOf = rangePanels, dateOnly = false } = {}) {
     const doc = ctx.el.ownerDocument;
-    const panels = () => (layer.isConnected && h.visible(layer) ? rangePanels(layer, h) : null);
+    const panels = () => (layer.isConnected && h.visible(layer) ? panelsOf(layer, h) : null);
     const views = () => panels()?.map(panel => ({ panel, view: calendarView(panel, h) })) || null;
     if (Array.from(layer.querySelectorAll('[class*="time-picker" i], [class*="time-header" i]')).some(h.visible)) return { reason: 'unsupported_control' };
     // 日历打开有动画：格子显示出来才看得出是选日还是选月。
-    const shown = await h.waitUntil(ctx, doc.documentElement, views, seen => Boolean(seen && (seen[0].view.dayCells >= 28 || seen[0].view.months.length >= 12)), 1500);
+    const ready = seen => Boolean(seen && (dateOnly ? seen.every(({ view }) => view.dayCells >= 28)
+      : seen[0].view.dayCells >= 28 || seen[0].view.months.length >= 12));
+    const shown = await h.waitUntil(ctx, doc.documentElement, views, ready, 1500);
     if (shown.reason) return { reason: shown.reason === 'verification_timeout' ? 'unsupported_control' : shown.reason };
     const mode = shown.value[0].view.dayCells >= 28 ? 'date' : 'month';
     // 面板显示的月份（选月的是年份），按月数比先后。
@@ -1526,11 +1559,13 @@
       opened = await h.waitUntil(ctx, doc.documentElement, () => genericOpened(), Boolean);
     }
     let typedFirst = false, typedAt = 0;
-    const typeSearch = (input, query, typing = info.freeText) => {
+    const typeSearch = (input, query) => {
       if (state.searchInput !== input) state.searchBefore = input.value;
       state.searchInput = input;
       state.query = query;
-      if (typing) h.type(input, query, ctx);
+      state.searchable = true;
+      // 自研学校、专业框可能在 keyup 后才取建议，打字时也不提前派发 change。
+      if (info.freeText || info.library === 'generic' || input === ariaTypeAhead) h.type(input, query, ctx);
       else { h.write(input, query, ctx); h.input(input); }
       typedAt = Date.now();
     };
@@ -1543,7 +1578,7 @@
       for (const query of searchPlan(desired[0]).queries) {
         if (opened.reason !== 'verification_timeout' || !typeInto.isConnected || !safeSearch(typeInto) || !h.visible(typeInto)) break;
         const reason = h.stop(ctx, true); if (reason) return { reason };
-        typeSearch(typeInto, query, info.freeText || typeInto === ariaTypeAhead);
+        typeSearch(typeInto, query);
         typedFirst = true;
         opened = await h.waitUntil(ctx, doc.documentElement, info.library === 'generic' ? () => genericOpened(1) : findOpened, Boolean,
           info.freeText ? Math.min(FREE_TEXT_TYPED_MS, h.timeoutMs ?? FREE_TEXT_TYPED_MS) : undefined);
@@ -1637,6 +1672,7 @@
       if (now) state.sawLoading = true;
       return now;
     };
+    const remainingLoadingWait = from => Math.max(0, (h.timeoutMs ?? 2000) * GENERIC_LOADING_WAITS - (Date.now() - from));
     // 弹层里显示着「暂无数据」一类的空状态；「加载中」还在等，不算。
     const emptyShown = () => [popup, ctx.popup].some(layer => layer?.isConnected && Array.from(layer.querySelectorAll('*')).some(node => {
       const text = trim(node.textContent);
@@ -1884,6 +1920,7 @@
       };
       // AntD 先输入了要找的值：先到的列表可能是输入前的请求晚到的结果。列表里有同名的一项才马上选，否则等满再用最后的列表。
       const typedAntd = typedFirst && !generic;
+      const typedGeneric = typedFirst && generic;
       const { queries: planned, original, education } = searchPlan(desired[level]);
       const laterQueries = searchable ? planned.slice(1).filter(query => query !== state.query) : [];
       const canTryAlternate = laterQueries.length > 0;
@@ -1908,9 +1945,11 @@
           || (generic && items.length === 1 && isMokaOption(info, items[0], h))) return sameOption(items, value, h.helpers);
         if (info.library === 'boss') return insistOriginal(items)
           ? sameOption(items, value, h.helpers) : bossOption(items, value, bossLabel, h.helpers);
-        return match(items, value, h.helpers, insistOriginal(items) || partial(items), englishLevel);
+        // 搜索后才出现的通用菜单也可能只展示部分条目，不能用包含关系猜测。
+        return match(items, value, h.helpers, typedGeneric || insistOriginal(items) || partial(items), englishLevel);
       };
-      const listReady = list => (!loading() && list.length > 0 && (!generic || Date.now() - steadySince >= 300) && (!typedAntd || sameName(list) || typedSettled(steadySince)))
+      const listReady = list => (!loading() && list.length > 0 && (!generic || Date.now() - steadySince >= 300)
+        && (!typedAntd || sameName(list) || typedSettled(steadySince)) && (!typedGeneric || sameName(list)))
         || (eagerSearch && list.length === 0) || (typedAntd && noSuggestions(list));
       const waitedFrom = Date.now();
       let ready = await h.waitUntil(ctx, doc.documentElement, generic || typedAntd ? watchOptions : () => readOptions(level), listReady);
@@ -1918,8 +1957,7 @@
       // 还在加载就不去搜索，按等待选项超时报。
       // 列表已经出来了、只是旁边留着一个不走的加载标记（底部的懒加载）的，不延长，照下面用已经看到的列表。
       if (generic && ready.reason === 'verification_timeout' && loading() && !readOptions(level).length) {
-        const rest = (h.timeoutMs ?? 2000) * GENERIC_LOADING_WAITS - (Date.now() - waitedFrom);
-        ready = await h.waitUntil(ctx, doc.documentElement, watchOptions, listReady, Math.max(0, rest));
+        ready = await h.waitUntil(ctx, doc.documentElement, watchOptions, listReady, remainingLoadingWait(waitedFrom));
         if (ready.reason === 'verification_timeout' && loading() && !readOptions(level).length) {
           if (level === 0 && !searchDone) { ctx.observed.hasOptions = false; state.firstList = []; state.firstTotal = 0; }
           return { reason: info.cascade ? 'cascade_timeout' : 'options_timeout' };
@@ -1952,16 +1990,22 @@
         if (!searchInput.isConnected || (!info.root.contains(searchInput) && !popup.contains(searchInput) && !ctx.popup.contains(searchInput))) return { reason: 'element_disconnected' };
         const signature = list.map(option => `${option.value}:${option.text}`).join('\n');
         info.requireCommitSignal = info.library === 'aria';
-        typeSearch(searchInput, query, info.freeText || searchInput === linkedSearch);
+        typeSearch(searchInput, query);
         searchDone = true;
         let lastSignature = signature, stableSince = Date.now();
-        const updated = await h.waitUntil(ctx, doc.documentElement, () => {
+        const readUpdated = () => {
           const current = readOptions(level);
           const next = current.map(option => `${option.value}:${option.text}`).join('\n');
           if (next !== lastSignature) { stableSince = Date.now(); lastSignature = next; }
           return current;
-        }, current => !loading() && lastSignature !== signature && current.length > 0
-          && (info.freeText ? sameName(current) || typedSettled(stableSince) : Date.now() - stableSince >= 80) || noSuggestions(current));
+        };
+        const updatedReady = current => !loading() && lastSignature !== signature && current.length > 0
+          && (info.freeText ? sameName(current) || typedSettled(stableSince) : Date.now() - stableSince >= 80) || noSuggestions(current);
+        let updated = await h.waitUntil(ctx, doc.documentElement, readUpdated, updatedReady);
+        // 搜索后仍在加载且还没出现新结果时，沿用初次打开弹层的等待上限。
+        if (generic && updated.reason === 'verification_timeout' && (!lastSignature || lastSignature === signature) && loading()) {
+          updated = await h.waitUntil(ctx, doc.documentElement, readUpdated, updatedReady, remainingLoadingWait(typedAt));
+        }
         // 列表空了或显示「暂无数据」就是没有这一项。有另一种写法时，空列表也可以再搜一次。
         if (updated.reason === 'verification_timeout' && !loading() && !readOptions(level).length
           && (signature || emptyShown() || canTryAlternate && query !== queries[queries.length - 1])) {

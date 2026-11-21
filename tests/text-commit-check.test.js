@@ -117,6 +117,40 @@ test("#479 a stable unique field id survives a redraw that adds a same-titled fi
   assert.equal(p.input("project").value, "虚构项目");
 });
 
+for (const changed of [false, true]) {
+  test(`a dropdown redrawn while opening is retried only with the approved value (changed=${changed})`, async (t) => {
+    const p = page(t, `<div class="form-item">
+      <label id="preference-label">期望城市</label>
+      <button type="button" id="preference" role="combobox" aria-labelledby="preference-label"
+        aria-expanded="false" aria-controls="preference-list">请选择</button>
+      </div><div id="preference-list" role="listbox" hidden><div role="option">杭州市</div></div>`, [["期望城市", "杭州市"]]);
+    const original = p.input("preference");
+    const list = p.input("preference-list");
+    let replacements = 0;
+    let opened = 0;
+    original.onclick = () => {
+      replacements += 1;
+      const fresh = original.cloneNode(true);
+      if (changed) fresh.textContent = "北京市";
+      original.replaceWith(fresh);
+      fresh.onclick = () => {
+        opened += 1;
+        fresh.setAttribute("aria-expanded", "true");
+        list.hidden = false;
+      };
+      list.firstElementChild.onclick = () => {
+        fresh.textContent = "杭州市";
+        fresh.setAttribute("aria-expanded", "false");
+        list.hidden = true;
+      };
+    };
+    await p.run();
+    assert.equal(replacements, 1);
+    assert.equal(opened, changed ? 0 : 1);
+    assert.equal(p.input("preference").textContent, changed ? "北京市" : "杭州市");
+  });
+}
+
 for (const invalid of ["duplicate-id", "changed-title", "changed-value", "changed-name"]) {
   test(`#479 redraw never rebinds through ${invalid}`, async (t) => {
     let changed = false;

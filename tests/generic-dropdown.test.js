@@ -8,11 +8,11 @@ const { JSDOM } = require("jsdom");
 const scanner = require("../extension/field-scan.js");
 const { ETHNIC, selectItem, wireSelect } = require("./helpers/beisen-form.js");
 
-function load(html) {
+function load(html, timeoutMs = 200) {
   const dom = new JSDOM(`<form>${html}</form>`, { runScripts: "outside-only" });
   const w = dom.window;
   for (const file of ["ai-helpers.js", "region-data.js", "custom-controls.js", "control-adapters.js"]) w.eval(fs.readFileSync(`extension/${file}`, "utf8"));
-  const api = w.ResumeProControls.create({ timeoutMs: 200, settleMs: 35, isVisible: (el) => !el.closest("[hidden]") });
+  const api = w.ResumeProControls.create({ timeoutMs, settleMs: 35, isVisible: (el) => !el.closest("[hidden]") });
   return { w, doc: w.document, api };
 }
 
@@ -62,7 +62,7 @@ function moka({ choices = ["男/Male", "女/Female"], onPick, searchable = false
 }
 
 // 北森新版 phoenix-select：弹层挂在 body 下，自带搜索框，选项文字在 span.item-text-label 里；选中的文字显示在组件里，输入框保持空。
-function beisen(choices = ["汉族", "回族", "满族"], firstScreen = 3) {
+function beisen(choices = ["汉族", "回族", "满族"], firstScreen = 3, searchMs = 0) {
   const h = load(`<div class="form-item"><label class="form-item__text">民族</label><div class="form-item__content">
     <div class="phoenix-select phoenix-select--editable phoenix-select--large"><ul class="phoenix-select__content">
       <li class="phoenix-select__selected"></li>
@@ -92,7 +92,11 @@ function beisen(choices = ["汉族", "回族", "满族"], firstScreen = 3) {
         list.append(row);
       }
     };
-    search.addEventListener("input", render);
+    search.addEventListener("input", () => {
+      if (!searchMs) { render(); return; }
+      list.innerHTML = '<div class="dictionary-loading"></div>';
+      h.w.setTimeout(render, searchMs);
+    });
     render();
     doc.body.append(layer);
     // Esc 不管用，点页面空白处才关（同真机）。
@@ -138,6 +142,15 @@ test("Beisen: an option outside the first screen is found through the layer's ow
   assert.deepEqual(h.clicks, ["蒙古族"]);
   assert.deepEqual(typedInto.filter((name) => name.includes("phoenix-select__input")), [], "the component's own input is left alone");
   assert.ok(typedInto.some((name) => name.includes("phoenix-input__input")), "the layer's search box was used");
+});
+
+test("Beisen: a search that is visibly loading can finish after the usual wait", async (t) => {
+  const h = beisen(["汉族", "回族", "满族", "蒙古族"], 3, 380);
+  t.after(() => h.w.close());
+  const outcome = await h.api.operate(h.target, "蒙古族");
+  assert.equal(outcome.ok, true, outcome.reason);
+  assert.deepEqual(h.clicks, ["蒙古族"]);
+  assert.equal(outcome.observed.shape.remote, true);
 });
 
 test("Moka: the bilingual option is chosen by its Chinese part", async () => {
@@ -192,6 +205,70 @@ test("Moka: a recognized single-item menu does not pick a longer option", async 
   const result = await h.api.operate(h.target, "北京大学");
   assert.equal(result.reason, "no_option_match");
   assert.deepEqual(h.clicks, []);
+});
+
+function schoolTypeahead(t, timeoutMs) {
+  const h = load(`<div class="item"><label>学校</label><div class="ud__select"><input role="combobox" aria-autocomplete="list"></div></div>`, timeoutMs);
+  t.after(() => h.w.close());
+  const input = h.doc.querySelector("input");
+  const clicks = [];
+  let popup;
+  const show = (...schools) => {
+    if (!popup) {
+      popup = h.doc.createElement("div");
+      popup.className = "school-suggestions";
+      h.doc.body.append(popup);
+    }
+    popup.replaceChildren(...schools.map(school => {
+      const option = h.doc.createElement("div");
+      option.textContent = school;
+      option.onclick = () => { clicks.push(school); input.value = school; popup.remove(); };
+      return option;
+    }));
+  };
+  input.addEventListener("blur", () => popup?.remove());
+  return { ...h, input, clicks, show, target: scanned(h.doc, "学校") };
+}
+
+test("a generic editable school dropdown can launch keyboard-driven suggestions after click finds no popup", async (t) => {
+  const h = schoolTypeahead(t);
+  h.input.onkeyup = () => h.show("北京大学", "北京交通大学");
+  let changedBeforeChoice = false;
+  h.input.onchange = () => { if (!h.clicks.length) changedBeforeChoice = true; };
+  const outcome = await h.api.operate(h.target, "北京大学");
+  assert.equal(outcome.ok, true, outcome.reason);
+  assert.deepEqual(h.clicks, ["北京大学"]);
+  assert.equal(changedBeforeChoice, false);
+});
+
+test("a generic search popup opened by typing cannot select a longer school name", async (t) => {
+  const h = schoolTypeahead(t);
+  h.input.oninput = () => { if (h.input.value) h.show("北京大学医学部", "北京交通大学"); };
+  const outcome = await h.api.operate(h.target, "北京大学");
+  assert.equal(outcome.reason, "no_option_match");
+  assert.deepEqual(h.clicks, []);
+  assert.equal(h.input.value, "");
+});
+
+test("an early nonmatching school list cannot mask a later exact result", async (t) => {
+  const h = schoolTypeahead(t, 950);
+  h.input.oninput = () => {
+    if (!h.input.value) return;
+    h.show("北京大学医学部", "北京交通大学");
+    h.w.setTimeout(() => h.show("北京大学", "清华大学"), 500);
+  };
+  const outcome = await h.api.operate(h.target, "北京大学");
+  assert.equal(outcome.ok, true, outcome.reason);
+  assert.deepEqual(h.clicks, ["北京大学"]);
+});
+
+test("a generic search records the typed attempt even when no popup appears", async (t) => {
+  const h = schoolTypeahead(t);
+  const outcome = await h.api.operate(h.target, "北京大学");
+  assert.equal(outcome.reason, "options_not_rendered");
+  assert.deepEqual(h.clicks, []);
+  assert.equal(h.input.value, "");
+  assert.equal(outcome.observed.shape.search, true);
 });
 
 test("Moka: a lone nearby validation hint is not a menu option", async (t) => {
@@ -860,14 +937,20 @@ test("Beisen div radio group: a component that ignores the click is not counted"
 
 // #269 日历：北森 phoenix（选到日、带输入框；或只选到月）和 Element（只读框，按 年 → 月 → 日 逐级点）。
 // 合成日历按 2026-10-22 真机看到的结构写，今天固定为 2026-10-22。
-function calendarHost({ kind = "phoenix-day", typing = true, futureDisabled = false, disabledAttr = false } = {}) {
+function calendarHost({ kind = "phoenix-day", typing = true, futureDisabled = false, disabledAttr = false, revertOnBlur = false } = {}) {
+  const standalone = kind === "element" || revertOnBlur;
+  const dateInput = kind === "element" ? "el-date-editor el-input" : "phoenix-date-picker";
+  const inputClass = kind === "element" ? ' class="el-input__inner"' : "";
   const h = load(`<div class="form-item"><label class="form-item__text">日期</label><div class="form-item__control">
-    ${kind === "element" ? `<div class="el-date-editor el-input"><input class="el-input__inner" readonly placeholder="请选择日期"></div>`
+    ${standalone ? `<div class="${dateInput}"><input${inputClass} readonly placeholder="请选择日期"></div>`
       : `<div class="phoenix-select phoenix-select--editable"><ul class="phoenix-select__content"><li class="phoenix-select__selected"></li><li class="phoenix-select__inputWrapper"><input class="phoenix-select__input"></li></ul></div>`}
     </div></div>`);
   const { doc } = h;
-  const commit = (text) => {
-    if (kind === "element") doc.querySelector(".el-date-editor input").value = text;
+  const input = doc.querySelector("input");
+  let provisional = false;
+  const commit = (text, typed = false) => {
+    provisional = typed && revertOnBlur;
+    if (standalone) input.value = text;
     else doc.querySelector(".phoenix-select__selected").textContent = text;
     layer?.remove(); layer = null;
   };
@@ -915,17 +998,18 @@ function calendarHost({ kind = "phoenix-day", typing = true, futureDisabled = fa
     layer.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       const value = layer.querySelector("input").value;
-      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) { clicks.push(`typed:${value}`); commit(value); }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) { clicks.push(`typed:${value}`); commit(value, true); }
     });
     doc.body.append(layer); render();
   };
-  const trigger = kind === "element" ? doc.querySelector(".el-date-editor input") : doc.querySelector(".phoenix-select");
+  const trigger = standalone ? input : doc.querySelector(".phoenix-select");
   trigger.addEventListener(kind === "element" ? "focus" : "click", open);
+  if (revertOnBlur) input.addEventListener("blur", () => { if (provisional) input.value = ""; });
   const control = scanner.scanPage(doc, { isVisible: () => true }).controls[0];
-  const target = kind === "element"
-    ? { kind: "element", element: control.element, root: control.root, controlKind: "date", pickerType: "element", hints: {} }
+  const target = standalone
+    ? { kind: "element", element: control.element, root: control.root, controlKind: "date", pickerType: control.pickerType, hints: {} }
     : { kind: "element", element: control.element, elements: control.elements, root: control.root, controlKind: control.controlKind, hints: {} };
-  const shown = () => kind === "element" ? doc.querySelector(".el-date-editor input").value : doc.querySelector(".phoenix-select__selected").textContent;
+  const shown = () => standalone ? input.value : doc.querySelector(".phoenix-select__selected").textContent;
   return { ...h, target, clicks, shown };
 }
 
@@ -942,6 +1026,16 @@ test("Beisen day calendar without a date box: year, month and day are clicked in
   const result = await h.api.operate(h.target, "2019-07-15");
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(h.shown(), "2019-07-15");
+});
+
+test("Beisen read-only date: when Enter only previews a value, retry on the actual date cell", async (t) => {
+  const h = calendarHost({ revertOnBlur: true });
+  t.after(() => h.w.close());
+  const result = await h.api.operate(h.target, "2026-10-15");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(h.clicks, ["typed:2026-10-15", "15"]);
+  assert.equal(h.shown(), "2026-10-15");
+  assert.equal(h.api.check(h.target).ok, true);
 });
 
 test("Beisen month calendar: the year arrows reach the year, then the month is clicked", async () => {
