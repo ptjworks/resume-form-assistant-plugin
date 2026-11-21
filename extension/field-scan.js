@@ -714,7 +714,8 @@
     if (item === control.root) return null;
     const placeholders = placeholdersOf(control);
     const skip = new Set([control.root, ...optionLabelElements(control)]);
-    const segments = usefulSegments(textSegments(item, ctx, skip), placeholders);
+    // Moka 等表单会在已标记的题目和输入框占位里重复同一句话。只在取未标记的邻近文字时排除占位。
+    const segments = usefulSegments(textSegments(item, ctx, skip), []);
     const before = segments.filter((segment) => isBefore(segment.node, control.root));
     const pool = before.length ? before
       : (control.controlKind === "checkbox" ? segments : []);
@@ -723,11 +724,14 @@
     for (let index = pool.length - 1; index >= 0; index -= 1) {
       const labelEl = labelLikeAncestor(pool[index].el, item);
       if (!labelEl) continue;
-      const text = cleanLabel(joinSegments(pool.filter((segment) => labelEl.contains(segment.node))), placeholders);
+      const text = cleanLabel(joinSegments(pool.filter((segment) => labelEl.contains(segment.node))));
       if (text) return { text, source: "item", labelEl };
     }
 
-    const loose = joinSegments(pool);
+    const looseBefore = usefulSegments(before, placeholders);
+    const loosePool = looseBefore.length ? looseBefore
+      : (control.controlKind === "checkbox" ? usefulSegments(segments, placeholders) : []);
+    const loose = joinSegments(loosePool);
     if (loose.length > MAX_LOOSE_TEXT_CHARS) return null;
     const text = cleanLabel(loose, placeholders);
     return text ? { text, source: "item-text", labelEl: null } : null;

@@ -149,6 +149,38 @@ test("Moka: the bilingual option is chosen by its Chinese part", async () => {
   assert.equal(h.api.check(h.target).ok, true);
 });
 
+test("Moka: a recognized menu can open with just one exact option", async (t) => {
+  const h = moka({ choices: ["英语/English"] });
+  t.after(() => h.w.close());
+  h.input.readOnly = true;
+  const result = await h.api.operate(h.target, "英语");
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.clicks, ["英语/English"]);
+});
+
+test("Moka: a recognized single-item menu does not pick a longer option", async (t) => {
+  const h = moka({ choices: ["北京大学医学部"] });
+  t.after(() => h.w.close());
+  h.input.readOnly = true;
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.reason, "no_option_match");
+  assert.deepEqual(h.clicks, []);
+});
+
+test("Moka: a lone nearby validation hint is not a menu option", async (t) => {
+  const h = moka({ choices: [] });
+  t.after(() => h.w.close());
+  const hint = h.doc.querySelector(".err");
+  hint.setAttribute("role", "alert");
+  let clicks = 0;
+  hint.addEventListener("click", () => { clicks += 1; });
+  h.input.addEventListener("click", () => { hint.textContent = "英语"; });
+  const result = await h.api.operate(h.target, "英语");
+  assert.equal(result.ok, false);
+  assert.equal(clicks, 0);
+  assert.deepEqual(h.clicks, []);
+});
+
 test("a component that shows only the Chinese part after selecting is accepted too", async () => {
   const h = moka({ onPick: (text) => { h.input.value = text.split("/")[0]; } });
   assert.equal((await h.api.operate(h.target, "女")).ok, true);

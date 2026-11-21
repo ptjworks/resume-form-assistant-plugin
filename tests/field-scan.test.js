@@ -41,6 +41,25 @@ test("#477 an explicit question is retained when its wording equals the input pl
   assert.ok(result.controls.every(control => scanner.isBindingCurrent(control, doc, { isVisible })));
 });
 
+test("#570 a structured form question still counts when its input repeats it as a placeholder", (t) => {
+  const doc = load(`<form>
+    <div class="apply-field-Q2iJ7AtQGX string_info-UOJxKN5mtC">
+      <div class="title-IWWQ0Xa4L7"><span><span>姓名</span></span></div>
+      <div class="ctrl-CICMG4Fr4_"><label class="sd-Input-container-2S_vM string_info"><input placeholder="姓名"></label></div>
+    </div>
+    <div><span>手机号码</span><input placeholder="手机号码"></div>
+    <div><div class="title-IWWQ0Xa4L7">请选择</div><input placeholder="请选择"></div>
+  </form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(result.controls.map(({ label, labelSource, offerable }) => [label, labelSource, offerable]), [
+    ["姓名", "item", true],
+    ["", "placeholder", false]
+  ]);
+  assert.equal(result.skipped.noLabel, 1);
+  assert.ok(result.controls.every(control => scanner.isBindingCurrent(control, doc, { isVisible })));
+});
+
 test("#479 only an id that is unique in its document becomes a redraw anchor", (t) => {
   const doc = load(`<form>
     <div><label for="name">姓名</label><input id="name" name="name"></div>

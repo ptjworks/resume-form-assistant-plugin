@@ -188,6 +188,47 @@ test('fill auto triggers and exclusions', () => {
   for (const key of ['assisted','cancelled','overwriteDeclined']) assert.equal(core.fillFailure({ ...base, fieldCount: 0, [key]: true }), null);
 });
 
+test('resume diagnostics count experience details by record instead of the company prefix', () => {
+  const resume = [
+    { group: '工作经历', key: '虚构甲公司工作经历-公司', value: '虚构甲公司' },
+    { group: '工作经历', key: '虚构甲公司工作经历-职位', value: '运营专员' },
+    { group: '工作经历', key: '虚构甲公司工作经历-岗位名称', value: '运营专员' },
+    { group: '工作经历', key: '虚构甲公司工作经历-开始时间', value: '2020.04' },
+    { group: '工作经历', key: '虚构甲公司工作经历-结束时间', value: '2021.06' },
+    { group: '工作经历', key: '虚构乙公司工作经历-职位', value: '研发工程师' },
+    { group: '工作经历', key: '虚构乙公司工作经历-起止时间', value: '2021.07-2023.08' },
+    { group: '工作经历', key: '虚构乙公司工作经历-职位 (2)', value: '项目负责人' },
+    { group: '工作经历', key: '职务', value: '另存的职位写法' },
+    { group: '教育背景', key: '教育经历1-学校', value: '虚构理工学院' },
+    { group: '教育背景', key: '教育经历1-专业', value: '工业设计' },
+    { group: '教育背景', key: '教育经历2-专业', value: '机械工程' },
+    { group: '教育背景', key: '教育经历3-专业', value: ' ' },
+    { group: '本网站回答', key: '项目经历-获奖', value: '虚构答复' }
+  ];
+  const kinds = core.resumeKinds(resume);
+  const counts = core.resumeKindCounts(resume);
+  assert.ok(kinds.has('职位') && kinds.has('学校') && kinds.has('专业') && kinds.has('起止时间'));
+  assert.equal(counts.get('职位'), 3);
+  assert.equal(counts.get('起止时间'), 2);
+  assert.equal(counts.get('专业'), 2);
+  assert.equal(counts.get('学校'), 1);
+  assert.equal(counts.get('工作经历'), 3);
+  assert.equal(counts.get('教育经历'), 2);
+  assert.equal(counts.get('项目经历'), 1);
+  assert.equal(kinds.has('获奖'), false, 'non-record groups keep the original field-key classification');
+});
+
+test('heading, empty and out-of-group experience keys do not imply a position record', () => {
+  const resume = [
+    { group: '工作经历', key: '工作经历', value: '自定义说明' },
+    { group: '工作经历', key: '虚构甲公司工作经历-职位', value: ' ' },
+    { group: '教育经历', key: '虚构乙公司工作经历-职位', value: '存错分组的旧模板值' },
+    { group: '本网站回答', key: '实习经历-职务', value: '站点问题的回答' }
+  ];
+  assert.equal(core.resumeKinds(resume).has('职位'), false);
+  assert.equal(core.resumeKindCounts(resume).get('职位'), undefined);
+});
+
 test('router rejects foreign senders and binds exact previews to one privileged document', async () => {
   const { installFeedback } = await import('../extension/link/feedback.mjs');
   const originalFetch = global.fetch;
