@@ -95,7 +95,11 @@
         if (kind !== "unknown") seen.add(kind);
       }
       const groupKey = foldKind(group) || "_";
-      const recordKey = record && [foldKind(record.anchor), record.index || groupMatch.index || "1", record.ordinal || "1"].join("\u0000");
+      const anchor = foldKind(record?.anchor);
+      const index = record?.index || groupMatch?.index;
+      // 只有结构明确指出经历身份才去重。没有身份的旧写法仍按同名字段（如职位1、职位2）计数。
+      const recordKey = record && (anchor || index || record.ordinal)
+        ? [anchor, index || "1", record.ordinal || "1"].join("\u0000") : "";
       const baseKey = foldKind(key.replace(/\d+$/g, "")) || "_";
       for (const kind of seen) {
         if (!byKind.has(kind)) byKind.set(kind, new Map());

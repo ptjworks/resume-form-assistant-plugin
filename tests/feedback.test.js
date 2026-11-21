@@ -229,6 +229,18 @@ test('heading, empty and out-of-group experience keys do not imply a position re
   assert.equal(core.resumeKindCounts(resume).get('职位'), undefined);
 });
 
+test('legacy experience field suffixes are counted when no record identity is given', () => {
+  const counts = core.resumeKindCounts([
+    { group: '工作经历', key: '工作经历-职位1', value: '工程师' },
+    { group: '工作经历', key: '工作经历-职位2', value: '主管' },
+    { group: '工作经历', key: '工作经历-开始时间1', value: '2020-01' },
+    { group: '工作经历', key: '工作经历-开始时间2', value: '2024-01' }
+  ]);
+  assert.equal(counts.get('职位'), 2);
+  assert.equal(counts.get('起止时间'), 2);
+  assert.equal(counts.get('工作经历'), 2);
+});
+
 test('router rejects foreign senders and binds exact previews to one privileged document', async () => {
   const { installFeedback } = await import('../extension/link/feedback.mjs');
   const originalFetch = global.fetch;

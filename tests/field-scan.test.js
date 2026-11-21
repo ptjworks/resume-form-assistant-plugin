@@ -76,6 +76,18 @@ test("a repeated placeholder hint cannot replace or join the marked question", (
   ]);
 });
 
+test("a marked placeholder example stays a hint even when the same text is shown twice", (t) => {
+  const doc = load(`<form>
+    <div><div class="title">YYYY-MM-DD</div><input placeholder="YYYY-MM-DD"></div>
+    <div><div class="title">example@example.test</div><input placeholder="example@example.test"></div>
+    <div><div class="title">男／女</div><input placeholder="男／女"></div>
+  </form>`);
+  t.after(() => doc.defaultView.close());
+  assert.deepEqual(scan(doc).controls.map(({ labelSource, offerable }) => [labelSource, offerable]), [
+    ["placeholder", false], ["placeholder", false], ["placeholder", false]
+  ]);
+});
+
 test("#479 only an id that is unique in its document becomes a redraw anchor", (t) => {
   const doc = load(`<form>
     <div><label for="name">姓名</label><input id="name" name="name"></div>
