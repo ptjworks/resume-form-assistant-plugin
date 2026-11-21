@@ -150,7 +150,7 @@ main > #banner { margin: 0; padding: 6px 20px; border-width: 0 0 1px; border-rad
 .support-card-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 .support-card-head p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
 .support-methods { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
-.support-method { margin: 0; padding: 14px 12px 12px; display: grid; justify-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; }
+.support-method { margin: 0; padding: 14px 12px 12px; display: grid; justify-items: center; gap: 9px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
 .support-method figcaption { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; }
 .payment-dot { width: 7px; height: 7px; border-radius: 50%; }
 .payment-dot.wechat { background: #07a75d; }

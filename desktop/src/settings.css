@@ -25,12 +25,12 @@
 .settings-nav button .update-dot { margin-left: auto; vertical-align: baseline; background: var(--ui-dot-error); }
 
 /* 右侧内容 */
-.settings-content { min-width: 0; min-height: 0; padding: 32px 32px 48px; overflow-y: auto; background: var(--ui-canvas); }
-.settings-section { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 672px; margin: 0 auto; }
+.settings-content { min-width: 0; min-height: 0; padding: 40px 32px 56px; overflow-y: auto; background: var(--ui-canvas); }
+.settings-section { display: flex; flex-direction: column; gap: 24px; min-width: 0; max-width: 672px; margin: 0 auto; }
 .settings-section:focus-visible { outline-offset: 6px; border-radius: 16px; }
 #ai-settings, #desktop-feedback, #desktop-usage { display: contents; }
 
-.settings-card { min-width: 0; padding: 20px 24px; border: 1px solid var(--ui-line); border-radius: 14px; background: var(--ui-surface); box-shadow: none; }
+.settings-card { min-width: 0; padding: 24px 28px; border: 1px solid var(--ui-line); border-radius: 14px; background: var(--ui-surface); box-shadow: none; }
 .settings-card-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .settings-card-head.has-aside { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .settings-card-head.has-aside > div:first-child { min-width: 0; flex: 1 1 280px; }
@@ -115,14 +115,14 @@
 .settings-fold > summary { width: fit-content; color: var(--ink); font-weight: 500; }
 .settings-fold[open] > summary { margin-bottom: 10px; }
 .settings-card-fold { padding: 0; }
-.settings-card-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; list-style: none; border-radius: 14px; }
+.settings-card-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 28px; list-style: none; border-radius: 14px; }
 .settings-card-fold > summary::-webkit-details-marker { display: none; }
 .settings-card-fold > summary:focus-visible { outline-offset: -2px; }
 .settings-fold-title { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
 .settings-fold-title::before { content: ""; width: 7px; height: 7px; border-right: 2px solid #7b8494; border-bottom: 2px solid #7b8494; transform: rotate(-45deg); transition: transform 140ms; }
 .settings-card-fold[open] > summary .settings-fold-title::before { transform: rotate(45deg); }
 .settings-fold-hint { color: var(--muted); font-size: 12px; text-align: right; }
-.settings-fold-body { padding: 16px 24px 20px; border-top: 1px solid var(--line); }
+.settings-fold-body { padding: 18px 28px 24px; border-top: 1px solid var(--line); }
 .settings-fold-body > :first-child { margin-top: 0; }
 .settings-count { color: var(--muted); font-size: 13px; font-weight: 400; }
 .settings-note-fold { margin-top: 14px; padding: 10px 14px; border: 1px solid #d6e7e1; border-radius: 10px; background: #f4f8f6; font-size: 13px; }
@@ -152,7 +152,7 @@
 .settings-divider { margin: 20px 0 16px; border-top: 1px solid var(--line); }
 .settings-subhead { margin: 0 0 12px !important; }
 .install-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
-.install-steps li { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border: 1px solid var(--card-line); border-radius: 12px; background: #fafbfc; }
+.install-steps li { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
 .install-steps span { color: var(--accent); font-size: 12px; font-weight: 600; }
 .install-steps strong { font-size: 14px; }
 .install-steps p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
@@ -183,9 +183,9 @@
 .provider-add label { flex-direction: row; color: var(--muted); font-size: 12px; white-space: nowrap; }
 #view-settings .provider-add select { min-height: 36px; padding: 4px 32px 4px 10px; }
 .provider-list { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
-.provider-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 16px; padding: 14px 16px; border: 1px solid var(--card-line); border-radius: 12px; background: var(--panel); }
-.provider-item.active { border-color: #9fcabe; background: #f4faf8; box-shadow: inset 3px 0 var(--accent); }
-.provider-item.editing { border-style: dashed; }
+.provider-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 16px; padding: 14px 16px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
+.provider-item.active { background: var(--ui-brand-pale); box-shadow: inset 3px 0 var(--ui-brand); }
+.provider-item.editing { border: 1px dashed var(--ui-brand-line); background: var(--ui-surface); }
 .provider-main { display: grid; gap: 6px; min-width: 0; }
 .provider-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .provider-title strong { font-size: 14px; overflow-wrap: anywhere; }
@@ -209,23 +209,28 @@
 #view-settings .model-candidates button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-pale); color: var(--accent); }
 
 /* 数据与备份 */
-.settings-points { margin: 14px 0 16px; padding: 12px 16px 12px 32px; border: 1px solid var(--card-line); border-radius: 10px; background: #f8faf9; color: #4a5361; font-size: 13px; line-height: 1.7; }
+.settings-points { margin: 14px 0 16px; padding: 12px 16px 12px 32px; border: 0; border-radius: 10px; background: var(--ui-canvas); color: #4a5361; font-size: 13px; line-height: 1.7; }
 .settings-points li + li { margin-top: 4px; }
 .settings-points li:nth-child(2) { color: #7c5a12; }
 .settings-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.settings-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--card-line); border-radius: 10px; background: #fafbfc; }
+.settings-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 0; border-radius: 10px; background: var(--ui-canvas); }
 .settings-list li > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .settings-list li strong { font-size: 14px; overflow-wrap: anywhere; }
 .settings-list li span, .settings-list li code { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .settings-list li > button, .settings-list-actions { flex: none; }
 .settings-list-actions { display: flex; gap: 8px; }
-.settings-list li.settings-list-empty { display: block; border-style: dashed; background: transparent; color: var(--muted); font-size: 13px; }
-.settings-list li.settings-list-empty.is-error { border-style: solid; border-color: #edc5c5; background: #fcf1f1; color: var(--danger); }
+.settings-list li.settings-list-empty { border: 1px dashed var(--ui-line); display: block; border-style: dashed; background: transparent; color: var(--muted); font-size: 13px; }
+.settings-list li.settings-list-empty.is-error { border: 1px solid #edc5c5; border-color: #edc5c5; background: #fcf1f1; color: var(--danger); }
 #orphan-report > .settings-callout { margin-top: 14px; }
 .orphan-list { margin-top: 12px; }
 
+/* 每个分类顶部的标题：放在卡片外面，让第一张卡片不贴着画布顶边。 */
+#view-settings .settings-page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 -4px; padding: 0 4px; }
+#view-settings .settings-page-head h2 { margin: 0; font-size: 22px; line-height: 1.35; font-weight: 650; letter-spacing: -.015em; color: var(--ui-ink); }
+#view-settings .settings-page-head p { margin: 4px 0 0; color: var(--ui-muted); font-size: 13.5px; line-height: 1.6; }
+
 /* 账号与云同步（Phase 2 才显示，这里只放占位结构） */
-.account-card { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px 16px; border: 1px solid var(--ui-line); border-radius: 12px; background: var(--ui-canvas); }
+.account-card { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px 16px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
 .account-avatar { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--ui-brand-pale); color: var(--ui-brand); }
 .account-avatar .icon { width: 20px; height: 20px; }
 .account-card p { margin: 0; }
@@ -242,7 +247,7 @@
 .about-head + .settings-callout { margin-top: 16px; }
 .update-checked-at { float: right; margin-left: 16px; }
 .facts-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
-.facts-group { min-width: 0; padding: 12px 14px; border: 1px solid var(--card-line); border-radius: 12px; background: #fafbfc; }
+.facts-group { min-width: 0; padding: 12px 14px; border: 0; border-radius: 12px; background: var(--ui-canvas); }
 #view-settings .facts-group h3 { margin: 0 0 8px; font-size: 13px; }
 #view-settings .facts-group .facts { grid-template-columns: minmax(84px, 128px) minmax(0, 1fr); gap: 6px 12px; padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; }
 #view-settings .facts-group code { font-size: 11.5px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -283,7 +288,7 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 .settings-dialog textarea { padding: 10px 12px; resize: vertical; }
 .settings-dialog .settings-callout { margin: 0; }
 /* 「备份到本机」「备份到坚果云」整张卡可收起：标题和说明在折叠栏里，收起后仍看得出是做什么的。 */
-.backup-fold > summary { align-items: flex-start; padding: 20px 24px; }
+.backup-fold > summary { align-items: flex-start; padding: 22px 28px; }
 .backup-fold > summary > div { min-width: 0; }
 .backup-fold > summary p { margin: 4px 0 0 17px; color: var(--muted); font-size: 13px; line-height: 1.65; }
 .backup-fold > summary .settings-fold-hint { flex: none; padding-top: 3px; }
@@ -325,7 +330,7 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 .cloud-form-actions { justify-content: flex-start; }
 .feedback-preview { max-height: 280px; margin: 0; padding: 12px 14px; overflow: auto; border: 1px solid var(--card-line); border-radius: 8px; background: #f4f7f6; font: 12px/1.6 Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 1180px) {
-  .settings-content { padding: 24px 24px 40px; }
+  .settings-content { padding: 32px 24px 48px; }
   .install-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 960px) {
