@@ -182,7 +182,7 @@ button:disabled { cursor: not-allowed; }
 .job-save-button:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-pale); color: var(--accent-strong); }
 .job-save-button:disabled { border-color: var(--line); color: var(--faint); }
 /* 悬停说明：侧栏里原生 title 提示不可靠，这里自己画一个，鼠标悬停或键盘聚焦时出现。 */
-.job-save-button[data-tip]::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 5; width: 100%; padding: 7px 10px; border-radius: 8px; background: var(--ink); color: #fff; font-size: 12px; font-weight: 400; line-height: 1.5; text-align: left; white-space: normal; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .12s ease; }
+.job-save-button[data-tip]::after { box-sizing: border-box; content: attr(data-tip); position: absolute; top: calc(100% + 6px); left: 0; z-index: 5; width: 100%; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--subtle); box-shadow: 0 4px 12px #18181b14; font-size: 12px; font-weight: 400; line-height: 1.5; text-align: left; white-space: normal; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .12s ease; }
 .job-save-button[data-tip]:hover::after, .job-save-button[data-tip]:focus-visible::after { opacity: 1; visibility: visible; }
 .desktop-status { margin-top: 10px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--ink); font-size: 12px; white-space: pre-wrap; }
 .queue-center { margin-top: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
