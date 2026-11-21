@@ -67,9 +67,9 @@ const FILL_OUTCOME: Record<string, string> = {
   cancelled: "已取消",
 };
 
-// Shown with every snapshot the desktop displays (D08 acceptance): a snapshot is what the
+// Shown with every "当时交的简历" the desktop displays (D08 acceptance): it is what the
 // plugin copied from the template when the fill was archived, not a record of what the
-// website received.
+// website received. (Internally still a "snapshot"; the word never reaches the user.)
 export const SNAPSHOT_DISCLAIMER =
   "这是插件在留档时从简历模板拷贝的内容，用来追溯当时用了哪份资料；它不能证明网站最终收到或保存了这些内容。";
 
@@ -109,10 +109,10 @@ function durationLabel(ms: number | undefined): string {
 /** Null when the snapshot can be opened; otherwise the sentence to show in its place. */
 export function snapshotStateLabel(state: string | undefined): string | null {
   if (state === "stored") return null;
-  if (state === "uploading") return "简历快照上传中，还没有传完。";
+  if (state === "uploading") return "当时交的简历还在上传，还没有传完。";
   // After a restore the plugin can upload the same bytes again, but only under a new id; the
   // fill event cannot be rewritten to point at it, so the copy shows up in the list instead.
-  return "简历快照不可用：桌面没有收到这份快照。恢复备份后重新上传的快照会单独出现在上方的快照列表里。";
+  return "这份当时交的简历不可用：桌面没有收到这份拷贝。恢复备份后重新上传的拷贝会单独出现在「当时交的简历」列表里。";
 }
 
 export function stageLabel(code: Stage | string | undefined): string {
@@ -247,8 +247,6 @@ export function createApplicationsController() {
   let formDirty = false;
   let saving = false;
   let editingId: string | null = null;
-  let offset = 0;
-  const limit = 8;
   let lastFilter = {};
 
   function beginList() {
@@ -269,7 +267,7 @@ export function createApplicationsController() {
   }
 
   function snapshot() {
-    return { formDirty, saving, selectedId, editingId, offset, lastFilter };
+    return { formDirty, saving, selectedId, editingId, lastFilter };
   }
 
   return {
@@ -287,17 +285,8 @@ export function createApplicationsController() {
     setEditing(id: string | null) {
       editingId = id;
     },
-    setOffset(value: number) {
-      offset = value;
-    },
     setFilter(filter: Record<string, unknown>) {
       lastFilter = filter;
-    },
-    get offset() {
-      return offset;
-    },
-    get limit() {
-      return limit;
     },
     get selectedId() {
       return selectedId;
