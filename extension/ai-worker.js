@@ -749,15 +749,21 @@ function completeExperienceDescriptions(fields, matches, catalog, excludedIds) {
   return filled;
 }
 
-// 职位漏配时只用已经匹配上的同一张经历卡里的公司，且公司须在对应经历类别里唯一。
+// 职位漏配时只用已经匹配上的同一张经历卡里的公司，且公司须在页面和简历的对应经历类别里唯一。
 // 页面按实际 DOM 卡片编号，不能按各字段的出现顺序推断卡片归属。
 function completeWorkTitles(fields, matches, catalog, matchedIds) {
   const companies = new Map();
-  const values = new Map(matches.filter(match => !match.blocked).map(match => [match.fieldId, match.value]));
+  const companyCounts = new Map();
+  const values = new Map(matches.filter(match => !match.blocked).map(match => [match.fieldId, String(match.value ?? "").trim()]));
   for (const field of fields) {
     if (field.workTitleRow?.role !== "company") continue;
     const id = field.workTitleRow.id;
     companies.set(id, companies.has(id) ? null : field);
+    const type = experienceSection(field.group);
+    const value = values.get(field.fieldId);
+    if (!type || !value) continue;
+    const key = `${type}:${value}`;
+    companyCounts.set(key, (companyCounts.get(key) || 0) + 1);
   }
   let records;
   const results = [];
@@ -766,8 +772,8 @@ function completeWorkTitles(fields, matches, catalog, matchedIds) {
     const type = experienceSection(field.group);
     const company = companies.get(field.workTitleRow.id);
     if (!company || !type || type === "project" || experienceSection(company.group) !== type) continue;
-    const value = String(values.get(company.fieldId) ?? "").trim();
-    if (!value) continue;
+    const value = values.get(company.fieldId);
+    if (!value || companyCounts.get(`${type}:${value}`) !== 1) continue;
     records ??= experienceRecords(catalog);
     const candidates = records.filter(record => record.type === type && record.parts.get("name")?.some(part => part.value === value));
     if (candidates.length !== 1) continue;

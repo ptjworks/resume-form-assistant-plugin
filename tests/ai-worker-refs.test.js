@@ -794,6 +794,24 @@ test("#569 work title completion requires a unique company record and respects e
   assert.equal(result.diagnostics.ruleMatches, 0);
 });
 
+test("#569 work title completion leaves duplicate employer cards alone", async () => {
+  const group = "工作经历";
+  const formFields = [1, 2].flatMap(i => [
+    { fieldId: `company-${i}`, label: "公司名称", group, inputType: "text", workTitleRow: { id: `row-${i}`, role: "company" } },
+    { fieldId: `title-${i}`, label: "职位", group, inputType: "text", workTitleRow: { id: `row-${i}`, role: "position" } }
+  ]);
+  const resumeFields = [
+    { group, key: "工作经历1-公司", value: "虚构单位" },
+    { group, key: "工作经历1-职位", value: "设计师" }
+  ];
+  const env = worker(() => [1, 2].map(i => ({ fieldId: `company-${i}`, ref: "r1" })));
+  const result = await env.run({ formFields, resumeFields });
+  for (const i of [1, 2]) {
+    assert.equal(valueOf(result, `company-${i}`), "虚构单位");
+    assert.equal(valueOf(result, `title-${i}`), undefined);
+  }
+});
+
 test("a view question takes no item that shares only a common word like 工作 with it", async () => {
   const resume = [{ group: "实习经历", key: "工作描述", value: "负责虚构数据看板" }, { group: "团队活动", key: "团队合作经历", value: "带队完成虚构项目" },
     { group: "学习经历", key: "学习能力自评", value: "上手快" }];
