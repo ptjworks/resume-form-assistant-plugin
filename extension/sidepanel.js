@@ -253,7 +253,7 @@
   const DEEP_ACTIVE = ["outlining", "analyzing", "preview", "acting", "filling"];
   // #225：预览最多 5 个「编辑 / 展开」加 4 类经历的「添加」。
   const DEEP_PLAN_MAX = 9;
-  // #226 本站配方：页面只报「有没有、上次是否过期」，侧栏看不到网址和配方内容。
+  // #226 本站填法（配方）：页面只报「有没有、上次是否过期」，侧栏看不到网址和配方内容。
   let recipeView = null;
   let recipePending = false;
   // #429 第 4 项：上传前的确认卡片和上传结果。页面报上传框（题目、认成什么、收什么、建议的文件），文件名、大小侧栏自己向后台读，
@@ -416,6 +416,7 @@
     const pill = { ready: ["已连接", "ok"], empty: ["已连接", "ok"], not_installed: ["未安装桌面", "error"], incompatible: ["桌面需更新", "error"],
       not_paired: ["未配对", "warn"], never_paired: ["未配对", "warn"] }[mode] || ["桌面未响应", "warn"];
     elements.desktopPill.textContent = storeLoaded ? pill[0] : "正在连接";
+    elements.desktopPill.title = elements.desktopPill.textContent;
     elements.desktopPill.dataset.tone = storeLoaded ? pill[1] : "idle";
     renderPageCard();
     elements.templateSelect.disabled = Boolean(copy) || !(currentStore?.templates?.length);
@@ -627,11 +628,11 @@
       || elements.deepButton.disabled || elements.fillResult.hidden;
     // 同一时间只有一个入口：结果下面出现提示卡时，按钮区那行次要入口收起来。
     elements.deepButton.hidden = filling || !elements.deepOffer.hidden;
-    // 本站配方：保存过才显示。重新分析就是深度分析本页（同样的首次说明、取消和调用上限）。
+    // 已记住本站填法：保存过才显示。重新识别就是深度分析本页（同样的首次说明、取消和调用上限）。
     elements.recipeLine.hidden = !recipeView?.saved || filling || repeating || deepRunning;
-    elements.recipeState.textContent = recipeView?.stale ? "可能已过期" : "已保存";
-    elements.recipeState.classList.toggle("chip--ok", !recipeView?.stale);
-    elements.recipeState.classList.toggle("chip--warn", Boolean(recipeView?.stale));
+    // 没过期时整行只说「已记住本站填法」；过期了再补一个提示。
+    elements.recipeState.hidden = !recipeView?.stale;
+    elements.recipeState.textContent = recipeView?.stale ? "可能已过期" : "";
     elements.recipeReanalyze.disabled = elements.deepButton.disabled;
     elements.recipeDelete.disabled = recipePending || currentTabId === null || Boolean(status?.busy) || deepRunning;
     // While the page fills, the card says so with the page's own phase text; no made-up percentage.
@@ -655,7 +656,7 @@
       if (currentTabId === null) reason = "";
       else if (desktopMode !== "ready") reason = "桌面简历当前不可用，处理上方提示后即可填写。";
       else if (!hasData) reason = "桌面里还没有可用的简历数据，请先到桌面创建模板或填写「我的信息」。";
-      else if (!selectedTemplate()) reason = "「AI 辅助新增条目」需要先在桌面选一份简历模板。";
+      else if (!selectedTemplate()) reason = "「辅助新增经历」需要先在桌面选一份简历模板。";
     }
     elements.fillReason.hidden = !reason;
     elements.fillReason.textContent = reason;
@@ -813,11 +814,11 @@
         return item;
       }));
       const finished = !DEEP_ACTIVE.includes(view.phase);
-      // 配方模式没有页面分析：如实说明模型只用在匹配简历上（没调用也说）。
+      // 按本站填法填写没有页面分析：如实说明模型只用在匹配简历上（没调用也说）。
       const recipeMode = view.mode === "recipe";
       elements.deepMeta.hidden = !(finished && (view.budget?.used || (recipeMode && view.result)));
       elements.deepMeta.textContent = !finished ? ""
-        : recipeMode ? `按本站配方填写，没有做页面分析；匹配简历调用模型 ${view.budget?.used || 0} 次。`
+        : recipeMode ? `按本站填法填写，没有做页面分析；匹配简历调用模型 ${view.budget?.used || 0} 次。`
           : view.budget?.used ? `本次共调用模型 ${view.budget.used} 次。` : "";
       elements.deepStop.hidden = !view.canStop;
       elements.deepRetry.hidden = !["needs_action", "failed", "stopped"].includes(view.phase);
@@ -844,7 +845,7 @@
     return raw && typeof raw === "object" && raw.saved === true ? { saved: true, stale: raw.stale === true } : null;
   }
 
-  // 删除只影响当前网页这一条配方；页面按自己的网址归类后交给后台删除，侧栏不经手网址。
+  // 忘掉只影响当前网页这一条填法；页面按自己的网址归类后交给后台删除，侧栏不经手网址。
   async function deleteRecipe() {
     if (recipePending || !recipeView?.saved) return;
     recipePending = true;
@@ -853,9 +854,9 @@
       const result = await sendToPage({ type: "RESUME_PANEL_RECIPE", action: "delete" });
       if (result?.ok) {
         recipeView = normalizeRecipe(result.recipe);
-        toast("已删除本站配方。下次一键填写会照常扫描网页。");
+        toast("已忘掉本站填法。下次一键填写会重新识别网页。");
       } else {
-        toast(result?.error || "没能删除本站配方，请稍后再试。");
+        toast(result?.error || "没能忘掉本站填法，请稍后再试。");
       }
     } finally {
       recipePending = false;
@@ -1590,7 +1591,7 @@
         .map((candidate) => ({ applicationId: candidate.applicationId, company: candidate.company, title: candidate.title, label: copy.describeApplicationChoice(candidate) }));
       if (!candidates.length) {
         const empty = copy.describeFillArchiveEmpty();
-        setRowUi(key, { busy: false, mode: "", message: { tone: empty.tone, text: `${empty.text}请先保存岗位到桌面端，再回来选择。` } });
+        setRowUi(key, { busy: false, mode: "", message: { tone: empty.tone, text: `${empty.text}请先点「保存」把岗位存到桌面，再回来选择。` } });
         return;
       }
       setRowUi(key, { busy: false, mode: "choices", candidates, allowNew: false, prompt: copy.FILL_ARCHIVE_CHOOSE, message: null });
@@ -1723,7 +1724,7 @@
   function applyJobSave(snapshot, tabId = currentTabId) {
     const next = snapshot && snapshot.draftId ? snapshot : null;
     if (!next && jobSave && snapshot?.discarded === "page-changed") {
-      toast("网页已经换成别的页面，刚才的岗位内容已作废。请重新点「保存岗位到桌面端」。");
+      toast("网页已经换成别的页面，刚才的岗位内容已作废。请重新点「保存」。");
     }
     // An older answer for the same draft (a poll that left before a click) is not news.
     if (next && jobSave && next.draftId === jobSave.draftId && next.version < jobSave.version && jobSave.tabId === tabId) return;
@@ -1833,7 +1834,7 @@
         failed: "这次没有完成，网页上已有内容不受影响"
       }[view.phase] || "";
       // A run that failed or was stopped does not say which steps it got through: none is marked done.
-      return { key: view.phase, title: "AI 辅助新增条目", step: steps[view.phase] ?? 4, error: view.phase === "failed", exit, desc,
+      return { key: view.phase, title: "辅助新增经历", step: steps[view.phase] ?? 4, error: view.phase === "failed", exit, desc,
         unsure: view.phase === "failed" || view.phase === "stopped" };
     }
     if (task === "deep") {
@@ -1848,7 +1849,7 @@
       if (view.mode === "recipe") {
         const recipeSteps = { outlining: 0, preview: 1, acting: 1, filling: 2 };
         const recipeDesc = {
-          outlining: "正在按本站配方核对网页上的按钮和字段",
+          outlining: "正在按本站填法核对网页上的按钮和字段",
           preview: "确认后才会点击；悬停某一项可在网页上看到对应按钮",
           acting: view.progress?.steps ? `正在执行第 ${view.progress.step}/${view.progress.steps} 步，每一步都核对网页变化` : "正在核对网页",
           filling: "正在匹配简历并填写网页，没有做页面分析",
@@ -1856,7 +1857,7 @@
           failed: "这次没有完成",
           stopped: "已停止"
         }[view.phase] || "";
-        return { key: view.phase, title: "按本站配方填写", step: recipeSteps[view.phase] ?? 3, error: view.phase === "failed", exit,
+        return { key: view.phase, title: "按本站填法填写", step: recipeSteps[view.phase] ?? 3, error: view.phase === "failed", exit,
           desc: recipeDesc, steps: TASK_STEPS.recipe, unsure: ["failed", "stopped", "needs_action"].includes(view.phase) };
       }
       const again = view.progress?.round === 2;
@@ -1969,7 +1970,7 @@
     submitSeen = { tabId, epoch: snapshot.epoch, version: snapshot.version };
     const next = snapshot.confirmId ? snapshot : null;
     if (!next && submitConfirm && snapshot.discarded === "page-changed") {
-      toast("网页已经换成别的页面，刚才核对的内容已作废。请重新点「确认已投递」。");
+      toast("网页已经换成别的页面，刚才核对的内容已作废。请重新点「已投递」。");
     }
     submitConfirm = next ? { ...next, tabId } : null;
     if (!next) submitLocalError = "";
@@ -2067,7 +2068,7 @@
     elements.jobSaveButton.disabled = noPage || jobPending;
     elements.jobSaveButton.title = noPage ? "当前网页没有连接填表助手，无法保存岗位。" : "";
     elements.jobHint.hidden = !noPage || active;
-    elements.jobSaveButton.textContent = "保存岗位到桌面端";
+    elements.jobSaveButton.textContent = "保存";
 
     elements.jobProgress.hidden = !(phase === "extracting" || phase === "assist");
     if (phase === "extracting") {
@@ -2626,7 +2627,7 @@
     if (elements.recipeReanalyze.disabled) return;
     startDeep().catch(() => toast("无法开始深度分析。"));
   });
-  elements.recipeDelete.addEventListener("click", () => { deleteRecipe().catch(() => toast("没能删除本站配方，请稍后再试。")); });
+  elements.recipeDelete.addEventListener("click", () => { deleteRecipe().catch(() => toast("没能忘掉本站填法，请稍后再试。")); });
   elements.deepConsentConfirm.addEventListener("click", () => { confirmDeepConsent().catch(() => toast("无法开始深度分析。")); });
   elements.deepConsentCancel.addEventListener("click", () => { deepConsentOpen = false; renderDeep(); });
   elements.deepStop.addEventListener("click", () => { deepAction("stop").catch(() => {}); });
@@ -2993,7 +2994,6 @@
     document.getElementById("legacy-hint").hidden = !["sending", "waiting"].includes(legacyImport?.phase);
   }
   // Connection details and anything left over from the 0.4.0 migration live on the status page.
-  document.getElementById("open-status").addEventListener("click", () => { chrome.runtime.openOptionsPage?.(); });
   const version = chrome.runtime.getManifest?.()?.version || "";
   elements.pluginVersion.textContent = version ? `插件 v${version}` : "";
   elements.pluginVersion.hidden = !version;

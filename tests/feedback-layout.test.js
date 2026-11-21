@@ -23,7 +23,7 @@ test('privacy states are grouped before a separate manual feedback card', () => 
   assert.ok(at(fillView, 'id="fill-diagnostics"') < at(fillView, 'id="feedback-manual-root"'));
   assert.ok(at(fillView, 'id="usage-compact-root"') < at(fillView, 'id="feedback-auto-root"'));
   assert.ok(at(fillView, 'id="feedback-auto-root"') < at(fillView, 'id="feedback-manual-root"'));
-  assert.match(fillView, /class="card privacy-summary"/);
+  assert.match(fillView, /class="privacy-summary"/);
   assert.match(fillView, /id="privacy-open-status"[^>]*>插件状态<\/button>/);
   assert.match(fillView, /<div id="feedback-auto-root" data-variant="compact"><\/div>/);
   const ui = read('feedback-ui.js');

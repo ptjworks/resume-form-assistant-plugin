@@ -11,20 +11,17 @@
   <body data-active-view="fill">
     <div class="dock">
       <header class="dock-header">
-        <div class="dock-header__row">
-          <div class="dock-brand">
-            <img src="icons/icon48.png" width="34" height="34" alt="">
-            <div class="dock-brand__text">
-              <p class="dock-brand__line"><strong>网申快填</strong><span id="desktop-pill" class="brand-pill" data-tone="idle">正在连接</span></p>
-              <span class="dock-brand__sub">填网申 · 管投递</span>
-            </div>
-          </div>
+        <div class="dock-brand">
+          <img src="icons/icon48.png" width="20" height="20" alt="">
+          <strong class="dock-brand__name">网申快填</strong>
+          <span id="desktop-pill" class="brand-pill" data-tone="idle" role="status" title="正在连接">正在连接</span>
         </div>
+        <button id="open-manager" class="dock-open" type="button">打开桌面</button>
       </header>
       <nav class="dock-tabs" role="tablist" aria-label="侧边栏视图">
         <button type="button" role="tab" id="tab-fill" data-tab="fill" aria-selected="true" aria-controls="fill-view">填写</button>
         <button type="button" role="tab" id="tab-fields" data-tab="fields" aria-selected="false" aria-controls="fields-view" tabindex="-1">简历字段</button>
-        <button type="button" role="tab" id="tab-mail" data-tab="mail" aria-selected="false" aria-controls="mail-view" tabindex="-1">邮件</button>
+        <button type="button" role="tab" id="tab-mail" data-tab="mail" aria-selected="false" aria-controls="mail-view" tabindex="-1">存邮件</button>
       </nav>
 
       <div id="desktop-connection" class="status-strip is-warn" role="status" hidden>
@@ -59,26 +56,25 @@
       <main class="dock-main">
         <section class="dock-view" id="fill-view" role="tabpanel" aria-labelledby="tab-fill" data-view="fill">
           <div class="view-scroll" id="fill-home">
-            <section class="card page-card" aria-label="当前网页">
-              <div class="card-head">
-                <p class="page-state is-unavailable" id="page-state">正在连接当前网页…</p>
+            <section class="fill-top" aria-label="当前简历模板与网站">
+              <div class="fill-top__row">
+                <div class="template-picker">
+                  <label for="template-select" class="sr-only">当前简历模板</label>
+                  <select id="template-select" class="dock-select"><option value="">正在加载…</option></select>
+                </div>
                 <span id="page-domain" class="chip chip--mono" hidden></span>
               </div>
+              <div class="fill-top__sub">
+                <p id="template-meta" class="template-meta"></p>
+                <button id="template-edit" class="text-action" type="button" disabled title="编辑这份模板的字段">编辑字段</button>
+              </div>
+              <p class="page-state is-unavailable" id="page-state">正在连接当前网页…</p>
               <p id="page-ready" class="page-ready" data-tone="idle"></p>
               <p id="site-hint" class="card-hint" hidden></p>
+              <p id="template-empty" class="card-hint" hidden>桌面里还没有简历模板。可以到桌面「简历」页创建，侧栏的资料都来自桌面程序。</p>
             </section>
 
-            <section class="card template-card" aria-label="当前模板">
-              <div class="card-head">
-                <label for="template-select" class="card-head__title"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><circle cx="12" cy="10" r="2.6"/><path d="M7.5 17c.9-2 2.5-3 4.5-3s3.6 1 4.5 3"/></svg>当前模板</label>
-                <button id="template-edit" class="card-action" type="button" disabled title="编辑这份模板的字段">编辑字段</button>
-              </div>
-              <div class="template-picker">
-                <select id="template-select" class="dock-select"><option value="">正在加载…</option></select>
-                <p id="template-meta" class="template-meta"></p>
-              </div>
-              <p id="template-empty" class="card-hint" hidden>桌面里还没有简历模板。可以到桌面「简历」页创建，侧栏的资料都来自桌面程序。</p>
-              <p class="source-line"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span id="config-state"></span><span id="plugin-version" class="chip chip--mono"></span></p>
+            <section class="fill-actions" aria-label="填写">
               <div id="fill-progress" class="fill-progress" role="status" hidden>
                 <p class="fill-progress__title">正在填写当前网页</p>
                 <p id="fill-progress-phase" class="fill-progress__phase"></p>
@@ -87,9 +83,11 @@
               </div>
               <button class="fill-button" id="fill-button" type="button">一键 AI 填写</button>
               <button class="cancel-button" id="cancel-button" type="button" hidden>取消 AI 等待（保留本地匹配）</button>
-              <button class="repeat-button" id="repeat-button" type="button">AI 辅助新增条目</button>
-              <button class="deep-button" id="deep-button" type="button" title="让 AI 先看懂页面结构再填写，适合常规填写漏填或填不上的页面">深度分析本页</button>
-              <p id="recipe-line" class="source-line recipe-line" hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V20l-6-3.5L6 20V4.5a1 1 0 0 1 1-1z"/></svg><span class="recipe-line__label">本站配方：</span><span id="recipe-state" class="chip chip--ok">已保存</span><button id="recipe-reanalyze" type="button" title="重新让 AI 分析这个页面；效果更好时会更新本站配方">重新分析</button><button id="recipe-delete" type="button" title="删除这个页面的配方，只影响本站这一条">删除</button></p>
+              <div class="fill-links">
+                <button class="deep-button" id="deep-button" type="button" title="让 AI 先看懂页面结构再填写，适合常规填写漏填或填不上的页面">深度分析本页</button>
+                <button class="repeat-button" id="repeat-button" type="button">辅助新增经历</button>
+              </div>
+              <p id="recipe-line" class="recipe-line" hidden><span class="recipe-line__label">已记住本站填法</span><span id="recipe-state" class="chip chip--warn" hidden>可能已过期</span><button id="recipe-reanalyze" type="button" title="重新让 AI 识别这个页面；效果更好时会更新本站填法">重新识别</button><button id="recipe-delete" type="button" title="忘掉这个页面的填法，只影响本站这一条">忘掉</button></p>
               <p id="fill-reason" class="card-hint fill-reason" hidden></p>
               <div id="ai-config-hint" class="ai-config-hint" role="status" hidden>
                 <p id="ai-config-hint-text" class="ai-config-hint__text">尚未配置 AI API Key：当前仅支持填写姓名、电话等少量基础项，配置后可大幅提升填写成功率。</p>
@@ -132,18 +130,20 @@
               </div>
             </div>
 
-            <section id="job-save" class="card flow-card" aria-labelledby="flow-title">
-              <div class="card-head">
-                <h2 id="flow-title" class="card-head__title"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.2 10.9 7.6-3.8M8.2 13.1l7.6 3.8"/></svg>投递流转</h2>
-                <span id="job-summary-badge" class="chip chip--ok" hidden>已读取岗位</span>
-              </div>
-              <div id="job-summary" class="job-summary" hidden>
-                <p id="job-summary-title" class="job-summary__title"></p>
-                <p id="job-summary-meta" class="job-summary__meta"></p>
-              </div>
-              <div class="flow-actions">
-                <button class="job-save-button" id="job-save-button" type="button">保存岗位到桌面端</button>
-                <button class="job-save-button job-submit-button" id="submit-confirm-button" type="button" title="你已经在招聘网站投递之后，在这里告诉桌面。插件不会替你提交申请。">确认已投递</button>
+            <section id="job-save" class="flow-bar" aria-labelledby="flow-title">
+              <div class="flow-bar__row">
+                <div class="flow-bar__info">
+                  <h2 id="flow-title" class="flow-bar__label">投递流转</h2>
+                  <div id="job-summary" class="job-summary" hidden>
+                    <p id="job-summary-title" class="job-summary__title"></p>
+                    <p id="job-summary-meta" class="job-summary__meta"></p>
+                  </div>
+                  <span id="job-summary-badge" class="chip chip--ok" hidden>已读取岗位</span>
+                </div>
+                <div class="flow-actions">
+                  <button class="job-save-button" id="job-save-button" type="button" title="保存岗位到桌面端" aria-label="保存岗位到桌面端">保存</button>
+                  <button class="job-save-button job-submit-button" id="submit-confirm-button" type="button" title="你已经在招聘网站投递之后，在这里告诉桌面。插件不会替你提交申请。" aria-label="确认已投递">已投递</button>
+                </div>
               </div>
               <p id="job-save-hint" class="card-hint" hidden>当前网页没有连接填表助手，无法保存岗位。请在招聘网页里打开侧栏。</p>
               <div id="desktop-status" class="desktop-status" role="status" hidden></div>
@@ -157,25 +157,32 @@
               </section>
             </section>
 
-            <details id="fill-diagnostics" class="card dock-diagnostics" hidden>
-              <summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg>填写诊断（不含简历内容）</summary>
-              <textarea id="fill-diagnostics-text" readonly rows="9" aria-label="填写诊断摘要"></textarea>
-              <button id="copy-diagnostics" class="dock-diagnostics-copy" type="button">复制诊断</button>
-            </details>
-            <div class="card privacy-summary">
-              <div class="privacy-summary-head">
-                <strong>隐私状态</strong>
-                <button id="privacy-open-status" class="feedback-link" type="button">插件状态</button>
-              </div>
-              <div class="privacy-summary-states">
-                <div id="usage-compact-root"></div>
-                <div id="feedback-auto-root" data-variant="compact"></div>
-              </div>
-            </div>
-            <div class="card feedback-wrap">
-              <div id="feedback-manual-root"></div>
-            </div>
             <p class="dock-help">需要手动补填？到 <button id="show-fields" class="dock-help-link" type="button">简历字段</button> 页，先点网页输入框，再点字段；输入框已有内容时，用「添加」「替换」「删除」。</p>
+
+            <details id="support-details" class="dock-support">
+              <summary><span>填写异常？查看诊断与反馈</span><svg class="icon dock-support__chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+              <div class="dock-support__body">
+                <div id="fill-diagnostics" class="dock-diagnostics" hidden>
+                  <p class="dock-diagnostics__title">填写诊断（不含简历内容）</p>
+                  <textarea id="fill-diagnostics-text" readonly rows="9" aria-label="填写诊断摘要"></textarea>
+                  <button id="copy-diagnostics" class="dock-diagnostics-copy" type="button">复制诊断摘要</button>
+                </div>
+                <div class="privacy-summary">
+                  <div class="privacy-summary-head">
+                    <strong>隐私状态</strong>
+                    <button id="privacy-open-status" class="feedback-link" type="button">插件状态</button>
+                  </div>
+                  <div class="privacy-summary-states">
+                    <div id="usage-compact-root"></div>
+                    <div id="feedback-auto-root" data-variant="compact"></div>
+                  </div>
+                </div>
+                <div class="feedback-wrap">
+                  <div id="feedback-manual-root"></div>
+                </div>
+                <p class="source-line"><span id="config-state"></span><span id="plugin-version" class="chip chip--mono"></span></p>
+              </div>
+            </details>
           </div>
 
           <!-- 多步流程的任务面板：盖住填写页的内容区，一次只显示一个流程。 -->
@@ -509,10 +516,6 @@
         </section>
       </main>
 
-      <footer class="dock-footer">
-        <button id="open-manager" type="button">打开桌面</button>
-        <button id="open-status" type="button">插件状态</button>
-      </footer>
       <div id="panel-toast" class="panel-toast" role="status" hidden></div>
     </div>
     <script src="usage-signals.js"></script>

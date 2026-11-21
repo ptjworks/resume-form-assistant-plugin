@@ -16,7 +16,7 @@ test('the 填写 view shows the save-job button itself, not only inside the ··
   const html = read('sidepanel.html');
   const fillView = html.slice(html.indexOf('id="fill-view"'), html.indexOf('id="fields-view"'));
   const menu = html.slice(html.indexOf('class="dock-tools__menu"'), html.indexOf('</details>'));
-  assert.match(fillView, /<button[^>]*id="job-save-button"[^>]*>保存岗位到桌面端<\/button>/);
+  assert.match(fillView, /<button[^>]*id="job-save-button"[^>]*>保存<\/button>/);
   assert.doesNotMatch(menu, /保存岗位到桌面端/, 'the ··· menu no longer hides the entry');
   assert.doesNotMatch(menu, /data-advanced="save"/);
   // The review form: editable company, title and location, a read-only URL, confirm and cancel.
