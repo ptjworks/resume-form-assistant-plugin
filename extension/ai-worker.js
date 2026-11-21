@@ -534,6 +534,13 @@ async function handleAiFill(message, controller = new AbortController()) {
     else matches[index] = match;
     seenMatchIds.add(match.fieldId);
   }
+  for (const match of completeWorkTitles(formFields, matches, catalog, seenMatchIds)) {
+    matches.push(match);
+    seenMatchIds.add(match.fieldId);
+    // 公司可能由模型找到，职位是本地按同一条经历补上的。
+    matchedFieldIds.add(match.fieldId);
+    diagnostics.ruleMatches += 1;
+  }
   // 拦下不填、只报原因的（blocked：日期不对、同一个回复里给了不同的值）不算 AI 填上的，另记 aiBlocked：网页把它们记作没写上。
   const aiAnswered = matches.filter(match => !matchedFieldIds.has(match.fieldId));
   diagnostics.aiMatches = aiAnswered.filter(match => !match.blocked).length;
@@ -672,7 +679,7 @@ function experienceRecords(catalog) {
     const order = part === "description" ? ResumeProAIHelpers.experienceDescriptionOrder(label) : 0;
     parts.get(part).push({ order, value: String(catalog.values.get(ref)).trim() });
   });
-  return [...records.values()].filter(record => record.parts.get("name")?.length === 1);
+  return [...records.values()];
 }
 
 function experienceDate(value) {
@@ -726,7 +733,7 @@ function completeExperienceDescriptions(fields, matches, catalog, excludedIds) {
     const anchors = row.filter(item => experiencePart(item.label, type) === "name");
     const name = anchors.length === 1 ? String(values.get(anchors[0].fieldId) ?? "").trim() : "";
     if (!name) continue;
-    records ??= experienceRecords(catalog);
+    records ??= experienceRecords(catalog).filter(record => record.parts.get("name")?.length === 1);
     const candidates = records.filter(record => record.type === type && record.parts.get("name")[0].value === name);
     const assessed = candidates.map(record => ({ record, evidence: experienceEvidence(record, row, values) }))
       .filter(item => !item.evidence.includes(false));
@@ -740,6 +747,43 @@ function completeExperienceDescriptions(fields, matches, catalog, excludedIds) {
     if (text) filled.push({ fieldId: field.fieldId, value: text });
   }
   return filled;
+}
+
+// 职位漏配时只用已经匹配上的同一张经历卡里的公司，且公司须在页面和简历的对应经历类别里唯一。
+// 页面按实际 DOM 卡片编号，不能按各字段的出现顺序推断卡片归属。
+function completeWorkTitles(fields, matches, catalog, matchedIds) {
+  const companies = new Map();
+  const companyCounts = new Map();
+  const values = new Map(matches.filter(match => !match.blocked).map(match => [match.fieldId, String(match.value ?? "").trim()]));
+  for (const field of fields) {
+    if (field.workTitleRow?.role !== "company") continue;
+    const id = field.workTitleRow.id;
+    companies.set(id, companies.has(id) ? null : field);
+    const type = experienceSection(field.group);
+    const value = values.get(field.fieldId);
+    if (!type || !value) continue;
+    const key = `${type}:${value}`;
+    companyCounts.set(key, (companyCounts.get(key) || 0) + 1);
+  }
+  let records;
+  const results = [];
+  for (const field of fields) {
+    if (field.workTitleRow?.role !== "position" || field.inputType !== "text" || matchedIds.has(field.fieldId)) continue;
+    const type = experienceSection(field.group);
+    const company = companies.get(field.workTitleRow.id);
+    if (!company || !type || type === "project" || experienceSection(company.group) !== type) continue;
+    const value = values.get(company.fieldId);
+    if (!value || companyCounts.get(`${type}:${value}`) !== 1) continue;
+    records ??= experienceRecords(catalog);
+    const candidates = records.filter(record => record.type === type && record.parts.get("name")?.some(part => part.value === value));
+    if (candidates.length !== 1) continue;
+    const parts = candidates[0].parts;
+    if (parts.get("name").some(part => part.value !== value)) continue;
+    const titles = new Set(parts.get("role")?.map(part => part.value));
+    if (titles.size !== 1) continue;
+    results.push({ fieldId: field.fieldId, value: [...titles][0], workTitleCompany: { fieldId: company.fieldId, value } });
+  }
+  return ResumeProAIHelpers.filterValidMatches(fields, results);
 }
 
 // 字段名最多留 60 个字：本网站回答、补充字段的字段名是题目原文，可能很长；前 60 个字足够认出是哪道题，目录也不容易超出预算。
@@ -827,7 +871,7 @@ function promptFields(fields, catalog, withValues = false) {
   const helpers = ResumeProAIHelpers;
   const sent = [];
   let noFit = 0;
-  for (const field of fields) {
+  for (const { workTitleRow, ...field } of fields) {
     // #466 无法唯一确认同一条教育记录时，两端都留空，不能分别让模型挑两条资料。
     if (field.educationRange || field.bossEducation || field.bossWork || field.bossCet?.role === "score") { noFit += 1; continue; }
     const choice = (field.inputType === "select" || field.inputType === "radio") && field.cascadeGroup === undefined

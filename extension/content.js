@@ -3885,14 +3885,16 @@
       const domOrderMap = new Map(fields.map((field, index) => [field.fieldId, index]));
       const recordOrder = new Map();
       const recordKey = field => field?.bossEducation ? `education:${field.bossEducation.row}`
-        : field?.bossWork ? `work:${field.bossWork.row}` : field?.bossCet ? `cet:${field.bossCet.row}` : "";
+        : field?.bossWork ? `work:${field.bossWork.row}` : field?.bossCet ? `cet:${field.bossCet.row}`
+          : field?.workTitleRow ? `work-title:${field.workTitleRow.id}` : "";
       for (const field of fields) {
         const row = recordKey(field);
         if (row && !recordOrder.has(row)) recordOrder.set(row, domOrderMap.get(field.fieldId));
       }
       const orderOf = field => {
         const index = domOrderMap.get(field?.fieldId) ?? 0;
-        const anchor = field?.bossEducation?.role === "school" || field?.bossWork?.role === "company" || field?.bossCet?.role === "level";
+        const anchor = field?.bossEducation?.role === "school" || field?.bossWork?.role === "company"
+          || field?.bossCet?.role === "level" || field?.workTitleRow?.role === "company";
         return anchor ? (recordOrder.get(recordKey(field)) ?? index) - 0.5 : index;
       };
       const byOrder = (a, b) => {
@@ -4553,9 +4555,35 @@
         }
         const fieldMeta = fieldMetaMap.get(match.fieldId);
         if (assisted && (!isAssistedField(element, fieldMeta) || hasExistingValue(element) || !assisted.scopes.some(scope => scope.isConnected && scope.contains(element.element)))) continue;
+        let confirmedCompanyEntry = null;
         const recordFailure = () => {
           if (match.bossSchool && !bossEducationSchoolMatches(element.element, match.bossSchool)) return "education_school_unconfirmed";
           if (match.bossCompany && !bossWorkCompanyMatches(element.element, match.bossCompany)) return "work_company_unconfirmed";
+          if (match.workTitleCompany) {
+            const { fieldId: companyId, value: expected } = match.workTitleCompany;
+            const previous = confirmedCompanyEntry || fieldMap.get(companyId);
+            const anchor = previous && (isFieldBindingCurrent(previous) ? previous : rebindFieldEntry(previous));
+            const row = element.binding?.workTitleRow;
+            const company = anchor?.element;
+            const shown = String(company?.value ?? "");
+            if (!row || !company || row !== anchor.binding?.workTitleRow || !row.contains(element.element) || !row.contains(company)
+              || shown.trim() !== expected
+              || company.validity?.valid === false || !inspectTextCommit(company, shown, true).ok) {
+              return "work_company_unconfirmed";
+            }
+            // 页面上原有的公司也要参与核对，不能只看本次模型返回的匹配。
+            const internship = /^(?:实习|internship)/i;
+            const isInternship = internship.test(anchor.binding.section);
+            const duplicate = [...fieldMap].some(([fieldId, entry]) => {
+              if (fieldId === companyId || entry.binding?.workTitleRole !== "company"
+                || internship.test(entry.binding.section) !== isInternship) return false;
+              const other = isFieldBindingCurrent(entry) ? entry : rebindFieldEntry(entry);
+              const otherRow = other?.binding?.workTitleRow;
+              return otherRow && otherRow !== row && String(other.element.value ?? "").trim() === expected;
+            });
+            if (duplicate) return "work_company_unconfirmed";
+            confirmedCompanyEntry = anchor;
+          }
           if (!match.blocked && fieldMeta?.bossCet?.role === "score") {
             const selected = bossCetSelection(element.element.closest(".group-part-item")).selected;
             if (!match.cetScoreLevel || selected !== match.cetScoreLevel) return "english_level_unconfirmed";
@@ -4636,10 +4664,10 @@
         };
         let filled = await writeField();
         stopInterruptedControl();
-        // 选完页面立刻重画（智联学位）：旧字段已经不在了，看找回的新字段——
-        // 内容和填写前一样（重建冲掉了这次写入）就在新字段上重做一次；显示的正是刚选的值就算填上；
+        // 展开或选完时网页重画（北森、智联）：旧字段已经不在了，看找回的新字段——
+        // 内容和填写前一样就在新字段上重做一次；已经尝试写入且显示的是这次的值，才算填上；
         // 别的内容（可能是用户刚改的，或页面带出的）不碰，按未确认处理。
-        if (!filled && !assisted && writeAttempted && textFillFailureCode(element) === "element_disconnected") {
+        if (!filled && !assisted && textFillFailureCode(element) === "element_disconnected") {
           const fresh = rebindFieldEntry(element);
           const approved = approvedValues.get(element);
           const now = fresh ? fillValueSnapshot(fresh) : null;
@@ -4649,7 +4677,7 @@
             element = fresh;
             filled = await writeField();
             stopInterruptedControl();
-          } else if (fresh && showsFilledValue(fresh, match.value)) {
+          } else if (writeAttempted && fresh && showsFilledValue(fresh, match.value)) {
             approvedValues.set(fresh, now);
             fieldMap.set(match.fieldId, fresh);
             textFillFailures.delete(fresh.kind === "radio" ? fresh.elements[0] : fresh.element);
@@ -5435,6 +5463,7 @@
       && el.closest('.group-part-item[data-group-id="EDUCATION"]');
     const schools = new Map();
     const workGroups = new Map();
+    const workTitleRows = new Map();
     const cetRows = new Map();
     const agent = self.ResumeProFormAgent;
     for (const control of scan.controls) {
@@ -5475,6 +5504,8 @@
       const workIndex = work?.rows.indexOf(rowElement) ?? -1;
       const workRole = workIndex >= 0 && self.ResumeProAIHelpers?.workRole?.(control.label.replace(/（(?:开始|结束)）$/, ""));
       const workPart = workRole === "range" && control.rangePart ? (control.rangePart === "开始" ? "start" : "end") : workRole;
+      const titleRow = !workPart && control.workTitleRow;
+      if (titleRow && !workTitleRows.has(titleRow)) workTitleRows.set(titleRow, `${prefix}${workTitleRows.size}`);
       const cet = cetRows.get(rowElement);
       const cetRole = cet && (cet.root === control.root ? "level"
         : control.controlKind === "text" && BOSS_CET_SCORE_LABEL.test(control.label) ? "score" : "");
@@ -5487,6 +5518,7 @@
         ...(control.repeatIndex > 0 ? { repeatIndex: control.repeatIndex, repeatCount: control.repeatCount } : {}),
         ...(workPart && workPart !== "range" ? { bossWork: { role: workPart, row: `${prefix}${work.id}:${workIndex}`,
           index: workIndex, companies: work.companies, companyReady: work.inputs.every(Boolean), kind: work.kind } } : {}),
+        ...(titleRow ? { workTitleRow: { id: workTitleRows.get(titleRow), role: control.workTitleRole } } : {}),
         ...(cetRole ? { bossCet: { role: cetRole, row: `${prefix}${cet.index}`, selected: cet.selected, otherSelected: cet.otherSelected } } : {}),
         ...(educationRole ? { bossEducation: { role: educationRole, row: `${prefix}${educationRows.get(row)}`,
           index: educationRows.get(row), school: schools.get(row) || "",

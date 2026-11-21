@@ -765,6 +765,53 @@ test("#481 project descriptions can use separately grouped resume fields with no
   assert.equal(valueOf(await env.run({ formFields, resumeFields }), "description"), "为团队整理月报。");
 });
 
+test("#569 work title completion requires a unique company record and respects existing AI matches", async () => {
+  const group = "工作经历";
+  const onlyCompany = worker(() => [{ fieldId: "company", ref: "r1" }]);
+  const formFields = [
+    { fieldId: "company", label: "公司名称", group, inputType: "text", workTitleRow: { id: "row-1", role: "company" } },
+    { fieldId: "title", label: "职位", group, inputType: "text", workTitleRow: { id: "row-1", role: "position" } }
+  ];
+  const resume = [
+    { group, key: "工作经历1-公司", value: "虚构单位" },
+    { group, key: "工作经历1-职位", value: "设计师" },
+    { group, key: "工作经历2-公司", value: "虚构单位" },
+    { group, key: "工作经历2-职位", value: "产品经理" }
+  ];
+  const unique = { formFields, resumeFields: resume.slice(0, 2) };
+  const completed = await onlyCompany.run(unique);
+  assert.equal(valueOf(completed, "title"), "设计师");
+  assert.equal(completed.diagnostics.aiMatches, 1);
+  assert.equal(completed.diagnostics.ruleMatches, 1);
+  assert.deepEqual(completed.diagnostics.unansweredIds, []);
+  assert.equal(valueOf(await onlyCompany.run({ formFields, resumeFields: resume }), "title"), undefined);
+  assert.equal(valueOf(await onlyCompany.run({ formFields, resumeFields: [...resume,
+    { group, key: "工作经历2-单位名称", value: "另一家虚构单位" }] }), "title"), undefined);
+  const answered = worker(() => [{ fieldId: "company", ref: "r1" }, { fieldId: "title", ref: "r2" }]);
+  const result = await answered.run(unique);
+  assert.deepEqual(result.matches.find(match => match.fieldId === "title"), { fieldId: "title", value: "设计师" });
+  assert.equal(result.diagnostics.aiMatches, 2);
+  assert.equal(result.diagnostics.ruleMatches, 0);
+});
+
+test("#569 work title completion leaves duplicate employer cards alone", async () => {
+  const group = "工作经历";
+  const formFields = [1, 2].flatMap(i => [
+    { fieldId: `company-${i}`, label: "公司名称", group, inputType: "text", workTitleRow: { id: `row-${i}`, role: "company" } },
+    { fieldId: `title-${i}`, label: "职位", group, inputType: "text", workTitleRow: { id: `row-${i}`, role: "position" } }
+  ]);
+  const resumeFields = [
+    { group, key: "工作经历1-公司", value: "虚构单位" },
+    { group, key: "工作经历1-职位", value: "设计师" }
+  ];
+  const env = worker(() => [1, 2].map(i => ({ fieldId: `company-${i}`, ref: "r1" })));
+  const result = await env.run({ formFields, resumeFields });
+  for (const i of [1, 2]) {
+    assert.equal(valueOf(result, `company-${i}`), "虚构单位");
+    assert.equal(valueOf(result, `title-${i}`), undefined);
+  }
+});
+
 test("a view question takes no item that shares only a common word like 工作 with it", async () => {
   const resume = [{ group: "实习经历", key: "工作描述", value: "负责虚构数据看板" }, { group: "团队活动", key: "团队合作经历", value: "带队完成虚构项目" },
     { group: "学习经历", key: "学习能力自评", value: "上手快" }];

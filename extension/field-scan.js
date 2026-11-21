@@ -347,6 +347,8 @@
       const pair = boss.closest(".date-picker-range-wrapper");
       return pair && componentScopeOk(pair, ctx, 2) ? pair : boss;
     }
+    const iview = el.closest(".ivu-date-picker");
+    if (iview && componentScopeOk(iview, ctx, 1)) return iview;
     if (el.matches(antdCss(el, CALENDAR_RANGE_INPUT))) {
       const root = el.closest(antdCss(el, ".ant-calendar-picker"));
       if (root && root !== ctx.body && componentScopeOk(root, ctx, 2)) return root;
@@ -373,6 +375,7 @@
   }
   function pickerTypeOf(root, ctx) {
     if (root.matches(antdCss(root, PERIOD_PICKER)) && periodRootOk(root)) return "period";
+    if (root.matches(".ivu-date-picker")) return "iview";
     const bossDates = ".ui-date-editor-date, .ui-date-editor-month";
     if (bossItem(root, ctx) && (root.matches(bossDates)
       || (root.matches(".date-picker-range-wrapper") && root.querySelector(bossDates)))) return "boss";
@@ -1130,6 +1133,47 @@
     return Boolean(cls) && a.tagName === b.tagName && cls === attr(b, "class");
   }
 
+  const WORK_TITLE_SECTION = /^(?:(?:工作|实习)(?:经历|经验)?|employment|workexperience|internships?)\d*$/;
+  const WORK_TITLE_COMPANY = /^(?:(?:实习|工作|任职)?(?:公司|单位|机构)(?:名称)?|雇主|employer|company(?:name)?)$/;
+  const WORK_TITLE_POSITION = /^(?:(?:实习|工作|担任)?(?:职位|岗位|职务|角色)(?:名称)?|jobtitle|position|role)$/;
+
+  function markWorkTitleRows(controls) {
+    const scopes = new Map();
+    for (const control of controls) {
+      if (control.controlKind !== "text" || !control.sectionRoot || !STRONG_SOURCES.has(control.labelSource)) continue;
+      const section = normalizeKey(control.section);
+      if (!WORK_TITLE_SECTION.test(section)) continue;
+      const label = normalizeKey(control.label);
+      const role = WORK_TITLE_COMPANY.test(label) ? "company" : WORK_TITLE_POSITION.test(label) ? "position" : "";
+      if (!role) continue;
+      if (!scopes.has(control.sectionRoot)) scopes.set(control.sectionRoot, []);
+      scopes.get(control.sectionRoot).push({ control, section, role });
+    }
+    for (const [scope, fields] of scopes) {
+      for (const { control: position, role, section } of fields) {
+        if (role !== "position") continue;
+        for (let row = position.root.parentElement; row && scope.contains(row); row = row.parentElement) {
+          const inside = fields.filter(field => row.contains(field.control.root));
+          const positions = inside.filter(field => field.role === "position");
+          const companies = inside.filter(field => field.role === "company");
+          if (positions.length > 1 || companies.length > 1) break;
+          if (companies.length !== 1 || companies[0].section !== section) continue;
+          // 只有同一个实际行容器才配对。按题目各自计的 repeatIndex 遇到缺字段的条目会错位。
+          const explicit = row.matches("tr, [role='row']") || (row === scope && row.tagName === "FIELDSET" && /\d$/.test(section));
+          const repeated = row !== scope && Array.from(row.parentElement.children).some(other => other !== row
+            && sameShape(row, other) && fields.some(field => field.section === section && other.contains(field.control.root)));
+          if (!explicit && !repeated) continue;
+          const company = companies[0].control;
+          position.workTitleRow = row;
+          position.workTitleRole = "position";
+          company.workTitleRow = row;
+          company.workTitleRole = "company";
+          break;
+        }
+      }
+    }
+  }
+
   // 分割线：<hr>，或类名以 separator / divider 结尾（简道云 .fx-form-separator、Element / antd 的 divider）。
   const DIVIDER_TOKEN = /(?:^|[-_])(?:separator|divider)$/i;
   function hasDivider(el) {
@@ -1265,6 +1309,7 @@
       }
     });
     const kept = controls.filter((control) => control.fillable);
+    markWorkTitleRows(kept);
     // #408 控件一个都没读出来：出错的之外，只剩页头导航、站内搜索、表单外的控件和文件框（这些本来就不填）。
     // 有读出来、只是禁用或对不上题目的控件时不算，没填的原因在它们身上。
     const unreadable = Boolean(fault) && !kept.length
@@ -1378,6 +1423,8 @@
       labelSource: control.labelSource,
       section: control.section || "",
       group: control.group || "",
+      workTitleRow: control.workTitleRow || null,
+      workTitleRole: control.workTitleRole || "",
       repeatIndex: control.repeatIndex || 0,
       repeatCount: control.repeatCount || 0,
       custom: Boolean(control.custom),

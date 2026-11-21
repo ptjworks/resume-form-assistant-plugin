@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
 const scanner = require('../extension/field-scan.js');
 
-function harness(t, { transfer = false, disabledDay, range = false } = {}) {
-  const dom = new JSDOM(`<form><table><tbody><tr><td><label for="graduation">毕业时间</label><div class="ivu-date-picker">
+function picker(t, { transfer = false, label = '毕业时间', editable = false } = {}) {
+  const dom = new JSDOM(`<form><table><tbody><tr><td><label for="graduation">${label}</label><div class="ivu-date-picker">
     <div class="ivu-date-picker-rel"><div class="ivu-date-picker-editor ivu-input-wrapper">
       <input id="graduation" class="ivu-input" type="text" readonly>
     </div></div></div></td></tr></tbody></table></form>`, { runScripts: 'outside-only', url: 'https://i.zhaopin.com/resume' });
@@ -19,6 +19,7 @@ function harness(t, { transfer = false, disabledDay, range = false } = {}) {
   const api = window.ResumeProControls.create({ timeoutMs: 200, settleMs: 20, isVisible: visible });
   const root = document.querySelector('.ivu-date-picker');
   const input = root.querySelector('input');
+  input.readOnly = !editable;
   const popup = document.createElement('div');
   popup.className = transfer ? 'ivu-select-dropdown ivu-date-picker-transfer' : 'ivu-select-dropdown';
   popup.dataset.transfer = String(transfer);
@@ -28,6 +29,17 @@ function harness(t, { transfer = false, disabledDay, range = false } = {}) {
   const rect = (top, height) => ({ left: 20, right: 230, top, bottom: top + height, width: 210, height });
   root.getBoundingClientRect = input.getBoundingClientRect = () => rect(40, 32);
   popup.getBoundingClientRect = () => rect(76, 250);
+  input.onclick = () => { popup.hidden = false; };
+  if (editable) input.onfocus = input.onclick;
+  input.onkeydown = event => { if (event.key === 'Escape') popup.hidden = true; };
+  const binding = scanner.scanPage(document, { isVisible: visible }).controls.find(control => control.element === input);
+  assert.equal(binding.controlKind, 'date-picker');
+  const target = { ...binding, binding, controlKind: 'date' };
+  return { api, target, input, popup, helpers: window.ResumeProAIHelpers };
+}
+
+function harness(t, { transfer = false, disabledDay, range = false, label } = {}) {
+  const { api, target, input, popup } = picker(t, { transfer, label });
 
   // iView uses spans wrapping <em> for all three views. The single header
   // switches year/month views, and the double arrows page through year lists.
@@ -74,11 +86,6 @@ function harness(t, { transfer = false, disabledDay, range = false } = {}) {
     drawPanel();
   };
   drawPanel();
-  input.onclick = () => { popup.hidden = false; };
-  input.onkeydown = event => { if (event.key === 'Escape') popup.hidden = true; };
-  const binding = scanner.scanPage(document, { isVisible: visible }).controls.find(control => control.element === input);
-  assert.equal(binding.controlKind, 'date-picker');
-  const target = { ...binding, binding, controlKind: 'date' };
   return { api, target, input, popup, clicks };
 }
 
@@ -118,4 +125,127 @@ test('#544 skips disabled dates and an iView range that requires two dates', asy
     assert.equal(popup.hidden, true);
     assert.deepEqual(clicks, []);
   }
+});
+
+test('#544 a single-date iView panel does not write only the start of an unresolved range', async t => {
+  const raw = '2026-05-23 - 至今';
+  const whole = harness(t, { label: '起止时间' });
+  const result = await whole.api.operate(whole.target, raw);
+  assert.equal(result.ok, false);
+  assert.equal(whole.input.value, '');
+  assert.deepEqual(whole.clicks, []);
+  assert.equal(whole.popup.hidden, true);
+
+  const start = harness(t, { label: '起止时间（开始）' });
+  assert.equal((await start.api.operate(start.target, raw)).ok, true);
+  assert.equal(start.input.value, '2026-05-23');
+});
+
+function rangePicker(t, { disabledDate = '', confirm = false, monthPanels = false, transfer = false, editable = false, submittedRange } = {}) {
+  const fixture = picker(t, { label: '起止时间', transfer, editable });
+  const { input, popup } = fixture;
+  let firstMonth = 2026 * 12 + 4;
+  const picked = [];
+  const render = () => {
+    const panel = (side, offset, dir) => {
+      const year = Math.floor(offset / 12), month = offset % 12 + 1;
+      const prefix = `${year}-${String(month).padStart(2, '0')}`;
+      const arrow = (level, advance) => `<span class="ivu-date-picker-${dir}-btn-arrow${level}" data-advance="${advance}"><i></i></span>`;
+      const cells = Array.from({ length: monthPanels ? 12 : new Date(year, month, 0).getDate() }, (_, i) => {
+        const date = `${prefix}-${String(i + 1).padStart(2, '0')}`;
+        return `<span class="ivu-date-picker-cells-cell${date === disabledDate ? ' ivu-date-picker-cells-cell-disabled' : ''}" data-date="${date}"><em>${i + 1}${monthPanels ? '月' : ''}</em></span>`;
+      }).join('');
+      return `<div class="ivu-picker-panel-content ivu-picker-panel-content-${side}">
+        <div class="ivu-date-picker-header">${arrow('-double', dir === 'prev' ? -12 : 12)}${arrow('', dir === 'prev' ? -1 : 1)}
+          <span>${year}年</span><span>${month}月</span></div>
+        <div class="ivu-date-picker-cells">${cells}</div></div>`;
+    };
+    popup.innerHTML = `<div><div class="ivu-picker-panel-body-wrapper ivu-date-picker-with-range">
+      <div class="ivu-picker-panel-body ivu-picker-panel-body-date">
+        ${panel('left', firstMonth, 'prev')}${panel('right', firstMonth + 1, 'next')}
+        ${confirm ? '<div class="ivu-picker-confirm"><button>确定</button></div>' : ''}
+      </div></div></div>`;
+  };
+  render();
+  popup.onclick = event => {
+    const button = event.target.closest('[data-advance]');
+    const day = event.target.closest('[data-date]')?.dataset.date;
+    if (button) { firstMonth += Number(button.dataset.advance); render(); }
+    if (!day || day === disabledDate) return;
+    picked.push(day);
+    if (picked.length === 2) {
+      input.value = submittedRange ?? picked.join(' - ');
+      popup.hidden = true;
+    }
+  };
+  return { ...fixture, picked };
+}
+
+test('#544 dates paired in one iView input are passed through matching, committed and both checked', async t => {
+  const { api, target, input, popup, helpers, picked } = rangePicker(t, { transfer: true });
+  const field = { inputType: 'date-picker', pickerType: target.pickerType, label: target.label };
+  const matched = helpers.pickerDate(field, '2024.06-2026.07.12');
+  assert.equal(matched, '2024-06 - 2026-07-12');
+  assert.equal(helpers.pickerDate({ ...field, label: '毕业时间' }, '2024.06-2026.07.12'), '2026-07-12');
+  assert.equal(helpers.pickerDate({ ...field, label: '教育起止时间（开始）' }, '2024.06-2026.07.12'), '2024-06');
+  assert.equal(helpers.pickerDate({ ...field, pickerType: 'generic' }, '2024.06-2026.07.12'), '');
+  const outcome = await api.operate(target, matched);
+  assert.equal(outcome.ok, true, JSON.stringify(outcome));
+  assert.equal(outcome.observed.dayDefaulted, true);
+  assert.equal(input.value, '2024-06-01 - 2026-07-12');
+  assert.deepEqual(picked, ['2024-06-01', '2026-07-12']);
+  assert.equal(popup.hidden, true);
+  input.value = '2024-06-01 - 2026-08-12';
+  assert.equal(api.check(target).reason, 'value_reverted');
+});
+
+test('#544 iView date ranges reject disabled endpoints, confirmations, and month-only panels', async t => {
+  for (const [options, reason, picked] of [
+    [{ disabledDate: '2026-07-12' }, 'no_option_match', ['2026-06-01']],
+    [{ confirm: true }, 'unsupported_control', []],
+    [{ monthPanels: true }, 'unsupported_control', []],
+  ]) {
+    const fixture = rangePicker(t, options);
+    assert.equal((await fixture.api.operate(fixture.target, '2026-06-01 - 2026-07-12')).reason, reason);
+    assert.equal(fixture.input.value, '');
+    assert.equal(fixture.popup.hidden, true);
+    assert.deepEqual(fixture.picked, picked);
+  }
+});
+
+test('#544 handles equal day numbers in two owned panels without taking another open range', async t => {
+  const { api, target, input, popup, picked } = rangePicker(t, { transfer: true, editable: true });
+  const stale = popup.cloneNode(true);
+  stale.hidden = false;
+  stale.getBoundingClientRect = popup.getBoundingClientRect;
+  popup.before(stale);
+  let staleClicks = 0;
+  stale.onclick = () => staleClicks++;
+  const outcome = await api.operate(target, '2026-05-12 - 2026-06-12');
+  assert.equal(outcome.ok, true, JSON.stringify(outcome));
+  assert.equal(input.value, '2026-05-12 - 2026-06-12');
+  assert.deepEqual(picked, ['2026-05-12', '2026-06-12']);
+  assert.equal(staleClicks, 0);
+  assert.equal(stale.hidden, false);
+});
+
+test('#544 iView date ranges require ordered real dates and verify both displayed endpoints', async t => {
+  const { api, target, input, picked } = rangePicker(t, { submittedRange: '2026-05-12 - 2026-06-13' });
+  for (const desired of ['2026-06-12 - 2026-05-12', '2026-05-12 - 2026-06-31', '2026-05-12 - 至今']) {
+    assert.equal((await api.operate(target, desired)).reason, 'invalid_date');
+  }
+  assert.deepEqual(picked, []);
+  assert.equal(input.value, '');
+  assert.equal((await api.operate(target, '2026-05-12 - 2026-06-12')).reason, 'selection_not_committed');
+  assert.equal(api.check(target), null);
+});
+
+test('#544 leaves an already open inline iView range alone', async t => {
+  const { api, target, input, popup, picked } = rangePicker(t);
+  popup.hidden = false;
+  const outcome = await api.operate(target, '2026-05-12 - 2026-06-12');
+  assert.equal(outcome.reason, 'ambiguous_popup', JSON.stringify(outcome));
+  assert.deepEqual(picked, []);
+  assert.equal(input.value, '');
+  assert.equal(popup.hidden, false);
 });

@@ -1587,8 +1587,15 @@
   // 日期控件：一段起止先按题目取开始或结束，再写成「2019-09」「2000-03-17」。资料原文的「2019.09」有的控件不认（Element 的月份框）。
   // 题目看不出取哪一头的一段起止、不是日期的值给空串：页面上也填不进去（评测里「参加工作时间」被给过一段实习时间）。
   function pickerDate(field, value) {
-    const picked = rangeDateValue(value, questionHint(field));
-    if (rangeDateParts(picked)) return "";
+    const hint = questionHint(field);
+    const picked = rangeDateValue(value, hint);
+    const range = rangeDateParts(picked);
+    if (range) {
+      // iView 用同一个输入框显示整段起止。题目明确要区间时保留两头，由填写层再核对双面板。
+      if (field?.inputType !== "date-picker" || field.pickerType !== "iview" || !/起止|区间|日期范围|\bdate\s+range\b/i.test(hint)) return "";
+      const dates = range.map(part => normalizeDateValue(part, parseDateParts(part)?.day ? "date" : "month"));
+      return dates.every(validCalendarDate) ? dates.join(" - ") : "";
+    }
     // 原生的 date、month、datetime-local 框写不进「至今」。
     if (isPresentDate(picked)) return ["date", "month", "datetime-local"].includes(field?.inputType) ? "" : picked;
     // 原生 datetime-local 框和认出是选日期时间的控件：资料里有时分就带上（「2026-07-15T14:30」）；没有时分的只给日期，由填写层补 00:00。
