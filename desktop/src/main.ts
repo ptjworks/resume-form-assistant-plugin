@@ -113,6 +113,8 @@ void document.fonts?.ready.then(() => placeNavIndicator(false));
 
 function showRoute(name: string | undefined) {
   views.notes.parentElement?.classList.toggle("notes-workspace-active", name === "notes");
+  // 设置页要让出首次使用提示条占的高度，样式按这个标记切换（见 settings.css）。
+  if (views.notes.parentElement) views.notes.parentElement.dataset.view = name ?? "";
   Object.entries(views).forEach(([key, el]) => {
     el.classList.toggle("hidden", key !== name);
   });
