@@ -1,8 +1,8 @@
 /* 设置页（#265）：左侧分类导航 + 右侧白色圆角卡片，与申请页、简历页同一套工作区。
    规则都挂在 #view-settings 或 .settings-dialog 下，不改全局 button / dialog / h2 / row。 */
 
-#view-settings { max-width: none; margin: 0; padding: 24px 28px 40px; background: var(--surface); }
-#view-settings h1 { font-size: 24px; }
+/* 整页分两栏：左边 208px 纯白分类导航，右边 #fafafa 画布，卡片在画布里居中、最宽 672px（#549）。画布自己滚动，导航不动。 */
+#view-settings { height: 100%; min-height: 0; max-width: none; margin: 0; padding: 0; overflow: hidden; background: var(--ui-canvas); font-family: var(--ui-font); }
 /* 首次说明在主窗口内始终可见，不随设置分类切换而隐藏。 */
 #feedback-consent:empty, #usage-notice:empty { display: none; }
 /* 首次说明收敛成顶栏下方的细条：去掉卡片的圆角、阴影，只留下边线。 */
@@ -13,25 +13,24 @@
 #feedback-consent .feedback-choice .settings-dialog-actions { padding: 8px 0 0; }
 #usage-notice .usage-notice p { margin: 4px 0; font-size: 12.5px; line-height: 1.6; color: var(--ui-muted); }
 #usage-notice .usage-notice .settings-dialog-actions { padding: 6px 0 0; border: 0; }
-.settings-heading p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
-.settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1040px); gap: 24px; padding-top: 20px; align-items: start; }
+.settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1fr); height: 100%; min-height: 0; }
 
 /* 左侧分类 */
-.settings-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 4px; }
-.settings-nav button { position: relative; display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 9px 14px; border: 0; border-radius: 10px; background: transparent; color: #4a5361; font-size: 14px; text-align: left; }
-.settings-nav button .icon { width: 18px; height: 18px; color: #7b8494; }
-.settings-nav button:hover:not(:disabled) { background: #eceff3; border-color: transparent; color: var(--ink); }
-.settings-nav button[aria-selected="true"], .settings-nav button[aria-selected="true"]:hover:not(:disabled) { background: var(--accent-pale); color: var(--accent); font-weight: 600; }
-.settings-nav button[aria-selected="true"] .icon { color: var(--accent); }
-.settings-nav button[aria-selected="true"]::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--accent); }
+.settings-nav { display: flex; flex-direction: column; gap: 2px; min-height: 0; padding: 16px 12px; overflow-y: auto; background: var(--ui-surface); border-right: 1px solid var(--ui-line); }
+.settings-nav button { position: relative; display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--ui-sub); font-size: 14px; text-align: left; }
+.settings-nav button .icon { width: 17px; height: 17px; color: var(--ui-faint); }
+.settings-nav button:hover:not(:disabled) { background: var(--ui-line-soft); border-color: transparent; color: var(--ui-ink); }
+.settings-nav button[aria-selected="true"], .settings-nav button[aria-selected="true"]:hover:not(:disabled) { background: var(--ui-brand-pale); color: var(--ui-brand); font-weight: 600; }
+.settings-nav button[aria-selected="true"] .icon { color: var(--ui-brand); }
+.settings-nav button .update-dot { margin-left: auto; vertical-align: baseline; background: var(--ui-dot-error); }
 
 /* 右侧内容 */
-.settings-content { min-width: 0; }
-.settings-section { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.settings-content { min-width: 0; min-height: 0; padding: 32px 32px 48px; overflow-y: auto; background: var(--ui-canvas); }
+.settings-section { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 672px; margin: 0 auto; }
 .settings-section:focus-visible { outline-offset: 6px; border-radius: 16px; }
 #ai-settings, #desktop-feedback, #desktop-usage { display: contents; }
 
-.settings-card { min-width: 0; padding: 20px 24px; border: 1px solid var(--card-line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); }
+.settings-card { min-width: 0; padding: 20px 24px; border: 1px solid var(--ui-line); border-radius: 14px; background: var(--ui-surface); box-shadow: none; }
 .settings-card-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .settings-card-head.has-aside { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .settings-card-head.has-aside > div:first-child { min-width: 0; flex: 1 1 280px; }
@@ -116,7 +115,7 @@
 .settings-fold > summary { width: fit-content; color: var(--ink); font-weight: 500; }
 .settings-fold[open] > summary { margin-bottom: 10px; }
 .settings-card-fold { padding: 0; }
-.settings-card-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; list-style: none; border-radius: 16px; }
+.settings-card-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; list-style: none; border-radius: 14px; }
 .settings-card-fold > summary::-webkit-details-marker { display: none; }
 .settings-card-fold > summary:focus-visible { outline-offset: -2px; }
 .settings-fold-title { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
@@ -225,7 +224,16 @@
 #orphan-report > .settings-callout { margin-top: 14px; }
 .orphan-list { margin-top: 12px; }
 
-/* 关于与诊断 */
+/* 账号与云同步（Phase 2 才显示，这里只放占位结构） */
+.account-card { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 14px 16px; border: 1px solid var(--ui-line); border-radius: 12px; background: var(--ui-canvas); }
+.account-avatar { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--ui-brand-pale); color: var(--ui-brand); }
+.account-avatar .icon { width: 20px; height: 20px; }
+.account-card p { margin: 0; }
+.account-name { color: var(--ui-ink); font-size: 14px; font-weight: 600; }
+.account-sub { color: var(--ui-muted); font-size: 12.5px; }
+.settings-card > .setting-row:last-child { padding-bottom: 0; }
+
+/* 隐私与关于 */
 .about-head { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 16px; }
 .about-mark { width: 48px; height: 48px; border-radius: 12px; }
 .about-title p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
@@ -317,18 +325,21 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 .cloud-form-actions { justify-content: flex-start; }
 .feedback-preview { max-height: 280px; margin: 0; padding: 12px 14px; overflow: auto; border: 1px solid var(--card-line); border-radius: 8px; background: #f4f7f6; font: 12px/1.6 Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 1180px) {
-  #view-settings { padding: 20px 20px 32px; }
-  .settings-layout { grid-template-columns: 176px minmax(0, 1fr); gap: 20px; }
+  .settings-content { padding: 24px 24px 40px; }
   .install-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 960px) {
   .facts-groups { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
   .settings-form-grid { grid-template-columns: minmax(0, 1fr); }
 }
-@media (max-width: 900px) {
-  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; padding-top: 12px; }
-  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }
-  .settings-nav button[aria-selected="true"]::before { display: none; }
+@media (max-width: 720px) {
+  /* 窗口最小 860，窄到这里只可能是被外部缩放；导航改到顶部，免得挤掉内容。 */
+  #view-settings { overflow-y: auto; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 100%; }
+  .settings-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--ui-line); }
+  .settings-content { overflow: visible; }
   .setting-row { flex-wrap: wrap; }
   .provider-item { grid-template-columns: minmax(0, 1fr); }
   .provider-actions { justify-content: flex-start; }

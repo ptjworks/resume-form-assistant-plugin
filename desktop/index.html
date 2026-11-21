@@ -365,43 +365,32 @@
         <section id="view-notes" class="view hidden"></section>
 
         <section id="view-settings" class="view hidden">
-          <header class="settings-heading"><h1>设置</h1><p>管理应用偏好、连接和本地数据。</p></header>
           <div class="settings-layout">
             <nav class="settings-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
-              <button type="button" role="tab" id="settings-tab-general" data-settings-tab="general" aria-controls="settings-general" aria-selected="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>通用</span></button>
+              <button type="button" role="tab" id="settings-tab-ai" data-settings-tab="ai" aria-controls="settings-ai" aria-selected="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg><span>AI 服务商</span></button>
+              <button type="button" role="tab" id="settings-tab-cloud-sync" data-settings-tab="cloud-sync" aria-controls="settings-cloud-sync" aria-selected="false" tabindex="-1" data-platform="cloud-sync" data-platform-off><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4.75 4.75 0 0 1-.5 9.5z"/></svg><span>账号与云同步</span></button>
               <button type="button" role="tab" id="settings-tab-browser" data-settings-tab="browser" aria-controls="settings-browser" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><span>浏览器连接</span></button>
               <button type="button" role="tab" id="settings-tab-mailbox" data-settings-tab="mailbox" aria-controls="settings-mailbox" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>邮箱</span></button>
-              <button type="button" role="tab" id="settings-tab-ai" data-settings-tab="ai" aria-controls="settings-ai" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg><span>AI 设置</span></button>
               <button type="button" role="tab" id="settings-tab-data" data-settings-tab="data" aria-controls="settings-data" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg><span>数据与备份</span></button>
-              <button type="button" role="tab" id="settings-tab-privacy" data-settings-tab="privacy" aria-controls="settings-privacy" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/></svg><span>隐私</span></button>
-              <button type="button" role="tab" id="settings-tab-about" data-settings-tab="about" aria-controls="settings-about" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>关于与诊断</span><span class="update-dot" data-update-dot aria-hidden="true" hidden></span></button>
+              <button type="button" role="tab" id="settings-tab-general" data-settings-tab="general" aria-controls="settings-general" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>通用与提醒</span></button>
+              <button type="button" role="tab" id="settings-tab-about" data-settings-tab="about" aria-controls="settings-about" aria-selected="false" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/></svg><span>隐私与关于</span><span class="update-dot" data-update-dot aria-hidden="true" hidden></span></button>
             </nav>
             <div class="settings-content">
-              <section id="settings-general" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-general" tabindex="0" data-settings-panel="general">
+              <section id="settings-ai" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-ai" tabindex="0" data-settings-panel="ai">
+                <div id="ai-settings"></div>
+              </section>
+              <section id="settings-cloud-sync" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-cloud-sync" tabindex="0" data-settings-panel="cloud-sync" data-platform="cloud-sync" data-platform-off hidden>
                 <div class="settings-card">
-                  <header class="settings-card-head"><h2>通用</h2><p>调整日常使用中的更新与窗口行为。</p></header>
-                  <div class="setting-row">
-                    <div><label for="update-auto" class="setting-label">自动检查更新</label><p>启动时检查新版本，每天最多一次。下载与安装由你决定。</p></div>
-                    <input type="checkbox" id="update-auto" class="setting-toggle" disabled />
+                  <header class="settings-card-head"><h2>账号与云同步</h2><p>登录后可以在多台电脑之间同步你的设置和求职记录。不登录也能完整使用，数据默认只留在本机。</p></header>
+                  <div class="account-card">
+                    <span class="account-avatar" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span>
+                    <div><p class="account-name" id="cloud-sync-account">本机使用</p><p class="account-sub">尚未登录</p></div>
                   </div>
-                  <p id="update-auto-msg" class="settings-inline-msg" role="status"></p>
-                  <div class="setting-row">
-                    <div><h3>关闭窗口</h3><p>关闭后收起到托盘或菜单栏，应用继续运行。</p></div>
-                    <button type="button" id="btn-hide">隐藏窗口</button>
-                  </div>
-                  <p id="hide-msg" class="settings-inline-msg" role="status"></p>
                 </div>
                 <div class="settings-card">
-                  <header class="settings-card-head"><h2>待办提醒</h2><p>系统能不能按时弹出提醒，以及几种情况下会怎样。</p></header>
-                  <div id="settings-reminder-callout" class="settings-callout" data-tone="pending">
-                    <div><p id="settings-reminder">正在读取系统通知能力…</p><p id="settings-reminder-window" class="settings-callout-sub"></p></div>
-                  </div>
-                  <details class="settings-fold"><summary>哪些情况下可以收到提醒？</summary><table id="settings-lifecycle" class="settings-table"></table></details>
-                </div>
-                <div class="settings-card settings-card-row">
-                  <div><h2>退出应用</h2><p>完全退出网申快填桌面程序，停止后台运行并暂停待办定时提醒。</p></div>
-                  <button type="button" id="btn-quit" class="settings-danger">退出应用</button>
-                  <p id="quit-error" class="settings-inline-msg" data-tone="error" role="alert" hidden></p>
+                  <header class="settings-card-head"><h2>端到端加密同步</h2><p>同步内容在本机加密后才会上传。以下开关默认全部关闭。</p></header>
+                  <div class="setting-row"><div><p class="setting-label">同步 AI 接口与密钥</p><p>在你的设备之间共享服务商配置和 API Key。</p></div><input id="cloud-sync-ai" class="setting-toggle" type="checkbox" role="switch" aria-label="同步 AI 接口与密钥" disabled /></div>
+                  <div class="setting-row"><div><p class="setting-label">同步简历模板与投递记录</p><p>在你的设备之间共享简历模板、我的信息和投递记录。</p></div><input id="cloud-sync-resume" class="setting-toggle" type="checkbox" role="switch" aria-label="同步简历模板与投递记录" disabled /></div>
                 </div>
               </section>
               <section id="settings-browser" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-browser" tabindex="0" data-settings-panel="browser" hidden>
@@ -484,9 +473,6 @@
                     <footer class="settings-dialog-actions"><button id="mailbox-cancel" type="button">取消</button><button id="mailbox-back" type="button" hidden>上一步</button><button id="mailbox-detect" type="button" class="primary">下一步</button><button id="mailbox-config-next" type="button" class="primary" hidden>继续</button><button id="mailbox-confirm-endpoint" type="button" class="primary" hidden>已按官方核对，继续</button><button id="mailbox-save" class="primary" type="submit" hidden>连接并添加</button></footer>
                   </form>
                 </dialog>
-              </section>
-              <section id="settings-ai" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-ai" tabindex="0" data-settings-panel="ai" hidden>
-                <div id="ai-settings"></div>
               </section>
               <section id="settings-data" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-data" tabindex="0" data-settings-panel="data" hidden>
                 <details id="backup-local" class="settings-card settings-card-fold backup-fold" open>
@@ -655,11 +641,36 @@
                   </div>
                 </details>
               </section>
-              <section id="settings-privacy" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-privacy" tabindex="0" data-settings-panel="privacy" hidden>
-                <div id="desktop-usage"></div>
-                <div id="desktop-feedback"></div>
+              <section id="settings-general" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-general" tabindex="0" data-settings-panel="general" hidden>
+                <div class="settings-card">
+                  <header class="settings-card-head"><h2>通用</h2><p>调整日常使用中的更新与窗口行为。</p></header>
+                  <div class="setting-row">
+                    <div><label for="update-auto" class="setting-label">自动检查更新</label><p>启动时检查新版本，每天最多一次。下载与安装由你决定。</p></div>
+                    <input type="checkbox" id="update-auto" class="setting-toggle" disabled />
+                  </div>
+                  <p id="update-auto-msg" class="settings-inline-msg" role="status"></p>
+                  <div class="setting-row">
+                    <div><h3>关闭窗口</h3><p>关闭后收起到托盘或菜单栏，应用继续运行。</p></div>
+                    <button type="button" id="btn-hide">隐藏窗口</button>
+                  </div>
+                  <p id="hide-msg" class="settings-inline-msg" role="status"></p>
+                </div>
+                <div class="settings-card">
+                  <header class="settings-card-head"><h2>待办提醒</h2><p>系统能不能按时弹出提醒，以及几种情况下会怎样。</p></header>
+                  <div id="settings-reminder-callout" class="settings-callout" data-tone="pending">
+                    <div><p id="settings-reminder">正在读取系统通知能力…</p><p id="settings-reminder-window" class="settings-callout-sub"></p></div>
+                  </div>
+                  <details class="settings-fold"><summary>哪些情况下可以收到提醒？</summary><table id="settings-lifecycle" class="settings-table"></table></details>
+                </div>
+                <div class="settings-card settings-card-row">
+                  <div><h2>退出应用</h2><p>完全退出网申快填桌面程序，停止后台运行并暂停待办定时提醒。</p></div>
+                  <button type="button" id="btn-quit" class="settings-danger">退出应用</button>
+                  <p id="quit-error" class="settings-inline-msg" data-tone="error" role="alert" hidden></p>
+                </div>
               </section>
               <section id="settings-about" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-about" tabindex="0" data-settings-panel="about" hidden>
+                <div id="desktop-usage"></div>
+                <div id="desktop-feedback"></div>
                 <div class="settings-card">
                   <div class="about-head">
                     <img class="about-mark" src="./src-tauri/icons/64x64.png" alt="" width="48" height="48" />
@@ -674,6 +685,10 @@
                   <div><h2>导出诊断</h2><p>遇到问题时，导出一份运行状态与排查信息（JSON 文件，存到本机日志目录；路径已脱敏，不含简历内容和 API Key）。</p></div>
                   <button type="button" id="btn-diag"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>导出诊断</button>
                   <p id="diag-msg" class="settings-inline-msg" role="status"></p>
+                </div>
+                <div class="settings-card settings-card-row" data-platform="onboarding" data-platform-off>
+                  <div><h2>新手引导</h2><p>重新看一遍各个功能的位置和用法。</p></div>
+                  <button type="button" id="btn-replay-onboarding" data-platform="onboarding" data-platform-off>重看新手引导</button>
                 </div>
                 <section class="settings-card support-card" aria-labelledby="support-payment-title">
                   <div class="support-card-head">
