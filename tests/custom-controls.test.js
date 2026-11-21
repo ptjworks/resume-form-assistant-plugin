@@ -45,11 +45,11 @@ test('ARIA portal delayed options commit through clicks and survive final check'
   assert.equal(h.api.check(h.target).ok, true);
   h.el.textContent = '请选择'; assert.equal(h.api.check(h.target).reason, 'value_reverted');
 });
-test('an ARIA combobox reads the chosen label with its hidden list still mounted', async (t) => {
-  const h = harness('<div role="combobox" tabindex="0" aria-haspopup="true" aria-controls="choices"><span>请选择</span><div id="choices" role="listbox" hidden><div role="option">本科</div><div role="option">硕士</div></div></div>');
+test('an ARIA combobox reads a chosen value inside a label with its hidden list still mounted', async (t) => {
+  const h = harness('<div role="combobox" tabindex="0" aria-haspopup="true" aria-controls="choices"><label>请选择</label><div id="choices" role="listbox" hidden><div role="option">本科</div><div role="option">硕士</div></div></div>');
   t.after(() => h.w.close());
   const list = h.w.document.getElementById('choices');
-  const label = h.el.querySelector('span');
+  const label = h.el.querySelector('label');
   h.el.onclick = (event) => { if (!list.contains(event.target)) list.hidden = false; };
   list.lastElementChild.onclick = () => { label.textContent = '硕士'; list.hidden = true; };
   const outcome = await h.api.operate(h.target, '硕士');

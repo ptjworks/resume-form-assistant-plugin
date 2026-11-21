@@ -9,6 +9,7 @@
   const BOSS_CASCADE = '.ui-cascader2__dropdown';
   const IVIEW_DATE_PICKER = '.ivu-date-picker';
   const IVIEW_DATE_TRANSFER = '.ivu-date-picker-transfer[data-transfer="true"]';
+  const MOKA_MENU = '.sd-Dropdown-dropdown, [class*="sd-Dropdown-dropdown-"]';
   // #301 antd 换了类名前缀（飞书招聘 atsx-，见 antd-prefix.js）：选择器里的 .ant- 按节点所在文档的前缀展开。
   const antd = (node, selector) => scope.ResumeProAntdPrefix?.css(node, selector) ?? selector;
   const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -35,12 +36,13 @@
     }
     return false;
   }
-  function shownText(root, el, excludedSelector) {
+  function shownText(root, el, ariaSelection = false) {
     const parts = [];
     const notValue = node => {
       for (let current = node; current && current !== root.parentElement; current = current.parentElement) {
-        if (current.tagName === 'LABEL' && !(el && current.contains(el))) return true;
-        if (excludedSelector && current.matches(excludedSelector)) return true;
+        // ARIA 触发器里的 label 也可能显示已选值。通用控件才用 label 边界排除相邻题目。
+        if (!ariaSelection && current.tagName === 'LABEL' && !(el && current.contains(el))) return true;
+        if (ariaSelection && current.matches(ARIA_POPUP_CONTENT)) return true;
         if (String(current.getAttribute?.('class') || '').split(/\s+/).some(token => NOT_VALUE_TOKEN.test(token))) return true;
         // 根里展开的弹层：里面是选项，不是已选值。
         if (innerPopup(current, root, el)) return true;
@@ -319,7 +321,7 @@
     }
     // role=combobox 的外壳里可能一直挂着选项。只读触发器当前显示的标签。
     const value = el.tagName === 'INPUT' ? trim(el.value)
-      : el.getAttribute('role') === 'combobox' ? shownText(el, el, ARIA_POPUP_CONTENT) : '';
+      : el.getAttribute('role') === 'combobox' ? shownText(el, el, true) : '';
     if (!value || scope.ResumeProAIHelpers?.isPlaceholderOption(value)) return [];
     return cascade ? value.split(/\s*(?:\/|>|→)\s*/).filter(Boolean) : [value];
   }
@@ -361,7 +363,7 @@
   // 下一个控件认弹层时跳过它们（见 staleLayer）。组件库的弹层外壳按类名认；别的按类名里的词认，并且自己浮在页面上、里面有字
   // （网页放所有弹层的空外壳不算，不然里面新画的弹层也会被跳过）。
   const FLOATING = '.el-popper, .el-picker-panel, .el-autocomplete-suggestion, .ant-calendar-picker-container, .ant-cascader-menus, .ant-picker-dropdown'
-    + `, ${IVIEW_DATE_TRANSFER}`;
+    + `, ${IVIEW_DATE_TRANSFER}, ${MOKA_MENU}`;
   const FLOATING_WORDS = ['popper', 'popover', 'popup', 'dropdown', 'picker-panel', 'suggest', 'calendar', 'datepicker', 'date-picker']
     .map(word => `[class*="${word}" i]`).join(', ');
   // 只按类名里的词认出的浮层，记下时里面有哪些元素（见 staleLayer）。一块里超过这么多的不记，按装着就算旧的。
@@ -546,7 +548,6 @@
   // 只有浮在页面上的层（自己或外层是 absolute / fixed 定位，真正的弹层、日历都是）才可能是弹层。
   const CHOICE_SELECTOR = 'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"], [role="radiogroup"], [class*="radio-group" i], [class*="radiogroup" i], [class*="checkbox-group" i]';
   const MOKA_TRIGGER = '.sd-Select-container, [class*="sd-Select-container-"]';
-  const MOKA_MENU = '.sd-Dropdown-dropdown, [class*="sd-Dropdown-dropdown-"]';
   const MOKA_ITEM = '.sd-Menu-content-item, [class*="sd-Menu-content-item-"]';
   function isMokaOption(info, option, h) {
     if (!info.el.closest(MOKA_TRIGGER)) return false;
