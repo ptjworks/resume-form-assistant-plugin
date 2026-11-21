@@ -2,7 +2,7 @@
    规则都挂在 #view-settings 或 .settings-dialog 下，不改全局 button / dialog / h2 / row。 */
 
 /* 整页分两栏：左边 208px 纯白分类导航，右边 #fafafa 画布，卡片在画布里居中、最宽 672px（#549）。画布自己滚动，导航不动。 */
-#view-settings { height: 100%; min-height: 0; max-width: none; margin: 0; padding: 0; overflow: hidden; background: var(--ui-canvas); font-family: var(--ui-font); }
+#view-settings { height: 100%; min-height: 0; max-width: none; margin: 0; padding: 0; overflow: hidden; background: var(--ui-surface); font-family: var(--ui-font); }
 /* 首次说明在主窗口内始终可见，不随设置分类切换而隐藏。 */
 #feedback-consent:empty, #usage-notice:empty { display: none; }
 /* 首次说明收敛成顶栏下方的细条：去掉卡片的圆角、阴影，只留下边线。 */
@@ -25,13 +25,18 @@
 .settings-nav button .update-dot { margin-left: auto; vertical-align: baseline; background: var(--ui-dot-error); }
 
 /* 右侧内容 */
-.settings-content { min-width: 0; min-height: 0; padding: 40px 32px 56px; overflow-y: auto; background: var(--ui-canvas); }
-.settings-section { display: flex; flex-direction: column; gap: 24px; min-width: 0; max-width: 672px; margin: 0 auto; }
+.settings-content { min-width: 0; min-height: 0; padding: 40px clamp(24px, 5vw, 56px) 64px; overflow-y: auto; background: var(--ui-surface); }
+.settings-section { display: flex; flex-direction: column; gap: 0; min-width: 0; max-width: 672px; margin: 0 auto; }
 .settings-section:focus-visible { outline-offset: 6px; border-radius: 16px; }
 #ai-settings, #desktop-feedback, #desktop-usage { display: contents; }
 
-.settings-card { min-width: 0; padding: 24px 28px; border: 0; border-radius: 14px; background: var(--ui-surface); box-shadow: none; }
-.settings-card-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+/* 无框：右侧整块白底，各组之间只靠留白和一条细分割线分开；每个分类的第一组不画上线。 */
+.settings-card { min-width: 0; padding: 32px 0; border: 0; border-top: 1px solid var(--ui-line); border-radius: 0; background: transparent; box-shadow: none; }
+.settings-section > .settings-card:first-child, #ai-settings > .settings-card:first-child, #desktop-usage > .settings-card:first-child, #settings-mailbox .settings-card { padding-top: 0; border-top: 0; }
+.settings-section > .settings-card:first-child { padding-top: 0; }
+#settings-mailbox .settings-card { padding-top: 0; }
+.settings-section .settings-card.provider-editor { margin: 8px 0; padding: 24px; border: 1px solid var(--ui-brand-line); border-radius: 12px; }
+.settings-card-head { padding-bottom: 12px; }
 .settings-card-head.has-aside { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .settings-card-head.has-aside > div:first-child { min-width: 0; flex: 1 1 280px; }
 #view-settings .settings-card h2 { margin: 0; font-size: 17px; line-height: 1.4; font-weight: 650; letter-spacing: -.01em; }
@@ -115,14 +120,14 @@
 .settings-fold > summary { width: fit-content; color: var(--ink); font-weight: 500; }
 .settings-fold[open] > summary { margin-bottom: 10px; }
 .settings-card-fold { padding: 0; }
-.settings-card-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 28px; list-style: none; border-radius: 14px; }
+.settings-card-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px 0; list-style: none; border-radius: 14px; }
 .settings-card-fold > summary::-webkit-details-marker { display: none; }
 .settings-card-fold > summary:focus-visible { outline-offset: -2px; }
 .settings-fold-title { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
 .settings-fold-title::before { content: ""; width: 7px; height: 7px; border-right: 2px solid #7b8494; border-bottom: 2px solid #7b8494; transform: rotate(-45deg); transition: transform 140ms; }
 .settings-card-fold[open] > summary .settings-fold-title::before { transform: rotate(45deg); }
 .settings-fold-hint { color: var(--muted); font-size: 12px; text-align: right; }
-.settings-fold-body { padding: 18px 28px 24px; border-top: 1px solid var(--line); }
+.settings-fold-body { padding: 0 0 28px; }
 .settings-fold-body > :first-child { margin-top: 0; }
 .settings-count { color: var(--muted); font-size: 13px; font-weight: 400; }
 .settings-note-fold { margin-top: 14px; padding: 10px 14px; border: 1px solid #d6e7e1; border-radius: 10px; background: #f4f8f6; font-size: 13px; }
@@ -283,9 +288,10 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 .settings-dialog textarea { padding: 10px 12px; resize: vertical; }
 .settings-dialog .settings-callout { margin: 0; }
 /* 「备份到本机」「备份到坚果云」整张卡可收起：标题和说明在折叠栏里，收起后仍看得出是做什么的。 */
-.backup-fold > summary { align-items: flex-start; padding: 22px 28px; }
+.backup-fold > summary { align-items: flex-start; padding: 28px 0 20px; }
 .backup-fold > summary > div { min-width: 0; }
-.backup-fold > summary p { margin: 4px 0 0 17px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.settings-section > .settings-card-fold:first-child > summary { padding-top: 0; }
+.backup-fold > summary p { margin: 4px 0 0 20px; color: var(--muted); font-size: 13px; line-height: 1.65; }
 .backup-fold > summary .settings-fold-hint { flex: none; padding-top: 3px; }
 .backup-fold > .settings-fold-body > .settings-callout:last-child { margin-top: 14px; }
 /* 坚果云备份（#315）：先看状态和主操作，三个设置分组折叠在下面，按钮紧挨所控制的字段。 */
@@ -325,7 +331,6 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 .cloud-form-actions { justify-content: flex-start; }
 .feedback-preview { max-height: 280px; margin: 0; padding: 12px 14px; overflow: auto; border: 1px solid var(--card-line); border-radius: 8px; background: #f4f7f6; font: 12px/1.6 Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 1180px) {
-  .settings-content { padding: 32px 24px 48px; }
   .install-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 960px) {
