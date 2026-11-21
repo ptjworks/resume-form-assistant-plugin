@@ -144,6 +144,34 @@ test('a linked ARIA autocomplete can open after typing, and selects only an exac
     });
   }
 });
+test('linked ARIA autocomplete both can search an already open empty listbox', async (t) => {
+  for (const suggestion of ['北京大学', '北京大学医学部']) {
+    await t.test(suggestion, async (t) => {
+      const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="both">', { timeoutMs: 250 });
+      t.after(() => h.w.close());
+      let clicked = 0;
+      const list = h.w.document.createElement('div');
+      list.id = 'choices';
+      list.setAttribute('role', 'listbox');
+      h.el.onclick = () => h.w.document.body.append(list);
+      h.el.onkeyup = () => {
+        if (h.el.value !== '北京大学' || !list.isConnected || list.firstChild) return;
+        const option = h.w.document.createElement('div');
+        option.setAttribute('role', 'option');
+        option.textContent = suggestion;
+        option.onclick = () => { clicked += 1; h.el.setAttribute('aria-valuetext', suggestion); list.remove(); };
+        list.append(option);
+      };
+      const result = await h.api.operate(h.target, '北京大学');
+      assert.equal(result.ok, suggestion === '北京大学', result.reason);
+      assert.equal(clicked, result.ok ? 1 : 0);
+      if (!result.ok) {
+        assert.equal(result.reason, 'no_option_match');
+        assert.equal(h.el.value, '');
+      }
+    });
+  }
+});
 test('linked ARIA autocomplete gives slow click-triggered options the usual time before typing', async (t) => {
   const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="list">', { timeoutMs: 1500 });
   t.after(() => h.w.close());

@@ -1577,9 +1577,10 @@
     // 通用路径先用弹层自带的搜索框（北森），没有才在下拉自己的输入框里输入（Moka 学校、专业）。
     const candidates = info.library === 'generic' ? [...ctx.popup.querySelectorAll('input'), info.combo, ...info.root.querySelectorAll('input')]
       : [info.combo, ...info.root.querySelectorAll('input'), ...popup.querySelectorAll('input')];
-    const searchInput = candidates.find(input => safeSearch(input) && h.visible(input) && (info.library !== 'boss'
+    const linkedSearch = ariaTypeAhead && safeSearch(ariaTypeAhead) && h.visible(ariaTypeAhead) ? ariaTypeAhead : null;
+    const searchInput = linkedSearch || candidates.find(input => safeSearch(input) && h.visible(input) && (info.library !== 'boss'
       || input.matches('input.ui-select-input, .select-dropdown-search input')));
-    const searchable = !info.cascade && searchInput && (ctx.hints.searchable === true || info.library === 'generic' || info.library === 'boss'
+    const searchable = !info.cascade && searchInput && (linkedSearch || ctx.hints.searchable === true || info.library === 'generic' || info.library === 'boss'
       || (info.library === 'element' && info.root.contains(searchInput) && safeSearch(searchInput))
       || info.combo.getAttribute('aria-autocomplete') === 'list' || searchInput.getAttribute('aria-autocomplete') === 'list'
       || searchInput.getAttribute('role') === 'searchbox' || searchInput.type === 'search'
@@ -1903,7 +1904,8 @@
         const value = wanted(items);
         if (!value) return { reason: 'ambiguous_option' };
         // 显式联想框和只有一条的 Moka 菜单，只选确认同名的那一项。
-        if ((typedFirst && ariaTypeAhead) || (generic && items.length === 1 && isMokaOption(info, items[0], h))) return sameOption(items, value, h.helpers);
+        if ((ariaTypeAhead && state.searchInput === ariaTypeAhead)
+          || (generic && items.length === 1 && isMokaOption(info, items[0], h))) return sameOption(items, value, h.helpers);
         if (info.library === 'boss') return insistOriginal(items)
           ? sameOption(items, value, h.helpers) : bossOption(items, value, bossLabel, h.helpers);
         return match(items, value, h.helpers, insistOriginal(items) || partial(items), englishLevel);
@@ -1950,7 +1952,7 @@
         if (!searchInput.isConnected || (!info.root.contains(searchInput) && !popup.contains(searchInput) && !ctx.popup.contains(searchInput))) return { reason: 'element_disconnected' };
         const signature = list.map(option => `${option.value}:${option.text}`).join('\n');
         info.requireCommitSignal = info.library === 'aria';
-        typeSearch(searchInput, query);
+        typeSearch(searchInput, query, info.freeText || searchInput === linkedSearch);
         searchDone = true;
         let lastSignature = signature, stableSince = Date.now();
         const updated = await h.waitUntil(ctx, doc.documentElement, () => {
