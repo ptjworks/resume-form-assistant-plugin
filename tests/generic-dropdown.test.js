@@ -149,6 +149,65 @@ test("Moka: the bilingual option is chosen by its Chinese part", async () => {
   assert.equal(h.api.check(h.target).ok, true);
 });
 
+test("Moka: a recognized menu can open with just one exact option", async (t) => {
+  const h = moka({ choices: ["英语/English"] });
+  t.after(() => h.w.close());
+  h.input.readOnly = true;
+  const result = await h.api.operate(h.target, "英语");
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(h.clicks, ["英语/English"]);
+});
+
+test("Moka: an education level maps before its single-option menu is matched", async (t) => {
+  const h = moka({ choices: ["本科"] });
+  t.after(() => h.w.close());
+  h.input.readOnly = true;
+  const target = { ...h.target, binding: { label: "学历" } };
+  assert.equal((await h.api.operate(target, "工学学士")).ok, true);
+  assert.deepEqual(h.clicks, ["本科"]);
+});
+
+test("Moka: a previously visible menu stays stale when its single option is redrawn", async (t) => {
+  const h = moka({ choices: [] });
+  t.after(() => h.w.close());
+  h.input.readOnly = true;
+  const oldMenu = h.doc.createElement("div");
+  oldMenu.className = "sd-Dropdown-dropdown-2Lm";
+  oldMenu.style.position = "fixed";
+  const markup = '<div class="sd-Select-menu-36GjT"><div class="sd-Menu-content-item-5Rt"><span>英语</span></div></div>';
+  oldMenu.innerHTML = markup;
+  h.doc.body.append(oldMenu);
+  let staleClicks = 0;
+  oldMenu.onclick = () => { staleClicks += 1; };
+  h.input.addEventListener("click", () => { oldMenu.innerHTML = markup; });
+  const result = await h.api.operate(h.target, "英语");
+  assert.equal(staleClicks, 0);
+  assert.equal(result.reason, "options_not_rendered");
+});
+
+test("Moka: a recognized single-item menu does not pick a longer option", async (t) => {
+  const h = moka({ choices: ["北京大学医学部"] });
+  t.after(() => h.w.close());
+  h.input.readOnly = true;
+  const result = await h.api.operate(h.target, "北京大学");
+  assert.equal(result.reason, "no_option_match");
+  assert.deepEqual(h.clicks, []);
+});
+
+test("Moka: a lone nearby validation hint is not a menu option", async (t) => {
+  const h = moka({ choices: [] });
+  t.after(() => h.w.close());
+  const hint = h.doc.querySelector(".err");
+  hint.setAttribute("role", "alert");
+  let clicks = 0;
+  hint.addEventListener("click", () => { clicks += 1; });
+  h.input.addEventListener("click", () => { hint.textContent = "英语"; });
+  const result = await h.api.operate(h.target, "英语");
+  assert.equal(result.ok, false);
+  assert.equal(clicks, 0);
+  assert.deepEqual(h.clicks, []);
+});
+
 test("a component that shows only the Chinese part after selecting is accepted too", async () => {
   const h = moka({ onPick: (text) => { h.input.value = text.split("/")[0]; } });
   assert.equal((await h.api.operate(h.target, "女")).ok, true);

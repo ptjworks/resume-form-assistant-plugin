@@ -68,44 +68,54 @@
     if (!text) return "unknown";
     return FIELD_KINDS.find(([, words]) => words.some(word => text.includes(word)))?.[0] || "unknown";
   }
-  // Which kinds the resume has a value for: each field's name and its group's name (教育经历, 工作经历).
+  const EXPERIENCE_NAMES = "教育经历|教育背景|学习经历|工作经历|实习经历|项目经历|校园经历|科研经历";
+  const EXPERIENCE_GROUP = new RegExp(`^(?<section>${EXPERIENCE_NAMES})\\s*(?<index>\\d*)$`);
+  const EXPERIENCE_KEY = new RegExp(`^(?<anchor>.*?)(?<section>${EXPERIENCE_NAMES})\\s*(?<index>\\d*)\\s*[-_:]\\s*(?<label>.+?)(?:\\s+\\((?<ordinal>\\d+)\\))?$`);
+  const experienceName = name => /^(?:教育背景|学习经历)$/.test(name) ? "教育经历" : name;
+
   function resumeKinds(fields) {
-    const kinds = new Set();
-    for (const field of Array.isArray(fields) ? fields : []) {
-      if (!String(field?.value ?? "").trim()) continue;
-      for (const text of [field.key, field.group]) {
-        const kind = fieldKind(text);
-        if (kind !== "unknown") kinds.add(kind);
-      }
-    }
-    return kinds;
+    return new Set(resumeKindCounts(fields).keys());
   }
+
   // #528 每类资料在简历里有几条记录：按所属分组（如「获奖情况 1」「获奖情况 2」）去重；
   // 同一分组下若同名字段出现多次（或带尾部序号如「获奖1」「获奖2」），取该分组内同基底字段名的最大重复数。
+  // 经历分组有「公司名工作经历-职位」或「工作经历2-职位」的结构时，用后半段分类，并按经历编号或名称计数。
   function resumeKindCounts(fields) {
     const byKind = new Map();
     for (const field of Array.isArray(fields) ? fields : []) {
       if (!String(field?.value ?? "").trim()) continue;
+      const group = String(field.group ?? "").normalize("NFKC").trim();
+      const key = String(field.key ?? "").normalize("NFKC").trim();
+      const groupMatch = EXPERIENCE_GROUP.exec(group)?.groups;
+      const keyMatch = groupMatch && EXPERIENCE_KEY.exec(key)?.groups;
+      const record = keyMatch && experienceName(keyMatch.section) === experienceName(groupMatch.section) ? keyMatch : null;
       const seen = new Set();
-      for (const text of [field.key, field.group]) {
+      for (const text of [record?.label ?? key, group]) {
         const kind = fieldKind(text);
         if (kind !== "unknown") seen.add(kind);
       }
-      const groupKey = foldKind(field.group) || "_";
-      const baseKey = foldKind(String(field.key ?? "").replace(/\d+$/g, "")) || "_";
+      const groupKey = foldKind(group) || "_";
+      const anchor = foldKind(record?.anchor);
+      const index = record?.index || groupMatch?.index;
+      // 只有结构明确指出经历身份才去重。没有身份的旧写法仍按同名字段（如职位1、职位2）计数。
+      const recordKey = record && (anchor || index || record.ordinal)
+        ? [anchor, index || "1", record.ordinal || "1"].join("\u0000") : "";
+      const baseKey = foldKind(key.replace(/\d+$/g, "")) || "_";
       for (const kind of seen) {
         if (!byKind.has(kind)) byKind.set(kind, new Map());
         const groups = byKind.get(kind);
-        if (!groups.has(groupKey)) groups.set(groupKey, new Map());
-        const keys = groups.get(groupKey);
-        keys.set(baseKey, (keys.get(baseKey) || 0) + 1);
+        if (!groups.has(groupKey)) groups.set(groupKey, { records: new Set(), keys: new Map() });
+        const { records, keys } = groups.get(groupKey);
+        if (recordKey) records.add(recordKey);
+        else keys.set(baseKey, (keys.get(baseKey) || 0) + 1);
       }
     }
     const counts = new Map();
     for (const [kind, groups] of byKind.entries()) {
       let total = 0;
-      for (const keys of groups.values()) {
-        total += Math.max(1, ...keys.values());
+      for (const { records, keys } of groups.values()) {
+        // 同一分组混用新旧字段名时，不能把缺少经历编号的项再当成一段经历。
+        total += Math.max(records.size, ...keys.values());
       }
       counts.set(kind, total);
     }

@@ -45,6 +45,27 @@ test('ARIA portal delayed options commit through clicks and survive final check'
   assert.equal(h.api.check(h.target).ok, true);
   h.el.textContent = '请选择'; assert.equal(h.api.check(h.target).reason, 'value_reverted');
 });
+test('an ARIA combobox reads a chosen value inside a label with its hidden list still mounted', async (t) => {
+  const h = harness('<div role="combobox" tabindex="0" aria-haspopup="true" aria-controls="choices"><label>请选择</label><div id="choices" role="listbox" hidden><div role="option">本科</div><div role="option">硕士</div></div></div>');
+  t.after(() => h.w.close());
+  const list = h.w.document.getElementById('choices');
+  const label = h.el.querySelector('label');
+  h.el.onclick = (event) => { if (!list.contains(event.target)) list.hidden = false; };
+  list.lastElementChild.onclick = () => { label.textContent = '硕士'; list.hidden = true; };
+  const outcome = await h.api.operate(h.target, '硕士');
+  assert.equal(outcome.ok, true, outcome.reason);
+  assert.deepEqual(Array.from(h.w.ResumeProCustomControls.readSelection(h.target).texts), ['硕士']);
+  assert.equal(h.api.check(h.target).ok, true);
+});
+test('an ARIA combobox does not read its only visible menu option as a committed selection', async (t) => {
+  const h = harness('<div role="combobox" tabindex="0" aria-haspopup="true" aria-controls="choices"><div id="choices" role="listbox" hidden><div role="option">硕士</div></div></div>');
+  t.after(() => h.w.close());
+  const list = h.w.document.getElementById('choices');
+  h.el.onclick = () => { list.hidden = false; };
+  const outcome = await h.api.operate(h.target, '硕士');
+  assert.equal(outcome.reason, 'selection_not_committed');
+  assert.equal(h.w.ResumeProCustomControls.hasExistingValue(h.target), false);
+});
 test('ARIA owns locates its popup despite another visible portal', async () => {
   const h = harness(button.replace('aria-controls', 'aria-owns'));
   const other = h.w.document.createElement('div'); other.setAttribute('role', 'listbox'); other.innerHTML = '<div role="option">硕士</div>'; h.w.document.body.append(other);
@@ -94,6 +115,82 @@ test('search waits for the updated live options rather than treating the query a
   }, 35);
   assert.equal((await h.api.operate(h.target, '北京大学')).ok, true);
   assert.equal(h.el.getAttribute('aria-expanded'), 'false');
+});
+test('a linked ARIA autocomplete can open after typing, and selects only an exact suggestion', async (t) => {
+  for (const suggestion of ['北京大学', '北京大学医学部']) {
+    await t.test(suggestion, async (t) => {
+      const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="list">', { timeoutMs: 300 });
+      t.after(() => h.w.close());
+      let clicked = 0;
+      h.el.onkeyup = () => {
+        if (h.el.value !== '北京大学' || h.w.document.getElementById('choices')) return;
+        const list = h.w.document.createElement('div');
+        list.id = 'choices';
+        list.setAttribute('role', 'listbox');
+        const option = h.w.document.createElement('div');
+        option.setAttribute('role', 'option');
+        option.textContent = suggestion;
+        option.onclick = () => { clicked += 1; h.el.setAttribute('aria-valuetext', suggestion); list.remove(); };
+        list.append(option);
+        h.w.document.body.append(list);
+      };
+      const result = await h.api.operate(h.target, '北京大学');
+      assert.equal(result.ok, suggestion === '北京大学', result.reason);
+      assert.equal(clicked, result.ok ? 1 : 0);
+      if (!result.ok) {
+        assert.equal(result.reason, 'no_option_match');
+        assert.equal(h.el.value, '');
+      }
+    });
+  }
+});
+test('linked ARIA autocomplete both can search an already open empty listbox', async (t) => {
+  for (const suggestion of ['北京大学', '北京大学医学部']) {
+    await t.test(suggestion, async (t) => {
+      const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="both">', { timeoutMs: 250 });
+      t.after(() => h.w.close());
+      let clicked = 0;
+      const list = h.w.document.createElement('div');
+      list.id = 'choices';
+      list.setAttribute('role', 'listbox');
+      h.el.onclick = () => h.w.document.body.append(list);
+      h.el.onkeyup = () => {
+        if (h.el.value !== '北京大学' || !list.isConnected || list.firstChild) return;
+        const option = h.w.document.createElement('div');
+        option.setAttribute('role', 'option');
+        option.textContent = suggestion;
+        option.onclick = () => { clicked += 1; h.el.setAttribute('aria-valuetext', suggestion); list.remove(); };
+        list.append(option);
+      };
+      const result = await h.api.operate(h.target, '北京大学');
+      assert.equal(result.ok, suggestion === '北京大学', result.reason);
+      assert.equal(clicked, result.ok ? 1 : 0);
+      if (!result.ok) {
+        assert.equal(result.reason, 'no_option_match');
+        assert.equal(h.el.value, '');
+      }
+    });
+  }
+});
+test('linked ARIA autocomplete gives slow click-triggered options the usual time before typing', async (t) => {
+  const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="list">', { timeoutMs: 1500 });
+  t.after(() => h.w.close());
+  let typing = 0;
+  let timer;
+  t.after(() => clearTimeout(timer));
+  h.el.onclick = () => {
+    timer = setTimeout(() => {
+      const list = addOptions(h, ['复旦大学', '北京大学']);
+      list.lastElementChild.onclick = () => {
+        h.el.value = '北京大学';
+        h.el.setAttribute('aria-valuetext', '北京大学');
+        list.remove();
+      };
+    }, 850);
+  };
+  h.el.oninput = () => { typing += 1; };
+  assert.equal((await h.api.operate(h.target, '北京大学')).ok, true);
+  assert.equal(typing, 0);
 });
 test('#481 English level search tries the alternate spelling once and restores the query on failure', async (t) => {
   const h = harness('<input role="combobox" aria-controls="choices" aria-autocomplete="list" value="原搜索词">');

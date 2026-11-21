@@ -41,6 +41,59 @@ test("#477 an explicit question is retained when its wording equals the input pl
   assert.ok(result.controls.every(control => scanner.isBindingCurrent(control, doc, { isVisible })));
 });
 
+test("#570 a structured form question still counts when its input repeats it as a placeholder", (t) => {
+  const doc = load(`<form>
+    <div class="apply-field-Q2iJ7AtQGX string_info-UOJxKN5mtC">
+      <div class="title-IWWQ0Xa4L7"><span><span>姓名</span></span></div>
+      <div class="ctrl-CICMG4Fr4_"><label class="sd-Input-container-2S_vM string_info"><input placeholder="姓名"></label></div>
+    </div>
+    <div><div class="title">手机号：</div><input placeholder="手机号："></div>
+    <div><span>手机号码</span><input placeholder="手机号码"></div>
+    <div><div class="title-IWWQ0Xa4L7">请选择</div><input placeholder="请选择"></div>
+  </form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(result.controls.map(({ label, labelSource, offerable }) => [label, labelSource, offerable]), [
+    ["姓名", "item", true],
+    ["手机号", "item", true],
+    ["", "placeholder", false]
+  ]);
+  assert.equal(result.skipped.noLabel, 1);
+  assert.ok(result.controls.every(control => scanner.isBindingCurrent(control, doc, { isVisible })));
+});
+
+test("a repeated placeholder hint cannot replace or join the marked question", (t) => {
+  const doc = load(`<form>
+    <div><div class="title">专业</div><div class="label-wrap"><span>请选择学校</span></div><input placeholder="请选择学校"></div>
+    <div><div class="label-wrap"><span>请选择学校</span></div><input placeholder="请选择学校"></div>
+    <div><div class="title">教育背景<span>请填写学校</span></div><input placeholder="请填写学校"></div>
+    <div><div class="form-label"><label>毕业时间</label><span>毕业时间未知时填写预计日期</span></div><input placeholder="毕业时间"></div>
+  </form>`);
+  t.after(() => doc.defaultView.close());
+  assert.deepEqual(scan(doc).controls.map(({ label, labelSource }) => [label, labelSource]), [
+    ["专业", "item"],
+    ["", "placeholder"],
+    ["教育背景", "item"],
+    ["毕业时间", "item"]
+  ]);
+});
+
+test("a marked placeholder example stays a hint even when the same text is shown twice", (t) => {
+  const doc = load(`<form>
+    <div><div class="title">YYYY-MM-DD</div><input placeholder="YYYY-MM-DD"></div>
+    <div><div class="title">example@example.test</div><input placeholder="example@example.test"></div>
+    <div><div class="title">男／女</div><input placeholder="男／女"></div>
+    <div><div class="title">示例：北京大学</div><input placeholder="示例：北京大学"></div>
+    <div><div class="title">搜索学校</div><input placeholder="搜索学校"></div>
+  </form>`);
+  t.after(() => doc.defaultView.close());
+  const result = scan(doc);
+  assert.deepEqual(result.controls.map(({ labelSource, offerable }) => [labelSource, offerable]), [
+    ["placeholder", false], ["placeholder", false], ["placeholder", false], ["placeholder", false]
+  ]);
+  assert.equal(result.skipped.siteSearch, 1);
+});
+
 test("#479 only an id that is unique in its document becomes a redraw anchor", (t) => {
   const doc = load(`<form>
     <div><label for="name">姓名</label><input id="name" name="name"></div>

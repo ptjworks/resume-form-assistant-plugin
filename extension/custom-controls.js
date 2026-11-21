@@ -7,6 +7,9 @@
   const BOSS_POPUP = '.ui-select-dropdown';
   const BOSS_CALENDAR = '.ui-picker-panel.ui-date-picker.ui-popper';
   const BOSS_CASCADE = '.ui-cascader2__dropdown';
+  const IVIEW_DATE_PICKER = '.ivu-date-picker';
+  const IVIEW_DATE_TRANSFER = '.ivu-date-picker-transfer[data-transfer="true"]';
+  const MOKA_MENU = '.sd-Dropdown-dropdown, [class*="sd-Dropdown-dropdown-"]';
   // #301 antd 换了类名前缀（飞书招聘 atsx-，见 antd-prefix.js）：选择器里的 .ant- 按节点所在文档的前缀展开。
   const antd = (node, selector) => scope.ResumeProAntdPrefix?.css(node, selector) ?? selector;
   const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -21,6 +24,7 @@
   // 组件根里看得见的文字。组件根取大了（外层类名带 select 的整行）时会装进题目和占位提示，这些不是已选值：
   // 不装着输入框的 <label>、类名以 title / placeholder 结尾的元素里的字都跳过。
   const NOT_VALUE_TOKEN = /(?:^|[-_])(?:title|placeholder)$/i;
+  const ARIA_POPUP_CONTENT = '[role="listbox"], [role="tree"], [role="menu"], [role="option"], [role="treeitem"], [role="menuitem"]';
   // #301 弹层画在组件根里（Moka sd-Dropdown 不挂到 body 时）：在包着输入框的 <label> 外框旁边的槽位里，fixed 定位。
   // 组件根里、外框外面、自己或往上到根之间有一层 fixed 定位的一块才算；外框里是组件显示的已选值。
   // absolute 定位的一块可能是组件浮着显示的已选值，不算。
@@ -32,11 +36,13 @@
     }
     return false;
   }
-  function shownText(root, el) {
+  function shownText(root, el, ariaSelection = false) {
     const parts = [];
     const notValue = node => {
       for (let current = node; current && current !== root.parentElement; current = current.parentElement) {
-        if (current.tagName === 'LABEL' && !(el && current.contains(el))) return true;
+        // ARIA 触发器里的 label 也可能显示已选值。通用控件才用 label 边界排除相邻题目。
+        if (!ariaSelection && current.tagName === 'LABEL' && !(el && current.contains(el))) return true;
+        if (ariaSelection && current.matches(ARIA_POPUP_CONTENT)) return true;
         if (String(current.getAttribute?.('class') || '').split(/\s+/).some(token => NOT_VALUE_TOKEN.test(token))) return true;
         // 根里展开的弹层：里面是选项，不是已选值。
         if (innerPopup(current, root, el)) return true;
@@ -314,14 +320,16 @@
       // flips while the dropdown opens (#269 智联), so only Element Plus (wrapper markup) stops here.
       if (library !== 'element' || (!cascade && root.querySelector('.el-select__wrapper'))) return [];
     }
-    const value = trim(el.tagName === 'INPUT' ? el.value : el.getAttribute('role') === 'combobox' ? el.textContent : '');
+    // role=combobox 的外壳里可能一直挂着选项。只读触发器当前显示的标签。
+    const value = el.tagName === 'INPUT' ? trim(el.value)
+      : el.getAttribute('role') === 'combobox' ? shownText(el, el, true) : '';
     if (!value || scope.ResumeProAIHelpers?.isPlaceholderOption(value)) return [];
     return cascade ? value.split(/\s*(?:\/|>|→)\s*/).filter(Boolean) : [value];
   }
   function queryInput(info) {
     if (info.el?.tagName === 'INPUT') return info.el;
     if (info.library !== 'aria' || !info.root) return null;
-    const inputs = Array.from(info.root.querySelectorAll('input[aria-autocomplete="list"], input[role="searchbox"], input[type="search"], .ui-select-selection input.ui-select-input'))
+    const inputs = Array.from(info.root.querySelectorAll('input[aria-autocomplete="list"], input[aria-autocomplete="both"], input[role="searchbox"], input[type="search"], .ui-select-selection input.ui-select-input'))
       .filter(input => !input.readOnly && !input.disabled && shown(input));
     return inputs.length === 1 ? inputs[0] : null;
   }
@@ -355,7 +363,8 @@
   // #301 点开之前就看得见的浮层：上一个下拉、联想框、日历没收起或正在退场的那一块（#417 智联、hotjob）。
   // 下一个控件认弹层时跳过它们（见 staleLayer）。组件库的弹层外壳按类名认；别的按类名里的词认，并且自己浮在页面上、里面有字
   // （网页放所有弹层的空外壳不算，不然里面新画的弹层也会被跳过）。
-  const FLOATING = '.el-popper, .el-picker-panel, .el-autocomplete-suggestion, .ant-calendar-picker-container, .ant-cascader-menus, .ant-picker-dropdown';
+  const FLOATING = '.el-popper, .el-picker-panel, .el-autocomplete-suggestion, .ant-calendar-picker-container, .ant-cascader-menus, .ant-picker-dropdown'
+    + `, ${IVIEW_DATE_TRANSFER}, ${MOKA_MENU}`;
   const FLOATING_WORDS = ['popper', 'popover', 'popup', 'dropdown', 'picker-panel', 'suggest', 'calendar', 'datepicker', 'date-picker']
     .map(word => `[class*="${word}" i]`).join(', ');
   // 只按类名里的词认出的浮层，记下时里面有哪些元素（见 staleLayer）。一块里超过这么多的不记，按装着就算旧的。
@@ -539,6 +548,13 @@
   // 装着单选、勾选的区域多半是旁边的另一道题（点开下拉时它可能因为校验样式变化被记下）：
   // 只有浮在页面上的层（自己或外层是 absolute / fixed 定位，真正的弹层、日历都是）才可能是弹层。
   const CHOICE_SELECTOR = 'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"], [role="radiogroup"], [class*="radio-group" i], [class*="radiogroup" i], [class*="checkbox-group" i]';
+  const MOKA_TRIGGER = '.sd-Select-container, [class*="sd-Select-container-"]';
+  const MOKA_ITEM = '.sd-Menu-content-item, [class*="sd-Menu-content-item-"]';
+  function isMokaOption(info, option, h) {
+    if (!info.el.closest(MOKA_TRIGGER)) return false;
+    const row = option.node.closest(MOKA_ITEM) || option.node.querySelector(MOKA_ITEM);
+    return Boolean(row?.closest(MOKA_MENU) && h.visible(row) && trim(row.textContent) === option.full);
+  }
   function neighbourQuestion(node, h) {
     if (!Array.from(node.querySelectorAll(CHOICE_SELECTOR)).some(el => h.visible(el) || el.closest('label, [class*="radio" i], [class*="checkbox" i]'))) return false;
     for (let current = node; current && current.nodeType === 1; current = current.parentElement) {
@@ -553,7 +569,8 @@
     if (node.getAttribute('role') === 'alert' || GENERIC_NOISE.test(String(node.className || ''))) return null;
     if (neighbourQuestion(node, h)) return null;
     const list = genericOptions(node, h);
-    if (list.length < minOptions) return null;
+    // Moka 的菜单和条目都能从组件结构确认。只有一个正式选项时也能认出弹层。
+    if (list.length < minOptions && !(list.length === 1 && isMokaOption(info, list[0], h))) return null;
     // 整页大小的外壳里只取装着全部条目的最小容器，再看它是不是贴着控件。
     let box = list[0].node.parentElement;
     while (box && box !== node && !list.every(option => box.contains(option.node))) box = box.parentElement;
@@ -832,6 +849,8 @@
   const PRESENT = /^(?:至今|至今在读|今|现在|present|now|till now|to date)$/i;
   const CN_MONTHS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'];
   const OTHER_MONTH = /(?:prev|last|next|other|pre)[-_]?month|disabled|outside|out-of/i;
+  // iView 的日期格是 span > em。周数的格子和日期用同一个基类，不能当成具体某天。
+  const CALENDAR_CELL = 'td, [role="gridcell"], .ivu-date-picker-cells-cell:not(.ivu-date-picker-cells-cell-week-label)';
   // 标成选中的日子（ant-calendar-selected-day、is-selected、aria-selected）。unselected 不算。
   const SELECTED_TOKEN = /(?:^|[-_])selected(?:$|[-_])/i;
   // 日历自带的日期框打了字以后，等日历跟上的上限（见 pickDate）。
@@ -871,11 +890,14 @@
   function calendarView(layer, h) {
     const hasText = el => Boolean(trim(el.textContent));
     const leaves = Array.from(layer.querySelectorAll('*')).filter(el => h.visible(el) && hasText(el) && !Array.from(el.children).some(hasText));
-    const inCell = el => Boolean(el.closest('td, [role="gridcell"]'));
+    const inCell = el => {
+      const cell = el.closest(CALENDAR_CELL);
+      return cell !== layer && layer.contains(cell);
+    };
     const otherMonth = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
         if (OTHER_MONTH.test(String(node.getAttribute?.('class') || ''))) return true;
-        if (node.matches?.('td, [role="gridcell"]')) return false;
+        if (node.matches?.(CALENDAR_CELL)) return false;
       }
       return false;
     };
@@ -884,8 +906,9 @@
     const headBoth = headYear || headMonth ? null : yearMonthOf(leaves.find(el => !inCell(el) && yearMonthOf(el.textContent))?.textContent);
     const disabledCell = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
-        if (node.getAttribute?.('aria-disabled') === 'true' || node.hasAttribute?.('disabled') || node.classList.contains('disabled')) return true;
-        if (node.matches?.('td, [role="gridcell"]')) return false;
+        if (node.getAttribute?.('aria-disabled') === 'true' || node.hasAttribute?.('disabled')
+          || node.matches('.disabled, .ivu-date-picker-cells-cell-disabled')) return true;
+        if (node.matches?.(CALENDAR_CELL)) return false;
       }
       return false;
     };
@@ -894,11 +917,11 @@
     const pickedCell = el => {
       for (let node = el; node && node !== layer; node = node.parentElement) {
         if (node.getAttribute?.('aria-selected') === 'true' || String(node.getAttribute?.('class') || '').split(/\s+/).some(token => SELECTED_TOKEN.test(token))) return true;
-        if (node.matches?.('td, [role="gridcell"]')) return false;
+        if (node.matches?.(CALENDAR_CELL)) return false;
       }
       return false;
     };
-    const buttons = Array.from(layer.querySelectorAll('[class]')).filter(el => h.visible(el) && !el.closest('td')).map(el => {
+    const buttons = Array.from(layer.querySelectorAll('[class]')).filter(el => h.visible(el) && !inCell(el)).map(el => {
       const cls = String(el.getAttribute('class')).toLowerCase();
       const dir = /prev|last|left/.test(cls) ? -1 : /next|right/.test(cls) ? 1 : 0;
       const level = /year|decade|super|d-arrow|double/.test(cls) ? 'year' : /month|arrow/.test(cls) ? 'month' : '';
@@ -939,15 +962,43 @@
   }
   function calendarNear(info, h) {
     const doc = info.el.ownerDocument, c = info.root.getBoundingClientRect();
+    const near = r => r.right > c.left - 16 && r.left < c.right + 16 && r.top <= c.bottom + 60 && r.bottom >= c.top - 60;
+    if (info.library === 'iview') {
+      const shownPanel = node => h.visible(node) && Boolean(node.querySelector('.ivu-picker-panel-body-wrapper .ivu-date-picker-header'));
+      const local = Array.from(info.root.querySelectorAll('.ivu-select-dropdown')).filter(node =>
+        node.closest(IVIEW_DATE_PICKER) === info.root && shownPanel(node));
+      if (local.length) return local.length === 1 ? local[0] : null;
+      const transferred = Array.from(doc.querySelectorAll(IVIEW_DATE_TRANSFER)).filter(node => {
+        if (node.closest(IVIEW_DATE_PICKER) || !shownPanel(node) || staleLayer(node, info)) return false;
+        const rect = node.getBoundingClientRect();
+        return c.width > 0 && rect.width > 0 && near(rect);
+      });
+      return transferred.length === 1 ? transferred[0] : null;
+    }
     const found = Array.from(doc.querySelectorAll('[class]')).filter(el => CALENDAR_CLASS.test(String(el.getAttribute('class')))
       && h.visible(el) && !el.contains(info.root) && (!info.root.contains(el) || innerPopup(el, info.root, info.el)) && el.querySelector('td, [role="gridcell"]')
       && !staleLayer(el, info));
     const outer = found.filter(el => !found.some(other => other !== el && other.contains(el)));
-    const near = outer.filter(el => {
-      const r = el.getBoundingClientRect();
-      return r.right > c.left - 16 && r.left < c.right + 16 && r.top <= c.bottom + 60 && r.bottom >= c.top - 60;
-    });
-    return near.length === 1 ? near[0] : null;
+    const nearby = outer.filter(el => near(el.getBoundingClientRect()));
+    return nearby.length === 1 ? nearby[0] : null;
+  }
+  async function pickIviewDate(ctx, raw, h, info, state) {
+    const doc = info.el.ownerDocument;
+    info.before = ctx.popupsBeforeFocus || shownLayers(doc, h.visible);
+    ctx.observed = { ...ctx.observed, library: 'iview' };
+    const started = Date.now(), alreadyOpen = calendarNear(info, h);
+    if (!alreadyOpen) {
+      const reason = h.click(info.el, ctx); if (reason) return { reason };
+    }
+    const opened = await h.waitUntil(ctx, doc.documentElement, () => calendarNear(info, h), Boolean);
+    if (opened.reason) return { reason: opened.reason === 'verification_timeout' ? 'options_not_rendered' : opened.reason };
+    const layer = opened.value;
+    state.openMs = alreadyOpen ? 0 : Date.now() - started;
+    ctx.popup = layer; info.popup = layer;
+    ctx.observed.popupRole = 'calendar';
+    // 双面板区间和带确认按钮的时间/多选日历不能按单个日期提交。
+    if (layer.querySelector('.ivu-date-picker-with-range, .ivu-picker-confirm')) return { reason: 'unsupported_control' };
+    return await pickDate(ctx, raw, h, layer, info);
   }
   function bossCalendar(info, h) {
     const local = Array.from(info.root.querySelectorAll(BOSS_CALENDAR)).filter(h.visible);
@@ -1109,7 +1160,9 @@
     const dayDefaulted = mode === 'date' && !target.d;
     const want = { ...target, d: target.d || 1 };
     const expected = mode === 'date' ? `${want.y}-${pad2(want.m)}-${pad2(want.d)}` : mode === 'month' ? `${want.y}-${pad2(want.m)}` : String(want.y);
+    const preciseCells = info.library === 'boss-date' || info.library === 'iview';
     const accepted = () => info.library === 'boss-date' ? shownDate(info.el.value, mode) === expected && (!layer.isConnected || !h.visible(layer))
+      : info.library === 'iview' ? shownDate(info.el.value, mode) === expected && !current()
       : (selectedTexts(info) || []).some(text => shownDate(text, mode) === expected)
         || (info.el.tagName === 'INPUT' && shownDate(info.el.value, mode) === expected);
     ctx.observed = { ...ctx.observed, calendarMode: mode };
@@ -1178,12 +1231,12 @@
           || view.headMonthNode || view.headYearNode;
       } else if (view.months.length >= 12) {
         if (!view.headYear || view.headYear === want.y) {
-          const hits = view.months.filter(cell => cell.value === want.m && (info.library !== 'boss-date' || !cell.disabled));
+          const hits = view.months.filter(cell => cell.value === want.m && (!preciseCells || !cell.disabled));
           node = hits.length === 1 ? hits[0].node : null; last = mode === 'month';
         } else node = view.button('year', want.y < view.headYear ? -1 : 1) || view.headYearNode;
       } else if (view.years.length >= 6) {
         const hits = view.years.filter(cell => cell.value === want.y);
-        if (hits.length === 1 && (info.library !== 'boss-date' || !hits[0].disabled)) { node = hits[0].node; last = mode === 'year'; }
+        if (hits.length === 1 && (!preciseCells || !hits[0].disabled)) { node = hits[0].node; last = mode === 'year'; }
         else if (!hits.length) node = view.button('year', want.y < Math.min(...view.years.map(cell => cell.value)) ? -1 : 1);
       }
       if (!node) return { reason: 'no_option_match' };
@@ -1320,6 +1373,12 @@
   async function perform(ctx, raw, h, state) {
     const info = describe(ctx.entry);
     state.info = info;
+    const iviewPicker = ctx.kind === 'date' && info.el?.closest(IVIEW_DATE_PICKER);
+    if (iviewPicker) {
+      info.root = iviewPicker;
+      info.library = 'iview';
+      return await pickIviewDate(ctx, raw, h, info, state);
+    }
     info.requireCommitSignal = info.library === 'aria' && ctx.startedEditable;
     info.requireCascadeSignal = info.library === 'element' && info.cascade && ctx.startedEditable;
     info.freeText = acceptsFreeText(ctx);
@@ -1419,6 +1478,8 @@
       return list && h.visible(list) ? list : null;
     };
     const initiallyOwned = ownedPopup(info, h.visible);
+    const ariaInput = info.library === 'aria' && !info.cascade && initiallyOwned.hasIds ? queryInput(info) : null;
+    const ariaTypeAhead = ariaInput && [info.combo, ariaInput].some(node => ['list', 'both'].includes(node.getAttribute('aria-autocomplete'))) ? ariaInput : null;
     const focusAdded = info.library === 'element' && Boolean(ctx.popupsBeforeFocus) ? popups(doc, h.visible).filter(node => !before.has(node)) : [];
     const alreadyOpen = (info.combo.getAttribute('aria-expanded') === 'true' && (initiallyOwned.popup || info.library === 'boss')) || layuiList()
       || (info.library === 'boss' && info.root.classList.contains('ui-select-visible'))
@@ -1446,6 +1507,7 @@
       const added = popups(doc, h.visible).filter(node => !before.has(node));
       return added.length > 1 ? { reason: 'ambiguous_popup' } : added.length === 1 ? { popup: added[0] } : null;
     };
+    // ARIA 联想框也可能在点击后异步加载列表。等完通常的打开时间，再试输入查询词。
     let opened = await h.waitUntil(ctx, doc.documentElement, findOpened, Boolean,
       info.freeText ? Math.min(FREE_TEXT_OPEN_MS, h.timeoutMs ?? FREE_TEXT_OPEN_MS) : undefined);
     // 通用路径和 AntD：点开后没有弹层、输入框又能打字（学校、专业这类边输边搜的下拉）：输入要找的值再等弹层。
@@ -1464,23 +1526,24 @@
       opened = await h.waitUntil(ctx, doc.documentElement, () => genericOpened(), Boolean);
     }
     let typedFirst = false, typedAt = 0;
-    const typeSearch = (input, query) => {
+    const typeSearch = (input, query, typing = info.freeText) => {
       if (state.searchInput !== input) state.searchBefore = input.value;
       state.searchInput = input;
       state.query = query;
-      if (info.freeText) h.type(input, query, ctx);
+      if (typing) h.type(input, query, ctx);
       else { h.write(input, query, ctx); h.input(input); }
       typedAt = Date.now();
     };
     const typeInto = info.library === 'boss' ? info.combo.querySelector('input.ui-select-input')
       : info.library === 'generic' || info.freeText ? info.el
+      : ariaTypeAhead ? ariaTypeAhead
       : ['antd', 'element'].includes(info.library) && !info.cascade && !info.root.matches(antd(info.root, '.ant-select-auto-complete, .ant-select-combobox'))
         ? Array.from(info.root.querySelectorAll('input')).find(input => safeSearch(input) && h.visible(input)) : null;
     if (typeInto && !dateWanted && opened.reason === 'verification_timeout' && safeSearch(typeInto) && h.visible(typeInto)) {
       for (const query of searchPlan(desired[0]).queries) {
         if (opened.reason !== 'verification_timeout' || !typeInto.isConnected || !safeSearch(typeInto) || !h.visible(typeInto)) break;
         const reason = h.stop(ctx, true); if (reason) return { reason };
-        typeSearch(typeInto, query);
+        typeSearch(typeInto, query, info.freeText || typeInto === ariaTypeAhead);
         typedFirst = true;
         opened = await h.waitUntil(ctx, doc.documentElement, info.library === 'generic' ? () => genericOpened(1) : findOpened, Boolean,
           info.freeText ? Math.min(FREE_TEXT_TYPED_MS, h.timeoutMs ?? FREE_TEXT_TYPED_MS) : undefined);
@@ -1514,9 +1577,10 @@
     // 通用路径先用弹层自带的搜索框（北森），没有才在下拉自己的输入框里输入（Moka 学校、专业）。
     const candidates = info.library === 'generic' ? [...ctx.popup.querySelectorAll('input'), info.combo, ...info.root.querySelectorAll('input')]
       : [info.combo, ...info.root.querySelectorAll('input'), ...popup.querySelectorAll('input')];
-    const searchInput = candidates.find(input => safeSearch(input) && h.visible(input) && (info.library !== 'boss'
+    const linkedSearch = ariaTypeAhead && safeSearch(ariaTypeAhead) && h.visible(ariaTypeAhead) ? ariaTypeAhead : null;
+    const searchInput = linkedSearch || candidates.find(input => safeSearch(input) && h.visible(input) && (info.library !== 'boss'
       || input.matches('input.ui-select-input, .select-dropdown-search input')));
-    const searchable = !info.cascade && searchInput && (ctx.hints.searchable === true || info.library === 'generic' || info.library === 'boss'
+    const searchable = !info.cascade && searchInput && (linkedSearch || ctx.hints.searchable === true || info.library === 'generic' || info.library === 'boss'
       || (info.library === 'element' && info.root.contains(searchInput) && safeSearch(searchInput))
       || info.combo.getAttribute('aria-autocomplete') === 'list' || searchInput.getAttribute('aria-autocomplete') === 'list'
       || searchInput.getAttribute('role') === 'searchbox' || searchInput.type === 'search'
@@ -1839,6 +1903,9 @@
         if (info.freeText) return sameOption(items, desired[level], h.helpers);
         const value = wanted(items);
         if (!value) return { reason: 'ambiguous_option' };
+        // 显式联想框和只有一条的 Moka 菜单，只选确认同名的那一项。
+        if ((ariaTypeAhead && state.searchInput === ariaTypeAhead)
+          || (generic && items.length === 1 && isMokaOption(info, items[0], h))) return sameOption(items, value, h.helpers);
         if (info.library === 'boss') return insistOriginal(items)
           ? sameOption(items, value, h.helpers) : bossOption(items, value, bossLabel, h.helpers);
         return match(items, value, h.helpers, insistOriginal(items) || partial(items), englishLevel);
@@ -1885,7 +1952,7 @@
         if (!searchInput.isConnected || (!info.root.contains(searchInput) && !popup.contains(searchInput) && !ctx.popup.contains(searchInput))) return { reason: 'element_disconnected' };
         const signature = list.map(option => `${option.value}:${option.text}`).join('\n');
         info.requireCommitSignal = info.library === 'aria';
-        typeSearch(searchInput, query);
+        typeSearch(searchInput, query, info.freeText || searchInput === linkedSearch);
         searchDone = true;
         let lastSignature = signature, stableSince = Date.now();
         const updated = await h.waitUntil(ctx, doc.documentElement, () => {
@@ -2407,7 +2474,7 @@
         // YUI 联想框没选成：失焦时它自己收起建议框；窗口不在前台时 blur() 不派发事件，就补一个 blur 给它。
         // 不按 Esc：会冒泡到外层对话框（#395）。
         if (info?.library === 'yui' && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) info.el.dispatchEvent(new info.el.ownerDocument.defaultView.FocusEvent('blur'));
-        if ((['generic', 'element', 'boss'].includes(info?.library) || outcome.reason === 'cascade_unsupported') && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) {
+        if ((['generic', 'element', 'boss', 'iview'].includes(info?.library) || outcome.reason === 'cascade_unsupported') && ctx.popup?.isConnected && h.visible(ctx.popup) && !h.stop(ctx)) {
           const doc = info.el.ownerDocument, View = doc.defaultView, layer = ctx.popup;
           const dialog = dialogOf(info.root);
           if (dialog) {
@@ -2424,7 +2491,7 @@
       // 一边改 class 一边淡出，下一个相邻的下拉会把它也当成新出现的弹层，报「无法确定控件弹层」（#301 北森）。
       // 看装着选项的那一块：它不见了，外壳就算还在页面上也不会再被认成弹层。
       // AntD、Element 的下拉失败时也等：AntD 失焦后过一会儿才开始收（#301 hotjob），收起还有动画。
-      const own = ['generic', 'boss'].includes(state.info?.library)
+      const own = ['generic', 'boss', 'iview'].includes(state.info?.library)
         || (outcome?.reason && ['antd', 'element'].includes(state.info?.library)) ? state.info.popup : null;
       const gone = () => !own.isConnected || !h.visible(own);
       if (own && !gone()) await h.waitUntil(ctx, state.info.el.ownerDocument.documentElement, gone, Boolean, POPUP_LEAVE_MS);
