@@ -639,8 +639,23 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     const draft = panel.querySelector<HTMLFormElement>("[data-note-add]");
     const draftOpen = Boolean(draft && !draft.hidden);
     const draftText = draft?.querySelector("input")?.value ?? "";
+    // 行下面那个无框备注框同理：改了还没保存（value 和上次画出来的不一样）就别被服务端的旧值盖掉。
+    const noteField = panel.querySelector<HTMLInputElement>(".app-note-input");
+    const noteDraft = noteField && noteField.value !== noteField.defaultValue
+      ? { value: noteField.value, focused: document.activeElement === noteField, start: noteField.selectionStart, end: noteField.selectionEnd }
+      : null;
     panel.innerHTML = `<div class="app-expand-body">${panelHtml(expandedView)}</div>`;
     bindDetailControls(panel);
+    if (noteDraft) {
+      const restoredNote = panel.querySelector<HTMLInputElement>(".app-note-input");
+      if (restoredNote) {
+        restoredNote.value = noteDraft.value;
+        if (noteDraft.focused) {
+          restoredNote.focus();
+          if (noteDraft.start !== null && noteDraft.end !== null) restoredNote.setSelectionRange(noteDraft.start, noteDraft.end);
+        }
+      }
+    }
     if (draftOpen) {
       const restored = panel.querySelector<HTMLFormElement>("[data-note-add]");
       if (restored) {
@@ -822,10 +837,16 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     if (target?.closest?.(`li[data-id="${attrValue(pending.id)}"] .app-cell-stage`)) return;
     void flushPending();
   }, true);
-  window.addEventListener("pagehide", () => { void flushPending(); });
-  window.addEventListener("beforeunload", () => { void flushPending(); });
+  /** 备注框里还有没保存的改动（光标还在里面）就一起写掉：窗口隐藏、切页时不会触发失焦。 */
+  function flushNoteDraft() {
+    const field = document.activeElement as HTMLInputElement | null;
+    if (field?.classList?.contains("app-note-input") && field.dataset.noteFor) void saveNote(field.dataset.noteFor, field);
+  }
+  function flushEverything() { flushNoteDraft(); void flushPending(); }
+  window.addEventListener("pagehide", flushEverything);
+  window.addEventListener("beforeunload", flushEverything);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") void flushPending();
+    if (document.visibilityState === "hidden") flushEverything();
   });
 
   // --- 展开区里的动作 -----------------------------------------------------------
@@ -888,7 +909,8 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
   /** 失焦时保存备注：只传 notes，别的字段不动；没改就不写。 */
   async function saveNote(id: string, field: HTMLInputElement) {
     const view = expandedView;
-    if (!view || view.application.id !== id) return;
+    // 详情里的申请和渲染时一样，兼容 `summary` 包一层的写法。
+    if (!view || ((view.application.summary || view.application) as ApplicationSummary).id !== id) return;
     const before = (view.application.notes ?? "").trim();
     const next = field.value.trim();
     if (next === before) return;
@@ -897,6 +919,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     try {
       await invoke("update_application_cmd", { args: { id, notes: field.value } });
       view.application.notes = next || null;
+      field.defaultValue = field.value;
       if (status) status.textContent = "已保存";
     } catch (err) {
       if (status) status.textContent = "没保存上";
@@ -1182,5 +1205,5 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     list.querySelector<HTMLElement>(`li[data-id="${attrValue(id)}"]`)?.scrollIntoView?.({ block: "nearest" });
   }
 
-  return { refreshList, refreshView, reloadArchive, openFromNotes, flushPending, openNewBar, ctl };
+  return { refreshList, refreshView, reloadArchive, openFromNotes, flushPending: () => { flushNoteDraft(); return flushPending(); }, openNewBar, ctl };
 }

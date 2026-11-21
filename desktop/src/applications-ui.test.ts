@@ -256,3 +256,19 @@ test('opening 官网 goes through the opener plugin, and the window may only ope
   assert.ok(!capability.permissions.some((p: unknown) => typeof p === 'string' && /^opener:/.test(p)));
   assert.match(read('./applications-ui.ts'), /target="_blank" rel="noopener noreferrer"/);
 });
+
+test('the row stage cell lets clicks on the triangle and the blank space fall through to the row; only the select itself takes clicks', () => {
+  const css = read('./styles.css');
+  const cell = css.match(/\.app-cell-stage \{([^}]*)\}/)?.[1] ?? '';
+  assert.doesNotMatch(cell, /pointer-events:\s*auto/);
+  assert.match(css, /\.app-cell \{[^}]*pointer-events:\s*none/);
+  assert.match(css, /\.app-stage-select \{[^}]*pointer-events:\s*auto/);
+});
+
+test('hidden stays hidden: the global [hidden] rule and the platform-off rule both exist, so the toast, new bar and 面经 entry start out invisible', () => {
+  const css = read('./styles.css');
+  assert.match(css, /\.hidden, \[hidden\] \{ display: none !important; \}/);
+  assert.match(css, /\[data-platform\]\[data-platform-off\] \{ display: none !important; \}/);
+  const html = section(read('../index.html'), 'view-applications');
+  for (const id of ['new-job-bar', 'apps-undo', 'apps-undo-dateform']) assert.match(html, new RegExp(`id="${id}"[^>]*\\bhidden\\b`), id);
+});

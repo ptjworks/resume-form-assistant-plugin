@@ -250,8 +250,8 @@ button.app-hint:hover:not(:disabled) { background: transparent; border-color: tr
 .app-hint-today { color: #d97706; }
 .app-hint-overdue { color: var(--ui-dot-error); }
 .app-hint-quiet { color: var(--ui-faint); }
-.app-cell-stage { display: flex; align-items: center; justify-content: flex-end; gap: 6px; pointer-events: auto; }
-.app-stage-select { min-height: 26px; padding: 2px 8px 2px 10px; border: 1px solid var(--ui-line); border-radius: 999px; background: var(--ui-surface); color: var(--ui-sub); font-size: 12.5px; cursor: pointer; }
+.app-cell-stage { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.app-stage-select { pointer-events: auto; min-height: 26px; padding: 2px 8px 2px 10px; border: 1px solid var(--ui-line); border-radius: 999px; background: var(--ui-surface); color: var(--ui-sub); font-size: 12.5px; cursor: pointer; }
 .app-stage-select:disabled { opacity: .55; cursor: default; }
 .app-item[data-stage="interview"] .app-stage-select { border-color: var(--ui-brand-line); background: var(--ui-brand-pale); color: #235d52; }
 .app-item[data-stage="assessment"] .app-stage-select { border-color: #f3d9a8; background: #fef6e4; color: #92600b; }

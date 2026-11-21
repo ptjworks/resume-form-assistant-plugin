@@ -704,6 +704,51 @@ test("a half-written timeline note survives a full redraw of the list", async ()
   expect(field().value).toBe("HR 说周五给回复");
 });
 
+test("notes: text typed in the notes field but not yet saved survives a background refresh, and keeps the cursor in it", async () => {
+  const { ui, writes } = await mount({ apps: [app("A", "interview")], views: {
+    A: { application: { id: "A", company: "公司A", title: "工程师", current_stage: "interview", notes: "旧备注" }, events: [], evidence: [], snapshots: [], snapshotStates: {}, todos: [] },
+  } });
+  toggleRow("A");
+  await waitFor(() => expect(row("A").querySelector(".app-note-input")).toBeTruthy());
+  const field = () => row("A").querySelector<HTMLInputElement>(".app-note-input")!;
+  field().focus();
+  fireEvent.change(field(), { target: { value: "旧备注，另外二面前要准备项目细节" } });
+  await ui.refreshView();
+  expect(field().value).toBe("旧备注，另外二面前要准备项目细节");
+  expect(document.activeElement).toBe(field());
+  expect(writes()).toHaveLength(0);
+  // 没改过的备注框，照常用服务端的新值。
+  fireEvent.change(field(), { target: { value: "旧备注" } });
+  await ui.refreshView();
+  expect(field().value).toBe("旧备注");
+});
+
+test("notes: hiding the window or leaving the page saves a note that is still being typed", async () => {
+  const { writes } = await mount({ apps: [app("A", "interview")], views: {
+    A: { application: { id: "A", company: "公司A", title: "工程师", current_stage: "interview", notes: "" }, events: [], evidence: [], snapshots: [], snapshotStates: {}, todos: [] },
+  } });
+  toggleRow("A");
+  await waitFor(() => expect(row("A").querySelector(".app-note-input")).toBeTruthy());
+  const field = row("A").querySelector<HTMLInputElement>(".app-note-input")!;
+  field.focus();
+  fireEvent.change(field, { target: { value: "还没点别处就关窗口了" } });
+  window.dispatchEvent(new Event("pagehide"));
+  await waitFor(() => expect(writeNames(writes())).toEqual(["update_application_cmd"]));
+  expect(writes()[0].args).toEqual({ args: { id: "A", notes: "还没点别处就关窗口了" } });
+});
+
+test("notes: autosave also works when the detail wraps the application in a summary", async () => {
+  const { writes } = await mount({ apps: [app("A", "interview")], views: {
+    A: { application: { summary: { id: "A", company: "公司A", title: "工程师", current_stage: "interview" }, notes: "" }, events: [], evidence: [], snapshots: [], snapshotStates: {}, todos: [] },
+  } });
+  toggleRow("A");
+  await waitFor(() => expect(row("A").querySelector(".app-note-input")).toBeTruthy());
+  const field = row("A").querySelector<HTMLInputElement>(".app-note-input")!;
+  fireEvent.change(field, { target: { value: "包了一层也能存" } });
+  fireEvent.focusOut(field);
+  await waitFor(() => expect(writeNames(writes())).toEqual(["update_application_cmd"]));
+});
+
 test("opening an application that sits in the folded ended group unfolds that group and expands the row", async () => {
   const { ui } = await mount({ apps: [app("A", "interview"), app("R", "rejected")] });
   expect(group("ended")!.querySelectorAll("li[data-id]").length).toBe(0);
