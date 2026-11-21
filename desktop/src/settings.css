@@ -361,6 +361,21 @@ dialog.settings-dialog::backdrop { background: #1c233066; }
 #view-settings button[aria-busy="true"], .settings-dialog button[aria-busy="true"] { cursor: progress; opacity: .7; }
 #view-settings input[aria-busy="true"] { cursor: progress; opacity: .7; }
 
+/* 邮箱页（#549）：这一页的标题、状态行和说明不在卡片里，无框版面下要自己撑开间距。 */
+#settings-mailbox { gap: 28px; }
+#settings-mailbox .mailbox-page-heading { margin: 0; }
+#settings-mailbox .mailbox-page-heading h2 { font-size: 17px; line-height: 1.4; font-weight: 650; letter-spacing: -.01em; }
+#settings-mailbox .mailbox-page-heading p { margin: 4px 0 0; font-size: 13px; line-height: 1.65; }
+#settings-mailbox > .settings-inline-msg { margin: 0; }
+#settings-mailbox #mailbox-retry-read { align-self: flex-start; }
+#settings-mailbox .mailbox-empty { min-height: 280px; padding: 40px 0; }
+#settings-mailbox > .settings-caption { margin: 0; padding-top: 24px; border-top: 1px solid var(--ui-line); }
+#settings-mailbox > .settings-fold { margin: -16px 0 0; }
+#settings-mailbox .mailbox-account { padding: 20px 0; }
+#settings-mailbox .mailbox-account:first-child { padding-top: 12px; border-top: 0; }
+#settings-mailbox .mailbox-list-toolbar { padding-bottom: 4px; }
+#settings-mailbox .settings-card { padding-bottom: 0; }
+
 /* 邮箱设置页；招聘通知里的候选列表样式归 workspace stylesheet。 */
 .mailbox-candidates { list-style: none; }
 .mailbox-account { padding: 16px 0; border-top: 1px solid var(--line, #e3e8ef); }
