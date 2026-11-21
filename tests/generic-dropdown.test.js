@@ -158,6 +158,15 @@ test("Moka: a recognized menu can open with just one exact option", async (t) =>
   assert.deepEqual(h.clicks, ["英语/English"]);
 });
 
+test("Moka: an education level maps before its single-option menu is matched", async (t) => {
+  const h = moka({ choices: ["本科"] });
+  t.after(() => h.w.close());
+  h.input.readOnly = true;
+  const target = { ...h.target, binding: { label: "学历" } };
+  assert.equal((await h.api.operate(target, "工学学士")).ok, true);
+  assert.deepEqual(h.clicks, ["本科"]);
+});
+
 test("Moka: a previously visible menu stays stale when its single option is redrawn", async (t) => {
   const h = moka({ choices: [] });
   t.after(() => h.w.close());

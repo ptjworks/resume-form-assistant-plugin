@@ -262,7 +262,7 @@ test("#481 an education level keeps an offered program-specific choice and separ
   assert.equal(helpers.choiceValue(field, value), "博士研究生");
   assert.equal(helpers.choiceValue({ ...field, options: [...field.options, value] }, value), value);
   assert.equal(helpers.isValueValidForField({ ...field, options: ["博士研究生（普博）"] }, value), false);
-  assert.equal(helpers.isValueValidForField(field, "理学学士"), false);
+  assert.equal(helpers.isValueValidForField(field, "理学学士"), true);
   assert.equal(helpers.choiceValue({ ...field, label: "学位" }, value), value);
   assert.equal(helpers.choiceValue({ ...field, options: ["硕士研究生"] }, "非全日制硕士研究生"), "硕士研究生");
   const attained = { ...field, label: "最高已取得学历", options: ["硕士研究生"] };
@@ -272,7 +272,8 @@ test("#481 an education level keeps an offered program-specific choice and separ
   assert.equal(helpers.choiceValue({ ...field, options: ["专科"] }, "大专（自考）"), "大专");
   assert.equal(helpers.isValueValidForField({ ...field, options: ["本科", "大学本科"] }, "本科（全日制）"), false);
   for (const [annotated, plain] of [["本科（未毕业）", "本科"], ["大专（肄业）", "大专"], ["硕士在读", "硕士"]]) {
-    assert.equal(helpers.isValueValidForField({ ...field, options: [plain] }, annotated), false);
+    // 「在读」不影响层次（#301）：硕士在读可以选「硕士」；未毕业、肄业仍不换。
+    assert.equal(helpers.isValueValidForField({ ...field, options: [plain] }, annotated), annotated === "硕士在读");
     assert.equal(helpers.isValueValidForField({ ...field, options: [annotated] }, plain), false);
     assert.equal(helpers.isValueValidForField({ ...field, options: [plain, annotated] }, annotated), true);
   }
@@ -1041,8 +1042,12 @@ test("#301 an education-level select that lists bare levels takes the same level
   assert.equal(helpers.choiceValue(levels, "硕士研究生"), "硕士");
   assert.equal(helpers.choiceValue(levels, "大学本科"), "本科");
   // 状态、学位、别的题都不换。
-  assert.equal(helpers.choiceValue(levels, "硕士在读"), "硕士在读");
-  assert.equal(helpers.choiceValue(levels, "理学学士"), "理学学士");
+  // 「在读」不影响层次，学历栏只写了学士就是本科（学士学位只授予本科毕业）；硕士、博士学位不推。
+  assert.equal(helpers.choiceValue(levels, "硕士在读"), "硕士");
+  assert.equal(helpers.choiceValue(levels, "理学学士"), "本科");
+  // 硕士、博士学位不是学历层次：明确不选（不会被唯一包含认成「博士」）。
+  assert.equal(helpers.choiceValue(levels, "理学博士"), "");
+  assert.equal(helpers.choiceValue({ ...levels, label: "最高已取得学历" }, "硕士在读"), "硕士在读");
   assert.equal(helpers.choiceValue({ ...levels, label: "学位" }, "博士研究生"), "博士研究生");
   assert.equal(helpers.choiceValue({ ...levels, options: ["博士", "博士后"] }, "博士研究生"), "博士");
   const mode = { label: "学历类型", inputType: "select", options: ["海外及港澳台", "统招全日制", "统招非全日制", "自考", "其他"] };
