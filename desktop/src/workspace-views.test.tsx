@@ -201,6 +201,18 @@ test("the month grid is made of rows of seven cells, and keyboard focus stays on
   expect(document.activeElement).toBe(within(document.getElementById("todo-detail")!).getByRole("button", { name: "重新打开" }));
 });
 
+test("choosing an undated todo from the fold with the keyboard keeps focus on that row", async () => {
+  const h = todos({ items: [task, { ...task, id: "t2", title: "跟进结果", company: "星河", position: "工程师", duePrecision: "none", dueDate: null }] });
+  await h.show({ id: "t1" });
+  document.getElementById("todo-undated")!.setAttribute("open", "");
+  const row = document.querySelector<HTMLElement>('#todo-undated-list [data-todo="t2"]')!;
+  row.focus();
+  fireEvent.click(row);
+  const after = document.querySelector<HTMLElement>('#todo-undated-list [data-todo="t2"]')!;
+  expect(after.getAttribute("aria-current")).toBe("true");
+  expect(document.activeElement).toBe(after);
+});
+
 test("four status filter buttons are gone", async () => {
   const h = todos(); await h.show();
   expect(document.getElementById("todo-filter")).toBeNull();

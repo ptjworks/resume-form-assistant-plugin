@@ -838,8 +838,14 @@ remindAtUtc: currentRemind(),
       return;
     }
     if (act === "select-undated") {
+      // 重画会换掉折叠条里的按钮；键盘操作的人得继续停在刚按的那一条上。
+      const keepFocus = Boolean((document.activeElement as HTMLElement | null)?.closest?.("#todo-undated-list"));
       selectUndated(id);
       render();
+      if (keepFocus) {
+        Array.from(undatedList.querySelectorAll<HTMLElement>('[data-act="select-undated"]'))
+          .find((node) => node.dataset.todo === id)?.focus({ preventScroll: true });
+      }
       return;
     }
     if (act === "write-note") {
