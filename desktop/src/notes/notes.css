@@ -303,7 +303,7 @@ input.notes-title-input:hover { border-color: var(--card-line); }
 .notes-status { margin: 0; padding: 5px 20px; min-height: 23px; font-size: 13px; border-top: 1px solid var(--ui-line); }
 .notes-status:empty { display: none; }
 .notes-status[data-tone="error"] { color: #9d321e; }
-.notes-heading .notes-status { margin: 0; min-height: 0; max-width: 170px; font-size: 12px; }
+.notes-heading .notes-status { margin: 0; padding: 0; min-height: 0; max-width: 170px; border-top: 0; font-size: 12px; }
 .notes-heading .notes-status:not([data-tone="error"]) { color: var(--ok); }
 .notes-paste-notice { display: block; color: #9d321e; }
 .notes-paste-notice:empty { display: none; }

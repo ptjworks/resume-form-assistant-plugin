@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Invoke } from "../api.ts";
 import { mountNotes } from "./view.ts";
@@ -401,4 +402,18 @@ test("a folder ⋯ menu closes on a click elsewhere and on Escape, and opening a
 
   second.querySelector("summary")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(second.open).toBe(false);
+});
+
+test("showCompany waits for a transition that is still running instead of dropping the click", async () => {
+  const { root, notes } = await mountLibrary();
+  const entering = notes.activate();
+  await notes.showCompany("星河科技");
+  await entering;
+  expect(root.querySelector<HTMLElement>(".notes-company-filter")!.hidden).toBe(false);
+  expect(folderNames(root)).toEqual(["星河科技 · 前端", "星河科技 · 后端"]);
+});
+
+test("the save status inside the editor header does not pick up the page-bottom status box style", () => {
+  const css = readFileSync("src/notes/notes.css", "utf8");
+  expect(css).toMatch(/\.notes-heading \.notes-status \{[^}]*padding: 0;[^}]*border-top: 0;/);
 });

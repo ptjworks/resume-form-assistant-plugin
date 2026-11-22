@@ -1978,6 +1978,8 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
 
   /** 从投递页点「该公司心得」：只显示这家公司各岗位的文件夹，点 × 看全部。 */
   async function showCompany(company: string) {
+    // 别的切换（比如刚进心得页的读取）还没完成时，等它做完再筛，不能把这次点击悄悄丢掉。
+    for (let waited = 0; transitioning && waited < 100; waited++) await new Promise(resolve => setTimeout(resolve, 30));
     if (transitioning) return;
     transitioning = true;
     try {
