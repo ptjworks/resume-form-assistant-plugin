@@ -188,7 +188,7 @@ test("row: company · city, title, and the stage select are in four columns; hos
   expect(stageSelect("A").value).toBe("submitted");
 });
 
-test("hint: nearest open todo with a time, a date-only todo without 00:00, else N 天前更新; clicking the todo only switches to the calendar page", async () => {
+test("hint: nearest open todo with a time, a date-only todo without 00:00, else N 天前更新; clicking the todo switches to the calendar page carrying the todo id and day", async () => {
   const openTodos = vi.fn();
   await mount({
     apps: [app("T", "interview"), app("D", "assessment"), app("U", "submitted", { updated_at: new Date(2026, 10, 18, 9).toISOString() })],
@@ -206,6 +206,8 @@ test("hint: nearest open todo with a time, a date-only todo without 00:00, else 
   expect(row("U").querySelector(".app-cell-hint")!.textContent).not.toContain("投递");
   fireEvent.click(row("T").querySelector<HTMLElement>("[data-go=todos]")!);
   expect(openTodos).toHaveBeenCalledTimes(1);
+  // 带着待办 id 与它在待办自己时区下的那一天（上海 14:30 → 11-22），日历据此选中。
+  expect(openTodos).toHaveBeenCalledWith({ id: "t1", day: "2026-11-22" });
   // 只是切页：没有展开这一行。
   expect(row("T").classList.contains("is-expanded")).toBe(false);
 });

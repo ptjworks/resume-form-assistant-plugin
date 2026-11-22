@@ -535,8 +535,8 @@ if (events?.listen) void events.listen("note-quit-requested", async () => {
 });
 const applications = mountApplications(command, {
   openNotes: application => void openNotes(application),
-  // 跨页入口这一项只负责切到目标页；定位到具体日期、邮件分别留给 #551、#552。
-  openTodos: () => void navigate("todos").then((moved) => { if (moved) void showTodos().catch(() => {}); }),
+  // 跨页入口只负责切到目标页；邮件的定位留给 #552。日历页带着待办 id 进去，选中那一天那一条。
+  openTodos: (target) => void navigate("todos").then((moved) => { if (moved) void showTodos(target).catch(() => {}); }),
   openInbox: () => void navigate("inbox"),
   listen: events?.listen
     ? (name, handler) => events.listen?.(name, (event) => handler({ payload: event?.payload }))
@@ -655,6 +655,12 @@ document.addEventListener("keydown", event => {
 // 待办只能挂在申请下面：一条申请都没有时，「去新增申请」切到申请页并打开新增表单。
 const showTodos = mountTodos(command, undefined, {
   writeNote: (application, suggested) => void openNotes(application, suggested),
+  // 日历详情里的「查看对应投递 →」：切到投递页并展开那一条申请。
+  openApplication: (id) => {
+    void navigate("applications", false).then((moved) => {
+      if (moved) void applications.openApplication(id);
+    });
+  },
   createApplication: () => {
     void navigate("applications").then((moved) => {
       if (moved) applications.openNewBar();

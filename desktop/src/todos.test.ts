@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ReminderCapability, TodoView } from './api.ts';
 import {
-  describeEmptyFilter,
   describeRemindAt,
   shortDue,
   LIFECYCLE_STATES,
@@ -13,9 +12,28 @@ import {
   describeDue,
   describeReminder,
   describeSave,
+  describeWhenNote,
+  presetFromRemind,
+  remindFromPreset,
   describeStatusChange,
-  groupTodos,
   localDay,
+  buildCalendar,
+  cellLabel,
+  companyShort,
+  dayHeading,
+  daySummary,
+  entryState,
+  inferKind,
+  KIND_ORDER,
+  monthGrid,
+  monthOf,
+  pillText,
+  shiftDay,
+  shiftMonth,
+  summarizeOverdue,
+  todoClock,
+  todoDay,
+  weekdayOf,
 } from './todos.ts';
 
 const AVAILABLE: ReminderCapability = { available: true, reason: null };
@@ -81,21 +99,6 @@ test('分组按到期远近，没有到期的单独一组，结束的归到最�
   assert.equal(bucketOf(todo({ duePrecision: "date", dueDate: daysFromToday(30) }), NOW), "later");
   assert.equal(bucketOf(todo(), NOW), "someday");
   assert.equal(bucketOf(todo({ status: "done", duePrecision: "date", dueDate: daysFromToday(-9) }), NOW), "closed");
-
-  const groups = groupTodos(
-    [
-      todo({ id: "later", duePrecision: "date", dueDate: daysFromToday(30) }),
-      todo({ id: "overdue", duePrecision: "date", dueDate: daysFromToday(-2) }),
-      todo({ id: "today", duePrecision: "date", dueDate: TODAY }),
-    ],
-    NOW,
-  );
-  assert.deepEqual(
-    groups.map((g) => g.bucket),
-    ["overdue", "today", "later"],
-    "先看已经误了的",
-  );
-  assert.equal(groups.length, 3, "空的分组不出现");
 });
 
 test('精确时刻按时刻比，不按日历日', () => {
@@ -133,6 +136,11 @@ test('五种提醒状态各有各的说法', () => {
 
   assert.match(describeReminder(todo({ status: "done" }), AVAILABLE).text, /不会再提醒/);
   assert.match(describeReminder(todo(), AVAILABLE).text, /没有到期/);
+});
+
+test('没有登记提醒、到期日已过：说「到期已过，不再提醒」', () => {
+  const text = describeReminder(todo({ reminderState: 'none', duePrecision: 'date', dueDate: '2026-09-01' }), AVAILABLE).text;
+  assert.equal(text, '到期已过，不再提醒');
 });
 
 test('机器能弹但这一条没登记上，也要说得出来', () => {
@@ -224,7 +232,185 @@ test('提醒时刻：没单独设就说按到期提醒，不编一个时刻', ()
   assert.match(describeRemindAt(todo({ remindAtUtc: '2026-09-20T01:00:00Z', timeZone: 'Asia/Shanghai' })), /09:00/);
 });
 
-test('筛选没结果时按状态说，不和「一条都没有」混在一起', () => {
-  assert.match(describeEmptyFilter('open').title, /未完成/);
-  assert.match(describeEmptyFilter('cancelled').title, /已取消/);
+// --- 日历页（#551） ---------------------------------------------------------------------
+
+test('类型按轮次与标题关键词推断：面试 > 测评 > 笔试 > 其他', () => {
+  assert.equal(inferKind(todo({ title: '一面', interviewRound: null })), 'interview');
+  assert.equal(inferKind(todo({ title: '准备材料', interviewRound: 2 })), 'interview', '有轮次就是面试');
+  assert.equal(inferKind(todo({ title: '在线测评' })), 'assessment');
+  assert.equal(inferKind(todo({ title: '技术笔试' })), 'written');
+  assert.equal(inferKind(todo({ title: '跟进结果' })), 'other');
+  assert.equal(inferKind(todo({ title: '笔试后面试', interviewRound: null })), 'interview', '先看面试');
+});
+
+test('仅日历日的待办在日历里没有时刻，绝不出现 00:00', () => {
+  const entry = buildCalendar([todo({ duePrecision: 'date', dueDate: '2026-11-19', title: '一面' })], NOW)
+    .byDay.get('2026-11-19')?.[0];
+  assert.ok(entry);
+  assert.equal(entry.clock, null);
+  assert.doesNotMatch(pillText(entry), /00:00|\d{2}:\d{2}/, '胶囊里不写时刻');
+  assert.equal(todoClock(todo({ duePrecision: 'date', dueDate: '2026-11-19' })), null);
+  // 仍有 dueAtUtc 残留也不能把日历日当成零点。
+  assert.equal(
+    todoClock(todo({ duePrecision: 'date', dueDate: '2026-11-19', dueAtUtc: '2026-11-19T00:00:00Z' })),
+    null,
+  );
+});
+
+test('精确时刻按待办自己的时区落在哪一天、写什么钟点', () => {
+  // 北京时间 11-19 07:30 = UTC 11-18 23:30：在上海属于 19 日，在 UTC 属于 18 日。
+  const shanghai = todo({ duePrecision: 'datetime', dueAtUtc: '2026-11-18T23:30:00Z', timeZone: 'Asia/Shanghai' });
+  assert.equal(todoDay(shanghai), '2026-11-19');
+  assert.equal(todoClock(shanghai), '07:30');
+  const utc = todo({ duePrecision: 'datetime', dueAtUtc: '2026-11-18T23:30:00Z', timeZone: 'UTC' });
+  assert.equal(todoDay(utc), '2026-11-18');
+  assert.equal(todoClock(utc), '23:30');
+  const entry = buildCalendar([shanghai], NOW).byDay.get('2026-11-19')?.[0];
+  assert.equal(pillText(entry!), '07:30 面试 · 合成');
+});
+
+test('读不出日期的待办进「未设具体日期」，不丢；已取消的不显示', () => {
+  const model = buildCalendar(
+    [
+      todo({ id: 'none' }),
+      todo({ id: 'broken', duePrecision: 'datetime', dueAtUtc: '不是时间' }),
+      todo({ id: 'badDate', duePrecision: 'date', dueDate: '明天' }),
+      todo({ id: 'cancelled', status: 'cancelled', duePrecision: 'date', dueDate: '2026-11-19' }),
+      todo({ id: 'cancelledUndated', status: 'cancelled' }),
+      todo({ id: 'done', status: 'done', duePrecision: 'date', dueDate: '2026-11-19' }),
+    ],
+    NOW,
+  );
+  assert.deepEqual(model.undated.map((t) => t.id), ['none', 'broken', 'badDate']);
+  assert.deepEqual(model.byDay.get('2026-11-19')?.map((e) => e.todo.id), ['done'], '已完成照样显示');
+});
+
+test('同一天：仅日期的在前，再按时刻', () => {
+  const day = '2026-11-19';
+  const at = (id: string, clock: string) =>
+    todo({ id, duePrecision: 'datetime', dueAtUtc: new Date(`${day}T${clock}:00`).toISOString() });
+  const model = buildCalendar(
+    [at('late', '16:00'), todo({ id: 'allday', duePrecision: 'date', dueDate: day }), at('early', '09:30')],
+    NOW,
+  );
+  assert.deepEqual(model.byDay.get(day)?.map((e) => e.todo.id), ['allday', 'early', 'late']);
+});
+
+test('状态：已完成、过时未完成标红，今天才到期的日期待办不算逾期', () => {
+  assert.equal(entryState(todo({ status: 'done', duePrecision: 'date', dueDate: daysFromToday(-3) }), NOW), 'done');
+  assert.equal(entryState(todo({ duePrecision: 'date', dueDate: daysFromToday(-1) }), NOW), 'overdue');
+  assert.equal(entryState(todo({ duePrecision: 'date', dueDate: TODAY }), NOW), 'open');
+  assert.equal(entryState(todo({ duePrecision: 'date', dueDate: daysFromToday(2) }), NOW), 'open');
+});
+
+test('月历 35 或 42 格，周一起，前后补相邻月份且标为非本月', () => {
+  // 2026 年 11 月：1 日是周日 → 前面补 6 天，30 天共 36 格 → 6 行。
+  const nov = monthGrid({ year: 2026, month: 11 });
+  assert.equal(nov.length, 42);
+  assert.equal(nov[0]?.day, '2026-10-26');
+  assert.equal(weekdayOf(nov[0]!.day), 1, '第一列是周一');
+  assert.equal(nov.filter((cell) => cell.inMonth).length, 30);
+  assert.equal(nov[6]?.day, '2026-11-01');
+  // 2026 年 2 月：1 日是周日，但只有 28 天，仍需 6 行；2027 年 2 月 1 日周一 28 天 → 4 行补到 35。
+  assert.equal(monthGrid({ year: 2026, month: 2 }).length, 35, '2 月：周日起 6 + 28 = 34 → 35');
+  assert.equal(monthGrid({ year: 2027, month: 2 }).length, 35);
+  assert.equal(monthGrid({ year: 2026, month: 9 }).length, 35, '9 月 1 日周二，30 天 → 35');
+  for (const cells of [nov, monthGrid({ year: 2026, month: 9 })]) {
+    assert.equal(cells.length % 7, 0);
+  }
+});
+
+test('切月跨年，天数加减不受夏令时影响', () => {
+  assert.deepEqual(shiftMonth({ year: 2026, month: 12 }, 1), { year: 2027, month: 1 });
+  assert.deepEqual(shiftMonth({ year: 2026, month: 1 }, -1), { year: 2025, month: 12 });
+  assert.deepEqual(monthOf('2026-11-19'), { year: 2026, month: 11 });
+  assert.equal(shiftDay('2026-03-08', 1), '2026-03-09');
+  assert.equal(shiftDay('2026-12-31', 1), '2027-01-01');
+});
+
+test('逾期汇总：数量与最早一天；已完成、没到点的不算', () => {
+  const summary = summarizeOverdue(
+    [
+      todo({ id: 'a', duePrecision: 'date', dueDate: daysFromToday(-2) }),
+      todo({ id: 'b', duePrecision: 'date', dueDate: daysFromToday(-9) }),
+      todo({ id: 'done', status: 'done', duePrecision: 'date', dueDate: daysFromToday(-20) }),
+      todo({ id: 'today', duePrecision: 'date', dueDate: TODAY }),
+      todo({ id: 'future', duePrecision: 'date', dueDate: daysFromToday(3) }),
+    ],
+    NOW,
+  );
+  assert.equal(summary.count, 2);
+  assert.deepEqual(summary.earliest, { day: daysFromToday(-9), id: 'b' });
+  assert.deepEqual(summarizeOverdue([], NOW), { count: 0, earliest: null });
+});
+
+test('右栏标题与副标题', () => {
+  assert.equal(dayHeading('2026-11-19'), '11月19日 · 周四');
+  assert.equal(daySummary('2026-11-20', '2026-11-19', 2), '明天 · 共 2 项');
+  assert.equal(daySummary('2026-11-19', '2026-11-19', 1), '今天 · 共 1 项');
+  assert.equal(daySummary('2026-12-01', '2026-11-19', 0), '没有日程');
+  assert.match(cellLabel('2026-11-19', 3), /11月19日 周四，3 项日程/);
+});
+
+test('公司简称：去掉有限公司和括号，过长截断', () => {
+  assert.equal(companyShort('星河科技有限公司'), '星河科技');
+  assert.equal(companyShort('远山（中国）有限公司'), '远山');
+  assert.equal(companyShort('北京字节跳动网络技术有限公司'), '北京字节跳动');
+  assert.equal(companyShort('有限公司'), '有限公司', '去空了就用原名');
+  assert.equal(companyShort(null), '');
+});
+
+test('弹窗小字：提醒能不能响如实写，没有日期就说不提醒', () => {
+  const base = { hasDate: true, hasTime: true, zoneLabel: '本机时区（Asia/Shanghai）', capability: AVAILABLE, remindAtUtc: null, timeZone: 'Asia/Shanghai' };
+  assert.equal(describeWhenNote(base), '按本机时区（Asia/Shanghai）。到点时按系统通知提醒。');
+  assert.match(describeWhenNote({ ...base, hasTime: false }), /当天早上 9 点/);
+  assert.match(describeWhenNote({ ...base, remindAtUtc: '2026-11-21T06:00:00Z' }), /将在 2026\/11\/21 14:00 提醒/);
+  assert.equal(describeWhenNote({ ...base, zoneLabel: '', capability: BLOCKED }), '系统通知未授权，到点时不会弹提醒。');
+  assert.match(describeWhenNote({ ...base, hasDate: false, hasTime: false }), /不会提醒/);
+});
+
+test('提醒预设：提前多久从到期时刻算，只有日期就从当天早上 9 点算', () => {
+  // 上海 11-22 14:30 = UTC 06:30
+  assert.equal(remindFromPreset('default', '2026-11-22', '14:30', 'Asia/Shanghai'), null, '默认交给后台');
+  assert.equal(remindFromPreset('15', '2026-11-22', '14:30', 'Asia/Shanghai'), '2026-11-22T06:15:00.000Z');
+  assert.equal(remindFromPreset('60', '2026-11-22', '14:30', 'Asia/Shanghai'), '2026-11-22T05:30:00.000Z');
+  assert.equal(remindFromPreset('1440', '2026-11-22', '14:30', 'Asia/Shanghai'), '2026-11-21T06:30:00.000Z');
+  // 只有日期：基准是当天 09:00（上海 = UTC 01:00），不是 00:00
+  assert.equal(remindFromPreset('1440', '2026-11-22', '', 'Asia/Shanghai'), '2026-11-21T01:00:00.000Z');
+  assert.equal(remindFromPreset('15', '', '', 'Asia/Shanghai'), null, '没有日期没法「提前」');
+});
+
+test('提醒预设：编辑时从已有提醒时刻还原，对不上就是自己选', () => {
+  assert.equal(presetFromRemind(null, '2026-11-22', '14:30', 'Asia/Shanghai'), 'default');
+  assert.equal(presetFromRemind('2026-11-22T05:30:00.000Z', '2026-11-22', '14:30', 'Asia/Shanghai'), '60');
+  assert.equal(presetFromRemind('2026-11-21T01:00:00Z', '2026-11-22', '', 'Asia/Shanghai'), '1440');
+  assert.equal(presetFromRemind('2026-11-22T05:47:00Z', '2026-11-22', '14:30', 'Asia/Shanghai'), 'custom');
+});
+
+test('只认完整的面试说法，不把单个「面」字当面试', () => {
+  for (const title of ['技术二面', 'HR 面', '终面', '一面', '第三面', '电话面试', '群面', '复试', '主管面', '视频 面']) {
+    assert.equal(inferKind(todo({ title })), 'interview', title);
+  }
+  for (const title of ['简历方面整理', '整理面经', '见面确认', '当面沟通', '上面的材料', '跟进结果']) {
+    assert.equal(inferKind(todo({ title })), 'other', title);
+  }
+  assert.equal(inferKind(todo({ title: '整理面经', interviewRound: 1 })), 'interview', '有面试轮次仍算面试');
+  assert.equal(inferKind(todo({ title: '在线测评' })), 'assessment');
+});
+
+test('逾期数量只算有日期、跳得过去的', () => {
+  const summary = summarizeOverdue([todo({ id: 'a', duePrecision: 'date', dueDate: daysFromToday(-2) })], NOW);
+  assert.equal(summary.count, 1);
+  assert.deepEqual(summary.earliest, { day: daysFromToday(-2), id: 'a' });
+});
+
+test('用户选过的类型优先于标题推断；没选过才推断', () => {
+  assert.equal(inferKind(todo({ title: '技术二面', kind: 'written' })), 'written', '标题写着面试也按他选的');
+  assert.equal(inferKind(todo({ title: '随便', kind: 'other' })), 'other');
+  assert.equal(inferKind(todo({ title: '技术二面', kind: null })), 'interview', '没选过按标题推断');
+  assert.equal(inferKind(todo({ title: '在线测评', interviewRound: 2, kind: 'assessment' })), 'assessment');
+});
+
+test('类型按钮按发生顺序：测评 → 笔试 → 面试 → 其他', () => {
+  assert.deepEqual(KIND_ORDER, ['assessment', 'written', 'interview', 'other']);
 });

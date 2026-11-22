@@ -213,86 +213,120 @@
         </section>
 
         <section id="view-todos" class="view hidden">
-          <header class="todo-page-header workspace-title-row">
-            <div class="todo-page-title">
-              <span class="todo-page-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg></span>
-              <div class="todo-page-heading">
-                <h1>待办</h1>
-                <span id="todo-digest" role="status" hidden></span>
+          <div id="todo-shell" class="cal-shell">
+            <section class="cal-main" aria-label="月历">
+              <header class="cal-head">
+                <div class="cal-head-title">
+                  <h1 id="cal-title" aria-live="polite">日历</h1>
+                  <div class="cal-nav" role="group" aria-label="切换月份">
+                    <button type="button" id="cal-prev" class="cal-nav-btn" aria-label="上个月"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button>
+                    <button type="button" id="cal-next" class="cal-nav-btn" aria-label="下个月"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+                    <button type="button" id="cal-today" class="cal-today">今天</button>
+                  </div>
+                  <button type="button" id="todo-digest" class="cal-overdue-chip" data-jump-overdue hidden></button>
+                </div>
+                <button type="button" id="todo-new" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>新增日程</button>
+              </header>
+              <div id="todo-toast" class="cal-toast" data-empty="true">
+                <p id="todo-status" class="note" role="status"></p>
+                <button type="button" id="todo-toast-close" class="cal-toast-close" aria-label="关闭提示" hidden>×</button>
               </div>
-            </div>
-            <button type="button" id="todo-new" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>新增待办</button>
-          </header>
-          <div id="todo-shell" class="workspace-shell">
-            <div class="workspace-list-card todo-list-card">
-              <div class="todo-list-head">
-                <div id="todo-filter" class="segmented" role="group" aria-label="任务状态"></div>
+              <div id="todo-list" class="cal-board" aria-label="月历"></div>
+              <div class="cal-folds">
+                <details id="todo-undated" class="cal-fold">
+                  <summary id="todo-undated-summary">未设具体日期的待办 (0)</summary>
+                  <div id="todo-undated-list" class="cal-undated"></div>
+                </details>
+                <details class="cal-fold todo-reminder-help">
+                  <summary>提醒什么时候会响</summary>
+                  <div class="cal-fold-body">
+                    <p id="todo-reminder-note" class="note"></p>
+                    <ul id="todo-lifecycle" class="cal-lifecycle"></ul>
+                  </div>
+                </details>
               </div>
-              <p id="todo-status" class="note" role="status"></p>
-              <div id="todo-list" class="workspace-list-scroll" aria-label="待办列表"></div>
-            </div>
-            <div id="todo-detail" class="workspace-detail-card" role="region" aria-label="待办详情"></div>
+            </section>
+            <aside id="todo-detail" class="cal-side" aria-label="选中日期的日程"></aside>
           </div>
-          <details class="todo-reminder-help"><summary>系统提醒说明</summary><p id="todo-reminder-note" class="note"></p></details>
           <dialog id="todo-dialog" class="resume-dialog" aria-labelledby="todo-form-heading">
             <form id="todo-form" class="dialog-form" novalidate>
               <div class="resume-dialog-head">
-                <h2 id="todo-form-heading">新增待办</h2>
+                <h2 id="todo-form-heading">新增日程</h2>
               </div>
               <div class="resume-dialog-body">
                 <div id="todo-no-apps" class="dialog-callout" hidden>
                   <p>待办需要关联一条申请。还没有申请记录，请先新增申请，或在浏览器扩展里保存岗位。</p>
                   <button type="button" id="todo-go-applications">去新增申请</button>
                 </div>
-                <label>做什么
-                  <input id="todo-title" name="title" autocomplete="off" maxlength="200" required placeholder="例如：完成在线测评" />
-                </label>
+                <div class="field">
+                  <label>做什么
+                    <input id="todo-title" name="title" autocomplete="off" maxlength="200" required placeholder="例如：技术二面" />
+                  </label>
+                  <div class="todo-kinds" id="todo-kinds" role="group" aria-label="类型">
+                    <button type="button" data-kind-pick="assessment" aria-pressed="false">测评</button>
+                    <button type="button" data-kind-pick="written" aria-pressed="false">笔试</button>
+                    <button type="button" data-kind-pick="interview" aria-pressed="false">面试</button>
+                    <button type="button" data-kind-pick="other" aria-pressed="false">其他</button>
+                  </div>
+                </div>
                 <div class="field">
                   <label>属于哪条申请
                     <select id="todo-application" name="applicationId" required aria-describedby="todo-application-hint"></select>
                   </label>
                   <p id="todo-application-hint" class="field-hint" hidden>待办建好后不能换到另一条申请。</p>
                 </div>
-                <div class="field-row" id="todo-schedule">
-                  <label>什么时候
-                    <select id="todo-precision" name="duePrecision">
-                      <option value="none">没有到期</option>
-                      <option value="date">只有日期</option>
-                      <option value="datetime">具体到几点</option>
-                    </select>
-                  </label>
-                  <label id="todo-date-field" hidden>到期日期
-                    <input id="todo-date" name="dueDate" type="date" hidden />
-                  </label>
-                  <label id="todo-datetime-field" hidden>到期时间
-                    <input id="todo-datetime" name="dueAtUtc" type="datetime-local" hidden />
-                  </label>
-                </div>
-                <details id="todo-form-options" class="todo-form-options">
-                  <summary>提醒、时区和面试轮次</summary>
-                  <div class="todo-form-extra">
-                    <div class="field">
-                      <label>提醒时刻
-                        <input id="todo-remind" name="remindAtUtc" type="datetime-local" aria-describedby="todo-remind-hint" />
+                <div class="field">
+                  <div class="when-row" id="todo-schedule">
+                    <div class="field-cell">
+                      <label>日期
+                        <input id="todo-date" name="dueDate" type="date" />
                       </label>
-                      <p id="todo-remind-hint" class="field-hint">留空则按到期时间提醒。日期和时刻按待办的时区理解。</p>
+                      <button type="button" id="todo-date-clear" class="link-button cell-clear" hidden>清除</button>
                     </div>
-                    <div class="field-row">
-                      <label>时区
-                        <input id="todo-timezone" name="timeZone" autocomplete="off" spellcheck="false" placeholder="留空按本机时区" />
-                      </label>
-                      <label>面试第几轮
-                        <input id="todo-round" name="interviewRound" type="number" min="1" max="99" step="1" placeholder="不需要就留空" />
-                      </label>
+                    <div class="field-cell" role="group" aria-labelledby="todo-time-label">
+                      <span id="todo-time-label" class="field-label">时间</span>
+                      <div class="time-pick">
+                        <select id="todo-hour" aria-label="几点"></select>
+                        <select id="todo-minute" aria-label="几分"></select>
+                      </div>
                     </div>
-                    <p id="todo-edit-note" class="field-hint" hidden>改期或修改提醒时刻会撤掉原来登记的提醒，再按新的时间重新登记。</p>
                   </div>
-                </details>
+                </div>
+                <div class="field">
+                  <label>提醒
+                    <select id="todo-remind-preset" name="remindPreset"></select>
+                  </label>
+                  <div id="todo-remind-custom" class="when-row todo-remind-custom" hidden>
+                    <label>提醒日期
+                      <input id="todo-remind-date" type="date" />
+                    </label>
+                    <div class="field-cell" role="group" aria-labelledby="todo-remind-time-label">
+                      <span id="todo-remind-time-label" class="field-label">提醒时间</span>
+                      <div class="time-pick">
+                        <select id="todo-remind-hour" aria-label="提醒几点"></select>
+                        <select id="todo-remind-minute" aria-label="提醒几分"></select>
+                      </div>
+                    </div>
+                  </div>
+                  <p id="todo-when-note" class="field-hint"></p>
+                  <p id="todo-edit-note" class="field-hint" hidden>改期或修改提醒会撤掉原来登记的提醒，再按新的时间重新登记。</p>
+                </div>
+                <button type="button" id="todo-more-toggle" class="link-button todo-more-toggle" aria-expanded="false" aria-controls="todo-form-options" hidden>更多设置：时区、面试轮次</button>
+                <div id="todo-form-options" class="todo-form-extra" hidden>
+                  <div class="field-row">
+                    <label>时区
+                      <input id="todo-timezone" name="timeZone" autocomplete="off" spellcheck="false" placeholder="留空按本机时区" />
+                    </label>
+                    <label>面试第几轮
+                      <input id="todo-round" name="interviewRound" type="number" min="1" max="99" step="1" placeholder="不需要就留空" />
+                    </label>
+                  </div>
+                </div>
                 <p id="todo-form-status" class="note" role="alert"></p>
               </div>
               <div class="resume-dialog-actions">
                 <button id="todo-cancel" type="button">取消</button>
-                <button id="todo-submit" type="submit" class="primary">添加待办</button>
+                <button id="todo-submit" type="submit" class="primary">添加日程</button>
               </div>
             </form>
           </dialog>

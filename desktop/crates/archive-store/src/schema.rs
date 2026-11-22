@@ -10,7 +10,7 @@
 //! - message_receipts 持久化提交回执(含 sourceRestoreEpoch 与 payloadSha256)与永久删除墓碑。
 //! - schema_migrations 记录迁移历史;PRAGMA user_version 为权威版本。
 
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 #[derive(Clone, Copy)]
 pub struct Migration {
@@ -392,6 +392,12 @@ CREATE TABLE note_files (
 CREATE INDEX idx_note_files_note ON note_files(note_id);
 "#;
 
+/// #551：待办的类型。可空：旧待办和 AI 建的待办没有类型，界面按标题推断。
+const V11_TODO_KIND: &str = r#"
+ALTER TABLE todos ADD COLUMN kind TEXT
+  CHECK (kind IS NULL OR kind IN ('assessment','written','interview','other'));
+"#;
+
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         to_version: 1,
@@ -442,5 +448,10 @@ pub const MIGRATIONS: &[Migration] = &[
         to_version: 10,
         description: "interview note folders, notes and private attachments (#490)",
         sql: V10_INTERVIEW_NOTES,
+    },
+    Migration {
+        to_version: 11,
+        description: "todo kind chosen by the user: assessment, written, interview or other (#551)",
+        sql: V11_TODO_KIND,
     },
 ];
