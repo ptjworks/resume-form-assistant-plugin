@@ -4,8 +4,8 @@
 
 import type { AiSuggestion, ReplyClass, SendMode, Stage, SuggestedTodoView } from "../api.ts";
 
-/** 面板当前在哪一步。 */
-export type Phase = "idle" | "preview" | "sending" | "review" | "failed";
+/** 面板当前在哪一步。`summary` 只在紧凑模式（通知页底栏）里出现：整理完先收成一行，要改再展开审核。 */
+export type Phase = "idle" | "preview" | "sending" | "review" | "failed" | "summary";
 
 // 偏移只收 `Z` 或 `±HH:MM`：不带冒号的 `+0800` 各家 WebView 解析得不一样，
 // 存储层的 RFC3339 解析也不收，放过去只会在确认事务里才炸。

@@ -17,6 +17,11 @@ export function mountAiReview(
   invoke: Invoke | null,
   evidenceId: string,
   onConfirmed?: (message: string) => void,
+  options: { compact?: boolean } = {},
 ) {
-  return mountReact(container, invoke, <AiReview evidenceId={evidenceId} onConfirmed={onConfirmed} />);
+  return mountReact(
+    container,
+    invoke,
+    <AiReview evidenceId={evidenceId} onConfirmed={onConfirmed} compact={options.compact} />,
+  );
 }

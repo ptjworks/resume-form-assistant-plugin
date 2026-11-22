@@ -12,7 +12,8 @@ import { stageLabel } from "../applications.ts";
 import { useInvoke } from "../react/invoke.tsx";
 import { AnalyzeDialog } from "./AnalyzeDialog.tsx";
 import { ReviewPanel } from "./ReviewPanel.tsx";
-import { confirmArgs, describeFailure, initialDraft } from "./review.ts";
+import { replyClassLabel } from "../inbox.ts";
+import { confirmArgs, confirmBlocker, describeFailure, initialDraft } from "./review.ts";
 import type { Draft, Failure, Phase } from "./review.ts";
 
 /** 每页取多少条申请，以及最多翻几页。存储层把 limit 卡在 1000 以内。 */
@@ -66,10 +67,16 @@ function newRequestId(): string {
 export function AiReview({
   evidenceId,
   onConfirmed,
+  compact = false,
 }: {
   evidenceId: string;
   /** 确认完了告诉宿主一声：它负责刷新那条证据，并把这句话显示在面板之外。 */
   onConfirmed?: (message: string) => void;
+  /**
+   * 通知页底栏用：入口只剩一个「AI 整理」按钮；整理完收成一行「识别到 N 个日程 · 确认 · 修改」，
+   * 「修改」才展开完整审核。发送前的脱敏预览和确认逻辑一字不改。
+   */
+  compact?: boolean;
 }) {
   const invoke = useInvoke();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -193,6 +200,17 @@ export function AiReview({
     ["confirmed", "modified_confirmed"].includes(row.status),
   );
 
+  // 紧凑模式：这条通知上留着没决定的建议（待确认、暂存）直接收成一行，不用再花一次钱重新分析。
+  const resumable = compact
+    ? [...saved].reverse().find((row) => ["pending", "deferred"].includes(row.status)) ?? null
+    : null;
+  useEffect(() => {
+    if (!compact || loadingSaved || phase !== "idle" || suggestion || !resumable) return;
+    setSuggestion(resumable);
+    setDraft(initialDraft(resumable));
+    setPhase("summary");
+  }, [compact, loadingSaved, phase, suggestion, resumable]);
+
   const openReview = useCallback(
     async (next: AiSuggestion) => {
       setSuggestion(next);
@@ -268,7 +286,14 @@ export function AiReview({
       if (generation !== sendGeneration.current) return;
       setCancellableId(null);
       setSaved((rows) => [...rows, next]);
-      await openReview(next);
+      if (compact) {
+        setSuggestion(next);
+        setDraft(initialDraft(next));
+        setPhase("summary");
+        setNotice(null);
+      } else {
+        await openReview(next);
+      }
     } catch (error) {
       if (generation !== sendGeneration.current) return;
       const described = describeFailure(error);
@@ -451,9 +476,65 @@ export function AiReview({
 
   const idle = phase === "idle" || phase === "failed";
 
+  const summaryBlocker = suggestion && draft ? confirmBlocker(draft, suggestion) : null;
+  const summaryLine =
+    compact && phase === "summary" && suggestion && draft ? (
+      <div className="ai-bar-line" data-ai-summary>
+        <span className="ai-bar-text">
+          {suggestion.todos.length
+            ? `识别到 ${suggestion.todos.length} 个日程`
+            : `识别为「${replyClassLabel(suggestion.replyClass)}」，没有识别到日程`}
+        </span>
+        {summaryBlocker ? <span className="ai-bar-note">{summaryBlocker}</span> : null}
+        <span className="ai-bar-actions">
+          <button
+            type="button"
+            className="primary"
+            onClick={confirm}
+            disabled={busy || alreadyConfirmed || !!summaryBlocker}
+          >
+            确认
+          </button>
+          <button type="button" className="linkish" onClick={() => void openReview(suggestion)} disabled={busy}>
+            修改
+          </button>
+        </span>
+      </div>
+    ) : null;
+
+  const compactRejected = compact ? reopenable.filter((row) => row.status === "rejected") : [];
+
   return (
-    <section className="ai-panel">
-      <div className="ai-idle">
+    <section className={compact ? "ai-panel is-compact" : "ai-panel"}>
+      {compact && phase !== "summary" ? (
+        <div className="ai-bar-line">
+          <span className="ai-bar-text">
+            {loadingSaved
+              ? "正在看这封以前有没有整理过…"
+              : alreadyConfirmed
+                ? "这封已经整理确认过了"
+                : "让 AI 读这封，找出日程和分类"}
+          </span>
+          <span className="ai-bar-actions">
+            {compactRejected.map((row) => (
+              <button key={row.id} type="button" className="linkish" onClick={() => void openReview(row)} disabled={busy || !idle}>
+                看看拒绝过的建议
+              </button>
+            ))}
+            <button
+              type="button"
+              className="primary ai-start"
+              title="先给你看将发送的内容，确认后才会发送；结果由你核对后才写入"
+              onClick={() => void loadPreview(selectedIds)}
+              disabled={!invoke || busy || loadingSaved || !idle}
+            >
+              AI 整理
+            </button>
+          </span>
+        </div>
+      ) : null}
+      {summaryLine}
+      {!compact ? <div className="ai-idle">
         <p className="ai-intro">
           让 AI 读这条通知，建议关联的申请、通知类型、阶段和待办。会把这封通知的正文和几条候选申请发给你配的服务商；发送前会先让你看一遍，结果由你核对后确认才会写入。
         </p>
@@ -487,7 +568,7 @@ export function AiReview({
           ))}
         </div>
         {!invoke ? <p className="muted">需要在桌面应用里使用。</p> : null}
-      </div>
+      </div> : null}
 
       {(phase === "preview" || phase === "sending") && preview ? (
         <AnalyzeDialog
@@ -550,7 +631,7 @@ export function AiReview({
       ) : null}
 
       {/* 审核与发送确认都在弹窗里：那两个阶段的错误由弹窗自己显示，这里只管弹窗外的。 */}
-      {phase === "idle" || phase === "failed" ? failureBlock : null}
+      {phase === "idle" || phase === "failed" || phase === "summary" ? failureBlock : null}
       {notice ? <p className="note ok">{notice}</p> : null}
     </section>
   );
