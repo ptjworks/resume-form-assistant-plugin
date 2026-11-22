@@ -455,6 +455,11 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
     focusAddedRef.current = `custom-${profile.custom.length}-key`;
     updateProfile({ ...profile, custom: [...profile.custom, { key: "", value: "" }] });
   };
+  // #553：固定字段的几组里也要能加字段。新字段统一放进「补充字段」（它们没有所属分组），所以切过去再新建一行。
+  const addFieldElsewhere = () => {
+    setSection(SECTIONS.findIndex((item) => item.kind === "custom"));
+    addCustom();
+  };
   const setCustom = (index: number, field: "key" | "value", value: string) =>
     updateProfile({ ...profile, custom: profile.custom.map((c, i) => (i === index ? { ...c, [field]: value } : c)) });
 
@@ -919,7 +924,9 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
               <button type="button" onClick={addMember}>添加家庭成员</button>
             ) : current.kind === "custom" ? (
               <button type="button" onClick={addCustom}>添加补充字段</button>
-            ) : null}
+            ) : (
+              <button type="button" title="新字段会放进「补充字段」" onClick={addFieldElsewhere}>添加字段</button>
+            )}
             <button type="submit" className="primary" disabled={busy || reloading || confirmDiscard}>
               {busy ? "正在保存…" : "保存我的信息"}
             </button>
