@@ -289,7 +289,20 @@ export function mountInbox(
     applyBusy();
   }
 
+  /** 重画列表时记住键盘停在哪一行、滚到哪儿，画完还原，免得后台刷新把人的操作位置弄丢。 */
   function renderList() {
+    const active = document.activeElement;
+    const focusedRow = active instanceof HTMLElement && list.contains(active) ? active.dataset.row ?? null : null;
+    const scrollTop = list.scrollTop;
+    paintList();
+    if (list.scrollTop !== scrollTop) list.scrollTop = scrollTop;
+    if (focusedRow) {
+      const again = [...list.querySelectorAll<HTMLElement>("button[data-row]")].find((node) => node.dataset.row === focusedRow);
+      again?.focus();
+    }
+  }
+
+  function paintList() {
     renderTabs();
     renderBatch();
     if (!loaded[tab]) {
@@ -659,7 +672,7 @@ export function mountInbox(
     if (hint) {
       hint.textContent = !applications.length
         ? "先到「投递」页新增一条，再回来关联。"
-        : applicationsTruncated ? "投递太多，这里只列出了最近 500 条，可以用上面的搜索找。" : "";
+        : applicationsTruncated ? "投递太多，这里只列出了最近 500 条。" : "";
     }
     sayInAssociate("");
     associating = item;

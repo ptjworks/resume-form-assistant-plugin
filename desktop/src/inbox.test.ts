@@ -189,3 +189,12 @@ test('the 待处理 badge adds new mail to filed mail and never shows a made-up 
   assert.equal(todoCount(0, 0), '0');
   assert.equal(todoCount(null, 4), '', '读不到待归档时不报数');
 });
+
+test('a processed mail whose job could not be read is still listed, with a plain reason instead of a blank', () => {
+  const rows = buildInboxRows({
+    tab: 'done', candidates: [], stored: [], bin: [],
+    done: [evidence('d1', { company: '', title: '' })],
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.sub, '所属投递读取失败');
+});

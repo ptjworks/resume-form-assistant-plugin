@@ -285,7 +285,7 @@ export function buildInboxRows(input: {
   if (input.tab === "bin") return input.bin.map((item) => evidenceRow(item, "bin"));
   const rows: InboxRow[] =
     input.tab === "done"
-      ? input.done.map((item) => evidenceRow(item, "done", applicationLabel(item)))
+      ? input.done.map((item) => evidenceRow(item, "done", applicationLabel(item) || "所属投递读取失败"))
       : [
           ...input.candidates.map((candidate): InboxRow => ({
             key: `c:${candidate.id}`,

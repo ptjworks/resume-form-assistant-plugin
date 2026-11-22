@@ -384,8 +384,12 @@ pub fn list_associated(
             continue;
         };
         if !names.contains_key(&app_id) {
+            // 某条投递读不出来（记录损坏、被锁）不该让整个「已处理」列表打不开：
+            // 那一条先空着名字，界面上写「所属投递读取失败」，其余邮件照常列出。
             let pair = store
-                .get_application(&app_id)?
+                .get_application(&app_id)
+                .ok()
+                .flatten()
                 .map(|app| (app.company.clone(), app.title.clone()))
                 .unwrap_or_default();
             names.insert(app_id.clone(), pair);

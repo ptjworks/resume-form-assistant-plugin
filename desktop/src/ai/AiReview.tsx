@@ -495,11 +495,12 @@ export function AiReview({
   const mentioned = (company: string) => company.trim() !== "" && body.includes(company.trim());
   const rankedApplications = [...applications].sort((a, b) => Number(mentioned(b.company)) - Number(mentioned(a.company)));
   const choicePool = identifiedChoices.length && !changing ? identifiedChoices : rankedApplications;
-  // 只有一条可选时替用户选上，免得窗里写着「属于：某某」按钮却是灰的。
+  // 只有 AI 明确认出了唯一一条投递时才替用户选上（比如另一条候选已经不在了）；
+  // AI 没认出时哪怕只有一条投递也不预选，要用户自己点——邮件可能和它毫无关系。
   useEffect(() => {
-    if (!compact || phase !== "summary" || !draft || draft.applicationId || choicePool.length !== 1) return;
-    setDraft({ ...draft, applicationId: choicePool[0]!.id });
-  }, [compact, phase, draft, choicePool.length === 1 ? choicePool[0]!.id : ""]);
+    if (!compact || phase !== "summary" || !draft || draft.applicationId || changing || identifiedChoices.length !== 1) return;
+    setDraft({ ...draft, applicationId: identifiedChoices[0]!.id });
+  }, [compact, phase, draft, changing, identifiedChoices.length === 1 ? identifiedChoices[0]!.id : ""]);
   const rerun = () => {
     // 重新整理会重新走一遍「先看将发送的内容」，发送后才多花一次调用。
     setPhase("idle");
@@ -521,7 +522,7 @@ export function AiReview({
   const resultDialog = (() => {
     if (!(compact && phase === "summary" && suggestion && draft)) return null;
     const choices = choicePool.map((c) => ({ id: c.id, label: `${c.company} · ${c.title}`, likely: (!identifiedChoices.length || changing) && mentioned(c.company) }));
-    const only = choices.length === 1 && !changing ? choices[0]! : null;
+    const only = identifiedChoices.length === 1 && !changing ? choices[0]! : null;
     const canChange = identifiedChoices.length > 0 && !changing && applications.length > 1;
     const hasTodos = suggestion.todos.length > 0;
     return (
@@ -564,7 +565,9 @@ export function AiReview({
             <p className="ai-result-app">还没有可以关联的投递。先到「投递」页新增一条，再回来整理。</p>
           ) : (
             <>
-              <p className="ai-result-app">属于哪条投递？</p>
+              <p className="ai-result-app">
+                {identifiedChoices.length && !changing ? "属于哪条投递？" : changing ? "换成哪条投递？" : "AI 没认出是哪条投递，请点选一条："}
+              </p>
               <ul className="ai-pick-list">
                 {choices.map((choice) => (
                   <li key={choice.id}>

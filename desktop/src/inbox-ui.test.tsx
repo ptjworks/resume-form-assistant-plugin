@@ -605,3 +605,26 @@ test("an AI confirmation with a reminder problem stays in the status bar with ×
     expect(el("inbox-status").querySelector(".status-close")).toBeTruthy();
   } finally { vi.useRealTimers(); }
 });
+
+test("a background mailbox update keeps the keyboard on the same row and the list where it was scrolled", async () => {
+  const h = setup({ list_inbox_cmd: () => [MAIL] });
+  h.inbox.setMailbox(mailbox([candidate("c1")]));
+  await h.inbox.refresh();
+  const row = el("inbox-list").querySelector<HTMLElement>('[data-row="e:e1"]')!;
+  row.focus();
+  el("inbox-list").scrollTop = 0;
+  h.inbox.setMailbox(mailbox([candidate("c1")], { note: "1 个邮箱检查异常，请到「设置 → 邮箱」查看原因。" }));
+  const again = el("inbox-list").querySelector<HTMLElement>('[data-row="e:e1"]')!;
+  expect(again).not.toBe(row);
+  expect(document.activeElement).toBe(again);
+});
+
+test("the associate hint no longer promises that search reaches every job", async () => {
+  const many = { total: 800, items: [{ id: "a1", company: "星河科技", title: "前端" }] };
+  const h = setup({ list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL), list_applications_cmd: () => many });
+  await h.inbox.refresh();
+  fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
+  fireEvent.click(await h.reader.findByRole("button", { name: "关联到投递" }));
+  await waitFor(() => expect(el("inbox-associate-hint").textContent).toContain("最近 500 条"));
+  expect(el("inbox-associate-hint").textContent).not.toContain("搜索");
+});

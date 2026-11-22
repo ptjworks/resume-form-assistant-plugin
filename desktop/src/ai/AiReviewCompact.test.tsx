@@ -185,13 +185,13 @@ test("模型没认出是哪条投递时，邮件里提到的公司排在最前�
     return base(none)(command, args);
   });
   await analyse(user);
-  await screen.findByText("属于哪条投递？");
+  await screen.findByText("AI 没认出是哪条投递，请点选一条：");
   await waitFor(() => expect(screen.getByText("邮件里提到")).toBeTruthy());
   const rows = screen.getAllByRole("button").filter((b) => b.closest(".ai-pick-list")).map((b) => b.textContent);
   expect(rows[0]).toContain("星河科技 · 前端");
 });
 
-test("只有一条可选投递时自动选上（含模型未指认但仅有单条在办投递），按钮立即可点", async () => {
+test("AI 没认出而你只有一条投递时不替用户选：显示成一行可点的列表，点了才亮", async () => {
   const user = userEvent.setup();
   const none = suggestion({ candidates: [] });
   const calls = mount((command, args) => {
@@ -199,14 +199,14 @@ test("只有一条可选投递时自动选上（含模型未指认但仅有单�
     return base(none)(command, args);
   });
   await analyse(user);
-  await screen.findByText("孤星科技 · 全栈");
+  await screen.findByText("AI 没认出是哪条投递，请点选一条：");
   const confirmBtn = screen.getByRole("button", { name: "加入日历" }) as HTMLButtonElement;
+  expect(confirmBtn.disabled).toBe(true);
+  await user.click(await screen.findByRole("button", { name: "孤星科技 · 全栈" }));
   await waitFor(() => expect(confirmBtn.disabled).toBe(false));
   await user.click(confirmBtn);
   await waitFor(() =>
-    expect(calls.find((call) => call.command === "confirm_suggestion_cmd")?.args).toMatchObject({
-      args: { applicationId: "only-1" },
-    }),
+    expect(calls.find((call) => call.command === "confirm_suggestion_cmd")?.args).toMatchObject({ args: { applicationId: "only-1" } }),
   );
 });
 
@@ -216,7 +216,7 @@ test("模型认出唯一候选但还有其他在办投递时，可点「不是�
   await analyse(user);
   await screen.findByText("合成科技 · 后端实习");
   await user.click(await screen.findByRole("button", { name: "不是这条？换一条" }));
-  await screen.findByText("属于哪条投递？");
+  await screen.findByText("换成哪条投递？");
   await user.click(screen.getByRole("button", { name: "别家 · 前端" }));
   await user.click(screen.getByRole("button", { name: "加入日历" }));
   await waitFor(() =>
@@ -249,19 +249,6 @@ test("结果窗点「不准？重新整理」回到外发预览，发送前不�
   expect(await screen.findByRole("button", { name: "发送" })).toBeTruthy();
   expect(calls.filter((call) => call.command === "preview_analysis_cmd")).toHaveLength(2);
   expect(calls.filter((call) => call.command === "analyze_evidence_cmd")).toHaveLength(1);
-});
-
-test("只有一条可选的投递时替用户选上，「加入日历」不是灰的", async () => {
-  const user = userEvent.setup();
-  const calls = mount((command, args) => {
-    if (command === "list_applications_cmd") return { total: 1, items: [{ id: "only", company: "星河科技", title: "前端" }] };
-    return base(suggestion({ candidates: [] }))(command, args);
-  });
-  await analyse(user);
-  await screen.findByText("星河科技 · 前端");
-  await waitFor(() => expect((screen.getByRole("button", { name: "加入日历" }) as HTMLButtonElement).disabled).toBe(false));
-  await user.click(screen.getByRole("button", { name: "加入日历" }));
-  await waitFor(() => expect(calls.find((call) => call.command === "confirm_suggestion_cmd")?.args).toMatchObject({ args: { applicationId: "only" } }));
 });
 
 test("一条投递都没有时说明去哪新增，按钮保持灰", async () => {
@@ -308,4 +295,14 @@ test("按钮就是面板根节点的直接子元素：通知页的样式选择�
   const button = await screen.findByRole("button", { name: "AI 整理" });
   expect(button.parentElement?.matches("section.ai-panel.is-compact")).toBe(true);
   expect(button.classList.contains("ai-start")).toBe(true);
+});
+
+test("AI 明确认出了唯一一条投递：直接选上，按钮可点", async () => {
+  const user = userEvent.setup();
+  const calls = mount(base(suggestion()));
+  await analyse(user);
+  await screen.findByText("合成科技 · 后端实习");
+  expect((screen.getByRole("button", { name: "加入日历" }) as HTMLButtonElement).disabled).toBe(false);
+  await user.click(screen.getByRole("button", { name: "加入日历" }));
+  await waitFor(() => expect(calls.find((c) => c.command === "confirm_suggestion_cmd")?.args).toMatchObject({ args: { applicationId: "app-a" } }));
 });
