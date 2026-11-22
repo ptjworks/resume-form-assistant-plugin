@@ -156,6 +156,9 @@ export type DuePrecision = "datetime" | "date" | "none";
 /** 一条待办的提醒现在处于什么状态（D10）。这是本机投递状态，不是申请历史。 */
 export type ReminderState = "none" | "scheduled" | "fired" | "missed" | "unsupported";
 
+/** 待办的类型（#551）：用户在新增 / 编辑日程时选的；没选过的旧待办是 null，界面按标题推断。 */
+export type TodoKind = "assessment" | "written" | "interview" | "other";
+
 export interface TodoView {
   id: string;
   applicationId: string;
@@ -168,6 +171,7 @@ export interface TodoView {
   status: TodoStatus;
   interviewRound?: number | null;
   sourceEventId?: string | null;
+  kind?: TodoKind | null;
   reminderState: ReminderState;
   reminderScheduledForUtc?: string | null;
   company?: string | null;

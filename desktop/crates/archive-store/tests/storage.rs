@@ -793,6 +793,7 @@ fn todo_of(db: &ArchiveStore, app: &str, title: &str, due: TodoDue) -> Todo {
         remind_at_utc: None,
         interview_round: None,
         source_event_id: None,
+        kind: None,
     })
     .unwrap()
 }
@@ -1069,6 +1070,7 @@ fn todo_date_precision_and_nullable_patch_survive_reopen() {
             remind_at_utc: None,
             interview_round: Some(1),
             source_event_id: None,
+            kind: None,
         })
         .unwrap();
     let updated = db
@@ -1376,4 +1378,79 @@ fn a_suggested_todo_stored_before_time_zones_existed_still_reads() {
         serde_json::from_str(r#"{"title":"完成测评","due":{"date":"2026-09-25"}}"#).unwrap();
     assert_eq!(old.time_zone, None);
     assert_eq!(old.due, TodoDue::Date("2026-09-25".into()));
+}
+
+#[test]
+fn a_todo_keeps_the_kind_the_user_chose_and_can_clear_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = ArchiveStore::open(cfg.clone()).unwrap();
+    let a = db.create_application(app()).unwrap();
+    let created = db
+        .create_todo(NewTodo {
+            application_id: a.id.clone(),
+            title: "技术二面".into(),
+            due: TodoDue::None,
+            time_zone: None,
+            remind_at_utc: None,
+            interview_round: None,
+            source_event_id: None,
+            kind: Some(TodoKind::Written),
+        })
+        .unwrap();
+    assert_eq!(created.kind, Some(TodoKind::Written), "标题写着面试也不改用户选的类型");
+    // 不给就不动；改标题不会清掉类型。
+    let renamed = db
+        .update_todo(&created.id, TodoPatch { title: Some("改个名".into()), ..Default::default() })
+        .unwrap();
+    assert_eq!(renamed.kind, Some(TodoKind::Written));
+    let changed = db
+        .update_todo(&created.id, TodoPatch { kind: Some(Some(TodoKind::Other)), ..Default::default() })
+        .unwrap();
+    assert_eq!(changed.kind, Some(TodoKind::Other));
+    // 显式给 None 才是清掉，回到按标题推断。
+    let cleared = db
+        .update_todo(&created.id, TodoPatch { kind: Some(None), ..Default::default() })
+        .unwrap();
+    assert_eq!(cleared.kind, None);
+    db.close().unwrap();
+    let again = ArchiveStore::open(cfg).unwrap();
+    assert_eq!(again.get_todo(&created.id).unwrap().unwrap().kind, None, "重新打开后还在");
+}
+
+#[test]
+fn a_v10_archive_gains_the_kind_column_and_its_old_todos_stay_unset() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let old = ArchiveStore::open_with_migrations(cfg.clone(), &MIGRATIONS[..10]).unwrap();
+    let app_id = old.create_application(app()).unwrap().id.clone();
+    old.close().unwrap();
+    {
+        // 旧版本写下的待办：没有 kind 这一列。
+        let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+        raw.execute(
+            "INSERT INTO todos (id, application_id, title, due_precision, status, created_at, updated_at) \
+             VALUES ('t-old', ?1, '旧待办', 'none', 'open', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z')",
+            [&app_id],
+        )
+        .unwrap();
+    }
+    let upgraded = ArchiveStore::open(cfg.clone()).unwrap();
+    assert_eq!(upgraded.schema_version(), 11);
+    assert!(upgraded.migration_backup.as_ref().is_some_and(|path| path.is_file()), "升级前先备份");
+    let todo = upgraded.get_todo("t-old").unwrap().unwrap();
+    assert_eq!(todo.title, "旧待办");
+    assert_eq!(todo.kind, None, "旧待办没有类型，界面按标题推断");
+}
+
+#[test]
+fn the_kind_column_refuses_values_outside_the_four_kinds() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let db = ArchiveStore::open(cfg.clone()).unwrap();
+    let a = db.create_application(app()).unwrap();
+    let todo = todo_of(&db, &a.id, "x", TodoDue::None);
+    db.close().unwrap();
+    let raw = rusqlite::Connection::open(cfg.db_path()).unwrap();
+    assert!(raw.execute("UPDATE todos SET kind = 'coffee' WHERE id = ?1", [&todo.id]).is_err());
 }

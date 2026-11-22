@@ -35,6 +35,22 @@
   --ui-dot-idle: #a1a1aa;
   --ui-dot-error: #ef4444;
   --ui-topbar-h: 52px;
+  /* 日历页（#551）：选中格、逾期、事件类型的浅色底（面试沿用品牌浅青）。 */
+  --ui-brand-wash: #f4faf8;
+  --ui-brand-pale-hover: #d4ece5;
+  --ui-brand-edge: #9fd0c5;
+  --ui-danger: #dc2626;
+  --ui-danger-pale: #fef2f2;
+  --ui-danger-line: #fecaca;
+  --ui-warn-ink: #805811;
+  --ui-kind-interview-bg: #e6f4f0;
+  --ui-kind-interview-ink: #235d52;
+  --ui-kind-assessment-bg: #fef3c7;
+  --ui-kind-assessment-ink: #92400e;
+  --ui-kind-written-bg: #e0f2fe;
+  --ui-kind-written-ink: #075985;
+  --ui-kind-other-bg: #f4f4f5;
+  --ui-kind-other-ink: #52525b;
 }
 
 * { box-sizing: border-box; }
@@ -735,10 +751,8 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 
 /* 待办与招聘通知（#262）：与申请页同一套工作区——中性底色、白色圆角卡片、左列表右详情，
    列表与详情各自滚动。 */
-#view-todos { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px 24px; background: var(--surface); }
 .workspace-shell { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, 42%) minmax(0, 1fr); gap: 20px; }
 .workspace-shell.is-empty { grid-template-columns: minmax(0, 1fr); }
-#todo-shell.is-empty .workspace-detail-card { display: none; }
 .workspace-list-card, .workspace-detail-card { min-width: 0; min-height: 0; background: var(--panel); border: 1px solid var(--card-line); border-radius: 16px; box-shadow: var(--shadow); }
 .workspace-list-card { display: flex; flex-direction: column; overflow: hidden; }
 .workspace-detail-card { overflow: auto; }
@@ -754,100 +768,190 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .workspace-help > summary { font-weight: 600; }
 .workspace-help > summary span { margin-left: 10px; color: var(--muted); font-size: 12px; font-weight: 400; }
 .workspace-help .note { margin-top: 10px; font-size: 13px; line-height: 1.7; }
-.segmented { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; margin-top: 14px; padding: 3px; border-radius: 10px; background: #eef1f4; }
-.segmented button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 3px 6px; border: 0; border-radius: 8px; background: transparent; color: #4a5361; font-size: 13px; white-space: nowrap; }
-.segmented button:hover:not(:disabled) { background: #e3e8ec; }
-.segmented button[aria-pressed="true"], .segmented button[aria-pressed="true"]:hover:not(:disabled) { background: var(--panel); color: var(--accent); font-weight: 600; box-shadow: 0 1px 3px #1c23301f; }
-.segment-count { color: var(--muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.segment-count:empty { display: none; }
-#view-todos { gap: 14px; }
-#todo-shell { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
-#todo-shell.is-empty { grid-template-columns: minmax(0, 1fr); }
-.todo-page-header { flex: none; align-items: center; flex-wrap: wrap; }
-.todo-page-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.todo-page-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 10px; }
-.todo-page-heading h1 { margin: 0; white-space: nowrap; }
-.todo-page-icon { display: grid; place-items: center; flex: 0 0 44px; height: 44px; border-radius: 12px; color: var(--accent-strong); background: var(--accent-pale); }
-.todo-page-icon .icon { width: 23px; height: 23px; }
-#todo-digest { font-size: 12px; color: var(--danger); white-space: nowrap; }
-.todo-list-head { flex: none; padding: 12px 14px 0; }
-.todo-list-head .segmented { margin: 0; }
-#todo-status { flex: none; margin: 9px 14px 0; font-size: 13px; }
-#todo-status:empty, #todo-form-status:empty, #inbox-paste-status:empty, #inbox-associate-status:empty { display: none; }
+#inbox-paste-status:empty, #inbox-associate-status:empty { display: none; }
 .todo-list-note { margin: 12px 6px; font-size: 13px; }
-#todo-list { padding: 10px 14px 16px; }
-.todo-group + .todo-group { margin-top: 16px; }
-.todo-group h2 { display: flex; align-items: center; gap: 7px; margin: 4px 8px 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
-.todo-group[data-bucket="overdue"] > h2 { color: var(--danger); }
 .chip { padding: 0 8px; border-radius: 999px; background: #edf0f4; color: var(--muted); font-size: 11px; font-weight: 500; }
-.todo-group .chip { padding: 0; color: var(--muted); background: transparent; font-variant-numeric: tabular-nums; }
-.todo-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.todo-item { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 54px; padding: 6px 9px 6px 6px; border: 1px solid transparent; border-radius: 9px; }
-.todo-item + .todo-item::before { content: ""; position: absolute; inset: -2px 9px auto 41px; border-top: 1px solid var(--line); }
-.todo-item:hover { background: var(--bg); }
-.todo-item.active { border-color: var(--accent-mark); background: var(--accent-pale); }
-.todo-check { position: relative; z-index: 1; display: grid; place-items: center; width: 28px; height: 32px; min-height: 0; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--accent); }
-.todo-check::before { content: ""; position: absolute; width: 18px; height: 18px; border: 1.5px solid #909e9b; border-radius: 50%; background: var(--panel); }
-button.todo-check:hover:not(:disabled) { background: transparent; }
-button.todo-check:hover:not(:disabled)::before { border-color: var(--accent); background: var(--accent-mark); }
-.todo-check .icon { position: relative; width: 12px; height: 12px; stroke-width: 2.6; }
-.todo-check[data-status="done"] { color: #fff; }
-.todo-check[data-status="done"]::before { border-color: var(--accent); background: var(--accent); }
-.todo-check[data-status="cancelled"] { color: var(--muted); }
-.todo-check[data-status="cancelled"]::before { border-color: var(--line); background: var(--bg); }
-.todo-select { display: grid; gap: 1px; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; text-align: left; }
-.todo-select:hover:not(:disabled) { background: transparent; }
-.todo-select::after { content: ""; position: absolute; inset: 0; border-radius: 9px; }
-.todo-select:focus-visible { outline: 0; }
-.todo-select:focus-visible::after { outline: 2px solid var(--accent); outline-offset: 1px; }
-.todo-select strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
-.todo-where { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
-.todo-where > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.todo-where .icon { flex: none; width: 13px; height: 13px; }
-.todo-round { flex: none; font-size: 11px; }
-.todo-item[data-status="done"] .todo-select strong, .todo-item[data-status="cancelled"] .todo-select strong { color: var(--muted); text-decoration: line-through; }
-.due-badge { flex: none; color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.due-badge[data-tone="overdue"] { color: var(--danger); }
-.due-badge[data-tone="today"] { color: #805811; }
-.todo-filter-empty { margin: 8px 4px; padding: 26px 16px; text-align: center; }
-.todo-filter-empty p { margin: 0; font-size: 13px; }
-.todo-filter-empty p:first-child { margin-bottom: 4px; font-size: 15px; font-weight: 600; }
+/* 日历页（#551）：左侧完整月历 + 右侧常驻选中日详情。只用 --ui-* 变量。
+   窄于 760px 时右栏落到月历下面，整页纵向滚动。 */
+#view-todos { height: 100%; min-height: 0; padding: 0; background: var(--ui-canvas); font-family: var(--ui-font); color: var(--ui-ink); overflow: hidden; }
+.cal-shell { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 36%, 460px); }
+.cal-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 16px 20px 16px 24px; overflow: auto; }
+.cal-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cal-head-title { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.cal-head-title h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 650; letter-spacing: -.015em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cal-nav { display: flex; align-items: center; gap: 4px; }
+.cal-nav button { min-height: 28px; border-color: var(--ui-line); border-radius: 7px; background: var(--ui-surface); color: var(--ui-sub); font-size: 13px; }
+.cal-nav button:hover:not(:disabled) { background: var(--ui-line-soft); border-color: var(--ui-line); color: var(--ui-ink); }
+.cal-nav-btn { display: grid; place-items: center; width: 28px; padding: 0; }
+.cal-today { padding: 0 12px; }
+.cal-head > button.primary { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 14px; border-radius: 8px; background: var(--ui-brand); border-color: var(--ui-brand); font-size: 13px; }
+.cal-head > button.primary:hover:not(:disabled) { background: var(--ui-brand-hover); border-color: var(--ui-brand-hover); }
+/* 逾期提示：标题行里的小标签，不占整行。 */
+.cal-overdue-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 11px 0 9px; border: 1px solid var(--ui-danger-line); border-radius: 13px; background: var(--ui-danger-pale); color: var(--ui-danger); font-size: 12.5px; white-space: nowrap; }
+.cal-overdue-chip:hover:not(:disabled) { background: #fee2e2; border-color: var(--ui-danger-line); }
+.cal-overdue-chip:disabled { opacity: 1; cursor: default; }
+.cal-overdue-dot { width: var(--ui-dot-size); height: var(--ui-dot-size); border-radius: 50%; background: var(--ui-danger); }
+/* 状态提示：浮在左侧栏底部，出现和消失都不会把月历顶动。 */
+.cal-toast { position: fixed; z-index: 20; left: 24px; bottom: 18px; display: flex; align-items: center; gap: 8px; max-width: min(520px, calc(100% - clamp(360px, 36%, 460px) - 48px)); padding: 8px 12px; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); box-shadow: 0 6px 20px #18181b1a; }
+/* 没有提示时不用 hidden 隐藏（那样读屏听不到随后写进去的文字），而是缩成看不见的一点，live region 一直在。 */
+.cal-toast[data-empty="true"] { padding: 0; gap: 0; border: 0; box-shadow: none; opacity: 0; pointer-events: none; width: 1px; height: 1px; max-width: 1px; overflow: hidden; }
+.cal-toast .note { margin: 0; font-size: 13px; }
+.cal-toast-close { flex: none; display: grid; place-items: center; width: 22px; min-height: 22px; padding: 0; border: 0; border-radius: 11px; background: transparent; color: var(--ui-muted); font-size: 16px; line-height: 1; }
+.cal-toast-close:hover:not(:disabled) { background: var(--ui-line-soft); color: var(--ui-ink); }
+#todo-status:empty, #todo-form-status:empty, #inbox-paste-status:empty { display: none; }
+.cal-board { flex: 1 0 auto; display: flex; flex-direction: column; }
+.cal-board .pane-error { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.cal-grid { flex: 1; display: flex; flex-direction: column; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); overflow: hidden; }
+.cal-week, .cal-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.cal-week { border-bottom: 1px solid var(--ui-line-soft); background: var(--ui-canvas); }
+.cal-week span { padding: 6px 0; text-align: center; color: var(--ui-muted); font-size: 12px; }
+.cal-days { flex: 1; display: flex; flex-direction: column; }
+.cal-row { flex: 1 1 0; min-height: 68px; }
+.cal-cell { position: relative; min-width: 0; min-height: 60px; display: flex; flex-direction: column; gap: 1px; padding: 4px 4px 5px; border-right: 1px solid var(--ui-line-soft); border-bottom: 1px solid var(--ui-line-soft); cursor: pointer; }
+.cal-cell:last-child { border-right: 0; }
+.cal-cell.is-out .cal-day { color: var(--ui-faint); font-weight: 400; }
+.cal-cell.is-out .cal-pills { opacity: .6; }
+.cal-cell:hover { background: var(--ui-canvas); }
+.cal-cell.is-selected { background: var(--ui-brand-wash); box-shadow: inset 0 0 0 1px var(--ui-brand-edge); }
+.cal-cell-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; }
+.cal-day { display: grid; place-items: center; min-width: 22px; min-height: 22px; padding: 0 5px; border: 0; border-radius: 11px; background: transparent; color: var(--ui-ink); font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.cal-day:hover:not(:disabled) { background: var(--ui-line-soft); }
+.cal-cell.is-today .cal-day, .cal-cell.is-today .cal-day:hover:not(:disabled) { background: var(--ui-brand); color: #fff; font-weight: 600; }
+.cal-pills { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cal-pills li { min-width: 0; }
+.cal-pill, .cal-more { display: block; width: 100%; min-height: 0; padding: 1px 6px; border: 0; border-radius: 5px; font-size: 11px; line-height: 16px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-pill[data-kind="interview"] { background: var(--ui-kind-interview-bg); color: var(--ui-kind-interview-ink); }
+.cal-pill[data-kind="assessment"] { background: var(--ui-kind-assessment-bg); color: var(--ui-kind-assessment-ink); }
+.cal-pill[data-kind="written"] { background: var(--ui-kind-written-bg); color: var(--ui-kind-written-ink); }
+.cal-pill[data-kind="other"] { background: var(--ui-kind-other-bg); color: var(--ui-kind-other-ink); }
+.cal-pill:hover:not(:disabled) { border-color: transparent; filter: brightness(.97); }
+.cal-pill[data-state="done"] { background: var(--ui-line-soft); color: var(--ui-faint); text-decoration: line-through; }
+.cal-pill[data-state="overdue"] { background: var(--ui-danger-pale); color: var(--ui-danger); box-shadow: inset 0 0 0 1px var(--ui-danger-line); }
+.cal-more { width: auto; flex: none; background: transparent; color: var(--ui-muted); padding-inline: 5px; font-weight: 600; }
+.cal-more:hover:not(:disabled) { background: var(--ui-line-soft); border-color: transparent; color: var(--ui-ink); }
+.cal-day:focus-visible, .cal-pill:focus-visible, .cal-more:focus-visible { outline-offset: 1px; }
 
-.todo-detail { display: grid; gap: 17px; padding: 20px; }
-.todo-detail-title { display: flex; align-items: flex-start; gap: 8px; }
-.todo-detail-title h2 { flex: 1; margin: 0; font-size: 21px; line-height: 1.4; font-weight: 650; overflow-wrap: anywhere; min-width: 0; }
-.todo-detail-application { display: flex; align-items: flex-start; gap: 7px; margin: 6px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-.todo-detail-application .icon, .todo-detail-row > .icon { flex: none; margin-top: 2px; }
-.todo-status-chip { flex: none; padding: 2px 8px; border-radius: 6px; background: var(--bg); color: var(--muted); font-size: 12px; }
-.todo-status-chip[data-status="done"] { background: var(--accent-pale); color: var(--accent-strong); }
-.todo-detail-menu { position: relative; flex: none; }
-.todo-detail-menu > summary { display: grid; place-items: center; width: 30px; height: 28px; list-style: none; border-radius: 6px; color: var(--muted); }
-.todo-detail-menu > summary::-webkit-details-marker { display: none; }
-.todo-detail-menu > summary:hover { background: var(--bg); }
-.todo-detail-menu > summary .icon { stroke-width: 3; }
-.todo-detail-menu > button { position: absolute; z-index: 2; inset: calc(100% + 4px) 0 auto auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; box-shadow: var(--shadow); }
-.todo-cancel-action { color: var(--danger); }
-.todo-schedule { border: 1px solid var(--line); border-radius: 10px; }
-.todo-detail-row { display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px; }
-.todo-detail-row + .todo-detail-row { border-top: 1px solid var(--line); }
-.todo-detail-row > .icon { color: var(--accent); }
+.cal-folds { flex: none; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); }
+.cal-fold + .cal-fold { border-top: 1px solid var(--ui-line-soft); }
+.cal-fold > summary { display: flex; align-items: center; gap: 6px; padding: 9px 14px; color: var(--ui-sub); font-size: 13px; cursor: pointer; }
+.cal-fold > summary:hover { color: var(--ui-ink); }
+.cal-count { color: var(--ui-muted); font-variant-numeric: tabular-nums; }
+.cal-undated, .cal-fold-body { padding: 0 14px 12px; }
+.cal-undated ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.cal-undated p { margin: 0; font-size: 13px; }
+.cal-undated-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 4px 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; text-align: left; font-size: 13px; }
+.cal-undated-item:hover:not(:disabled) { background: var(--ui-canvas); border-color: transparent; }
+.cal-undated-item.is-active, .cal-undated-item.is-active:hover:not(:disabled) { background: var(--ui-brand-wash); border-color: var(--ui-brand-edge); }
+.cal-undated-item strong { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.cal-undated-item[data-status="done"] strong { color: var(--ui-faint); text-decoration: line-through; }
+.cal-undated-where { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ui-muted); font-size: 12px; }
+.kind-dot { flex: none; width: var(--ui-dot-size); height: var(--ui-dot-size); border-radius: 50%; background: var(--ui-kind-other-ink); }
+[data-kind="interview"] > .kind-dot { background: var(--ui-brand); }
+[data-kind="assessment"] > .kind-dot { background: var(--ui-dot-pending); }
+[data-kind="written"] > .kind-dot { background: var(--ui-kind-written-ink); }
+.cal-fold-body .note { max-width: 68ch; margin: 0 0 8px; font-size: 12.5px; }
+.cal-lifecycle { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-width: 68ch; color: var(--ui-muted); font-size: 12.5px; line-height: 1.6; }
+.cal-lifecycle strong { margin-right: 8px; color: var(--ui-sub); font-weight: 600; }
+
+.cal-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--ui-line); background: var(--ui-surface); }
+.cal-side-head { flex: none; padding: 16px 18px 12px; border-bottom: 1px solid var(--ui-line-soft); }
+.cal-side-head h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 650; }
+.cal-side-head p { margin: 2px 0 0; color: var(--ui-muted); font-size: 12.5px; }
+.cal-side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; overflow: auto; }
+.cal-side-note { margin: 0; font-size: 13px; }
+.cal-side-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 12px; text-align: center; }
+.cal-side-empty-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--ui-brand-pale); color: var(--ui-brand); }
+.cal-side-empty-icon .icon { width: 22px; height: 22px; }
+.cal-side-empty p { margin: 0; font-size: 13px; line-height: 1.7; }
+.cal-side-empty-title { color: var(--ui-ink); font-size: 14px; font-weight: 600; }
+/* 「在这天添加日程」：浅绿底、绿色描边和字，固定在右栏底部的独立底栏里；当天没日程时放在空状态中央。 */
+.cal-side-foot { flex: none; padding: 10px 14px; border-top: 1px solid var(--ui-line-soft); background: var(--ui-surface); }
+.cal-add { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 38px; border: 1px solid var(--ui-brand-edge); border-radius: 8px; background: var(--ui-brand-pale); color: var(--ui-brand-hover); font-size: 13px; font-weight: 600; }
+.cal-add .icon { width: 15px; height: 15px; stroke-width: 2.2; }
+.cal-add:hover:not(:disabled) { background: var(--ui-brand-pale-hover); border-color: var(--ui-brand); color: var(--ui-brand-hover); }
+.cal-side-empty .cal-add { width: auto; margin-top: 8px; padding: 0 20px; }
+
+.cal-card { display: grid; gap: 8px; padding: 12px 12px 10px; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); }
+.cal-card[aria-current="true"] { border-color: var(--ui-brand-edge); background: var(--ui-brand-wash); }
+.cal-card-top { display: flex; align-items: center; gap: 6px; min-height: 24px; }
+.kind-badge { padding: 1px 8px; border-radius: 5px; font-size: 11.5px; font-weight: 600; }
+.kind-badge[data-kind="interview"] { background: var(--ui-kind-interview-bg); color: var(--ui-kind-interview-ink); }
+.kind-badge[data-kind="assessment"] { background: var(--ui-kind-assessment-bg); color: var(--ui-kind-assessment-ink); }
+.kind-badge[data-kind="written"] { background: var(--ui-kind-written-bg); color: var(--ui-kind-written-ink); }
+.kind-badge[data-kind="other"] { background: var(--ui-kind-other-bg); color: var(--ui-kind-other-ink); }
+.cal-flag { padding: 1px 7px; border-radius: 5px; background: var(--ui-line-soft); color: var(--ui-muted); font-size: 11.5px; }
+.cal-flag[data-tone="overdue"] { background: var(--ui-danger-pale); color: var(--ui-danger); }
+.cal-card h3 { margin: 0; font-size: 15px; line-height: 1.45; font-weight: 650; overflow-wrap: anywhere; }
+.cal-card[data-state="done"] h3 { color: var(--ui-faint); text-decoration: line-through; }
+.cal-card-where { display: flex; align-items: flex-start; gap: 6px; margin: -2px 0 0; color: var(--ui-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.cal-card-where .icon { flex: none; width: 14px; height: 14px; margin-top: 3px; }
+.cal-card-facts { border: 1px solid var(--ui-line-soft); border-radius: 8px; background: var(--ui-surface); }
+.todo-detail-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; }
+.todo-detail-row + .todo-detail-row { border-top: 1px solid var(--ui-line-soft); }
+.todo-detail-row > .icon { flex: none; width: 14px; height: 14px; margin-top: 3px; color: var(--ui-brand); }
 .todo-detail-row > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.todo-detail-row > div > span { display: block; color: var(--muted); font-size: 12px; }
-.todo-detail-row strong { display: block; font-size: 14px; font-weight: 600; }
-.todo-detail-row > .due-badge { padding: 1px 6px; border-radius: 5px; background: #fcf1f1; }
-.todo-detail-row > .due-badge[data-tone="today"] { background: #fdf7ea; }
-.todo-reminder p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-.todo-reminder[data-tone="warn"] p { color: #805811; }
-.todo-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.todo-detail-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 35px; font-size: 13px; }
-.todo-detail-empty { display: grid; place-content: center; min-height: 160px; height: 100%; padding: 24px; text-align: center; }
-.todo-detail-empty p { margin: 0; font-size: 13px; }
-.todo-detail-empty p:first-child { margin-bottom: 4px; font-size: 16px; font-weight: 600; }
-.todo-reminder-help { flex: none; align-self: flex-start; margin-inline: 2px; color: var(--muted); font-size: 12px; }
-.todo-reminder-help .note { max-width: 68ch; margin-top: 4px; }
-.todo-form-options { border-top: 1px solid var(--line); padding-top: 8px; }
-.todo-form-options > summary { padding: 4px 0; color: var(--accent-strong); font-weight: 600; }
-.todo-form-extra { display: grid; gap: 10px; padding-top: 8px; }
+.todo-detail-row > div > span { display: block; color: var(--ui-muted); font-size: 11.5px; }
+.todo-detail-row strong { display: block; font-size: 13px; font-weight: 600; }
+.todo-reminder p { margin: 2px 0 0; color: var(--ui-muted); font-size: 12px; }
+.todo-reminder[data-tone="warn"] p { color: var(--ui-warn-ink); }
+.cal-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.cal-card-actions button:not(.link-button) { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 11px; border-radius: 7px; border-color: var(--ui-line); font-size: 12.5px; }
+.cal-card-actions button.primary { background: var(--ui-brand); border-color: var(--ui-brand); }
+.cal-card-actions button.primary:hover:not(:disabled) { background: var(--ui-brand-hover); border-color: var(--ui-brand-hover); }
+.cal-card-actions .link-button { margin-left: auto; font-size: 12.5px; }
+.todo-detail-menu { position: relative; margin-left: auto; }
+.todo-detail-menu > summary { display: grid; place-items: center; width: 28px; height: 24px; list-style: none; border-radius: 6px; color: var(--ui-muted); cursor: pointer; }
+.todo-detail-menu > summary::-webkit-details-marker { display: none; }
+.todo-detail-menu > summary:hover { background: var(--ui-line-soft); }
+.todo-detail-menu > summary .icon { stroke-width: 3; }
+.todo-detail-menu > button { position: absolute; z-index: 2; right: 0; min-width: 116px; display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border-color: var(--ui-line); border-radius: 7px; background: var(--ui-surface); font-size: 12.5px; white-space: nowrap; box-shadow: 0 4px 14px #18181b1a; }
+.todo-detail-menu > button:nth-of-type(1) { top: calc(100% + 4px); }
+.todo-detail-menu > button:nth-of-type(2) { top: calc(100% + 38px); }
+.todo-cancel-action { color: var(--ui-danger); }
+
+@media (max-width: 760px) {
+  #view-todos { overflow: auto; }
+  .cal-shell { height: auto; min-height: 100%; grid-template-columns: minmax(0, 1fr); }
+  .cal-main { overflow: visible; padding: 14px 16px; }
+  .cal-toast { left: 16px; max-width: calc(100% - 32px); }
+  .cal-side { border-left: 0; border-top: 1px solid var(--ui-line); }
+  .cal-side-body { overflow: visible; }
+}
+
+.todo-form-extra { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--ui-line-soft); }
+.field-cell { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field-label { font-weight: 500; }
+.cell-clear { position: absolute; top: 0; right: 0; min-height: 0; padding: 0 2px; font-size: 12px; }
+/* 日期 | 几点 | 几分：三个框等宽等高。时间那一格占后两列，里面再平分，宽度正好和日期一样。 */
+.when-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.when-row > .field-cell:last-child { grid-column: span 2; }
+.time-pick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.when-row input { min-height: 40px; }
+
+/* 自绘下拉：按钮和输入框同高同边框，列表贴在按钮正下方。 */
+.dd { position: relative; display: block; min-width: 0; }
+.dd > select.dd-native { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+.dd-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font-weight: 400; text-align: left; }
+.dd-btn[data-empty="true"] .dd-value { color: var(--muted); }
+.dd-btn .dd-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-caret { flex: none; width: 14px; height: 14px; color: var(--muted); stroke-width: 2; }
+.dd-btn[aria-expanded="true"] { border-color: var(--ui-brand-edge); box-shadow: 0 0 0 3px var(--ui-brand-pale); }
+.dd-list { position: fixed; z-index: 1000; margin: 0; padding: 4px; list-style: none; overflow-y: auto; border: 1px solid var(--ui-line); border-radius: 8px; background: var(--ui-surface); box-shadow: 0 8px 24px #18181b1f; }
+.dd-list > li { display: flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dd-list > li.is-active { background: var(--ui-line-soft); }
+.dd-list > li[aria-selected="true"] { color: var(--ui-brand); font-weight: 600; }
+.dd-list > li[aria-disabled="true"] { color: var(--ui-faint); cursor: default; }
+.todo-remind-custom { margin-top: 8px; }
+.todo-more-toggle { align-self: flex-start; justify-self: start; font-size: 13px; }
+.todo-kinds { display: flex; gap: 6px; }
+.todo-kinds button { min-height: 28px; padding: 0 14px; border-color: var(--ui-line); border-radius: 14px; background: var(--ui-surface); color: var(--ui-sub); font-size: 12.5px; }
+.todo-kinds button:hover:not(:disabled) { background: var(--ui-canvas); border-color: var(--ui-faint); color: var(--ui-ink); }
+/* 选中的类型常亮：用它在月历上的颜色。 */
+.todo-kinds button[aria-pressed="true"] { font-weight: 600; }
+.todo-kinds button[data-kind-pick="assessment"][aria-pressed="true"] { background: var(--ui-kind-assessment-bg); border-color: var(--ui-kind-assessment-ink); color: var(--ui-kind-assessment-ink); }
+.todo-kinds button[data-kind-pick="written"][aria-pressed="true"] { background: var(--ui-kind-written-bg); border-color: var(--ui-kind-written-ink); color: var(--ui-kind-written-ink); }
+.todo-kinds button[data-kind-pick="interview"][aria-pressed="true"] { background: var(--ui-kind-interview-bg); border-color: var(--ui-kind-interview-ink); color: var(--ui-kind-interview-ink); }
+.todo-kinds button[data-kind-pick="other"][aria-pressed="true"] { background: var(--ui-kind-other-bg); border-color: var(--ui-kind-other-ink); color: var(--ui-kind-other-ink); }
 
 /* 首次空状态：整张卡片给它。 */
 .workspace-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 560px; margin: 0 auto; padding: 56px 24px; text-align: center; }
@@ -1005,22 +1109,14 @@ dialog.ai-review-dialog.is-wide { max-width: 860px; }
 }
 
 @media (max-width: 1180px) {
-  #view-todos { padding: 16px; }
   .workspace-shell { gap: 16px; }
 }
 @media (max-width: 960px) {
   .workspace-header { flex-wrap: wrap; }
 }
-@media (max-width: 780px) {
-  #view-todos { height: auto; min-height: 100%; }
-  #todo-shell { grid-template-columns: minmax(0, 1fr); }
-  #todo-shell .workspace-list-card { max-height: 360px; }
-  #todo-shell .workspace-detail-card { overflow: visible; }
-}
 @media (prefers-reduced-motion: reduce) {
   .ai-spinner { animation: none; }
 }
-#todo-shell.is-empty .todo-list-head { display: none; }
 
 /* Cloud backup reuses the native settings card/dialog hierarchy. */
 

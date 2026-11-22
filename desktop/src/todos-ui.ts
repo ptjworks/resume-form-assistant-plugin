@@ -1,41 +1,61 @@
 import type { NotesApplication } from "./notes/view.ts";
-// D10 待办视图（#262 改版）：左侧按时间分组的列表，右侧选中待办的详情。
-// 新建/编辑在弹窗里；完成、取消、重新打开直接执行并在状态行反馈。
+// D10 日历视图（#551）：左侧完整月历，右侧常驻选中日的详情；底部折叠「未设具体日期的
+// 待办」与「提醒什么时候会响」。新建/编辑仍在弹窗里；完成、取消、重新打开直接执行并在
+// 状态行反馈。
 //
 // 这个视图**完全不依赖系统通知**。未授权、未启用、平台不支持时它照常可用，
 // 只是每条待办的详情里如实写着提醒不会响（产品需求 §5.4）。
+//
+// 类型（测评 / 笔试 / 面试 / 其他）：待办表有一个可空的 `kind` 列（数据库 v11），用户在弹窗里
+// 点选过就用他选的；没选过的（旧待办、AI 从邮件建的）为空，由 todos.ts 的 `inferKind` 按标题与
+// 面试轮次推断。编辑时「推断出来的」只用来显示，不会被悄悄存进库。
 
 import type {
   ApplicationSummary,
   Invoke,
-  OverdueDigest,
   Page,
   ReminderCapability,
+  TodoKind,
   TodoStatus,
   TodoView,
   TodoWriteResult,
 } from "./api.ts";
 import { input, maybe, must, select as selectEl, valueOf } from "./dom.ts";
 import { localInputToUtc, utcToLocalInput } from "./zoned.ts";
-import type { Message, TodoFilter } from "./todos.ts";
+import type { CalendarEntry, Message, MonthRef, RemindPreset } from "./todos.ts";
+import { closeOpenDropdown, consumeEscapeClose, enhanceSelect } from "./dropdown.ts";
 import {
-  BUCKET_LABEL,
   DELIVERY_WINDOW_NOTE,
+  describeWhenNote,
+  presetFromRemind,
+  remindFromPreset,
   EMPTY_TODOS,
-  FILTER_OPTIONS,
+  KIND_LABEL,
+  LIFECYCLE_STATES,
   NEEDS_APPLICATION,
   STATUS_LABEL,
-  bucketOf,
+  WEEKDAY_HEADS,
+  buildCalendar,
+  cellLabel,
+  dayHeading,
+  daySummary,
   describeCapability,
   describeDigest,
   describeDue,
-  describeEmptyFilter,
   describeReminder,
   describeRemindAt,
   describeSave,
   describeStatusChange,
-  groupTodos,
-  shortDue,
+  inferKind,
+  localDay,
+  monthGrid,
+  monthOf,
+  monthTitle,
+  pillText,
+  prefillForDay,
+  shiftMonth,
+  summarizeOverdue,
+  todoDay,
 } from "./todos.ts";
 
 function escapeHtml(value: unknown) {
@@ -85,38 +105,107 @@ const ICON = {
 export interface TodosHost {
   createApplication?: (() => void) | null;
   writeNote?: (application: NotesApplication, suggested: string) => void;
+  /** 「查看对应投递 →」：切到投递页并展开这条申请。 */
+  openApplication?: (applicationId: string) => void;
 }
+
+/** 从别的页面跳进日历时要定位到哪：优先按待办 id，其次按日期。 */
+export interface TodoTarget {
+  id?: string | null;
+  day?: string | null;
+}
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** 几点 / 几分两个下拉：几点的第一项是「不指定」，几分每 5 分钟一档。 */
+function fillTimeSelects(hour: HTMLSelectElement, minute: HTMLSelectElement, blank: string) {
+  hour.innerHTML = `<option value="">${blank}</option>${Array.from({ length: 24 }, (_, h) => `<option value="${pad2(h)}">${h} 点</option>`).join("")}`;
+  minute.innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${pad2(i * 5)}">${pad2(i * 5)} 分</option>`).join("");
+}
+
+/** 两个下拉合成 `HH:MM`；没选几点就是空（不指定时间）。 */
+function readClock(hour: HTMLSelectElement, minute: HTMLSelectElement): string {
+  return hour.value ? `${hour.value}:${minute.value || "00"}` : "";
+}
+
+/** `HH:MM` 回填进两个下拉。分钟不在 5 分钟档上（比如 14:32）时补一个选项，不能悄悄改掉。 */
+function writeClock(hour: HTMLSelectElement, minute: HTMLSelectElement, clock: string) {
+  if (!clock) {
+    hour.value = "";
+    minute.value = "00";
+    return;
+  }
+  const [h = "", m = "00"] = clock.split(":");
+  hour.value = h;
+  if (!minute.innerHTML.includes(`value="${m}"`)) {
+    minute.insertAdjacentHTML("beforeend", `<option value="${m}">${m} 分</option>`);
+  }
+  minute.value = m;
+}
+
+/** 成功、普通提示显示多久（毫秒）。 */
+const TOAST_MS = 3000;
+
+/** 月历格里最多直接画几条胶囊，多出来的收进「+N」。 */
+const PILLS_PER_CELL = 2;
 
 export function mountTodos(
   invoke: Invoke,
   now: () => Date = () => new Date(),
-  { createApplication = null, writeNote }: TodosHost = {},
+  { createApplication = null, writeNote, openApplication }: TodosHost = {},
 ) {
-  const shell = must("todo-shell");
-  const list = must("todo-list");
-  const detail = must("todo-detail");
+  const board = must("todo-list");
+  const side = must("todo-detail");
   const status = must("todo-status");
-  const digest = must("todo-digest");
-  const filterGroup = must("todo-filter");
+  const toast = must("todo-toast");
+  const toastClose = must("todo-toast-close");
+  const digest = must<HTMLButtonElement>("todo-digest");
+  const titleEl = must("cal-title");
+  const undatedSummary = must("todo-undated-summary");
+  const undatedList = must("todo-undated-list");
+  const undatedFold = must<HTMLDetailsElement>("todo-undated");
   const reminderNote = must("todo-reminder-note");
+  const lifecycle = must("todo-lifecycle");
   const form = must<HTMLFormElement>("todo-form");
   const applicationSelect = selectEl("todo-application");
-  const precisionSelect = selectEl("todo-precision");
   const dateInput = input("todo-date");
-  const datetimeInput = input("todo-datetime");
+  const hourSelect = selectEl("todo-hour");
+  const minuteSelect = selectEl("todo-minute");
+  const dateClear = must<HTMLButtonElement>("todo-date-clear");
+  const remindPreset = selectEl("todo-remind-preset");
+  const remindCustom = must("todo-remind-custom");
+  const remindDate = input("todo-remind-date");
+  const remindHour = selectEl("todo-remind-hour");
+  const remindMinute = selectEl("todo-remind-minute");
+  fillTimeSelects(hourSelect, minuteSelect, "不指定时间");
+  fillTimeSelects(remindHour, remindMinute, "选择几点");
+  // 弹窗里的下拉都换成贴着框、最多露 6 行的自绘下拉（select 本身留着当数据来源）。
+  const dropdowns = [applicationSelect, hourSelect, minuteSelect, remindPreset, remindHour, remindMinute].map(enhanceSelect);
+  const syncDropdowns = () => dropdowns.forEach((dropdown) => dropdown.sync());
+  /** 弹窗里被点亮的类型；没选就是 null（存成「没选」，日历按标题推断）。 */
+  let pickedKind: TodoKind | null = null;
+  const whenNote = must("todo-when-note");
+  const moreToggle = must<HTMLButtonElement>("todo-more-toggle");
   const dialog = must<HTMLDialogElement>("todo-dialog");
   const formStatus = must("todo-form-status");
-  const formOptions = must<HTMLDetailsElement>("todo-form-options");
+  const formOptions = must("todo-form-options");
 
   let capability: ReminderCapability = { available: false, reason: null };
   let applications: ApplicationSummary[] = [];
   let applicationsLoaded = false;
-  /** 一次取回全部状态，筛选在本地做：计数和「一条都没有」才分得清。 */
+  /** 一次取回全部状态，日历上怎么画在本地决定。 */
   let todos: TodoView[] = [];
   let loaded = false;
   let listError: string | null = null;
-  let filter: TodoFilter = "open";
+  /** 月历正在看哪个月、右栏正在看哪一天；第一次进入时落在今天。 */
+  let viewMonth: MonthRef = monthOf(localDay(now()));
+  let selectedDay: string = localDay(now());
+  /** 选中日里被点中的那一条（高亮用）。 */
   let selectedId: string | null = null;
+  /** 在右栏单独显示的「未设具体日期」待办；有值时右栏不显示某一天。 */
+  let undatedId: string | null = null;
+  let started = false;
+  let pendingTarget: TodoTarget | null = null;
   let editing: string | null = null;
   /// 双击提交会建出两条待办、登记两条提醒。一次只让一个请求在飞。
   let saving = false;
@@ -125,9 +214,24 @@ export function mountTodos(
   let acting = false;
   let opener: HTMLElement | null = null;
 
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * 状态提示是浮在月历下方的小条，不占版面。成功和普通提示几秒后自己消失；
+   * 出了问题的（保存失败、提醒没登记上）不自动消失，带 × 由用户关。
+   */
   function say(message: Message | null) {
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
     status.textContent = message?.text ?? "";
     status.className = message ? `note ${message.tone}` : "note";
+    toast.dataset.empty = message ? "false" : "true";
+    const sticky = message?.tone === "warn" || message?.tone === "pending";
+    toastClose.hidden = !sticky;
+    if (message && !sticky) {
+      toastTimer = setTimeout(() => say(null), TOAST_MS);
+      (toastTimer as { unref?: () => void }).unref?.();
+    }
   }
 
   function sayInForm(message: Message | null) {
@@ -135,163 +239,318 @@ export function mountTodos(
     formStatus.className = message ? `note ${message.tone}` : "note";
   }
 
-  /** 到期精度决定哪个输入框可用。三个精度互斥，不会同时填两个。 */
-  function syncPrecision() {
-    const precision = precisionSelect.value;
-    dateInput.hidden = precision !== "date";
-    datetimeInput.hidden = precision !== "datetime";
-    const dateField = maybe("todo-date-field");
-    const datetimeField = maybe("todo-datetime-field");
-    if (dateField) dateField.hidden = precision !== "date";
-    if (datetimeField) datetimeField.hidden = precision !== "datetime";
+  /** 更多设置（提醒时刻、时区、面试轮次）：只在编辑时出现；已经设过值的会自动展开，保证保存时不被悄悄清掉。 */
+  function setMore(open: boolean) {
+    formOptions.hidden = !open;
+    moreToggle.setAttribute("aria-expanded", String(open));
+    moreToggle.textContent = open ? "收起更多设置" : "更多设置：时区、面试轮次";
+  }
+
+  /**
+   * 编辑时、用户没点过类型的待办：日历上显示的是按标题推断出来的那个类型。弹窗里把它亮着，
+   * 让人看得见现在是什么，但**不存**——只有用户亲手点了才存，否则以后改标题类型就不会跟着变。
+   */
+  function autoKind(): TodoKind | null {
+    if (editing === null) return null;
+    return inferKind({ title: valueOf("todo-title"), interviewRound: Number(valueOf("todo-round")) || null, kind: null });
+  }
+
+  function paintKinds() {
+    const lit = pickedKind ?? autoKind();
+    form.querySelectorAll<HTMLElement>("[data-kind-pick]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.kindPick === lit));
+    });
+  }
+
+  function formZone(): string | null {
+    return valueOf("todo-timezone").trim() || null;
+  }
+
+  /** 这次要单独设的提醒时刻：预设按「提前多久」算，「自己选」按那三个下拉；默认交给后台。 */
+  function currentRemind(): string | null {
+    const zone = formZone();
+    const preset = remindPreset.value as RemindPreset;
+    if (preset === "custom") {
+      return localInputToUtc(`${remindDate.value}T${readClock(remindHour, remindMinute)}`, zone);
+    }
+    return remindFromPreset(preset, dateInput.value, readClock(hourSelect, minuteSelect), zone);
+  }
+
+  /**
+   * 日期、时间、提醒三者互相牵动：没日期就没法「提前多久」；没选几点分钟就不能选；
+   * 提醒下拉里「默认」写成此刻实际会发生的事；下面一行小字写出最后会在什么时候响。
+   */
+  function syncWhenNote() {
+    const hasDate = Boolean(dateInput.value);
+    const clock = readClock(hourSelect, minuteSelect);
+    minuteSelect.disabled = !hourSelect.value;
+    // 自己选提醒时间时也一样：没选几点，几分就灰掉并回到 00。
+    remindMinute.disabled = !remindHour.value;
+    if (!remindHour.value) remindMinute.value = "00";
+    dateClear.hidden = !hasDate;
+    let preset = remindPreset.value || "default";
+    if (!hasDate && preset !== "custom") preset = "default";
+    const labels: Array<[string, string]> = [
+      ["default", hasDate ? (clock ? "到点时（默认）" : "当天早上 9 点（默认）") : "不提醒（没有日期）"],
+      ["15", "提前 15 分钟"],
+      ["60", "提前 1 小时"],
+      ["1440", "提前 1 天"],
+      ["custom", "自己选时间…"],
+    ];
+    remindPreset.innerHTML = labels
+      .map(([value, label]) => `<option value="${value}"${!hasDate && ["15", "60", "1440"].includes(value) ? " disabled" : ""}>${label}</option>`)
+      .join("");
+    remindPreset.value = preset;
+    remindCustom.hidden = preset !== "custom";
+    // 刚切到「自己选时间」：日期先填成到期那天，只剩钟点要选。
+    if (preset === "custom" && !remindDate.value && hasDate) remindDate.value = dateInput.value;
+    const custom = valueOf("todo-timezone").trim();
+    const local = localTimeZone();
+    const label = custom ? ` ${custom} 时区` : local ? `本机时区（${local}）` : "本机时区";
+    whenNote.textContent = describeWhenNote({
+      hasDate,
+      hasTime: Boolean(clock),
+      zoneLabel: label,
+      capability,
+      remindAtUtc: currentRemind(),
+      timeZone: formZone(),
+    });
+    syncDropdowns();
   }
 
   function renderCapability() {
     const message = describeCapability(capability);
     reminderNote.textContent = `${message.text} ${DELIVERY_WINDOW_NOTE}`;
     reminderNote.className = `note ${message.tone}`;
-  }
-
-  function visibleTodos(): TodoView[] {
-    return filter === "all" ? todos : todos.filter((todo) => todo.status === filter);
-  }
-
-  /** 列表里排第一的那条（按分组顺序：先逾期、再今天……）。 */
-  function firstShown(): string | null {
-    return groupTodos(visibleTodos(), now())[0]?.todos[0]?.id ?? null;
-  }
-
-  function renderFilter() {
-    const counts: Record<TodoFilter, number> = {
-      open: todos.filter((todo) => todo.status === "open").length,
-      done: todos.filter((todo) => todo.status === "done").length,
-      cancelled: todos.filter((todo) => todo.status === "cancelled").length,
-      all: todos.length,
-    };
-    filterGroup.innerHTML = FILTER_OPTIONS.map(
-      (option) =>
-        `<button type="button" data-filter="${option.value}" aria-pressed="${option.value === filter}">${escapeHtml(option.label)}<span class="segment-count">${loaded ? counts[option.value] : ""}</span></button>`,
+    lifecycle.innerHTML = LIFECYCLE_STATES.map(
+      (state) => `<li><strong>${escapeHtml(state.when)}</strong><span>${escapeHtml(state.what)}</span></li>`,
     ).join("");
   }
 
-  function item(todo: TodoView): string {
+  function todayDay() {
+    return localDay(now());
+  }
+
+  function selectDay(day: string, id: string | null = null) {
+    selectedDay = day;
+    selectedId = id;
+    undatedId = null;
+    viewMonth = monthOf(day);
+  }
+
+  function selectUndated(id: string) {
+    undatedId = id;
+    selectedId = id;
+  }
+
+  // --- 月历 ---------------------------------------------------------------------------
+
+  function pill(entry: CalendarEntry): string {
+    const todo = entry.todo;
     const id = escapeHtml(todo.id);
-    const active = todo.id === selectedId;
-    const due = shortDue(todo, now());
-    const where = [todo.company, todo.position].filter(Boolean).map(escapeHtml).join(" · ");
-    const round = todo.interviewRound ? `<span class="todo-round">第 ${todo.interviewRound} 轮</span>` : "";
-    // 圆圈是真按钮：未完成的点一下就完成（可以在详情里重新打开）；已结束的只是标记。
-    const check =
-      todo.status === "open"
-        ? `<button type="button" class="todo-check" data-todo="${id}" data-act="done" aria-label="完成「${escapeHtml(todo.title)}」" title="标记为已完成"></button>`
-        : `<span class="todo-check" data-status="${escapeHtml(todo.status)}" aria-hidden="true">${todo.status === "done" ? ICON.check : ICON.close}</span>`;
-    return `
-      <li class="todo-item${active ? " active" : ""}" data-id="${id}" data-status="${escapeHtml(todo.status)}">
-        ${check}
-        <button type="button" class="todo-select" data-todo="${id}" data-act="select" aria-current="${active}">
-          <strong>${escapeHtml(todo.title)}</strong>
-          <span class="todo-where">${ICON.building}<span>${where || "未关联申请信息"}</span>${round}</span>
-        </button>
-        ${due.tone === "none" ? "" : `<span class="due-badge" data-tone="${due.tone}">${escapeHtml(due.text.replace(/^已逾期 · /, ""))}</span>`}
-      </li>`;
+    const where = [todo.company, todo.position].filter(Boolean).join(" · ");
+    const tail = entry.state === "done" ? "，已完成" : entry.state === "overdue" ? "，已逾期" : "";
+    const label = `${entry.clock ? `${entry.clock} ` : ""}${KIND_LABEL[entry.kind]}：${todo.title}${where ? `，${where}` : ""}${tail}`;
+    return `<li><button type="button" class="cal-pill" data-kind="${entry.kind}" data-state="${entry.state}"
+      data-todo="${id}" data-day="${escapeHtml(entry.day)}" data-act="select"
+      aria-label="${escapeHtml(label)}" title="${escapeHtml(`${todo.title}${where ? `（${where}）` : ""}`)}">${escapeHtml(pillText(entry))}</button></li>`;
   }
 
-  function renderList() {
-    renderFilter();
-    shell.classList.toggle("is-empty", loaded && todos.length === 0 && !listError);
-    if (!loaded) {
-      list.innerHTML = listError ? readError() : '<p class="todo-list-note muted">正在读取待办…</p>';
-      return;
-    }
-    if (!todos.length) {
-      const blocked = applicationsLoaded && !applications.length;
-      list.innerHTML = `
-        <div class="workspace-empty">
-          <span class="workspace-empty-icon">${ICON.calendar}</span>
-          <h2>还没有待办</h2>
-          <p>${escapeHtml(blocked ? NEEDS_APPLICATION : EMPTY_TODOS)}</p>
-          ${blocked ? '<div class="workspace-empty-actions"><button type="button" data-empty-act="application">去新增申请</button></div>' : ""}
-        </div>`;
-      return;
-    }
-    const shown = visibleTodos();
-    if (!shown.length) {
-      const empty = describeEmptyFilter(filter);
-      list.innerHTML = `<div class="todo-filter-empty" role="status"><p>${escapeHtml(empty.title)}</p><p class="muted">${escapeHtml(empty.text)}</p></div>`;
-      return;
-    }
-    list.innerHTML = groupTodos(shown, now())
-      .map(
-        (group) => `
-          <section class="todo-group" data-bucket="${group.bucket}">
-            <h2>${BUCKET_LABEL[group.bucket]}<span class="chip">${group.todos.length}</span></h2>
-            <ul class="todo-items">${group.todos.map(item).join("")}</ul>
-          </section>`,
-      )
-      .join("");
+  function cell(day: string, inMonth: boolean, entries: CalendarEntry[], today: string): string {
+    const selected = day === selectedDay && !undatedId;
+    const shown = entries.slice(0, PILLS_PER_CELL);
+    const rest = entries.length - shown.length;
+    const num = Number(day.slice(8, 10));
+    const classes = ["cal-cell", inMonth ? "" : "is-out", day === today ? "is-today" : "", selected ? "is-selected" : ""]
+      .filter(Boolean)
+      .join(" ");
+    const more = rest > 0
+      ? `<button type="button" class="cal-more" data-day="${escapeHtml(day)}" aria-label="${escapeHtml(`${cellLabel(day, entries.length)}，查看全部`)}">+${rest}</button>`
+      : "";
+    return `<div class="${classes}" role="gridcell" data-day="${escapeHtml(day)}">
+      <div class="cal-cell-head">
+        <button type="button" class="cal-day" data-day="${escapeHtml(day)}" aria-pressed="${selected}"
+          ${day === today ? 'aria-current="date"' : ""} aria-label="${escapeHtml(cellLabel(day, entries.length))}">${num}</button>${more}
+      </div>
+      <ul class="cal-pills">${shown.map(pill).join("")}</ul>
+    </div>`;
   }
 
-  function renderDetail() {
-    const todo = todos.find((entry) => entry.id === selectedId);
-    if (!todo) {
-      detail.innerHTML = loaded && todos.length
-        ? '<div class="todo-detail-empty"><p>选择一条待办</p><p class="muted">查看到期时间、提醒状态和关联申请。</p></div>'
-        : "";
-      return;
-    }
-    const id = escapeHtml(todo.id);
-    const reminder = describeReminder(todo, capability);
-    const reminderTime = describeRemindAt(todo);
-    const reminderZone = todo.timeZone && (!todo.dueAtUtc || todo.duePrecision !== "datetime")
-      && (todo.remindAtUtc || todo.reminderScheduledForUtc) ? todo.timeZone : "";
-    const bucket = bucketOf(todo, now());
-    const where = [todo.company, todo.position].filter(Boolean).map(escapeHtml).join(" · ");
-    const isOpen = todo.status === "open";
-    const timing =
-      isOpen && (bucket === "overdue" || bucket === "today")
-        ? `<span class="due-badge" data-tone="${bucket}">${BUCKET_LABEL[bucket]}</span>`
-        : "";
-    detail.innerHTML = `
-      <article class="todo-detail" data-status="${escapeHtml(todo.status)}">
-        <div class="todo-detail-head">
-          <div class="todo-detail-title">
-            <h2>${escapeHtml(todo.title)}</h2>
-            ${!isOpen ? `<span class="todo-status-chip" data-status="${escapeHtml(todo.status)}">${STATUS_LABEL[todo.status]}</span>` : ""}
-            ${isOpen ? `<details class="todo-detail-menu"><summary aria-label="更多待办操作" title="更多待办操作">${ICON.more}</summary>
-              <button type="button" class="todo-cancel-action" data-todo="${id}" data-act="cancelled">${ICON.close}取消待办</button></details>` : ""}
-          </div>
-          <p class="todo-detail-application">${ICON.building}<span>${where || "未关联申请信息"}${todo.interviewRound ? ` · 第 ${todo.interviewRound} 轮` : ""}</span></p>
-        </div>
-        <div class="todo-schedule">
-          <div class="todo-detail-row">${ICON.calendar}<div><span>截止时间</span><strong>${escapeHtml(describeDue(todo))}</strong></div>${timing}</div>
-          <div class="todo-detail-row todo-reminder" data-tone="${reminder.tone}">${ICON.bell}<div><span>提醒</span>
-            <strong>${escapeHtml(reminder.tone === "success" ? reminder.text : reminderTime)}</strong>
-            ${reminderZone ? `<p>提醒时区：${escapeHtml(reminderZone)}</p>` : ""}
-            ${reminder.tone === "success" ? "" : `<p>${escapeHtml(reminder.text)}</p>`}</div></div>
-        </div>
-        <div class="todo-detail-actions">
-          ${isOpen ? `<button type="button" class="primary" data-todo="${id}" data-act="done">${ICON.check}标记为已完成</button>
-            <button type="button" data-todo="${id}" data-act="edit">${ICON.edit}编辑 / 改期</button>`
-            : `<button type="button" class="primary" data-todo="${id}" data-act="open">${ICON.reopen}重新打开</button>`}
-          ${writeNote && todo.status !== "cancelled" ? `<button type="button" data-todo="${id}" data-act="write-note">写心得</button>` : ""}
-        </div>
-      </article>`;
-  }
-
-  function render() {
-    renderList();
-    if (loaded && listError) list.insertAdjacentHTML("afterbegin", readError());
-    renderDetail();
+  function renderBoard() {
+    const model = buildCalendar(todos, now());
+    const today = todayDay();
+    titleEl.textContent = monthTitle(viewMonth);
+    const cells = monthGrid(viewMonth);
+    // 每 7 格一行（role="row"），读屏才认得出「第几行、周几」。
+    const weeks = Array.from({ length: cells.length / 7 }, (_, week) =>
+      `<div class="cal-row" role="row">${cells
+        .slice(week * 7, week * 7 + 7)
+        .map((entry) => cell(entry.day, entry.inMonth, model.byDay.get(entry.day) ?? [], today))
+        .join("")}</div>`,
+    ).join("");
+    const grid = `<div class="cal-grid" role="grid" aria-label="${escapeHtml(monthTitle(viewMonth))}" data-rows="${cells.length / 7}">
+      <div class="cal-week" role="row">${WEEKDAY_HEADS.map((head) => `<span role="columnheader">${head}</span>`).join("")}</div>
+      <div class="cal-days" role="rowgroup">${weeks}</div>
+    </div>`;
+    board.innerHTML = `${listError ? readError() : ""}${grid}`;
   }
 
   function readError() {
     return `<div class="pane-error" role="alert"><p class="note warn">${escapeHtml(listError)}</p><button type="button" data-todo-retry>重新读取</button></div>`;
   }
 
+  /** 标题行里的红色小标签：「4 条已逾期」，点一下跳到最早那天。说的是到期没做，不是提醒过了。 */
+  function renderDigest() {
+    const summary = summarizeOverdue(todos, now());
+    const message = describeDigest(summary.count, 0);
+    digest.hidden = !message || !loaded;
+    if (!message) return;
+    digest.innerHTML = `<span class="cal-overdue-dot" aria-hidden="true"></span>${escapeHtml(message.text)}`;
+    digest.disabled = !summary.earliest;
+    digest.title = summary.earliest ? "跳到最早一条逾期的日程" : "";
+    digest.setAttribute("aria-label", `${message.text}${summary.earliest ? "，点击跳到最早一天" : ""}`);
+  }
+
+  /** 底部折叠条：数量一直显示，折叠着也看得见。 */
+  function renderUndated() {
+    const model = buildCalendar(todos, now());
+    const count = model.undated.length;
+    undatedSummary.innerHTML = `未设具体日期的待办 <span class="cal-count">(${loaded ? count : "…"})</span>`;
+    if (!loaded) {
+      undatedList.innerHTML = "";
+      return;
+    }
+    undatedList.innerHTML = count
+      ? `<ul>${model.undated
+          .map((todo) => {
+            const id = escapeHtml(todo.id);
+            const where = [todo.company, todo.position].filter(Boolean).map(escapeHtml).join(" · ");
+            const active = todo.id === undatedId;
+            return `<li><button type="button" class="cal-undated-item${active ? " is-active" : ""}" data-todo="${id}" data-act="select-undated"
+              data-kind="${inferKind(todo)}" data-status="${escapeHtml(todo.status)}" aria-current="${active}">
+              <span class="kind-dot" aria-hidden="true"></span><strong>${escapeHtml(todo.title)}</strong>
+              <span class="cal-undated-where">${where || "未关联申请信息"}</span>
+              ${todo.status === "done" ? '<span class="cal-flag">已完成</span>' : ""}</button></li>`;
+          })
+          .join("")}</ul>`
+      : '<p class="muted">没有未设具体日期的待办。</p>';
+  }
+
+  // --- 右栏 ---------------------------------------------------------------------------
+
+  function card(entry: CalendarEntry): string {
+    const todo = entry.todo;
+    const id = escapeHtml(todo.id);
+    const reminder = describeReminder(todo, capability);
+    const reminderTime = describeRemindAt(todo);
+    const reminderZone =
+      todo.timeZone && (!todo.dueAtUtc || todo.duePrecision !== "datetime") && (todo.remindAtUtc || todo.reminderScheduledForUtc)
+        ? todo.timeZone
+        : "";
+    const where = [todo.company, todo.position].filter(Boolean).map(escapeHtml).join(" · ");
+    const isOpen = todo.status === "open";
+    const flag =
+      entry.state === "overdue"
+        ? '<span class="cal-flag" data-tone="overdue">已逾期</span>'
+        : todo.status !== "open"
+          ? `<span class="cal-flag" data-status="${escapeHtml(todo.status)}">${STATUS_LABEL[todo.status]}</span>`
+          : "";
+    const menuItems = [
+      writeNote && todo.status !== "cancelled"
+        ? `<button type="button" data-todo="${id}" data-act="write-note">写心得</button>`
+        : "",
+      isOpen ? `<button type="button" class="todo-cancel-action" data-todo="${id}" data-act="cancelled">${ICON.close}取消待办</button>` : "",
+    ].join("");
+    return `<article class="cal-card" data-todo-card="${id}" data-kind="${entry.kind}" data-state="${entry.state}"
+        aria-current="${todo.id === selectedId}" aria-label="${escapeHtml(todo.title)}">
+      <div class="cal-card-top">
+        <span class="kind-badge" data-kind="${entry.kind}">${KIND_LABEL[entry.kind]}</span>${flag}
+        ${menuItems ? `<details class="todo-detail-menu"><summary aria-label="更多待办操作" title="更多待办操作">${ICON.more}</summary>${menuItems}</details>` : ""}
+      </div>
+      <h3>${escapeHtml(todo.title)}</h3>
+      <p class="cal-card-where">${ICON.building}<span>${where || "未关联申请信息"}${todo.interviewRound ? ` · 第 ${todo.interviewRound} 轮` : ""}</span></p>
+      <div class="cal-card-facts">
+        <div class="todo-detail-row">${ICON.calendar}<div><span>到期时间</span><strong>${escapeHtml(describeDue(todo))}</strong></div></div>
+        <div class="todo-detail-row todo-reminder" data-tone="${reminder.tone}">${ICON.bell}<div><span>提醒</span>
+          <strong>${escapeHtml(reminder.tone === "success" ? reminder.text : reminderTime)}</strong>
+          ${reminderZone ? `<p>提醒时区：${escapeHtml(reminderZone)}</p>` : ""}
+          ${reminder.tone === "success" ? "" : `<p>${escapeHtml(reminder.text)}</p>`}</div></div>
+      </div>
+      <div class="cal-card-actions">
+        ${isOpen
+          ? `<button type="button" class="primary" data-todo="${id}" data-act="done">${ICON.check}标记完成</button>
+             <button type="button" data-todo="${id}" data-act="edit">${ICON.edit}编辑</button>`
+          : `<button type="button" class="primary" data-todo="${id}" data-act="open">${ICON.reopen}重新打开</button>`}
+        ${openApplication ? `<button type="button" class="link-button" data-todo="${id}" data-act="go-application">查看对应投递 →</button>` : ""}
+      </div>
+    </article>`;
+  }
+
+  /** 「在这天添加日程」：浅绿底带加号，和灰色的次要按钮区分开。 */
+  function addButton(day: string): string {
+    return `<button type="button" class="cal-add" data-add-day="${escapeHtml(day)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>在这天添加日程</button>`;
+  }
+
+  function sideEmpty(day: string): string {
+    const blocked = applicationsLoaded && !applications.length;
+    const noTodosAtAll = loaded && !todos.length;
+    const text = blocked ? NEEDS_APPLICATION : noTodosAtAll ? EMPTY_TODOS : "这一天还没有安排。";
+    return `<div class="cal-side-empty">
+      <span class="cal-side-empty-icon">${ICON.calendar}</span>
+      <p class="cal-side-empty-title">没有日程</p>
+      <p class="muted">${escapeHtml(text)}</p>
+      ${blocked ? '<button type="button" data-empty-act="application">去新增申请</button>' : addButton(day)}
+    </div>`;
+  }
+
+  function renderSide() {
+    if (!loaded) {
+      side.innerHTML = `<div class="cal-side-body"><p class="cal-side-note muted">${listError ? "待办还没读到。" : "正在读取待办…"}</p></div>`;
+      return;
+    }
+    const model = buildCalendar(todos, now());
+    const undated = undatedId ? todos.find((todo) => todo.id === undatedId && todo.status !== "cancelled") : undefined;
+    if (undatedId && !undated) undatedId = null;
+    if (undated) {
+      const entry: CalendarEntry = {
+        todo: undated,
+        day: "",
+        clock: null,
+        kind: inferKind(undated),
+        state: undated.status === "done" ? "done" : "open",
+      };
+      side.innerHTML = `<header class="cal-side-head"><h2>未设具体日期</h2><p>这条待办没有到期日，不在月历上显示</p></header>
+        <div class="cal-side-body">${card(entry)}</div>`;
+      return;
+    }
+    const entries = model.byDay.get(selectedDay) ?? [];
+    side.innerHTML = `<header class="cal-side-head"><h2>${escapeHtml(dayHeading(selectedDay))}</h2><p>${escapeHtml(daySummary(selectedDay, todayDay(), entries.length))}</p></header>
+      <div class="cal-side-body">${entries.length ? entries.map(card).join("") : sideEmpty(selectedDay)}</div>
+      ${entries.length ? `<footer class="cal-side-foot">${addButton(selectedDay)}</footer>` : ""}`;
+  }
+
+  function render() {
+    renderBoard();
+    renderDigest();
+    renderUndated();
+    renderSide();
+  }
+
+  /** 重画会换掉按钮；键盘操作的人得继续停在原来那个位置。 */
+  function renderKeepingFocus() {
+    const active = document.activeElement as HTMLElement | null;
+    const day = active?.closest?.("#todo-list") ? (active.dataset?.day ?? null) : null;
+    const pillId = day && active?.dataset?.todo ? active.dataset.todo : null;
+    render();
+    if (!day) return;
+    const found = pillId
+      ? Array.from(board.querySelectorAll<HTMLElement>(".cal-pill")).find((node) => node.dataset.todo === pillId)
+      : Array.from(board.querySelectorAll<HTMLElement>(".cal-day")).find((node) => node.dataset.day === day);
+    found?.focus({ preventScroll: true });
+  }
+
   async function refresh() {
     try {
-      // 取全部状态，筛选在本地做：这样筛选按钮上能写数量，也分得清「一条都没有」
-      // 和「这个状态下没有」。
       todos = await invoke<TodoView[]>("list_todos_cmd", { applicationId: null, status: "all" });
       loaded = true;
       if (listError) say(null);
@@ -303,9 +562,22 @@ export function mountTodos(
       return false;
     }
     if (selectedId && !todos.some((todo) => todo.id === selectedId)) selectedId = null;
-    if (!selectedId) selectedId = firstShown();
+    if (undatedId && !todos.some((todo) => todo.id === undatedId)) undatedId = null;
     render();
     return true;
+  }
+
+  /** 从别的页面跳来：按待办 id 找到那天并选中那条；找不到就按日期，再不行就留在原处。 */
+  function applyTarget(target: TodoTarget) {
+    const todo = target.id ? todos.find((entry) => entry.id === target.id) : undefined;
+    const day = (todo ? todoDay(todo) : null) ?? target.day ?? null;
+    if (todo && todo.status !== "cancelled" && !todoDay(todo)) {
+      selectUndated(todo.id);
+      undatedFold.open = true;
+    } else if (day) {
+      selectDay(day, todo && todo.status !== "cancelled" ? todo.id : null);
+    }
+    render();
   }
 
   async function loadApplications() {
@@ -334,24 +606,14 @@ export function mountTodos(
       .join("");
     applicationSelect.innerHTML = `<option value="">请选择一条申请…</option>${options}`;
     if (keep !== undefined) applicationSelect.value = keep;
+    syncDropdowns();
   }
 
-  async function loadDigest() {
-    try {
-      const result = await invoke<OverdueDigest>("overdue_digest_cmd", {});
-      const message = describeDigest(result.todos.length, result.more);
-      digest.hidden = !message;
-      if (message) {
-        digest.textContent = message.text;
-      }
-    } catch {
-      // 汇总拿不到不该挡住整个视图。
-      digest.hidden = true;
-    }
-  }
-
+  /** 日期空 = 未设具体日期；只有日期 = 仅日历日；日期加时间 = 具体时刻。 */
   function argsFromForm() {
-    const precision = precisionSelect.value;
+    const date = dateInput.value;
+    const time = readClock(hourSelect, minuteSelect);
+    const precision = !date ? "none" : time ? "datetime" : "date";
     const zone = valueOf("todo-timezone").trim() || null;
     const round = valueOf("todo-round").trim();
     return {
@@ -362,12 +624,14 @@ export function mountTodos(
       // （没填就按本机），不是无条件按本机解释——否则给上海的面试在纽约的机器上
       // 会存成差 12 小时的时刻。
       dueAtUtc:
-        precision === "datetime" ? localInputToUtc(valueOf("todo-datetime"), zone) : null,
+        precision === "datetime" ? localInputToUtc(`${date}T${time}`, zone) : null,
       // 编辑时这几项都显式发出去：命令层把「没给」当成「别动」，显式的 null 才是
       // 「清空」。否则用户删掉提醒时刻、时区或轮次会被悄悄保留。
       timeZone: zone,
-      remindAtUtc: localInputToUtc(valueOf("todo-remind"), zone),
+remindAtUtc: currentRemind(),
       interviewRound: round === "" ? null : Number(round),
+      // 用户点亮的类型；没点亮就是 null（新增时存成「没选」，编辑时清掉，日历回到按标题推断）。
+      kind: pickedKind,
     };
   }
 
@@ -377,17 +641,17 @@ export function mountTodos(
       return { text: "请选择这条待办属于哪条申请。", field: "todo-application" };
     }
     if (!args.title) return { text: "待办要有一个标题。", field: "todo-title" };
-    if (args.duePrecision === "date" && !args.dueDate) {
-      return { text: "选了「只有日期」，请填上日期。", field: "todo-date" };
+    if (!dateInput.value && hourSelect.value) {
+      return { text: "填了时间，请也选一个日期。", field: "todo-date" };
     }
     if (args.duePrecision === "datetime" && !args.dueAtUtc) {
-      return { text: "选了「具体到几点」，请填上完整的日期和时刻。", field: "todo-datetime" };
+      return { text: "日期和时间读不出来，请重新选一下。", field: "todo-hour" };
     }
     if (args.timeZone && !knownTimeZone(args.timeZone)) {
       return { text: "认不出这个时区。请写成 IANA 名称，例如 Asia/Shanghai；留空按本机时区。", field: "todo-timezone" };
     }
-    if (valueOf("todo-remind") && !args.remindAtUtc) {
-      return { text: "提醒时刻不完整，请补全或清空。", field: "todo-remind" };
+    if (remindPreset.value === "custom" && !args.remindAtUtc) {
+      return { text: "提醒时间不完整，请选好日期和几点，或改回「默认」。", field: "todo-remind-date" };
     }
     if (args.interviewRound !== null && !(Number.isInteger(args.interviewRound) && args.interviewRound >= 1 && args.interviewRound <= 99)) {
       return { text: "面试轮次是 1 到 99 的整数，不需要就留空。", field: "todo-round" };
@@ -404,7 +668,7 @@ export function mountTodos(
     const submit = must<HTMLButtonElement>("todo-submit");
     submit.disabled = busy || (!editing && applicationsLoaded && !applications.length);
     applicationSelect.disabled = busy || editing !== null;
-    submit.textContent = busy ? "正在保存…" : editing ? "保存修改" : "添加待办";
+    submit.textContent = busy ? "正在保存…" : editing ? "保存修改" : "添加日程";
     form.setAttribute("aria-busy", String(busy));
   }
 
@@ -412,10 +676,18 @@ export function mountTodos(
     editing = null;
     form.reset();
     fillApplications("");
-    syncPrecision();
+    pickedKind = null;
+    paintKinds();
+    writeClock(hourSelect, minuteSelect, "");
+    writeClock(remindHour, remindMinute, "");
+    remindDate.value = "";
+    remindPreset.value = "default";
+    // 只有一条申请时不用再选。
+    if (applications.length === 1 && applications[0]) applicationSelect.value = applications[0].id;
     sayInForm(null);
-    must("todo-form-heading").textContent = "新增待办";
-    formOptions.open = false;
+    must("todo-form-heading").textContent = "新增日程";
+    setMore(false);
+    moreToggle.hidden = true;
     const noApps = applicationsLoaded && !applications.length;
     must("todo-no-apps").hidden = !noApps;
     must("todo-application-hint").hidden = true;
@@ -424,6 +696,7 @@ export function mountTodos(
       ? `留空按本机时区（${localTimeZone()}）`
       : "留空按本机时区，例如 Asia/Shanghai";
     setFormBusy(false);
+    syncWhenNote();
   }
 
   function openDialog() {
@@ -433,15 +706,19 @@ export function mountTodos(
   }
 
   function closeDialog() {
+    closeOpenDropdown();
     dialog.close();
     resetForm();
     if (opener?.isConnected) opener.focus();
     opener = null;
   }
 
-  function openCreate() {
+  /** 新增日程：日期预填为选中那天（精度默认「只有日期」），用户可以改成具体到几点。 */
+  function openCreate(day: string) {
     if (saving || editLoading) return;
     resetForm();
+    dateInput.value = prefillForDay(day).dueDate;
+    syncWhenNote();
     openDialog();
     if (applicationsLoaded && !applications.length) maybe("todo-go-applications")?.focus();
     else input("todo-title").focus();
@@ -471,24 +748,35 @@ export function mountTodos(
       }
       applicationSelect.value = todo.applicationId;
       input("todo-title").value = todo.title;
-      precisionSelect.value = todo.duePrecision;
-      dateInput.value = todo.dueDate ?? "";
-      // 存的是 UTC，控件要的是墙钟。直接把 ISO 串切前 16 位塞进去，保存时又被
-      // 按本机重新解释一遍，到期时间会平移一个时区偏移。
-      datetimeInput.value = todo.dueAtUtc ? utcToLocalInput(todo.dueAtUtc, todo.timeZone) : "";
+      // 存过类型的用存的；没存过的保持「没选」，亮着的只是按标题推断出来的（见 autoKind）。
+      pickedKind = todo.kind ?? null;
+      // 存的是 UTC，控件要的是墙钟：按待办自己的时区换算成日期和时间两格，保存时再按同一个
+      // 时区换回去，否则到期时间会平移一个时区偏移。
+      const wall = todo.duePrecision === "datetime" && todo.dueAtUtc ? utcToLocalInput(todo.dueAtUtc, todo.timeZone) : "";
+      dateInput.value = wall ? wall.slice(0, 10) : (todo.duePrecision === "date" ? (todo.dueDate ?? "") : "");
+      writeClock(hourSelect, minuteSelect, wall ? wall.slice(11, 16) : "");
       input("todo-timezone").value = todo.timeZone ?? "";
-      // 提醒时刻也要回填，否则用户看不到现在设的是几点，一保存还会被当成「清空」。
-      input("todo-remind").value = todo.remindAtUtc
-        ? utcToLocalInput(todo.remindAtUtc, todo.timeZone)
-        : "";
+      // 提醒也要回填，否则用户看不到现在是怎么设的，一保存还会被当成「清空」：
+      // 对得上「提前多久」的显示成那一项，对不上的显示成「自己选时间」并填好日期和钟点。
+      const preset = presetFromRemind(todo.remindAtUtc, dateInput.value, readClock(hourSelect, minuteSelect), todo.timeZone ?? null);
+      remindPreset.value = preset;
+      if (preset === "custom" && todo.remindAtUtc) {
+        const remindWall = utcToLocalInput(todo.remindAtUtc, todo.timeZone);
+        remindDate.value = remindWall.slice(0, 10);
+        writeClock(remindHour, remindMinute, remindWall.slice(11, 16));
+      }
       input("todo-round").value = todo.interviewRound ? String(todo.interviewRound) : "";
-      syncPrecision();
-      must("todo-form-heading").textContent = "编辑待办";
-      formOptions.open = Boolean(todo.timeZone || todo.remindAtUtc || todo.interviewRound);
+      paintKinds();
+      must("todo-form-heading").textContent = "编辑日程";
+      // 编辑时留一个「更多设置」链接；设过面试轮次的直接展开。时区只有一个名字，
+      // 小字里已经写了，收着也照样随表单一起保存，不会被清掉。
+      moreToggle.hidden = false;
+      setMore(Boolean(todo.interviewRound));
       must("todo-no-apps").hidden = true;
       must("todo-application-hint").hidden = false;
       must("todo-edit-note").hidden = false;
       setFormBusy(false);
+      syncWhenNote();
       openDialog();
       input("todo-title").focus();
     } catch (error) {
@@ -501,8 +789,10 @@ export function mountTodos(
   async function changeStatus(id: string, next: TodoStatus) {
     if (acting) return;
     acting = true;
-    detail.setAttribute("aria-busy", "true");
-    detail.querySelectorAll<HTMLButtonElement>("button[data-act]").forEach((button) => {
+    // 重画会换掉按钮；键盘操作的人（焦点在右栏里）做完后要继续停在这张卡片上。
+    const keepFocus = Boolean((document.activeElement as HTMLElement | null)?.closest?.("#todo-detail"));
+    side.setAttribute("aria-busy", "true");
+    side.querySelectorAll<HTMLButtonElement>("button[data-act]").forEach((button) => {
       button.disabled = true;
     });
     let result: TodoWriteResult;
@@ -511,20 +801,26 @@ export function mountTodos(
     } catch (error) {
       say({ tone: "warn", text: `操作失败：${invokeError(error)}` });
       acting = false;
-      detail.removeAttribute("aria-busy");
-      renderDetail();
+      side.removeAttribute("aria-busy");
+      renderSide();
       return;
     }
-    // 写完就放开：接下来重画出来的按钮（比如「重新打开」）必须马上能点，
-    // 不能等逾期汇总也读完才响应。
+    // 写完就放开：接下来重画出来的按钮（比如「重新打开」）必须马上能点。
     acting = false;
-    detail.removeAttribute("aria-busy");
+    side.removeAttribute("aria-busy");
     say(describeStatusChange(next, result?.reminderProblem));
-    // 状态改完仍然停在这一条上：完成的那条从「未完成」里消失了，详情还在，
-    // 点错了可以直接在这里重新打开。
-    selectedId = id;
+    // 状态改完仍然停在这一天、这一条上：完成的那条在格子里变灰，点错了可以直接重新打开。
+    // 取消的那条会从日历上消失，右栏回到这一天的其余日程。
+    selectedId = next === "cancelled" ? null : id;
     await refresh();
-    await loadDigest();
+    if (keepFocus) focusCard(id);
+  }
+
+  /** 把焦点放回这张卡片的主按钮（完成后是「重新打开」）；卡片没了（取消）就放到右栏里第一个能点的按钮。 */
+  function focusCard(id: string) {
+    const card = Array.from(side.querySelectorAll<HTMLElement>("[data-todo-card]")).find((node) => node.dataset.todoCard === id);
+    const target = card?.querySelector<HTMLElement>("button.primary") ?? side.querySelector<HTMLElement>(".cal-card button.primary, .cal-add");
+    target?.focus({ preventScroll: true });
   }
 
   async function onAction(event: Event) {
@@ -533,12 +829,22 @@ export function mountTodos(
     const id = button.dataset.todo ?? "";
     const act = button.dataset.act ?? "";
     if (act === "select") {
-      const restoreFocus = document.activeElement === button;
-      selectedId = id;
+      const item = todos.find((todo) => todo.id === id);
+      const day = button.dataset.day || (item ? todoDay(item) : null);
+      if (day) {
+        selectDay(day, id);
+        renderKeepingFocus();
+      }
+      return;
+    }
+    if (act === "select-undated") {
+      // 重画会换掉折叠条里的按钮；键盘操作的人得继续停在刚按的那一条上。
+      const keepFocus = Boolean((document.activeElement as HTMLElement | null)?.closest?.("#todo-undated-list"));
+      selectUndated(id);
       render();
-      if (restoreFocus) {
-        Array.from(list.querySelectorAll<HTMLButtonElement>('[data-act="select"]'))
-          .find(row => row.dataset.todo === id)?.focus({ preventScroll: true });
+      if (keepFocus) {
+        Array.from(undatedList.querySelectorAll<HTMLElement>('[data-act="select-undated"]'))
+          .find((node) => node.dataset.todo === id)?.focus({ preventScroll: true });
       }
       return;
     }
@@ -547,13 +853,17 @@ export function mountTodos(
       if (item) writeNote?.({ id: item.applicationId, company: item.company ?? "", title: item.position ?? "" }, item.title);
       return;
     }
+    if (act === "go-application") {
+      const item = todos.find(todo => todo.id === id);
+      if (item) openApplication?.(item.applicationId);
+      return;
+    }
     if (saving || editLoading) return;
     if (act === "edit") {
       await openEdit(id);
       return;
     }
     if (act === "done" || act === "cancelled" || act === "open") {
-      selectedId = id;
       await changeStatus(id, act);
     }
   }
@@ -566,7 +876,7 @@ export function mountTodos(
     if (problem) {
       sayInForm({ tone: "warn", text: problem.text });
       const field = maybe(problem.field);
-      if (field?.closest?.("#todo-form-options")) formOptions.open = true;
+      if (field?.closest?.("#todo-form-options")) setMore(true);
       field?.focus();
       return;
     }
@@ -583,77 +893,159 @@ export function mountTodos(
       say(describeSave(wasEditing ? "updated" : "created", result?.reminderProblem));
       saving = false;
       closeDialog();
-      selectedId = result?.todo?.id ?? wasEditing ?? selectedId;
+      // 保存完把月历带到这条待办所在的那天并选中它；没有日期的进「未设具体日期」。
+      const saved = result?.todo;
+      const savedDay = saved ? todoDay(saved) : null;
+      const savedId = saved?.id ?? wasEditing ?? null;
+      if (savedDay) selectDay(savedDay, savedId);
+      else if (savedId && saved) {
+        selectUndated(savedId);
+        undatedFold.open = true;
+      }
       await refresh();
-      await loadDigest();
     } catch (error) {
       // 失败时弹窗不关、输入一个字不丢，错误就写在按钮上方。
       sayInForm({ tone: "warn", text: `保存失败：${invokeError(error)}` });
     } finally {
       saving = false;
-      if (dialog.open) setFormBusy(false);
+      if (dialog.open) {
+        setFormBusy(false);
+        syncWhenNote();
+      }
     }
   });
 
   function cancel(event: Event) {
     event.preventDefault();
+    // 这一下 Esc 是用来收起下拉的，不关弹窗。
+    if (closeOpenDropdown() || consumeEscapeClose()) return;
     if (saving) return;
     closeDialog();
   }
   must("todo-cancel").addEventListener("click", cancel);
   dialog.addEventListener("cancel", cancel);
-  must("todo-new").addEventListener("click", openCreate);
+  must("todo-new").addEventListener("click", () => openCreate(selectedDay));
   maybe("todo-go-applications")?.addEventListener("click", () => {
     if (saving) return;
     closeDialog();
     createApplication?.();
   });
 
-  list.addEventListener("click", (event) => {
-    if ((event.target as HTMLElement | null)?.closest("button[data-todo-retry]")) {
+  function jumpToMonth(next: MonthRef) {
+    viewMonth = next;
+    undatedId = null;
+    selectedId = null;
+    // 切月后右栏跟着换：本月就回到今天，其他月看那个月的 1 号。
+    const today = todayDay();
+    const thisMonth = monthOf(today);
+    selectedDay =
+      next.year === thisMonth.year && next.month === thisMonth.month
+        ? today
+        : `${String(next.year).padStart(4, "0")}-${String(next.month).padStart(2, "0")}-01`;
+    renderKeepingFocus();
+  }
+
+  must("cal-prev").addEventListener("click", () => jumpToMonth(shiftMonth(viewMonth, -1)));
+  must("cal-next").addEventListener("click", () => jumpToMonth(shiftMonth(viewMonth, 1)));
+  must("cal-today").addEventListener("click", () => {
+    selectDay(todayDay());
+    renderKeepingFocus();
+  });
+  toastClose.addEventListener("click", () => say(null));
+  digest.addEventListener("click", () => {
+    const earliest = summarizeOverdue(todos, now()).earliest;
+    if (!earliest) return;
+    selectDay(earliest.day, earliest.id);
+    render();
+  });
+
+  board.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("button[data-todo-retry]")) {
       void refresh().then((ok) => { if (ok) say({ tone: "info", text: "已刷新待办。" }); });
       return;
     }
-    if ((event.target as HTMLElement | null)?.closest('button[data-empty-act="application"]')) {
+    if (target?.closest("button[data-todo]")) {
+      void onAction(event);
+      return;
+    }
+    // 日期数字、「+N」、格子里的空白处：都是选中那一天。
+    const dayNode = target?.closest<HTMLElement>("[data-day]");
+    if (dayNode?.dataset.day) {
+      selectDay(dayNode.dataset.day);
+      renderKeepingFocus();
+    }
+  });
+  undatedList.addEventListener("click", (event) => void onAction(event));
+  side.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button[data-empty-act="application"]')) {
       createApplication?.();
+      return;
+    }
+    const add = target?.closest<HTMLElement>("button[data-add-day]");
+    if (add) {
+      openCreate(add.dataset.addDay || selectedDay);
       return;
     }
     void onAction(event);
   });
-  detail.addEventListener("click", (event) => void onAction(event));
-  detail.addEventListener("keydown", event => {
+  side.addEventListener("keydown", event => {
     if (event.key !== "Escape") return;
-    const menu = detail.querySelector<HTMLDetailsElement>(".todo-detail-menu[open]");
+    const menu = side.querySelector<HTMLDetailsElement>(".todo-detail-menu[open]");
     if (!menu) return;
     event.preventDefault();
     menu.open = false;
     menu.querySelector("summary")?.focus();
   });
-  filterGroup.addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement | null)?.closest<HTMLElement>("button[data-filter]");
-    const next = button?.dataset.filter as TodoFilter | undefined;
-    if (!next || next === filter) return;
-    const restoreFocus = document.activeElement === button;
-    filter = next;
-    // 切了筛选，原来选中的那条不在新列表里了就换成新列表的第一条。
-    if (!visibleTodos().some((todo) => todo.id === selectedId)) selectedId = firstShown();
-    render();
-    if (restoreFocus) filterGroup.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
+  input("todo-title").addEventListener("input", paintKinds);
+  input("todo-round").addEventListener("input", paintKinds);
+  for (const node of [dateInput, hourSelect, minuteSelect, remindPreset, remindDate, remindHour, remindMinute]) {
+    node.addEventListener("input", syncWhenNote);
+    node.addEventListener("change", syncWhenNote);
+  }
+  dateClear.addEventListener("click", () => {
+    dateInput.value = "";
+    writeClock(hourSelect, minuteSelect, "");
+    syncWhenNote();
+    dateInput.focus();
   });
-  precisionSelect.addEventListener("change", syncPrecision);
+  input("todo-timezone").addEventListener("input", syncWhenNote);
+  moreToggle.addEventListener("click", () => setMore(formOptions.hidden));
+  form.addEventListener("click", (event) => {
+    const pick = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-kind-pick]");
+    if (!pick) return;
+    // 点亮就记住，再点一下取消；不会改标题。
+    const kind = pick.dataset.kindPick as TodoKind;
+    pickedKind = pickedKind === kind ? null : kind;
+    paintKinds();
+  });
 
-  renderList();
+  render();
 
-  return async function show() {
+  /**
+   * 进入日历页。`target` 是从别处（比如投递页第 3 列的日程）带来的定位：
+   * 按待办 id 切到那一天并选中它。第一次进入落在今天。
+   */
+  return async function show(target?: TodoTarget | null) {
+    if (!started) {
+      started = true;
+      selectDay(todayDay());
+    }
+    pendingTarget = target ?? null;
     try {
       capability = await invoke<ReminderCapability>("reminder_capability_cmd", {});
     } catch {
       capability = { available: false, reason: "读不到系统通知的状态。" };
     }
     renderCapability();
-    syncPrecision();
+    syncWhenNote();
     await loadApplications();
-    await loadDigest();
     await refresh();
+    if (pendingTarget) {
+      const wanted = pendingTarget;
+      pendingTarget = null;
+      applyTarget(wanted);
+    }
   };
 }

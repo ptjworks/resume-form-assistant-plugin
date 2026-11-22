@@ -39,7 +39,7 @@ import {
   type GroupView,
 } from "./applications-model.ts";
 import { highlightHtml } from "./search-highlight.ts";
-import { STATUS_LABEL, describeDue, localDay } from "./todos.ts";
+import { STATUS_LABEL, describeDue, localDay, todoDay } from "./todos.ts";
 
 /** 往后改阶段后，提示条停留多久还没人动就写库。 */
 const UNDO_MS = 8000;
@@ -108,8 +108,8 @@ export interface ApplicationsOptions {
   undoMs?: number;
   now?: () => Date;
   openNotes?: (application: ApplicationSummary) => void;
-  /** 点第 3 列的日程：只负责切到日历页（定位到当天留给 #551）。 */
-  openTodos?: () => void;
+  /** 点第 3 列的日程：切到日历页，并带上这条待办的 id 与所在日期，日历据此选中那一天那一条。 */
+  openTodos?: (target?: { id: string; day: string | null }) => void;
   /** 点「N 封相关邮件」：切到通知页的「已处理」，只看这一条投递的邮件。 */
   openInbox?: (applicationId: string, label: string) => void;
   /** 用系统浏览器打开官网。没传就走链接自己的 `target="_blank"`，由桌面的 opener 插件接手（只放行 http/https，见 capabilities）。 */
@@ -932,8 +932,10 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     if (!target) return;
     const go = target.closest<HTMLElement>("[data-go]");
     if (go) {
-      if (go.dataset.go === "todos") options.openTodos?.();
-      else if (go.dataset.go === "inbox") {
+      if (go.dataset.go === "todos") {
+        const todo = nearest.get(go.closest<HTMLElement>("li[data-id]")?.dataset.id ?? "");
+        options.openTodos?.(todo ? { id: todo.id, day: todoDay(todo) } : undefined);
+      } else if (go.dataset.go === "inbox") {
         const owner = go.closest<HTMLElement>("li[data-id]");
         const id = owner?.dataset.id;
         // 这个按钮就在展开的那一行里：公司和岗位直接取展开着的这条。
@@ -1212,5 +1214,8 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     list.querySelector<HTMLElement>(`li[data-id="${attrValue(id)}"]`)?.scrollIntoView?.({ block: "nearest" });
   }
 
-  return { refreshList, refreshView, reloadArchive, openFromNotes, flushPending: () => { flushNoteDraft(); return flushPending(); }, openNewBar, ctl };
+  /** 从日历页跳来：展开这一条申请（和从心得页跳来是同一套展开逻辑，回收站里的会说明去哪恢复）。 */
+  const openApplication = (id: string) => openFromNotes(id, false);
+
+  return { refreshList, refreshView, reloadArchive, openFromNotes, openApplication, flushPending: () => { flushNoteDraft(); return flushPending(); }, openNewBar, ctl };
 }

@@ -275,6 +275,37 @@ impl TodoStatus {
     }
 }
 
+/// 待办的类型（#551）。用来给日历配颜色、让用户一眼分清；没记类型的旧待办是 `None`，
+/// 界面按标题推断。`Other` 是用户明确选了「其他」，和「没选」不同。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoKind {
+    Assessment,
+    Written,
+    Interview,
+    Other,
+}
+
+impl TodoKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TodoKind::Assessment => "assessment",
+            TodoKind::Written => "written",
+            TodoKind::Interview => "interview",
+            TodoKind::Other => "other",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "assessment" => TodoKind::Assessment,
+            "written" => TodoKind::Written,
+            "interview" => TodoKind::Interview,
+            "other" => TodoKind::Other,
+            _ => return None,
+        })
+    }
+}
+
 /// 待办到期精度(§8.6):datetime / date / none 三态分列存储。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -807,6 +838,9 @@ pub struct Todo {
     pub source_event_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// #551：用户选的类型；旧待办和 AI 建的待办为 `None`，界面按标题推断。
+    #[serde(default)]
+    pub kind: Option<TodoKind>,
     /// D10：提醒登记到 OS 时算出的绝对时刻。
     pub reminder_scheduled_for_utc: Option<String>,
     /// D10：OS 侧句柄，撤销旧计划要用。
@@ -875,6 +909,8 @@ pub struct NewTodo {
     pub interview_round: Option<i64>,
     /// 由哪个事件创建(可选)。
     pub source_event_id: Option<String>,
+    /// 用户选的类型(可选)。
+    pub kind: Option<TodoKind>,
 }
 
 /// AI 建议状态(§8.7)。

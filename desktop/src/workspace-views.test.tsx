@@ -38,10 +38,10 @@ function todos({ failSave = false, items = [task] as unknown[], applications = a
   };
 }
 
-test("new todo is a dialog; cancel and Escape never write, filters survive successful form reset", async () => {
+test("new schedule is a dialog; cancel and Escape never write, the month being viewed survives a successful form reset", async () => {
   const h = todos(); await h.show();
   expect(h.dialog.open).toBe(false);
-  const opener = h.query.getByRole("button", { name: "新增待办" });
+  const opener = h.query.getByRole("button", { name: "新增日程" });
   opener.focus();
   fireEvent.click(opener);
   expect(h.dialog.open).toBe(true);
@@ -54,25 +54,28 @@ test("new todo is a dialog; cancel and Escape never write, filters survive succe
   fireEvent(h.dialog, new Event("cancel", { cancelable: true }));
   expect(h.dialog.open).toBe(false);
   expect(h.calls.some((call) => call.name === "create_todo_cmd")).toBe(false);
-  fireEvent.click(within(h.query.getByRole("group", { name: "任务状态" })).getByRole("button", { name: /全部/ }));
+  // 切到下个月，新增时日期预填的是那个月的 1 号；保存成功后弹窗关上，月历仍在看着那个月。
+  fireEvent.click(h.query.getByRole("button", { name: "下个月" }));
+  expect(document.getElementById("cal-title")!.textContent).toBe("2026年10月");
   fireEvent.click(opener);
-  fireEvent.change(h.query.getByLabelText("属于哪条申请"), { target: { value: "a1" } });
+  expect((document.getElementById("todo-date") as HTMLInputElement).value).toBe("2026-10-01");
+  fireEvent.change(document.getElementById("todo-application")!, { target: { value: "a1" } });
   fireEvent.input(h.query.getByLabelText("做什么"), { target: { value: "新任务" } });
   fireEvent.submit(document.getElementById("todo-form")!);
   await waitFor(() => expect(h.dialog.open).toBe(false));
-  expect(h.calls.find((call) => call.name === "create_todo_cmd")?.args).toMatchObject({ args: { applicationId: "a1", title: "新任务" } });
-  expect(within(h.query.getByRole("group", { name: "任务状态" })).getByRole("button", { name: /全部/ }).getAttribute("aria-pressed")).toBe("true");
+  expect(h.calls.find((call) => call.name === "create_todo_cmd")?.args).toMatchObject({ args: { applicationId: "a1", title: "新任务", duePrecision: "date", dueDate: "2026-10-01" } });
+  expect(document.getElementById("cal-title")!.textContent).toBe("2026年10月");
 });
 
 test("edit opens the correct application, while failed creation retains input in the dialog", async () => {
-  const h = todos({ failSave: true }); await h.show();
-  fireEvent.click(h.query.getByRole("button", { name: "编辑 / 改期" }));
+  const h = todos({ failSave: true }); await h.show({ id: "t1" });
+  fireEvent.click(h.query.getByRole("button", { name: "编辑" }));
   await waitFor(() => expect(h.dialog.open).toBe(true));
-  const application = h.query.getByLabelText("属于哪条申请") as HTMLSelectElement;
+  const application = document.getElementById("todo-application") as HTMLSelectElement;
   expect(application.value).toBe("a2"); expect(application.disabled).toBe(true);
   expect(within(h.dialog).getByText(/撤掉原来登记的提醒/)).toBeTruthy();
   fireEvent.click(within(h.dialog).getByRole("button", { name: "取消" }));
-  fireEvent.click(h.query.getByRole("button", { name: "新增待办" }));
+  fireEvent.click(h.query.getByRole("button", { name: "新增日程" }));
   fireEvent.change(application, { target: { value: "a1" } });
   fireEvent.input(h.query.getByLabelText("做什么"), { target: { value: "不要丢掉" } });
   fireEvent.submit(document.getElementById("todo-form")!);
@@ -83,31 +86,43 @@ test("edit opens the correct application, while failed creation retains input in
   expect(application.value).toBe("a1");
 });
 
-test("todo list and detail: selecting shows details, complete is direct and can be reopened in place", async () => {
+test("month calendar and day panel: pills select the day, complete is direct and can be reopened in place", async () => {
   const h = todos({ items: [task, { ...task, id: "t2", title: "跟进结果", company: "星河", position: "工程师", duePrecision: "none", dueDate: null }] });
-  await h.show();
+  await h.show({ id: "t1" });
   const detail = within(document.getElementById("todo-detail")!);
+  expect(detail.getByRole("heading", { name: "9月25日 · 周五" })).toBeTruthy();
   expect(detail.getByRole("heading", { name: "准备面试" })).toBeTruthy();
   expect(detail.getByText("系统通知不可用。")).toBeTruthy();
+  // 没有日期的那条在底部折叠条里，数量一直显示。
+  expect(document.getElementById("todo-undated-summary")!.textContent).toContain("(1)");
   fireEvent.click(h.query.getByRole("button", { name: /^跟进结果/ }));
   expect(detail.getByRole("heading", { name: "跟进结果" })).toBeTruthy();
-  fireEvent.click(detail.getByRole("button", { name: "标记为已完成" }));
+  expect(detail.getByRole("heading", { name: "未设具体日期" })).toBeTruthy();
+  fireEvent.click(detail.getByRole("button", { name: "标记完成" }));
   await waitFor(() => expect(detail.getByRole("button", { name: "重新打开" })).toBeTruthy());
   expect(h.calls.find((call) => call.name === "set_todo_status_cmd")?.args).toEqual({ id: "t2", status: "done" });
   expect(document.getElementById("todo-status")!.textContent).toContain("已标记完成");
-  // 已完成的那条不在「未完成」列表里了，但详情还停在它上面，可以直接重新打开。
-  expect(h.query.queryByRole("button", { name: /^跟进结果/ })).toBeNull();
   fireEvent.click(detail.getByRole("button", { name: "重新打开" }));
-  await waitFor(() => expect(detail.getByRole("button", { name: "标记为已完成" })).toBeTruthy());
+  await waitFor(() => expect(detail.getByRole("button", { name: "标记完成" })).toBeTruthy());
 });
 
-test("first-time empty and filter-without-results are different states; no application leads to creating one", async () => {
+test("the day panel never prints 00:00 for a date-only schedule and says what the reminder really does", async () => {
+  const h = todos(); await h.show({ id: "t1" });
+  const text = document.getElementById("view-todos")!.textContent ?? "";
+  expect(text).not.toContain("00:00");
+  expect(text).toContain("2026-09-25（未定时间）");
+  expect(text).toContain("系统通知不可用。");
+  // 月历格里的胶囊只写类型与公司简称。
+  const pill = document.querySelector<HTMLElement>('.cal-pill[data-todo="t1"]')!;
+  expect(pill.textContent).toBe("面试 · 远山");
+});
+
+test("first-time empty: the day panel leads to creating an application; add button is blocked by the dialog's own callout", async () => {
   const none = todos({ items: [], applications: [] }); await none.show();
-  expect(document.getElementById("todo-shell")!.classList.contains("is-empty")).toBe(true);
-  expect(none.query.getByRole("heading", { name: "还没有待办" })).toBeTruthy();
+  expect(document.querySelector(".cal-grid")).toBeTruthy();
   fireEvent.click(none.query.getByRole("button", { name: "去新增申请" }));
   expect(none.createApplication).toHaveBeenCalledTimes(1);
-  fireEvent.click(none.query.getByRole("button", { name: "新增待办" }));
+  fireEvent.click(none.query.getByRole("button", { name: "新增日程" }));
   expect((document.getElementById("todo-submit") as HTMLButtonElement).disabled).toBe(true);
   expect(document.getElementById("todo-no-apps")!.hidden).toBe(false);
   fireEvent.click(within(none.dialog).getByRole("button", { name: "去新增申请" }));
@@ -115,10 +130,93 @@ test("first-time empty and filter-without-results are different states; no appli
   expect(none.createApplication).toHaveBeenCalledTimes(2);
 
   document.body.innerHTML = readFileSync("index.html", "utf8").split("<body>")[1].split("</body>")[0];
-  const filtered = todos(); await filtered.show();
-  fireEvent.click(within(filtered.query.getByRole("group", { name: "任务状态" })).getByRole("button", { name: /已取消/ }));
-  expect(document.getElementById("todo-shell")!.classList.contains("is-empty")).toBe(false);
-  expect(filtered.query.getByText("没有已取消的待办")).toBeTruthy();
+  const filled = todos(); await filled.show();
+  // 有申请时，空的一天只提示可以添加，不拦着。
+  expect(filled.query.getByRole("button", { name: "在这天添加日程" })).toBeTruthy();
+  expect(filled.query.queryByRole("button", { name: "去新增申请" })).toBeNull();
+});
+
+test("type buttons are ordered 测评 笔试 面试 其他, stay lit once picked, never touch the title; Esc closes a dropdown before the dialog", async () => {
+  const h = todos(); await h.show();
+  fireEvent.click(h.query.getByRole("button", { name: "新增日程" }));
+  const group = within(document.getElementById("todo-kinds")!);
+  const labels = group.getAllByRole("button").map((button) => button.textContent);
+  expect(labels).toEqual(["测评", "笔试", "面试", "其他"]);
+  fireEvent.input(h.query.getByLabelText("做什么"), { target: { value: "我自己写的" } });
+  fireEvent.click(group.getByRole("button", { name: "笔试" }));
+  expect(group.getByRole("button", { name: "笔试" }).getAttribute("aria-pressed")).toBe("true");
+  expect(group.getByRole("button", { name: "测评" }).getAttribute("aria-pressed")).toBe("false");
+  expect((h.query.getByLabelText("做什么") as HTMLInputElement).value).toBe("我自己写的");
+  fireEvent.click(group.getByRole("button", { name: "其他" }));
+  expect(group.getByRole("button", { name: "笔试" }).getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(group.getByRole("button", { name: "其他" }));
+  expect(group.getByRole("button", { name: "其他" }).getAttribute("aria-pressed")).toBe("false");
+
+  // 下拉在弹窗里：Esc 只收起下拉。
+  const hour = document.querySelector<HTMLButtonElement>('.dd-btn[aria-label="几点"]')!;
+  fireEvent.click(hour);
+  expect(document.querySelector(".dd-list:not([hidden])")).toBeTruthy();
+  fireEvent.keyDown(hour, { key: "Escape" });
+  fireEvent(h.dialog, new Event("cancel", { cancelable: true }));
+  expect(document.querySelector(".dd-list:not([hidden])")).toBeNull();
+  expect(h.dialog.open).toBe(true);
+  // 紧接着再按一次 Esc 就关弹窗，不用等：那一下只吞一次。
+  fireEvent(h.dialog, new Event("cancel", { cancelable: true }));
+  expect(h.dialog.open).toBe(false);
+});
+
+test("editing a todo whose type was never picked lights the guessed type but does not save it until the user clicks", async () => {
+  const h = todos(); await h.show({ id: "t1" });
+  fireEvent.click(h.query.getByRole("button", { name: "编辑" }));
+  await waitFor(() => expect(h.dialog.open).toBe(true));
+  const group = within(document.getElementById("todo-kinds")!);
+  expect(group.getByRole("button", { name: "面试" }).getAttribute("aria-pressed")).toBe("true"); // 标题「准备面试」
+  fireEvent.submit(document.getElementById("todo-form")!);
+  await waitFor(() => expect(h.dialog.open).toBe(false));
+  expect((h.calls.find((call) => call.name === "edit_todo_cmd")!.args as { args: Record<string, unknown> }).args.kind).toBeNull();
+
+  // 亲手点一下才存；再点一下回到「自动」。
+  fireEvent.click(h.query.getByRole("button", { name: "编辑" }));
+  await waitFor(() => expect(h.dialog.open).toBe(true));
+  fireEvent.click(within(document.getElementById("todo-kinds")!).getByRole("button", { name: "面试" }));
+  fireEvent.submit(document.getElementById("todo-form")!);
+  await waitFor(() => expect(h.dialog.open).toBe(false));
+  const edits = h.calls.filter((call) => call.name === "edit_todo_cmd");
+  expect((edits[1]!.args as { args: Record<string, unknown> }).args.kind).toBe("interview");
+});
+
+test("the month grid is made of rows of seven cells, and keyboard focus stays on the card after completing it", async () => {
+  const h = todos(); await h.show({ id: "t1" });
+  const rows = Array.from(document.querySelectorAll('.cal-grid [role="row"]'));
+  const weekRows = rows.filter((row) => row.classList.contains("cal-row"));
+  expect(rows.length).toBe(weekRows.length + 1); // 星期头也是一行
+  expect(weekRows.length === 5 || weekRows.length === 6).toBe(true);
+  for (const row of weekRows) expect(row.querySelectorAll('[role="gridcell"]')).toHaveLength(7);
+  expect(document.querySelectorAll('.cal-grid > [role="gridcell"], .cal-days > [role="gridcell"]')).toHaveLength(0);
+
+  const done = within(document.getElementById("todo-detail")!).getByRole("button", { name: "标记完成" });
+  done.focus();
+  fireEvent.click(done);
+  await waitFor(() => expect(within(document.getElementById("todo-detail")!).getByRole("button", { name: "重新打开" })).toBeTruthy());
+  expect(document.activeElement).toBe(within(document.getElementById("todo-detail")!).getByRole("button", { name: "重新打开" }));
+});
+
+test("choosing an undated todo from the fold with the keyboard keeps focus on that row", async () => {
+  const h = todos({ items: [task, { ...task, id: "t2", title: "跟进结果", company: "星河", position: "工程师", duePrecision: "none", dueDate: null }] });
+  await h.show({ id: "t1" });
+  document.getElementById("todo-undated")!.setAttribute("open", "");
+  const row = document.querySelector<HTMLElement>('#todo-undated-list [data-todo="t2"]')!;
+  row.focus();
+  fireEvent.click(row);
+  const after = document.querySelector<HTMLElement>('#todo-undated-list [data-todo="t2"]')!;
+  expect(after.getAttribute("aria-current")).toBe("true");
+  expect(document.activeElement).toBe(after);
+});
+
+test("four status filter buttons are gone", async () => {
+  const h = todos(); await h.show();
+  expect(document.getElementById("todo-filter")).toBeNull();
+  for (const label of ["未完成", "已取消", "全部"]) expect(h.query.queryByRole("button", { name: new RegExp(`^${label}`) })).toBeNull();
 });
 
 test("paste import is a dialog: empty text is refused inline, success closes and clears", async () => {
@@ -250,23 +348,21 @@ test.each([false, true])("todo read failure has retry and keeps previously loade
       return [task, { ...task, id: "t2", title: "保留选中任务" }] as T;
     }
     if (name === "list_applications_cmd") return { items: apps } as T;
-    if (name === "overdue_digest_cmd") return { todos: [], more: 0 } as T;
     if (name === "reminder_capability_cmd") return { available: false } as T;
     return {} as T;
   };
-  const show = mountTodos(invoke);
-  await show();
+  const show = mountTodos(invoke, () => new Date(2026, 8, 20, 10, 0, 0));
+  await show({ id: "t1" });
   if (previouslyLoaded) {
     fireEvent.click(document.querySelector('[data-todo="t2"][data-act="select"]')!);
     fail = true;
     await show();
-    expect(document.querySelector('[data-todo="t2"][data-act="select"]')!.getAttribute("aria-current")).toBe("true");
-    expect(document.querySelector("#todo-detail h2")!.textContent).toBe("保留选中任务");
-    expect(document.querySelector('[data-filter="open"]')!.textContent).toContain("2");
+    expect(document.querySelector('[data-todo-card="t2"]')!.getAttribute("aria-current")).toBe("true");
+    expect(document.querySelector('[data-todo-card="t2"] h3')!.textContent).toBe("保留选中任务");
     expect(document.getElementById("todo-status")!.textContent).toContain("当前显示上次读取的结果");
   }
   expect(document.getElementById("todo-list")!.textContent).toContain("数据库打不开");
-  expect(document.getElementById("todo-list")!.textContent).not.toContain("还没有待办");
+  expect(document.getElementById("todo-list")!.querySelector(".cal-grid")).toBeTruthy();
   fail = false;
   fireEvent.click(document.querySelector('[data-todo-retry]')!);
   await waitFor(() => expect(document.querySelector('[data-todo-retry]')).toBeNull());

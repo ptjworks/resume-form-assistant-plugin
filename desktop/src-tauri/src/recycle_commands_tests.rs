@@ -252,6 +252,7 @@ fn the_purge_preview_counts_with_sql_not_with_a_capped_list() {
                 remind_at_utc: None,
                 interview_round: None,
                 source_event_id: None,
+                kind: None,
             })
             .unwrap();
     }

@@ -8,7 +8,7 @@
 //! 事，如实记进 `reminder_state` 再由界面说出来（产品需求 §5.4）。
 
 use archive_store::{
-    ArchiveStore, ApplicationDetail, NewTodo, ReminderState, Todo, TodoDue, TodoPatch, TodoStatus,
+    ArchiveStore, ApplicationDetail, NewTodo, ReminderState, Todo, TodoDue, TodoKind, TodoPatch, TodoStatus,
 };
 use reminders::{
     plan, Capability, Due, ReminderError, ReminderRequest, ReminderScheduler, ScheduledHandle,
@@ -44,6 +44,9 @@ pub struct TodoView {
     pub status: String,
     pub interview_round: Option<i64>,
     pub source_event_id: Option<String>,
+    /// 用户选的类型：`assessment` / `written` / `interview` / `other`；没选过（旧待办、
+    /// AI 建的待办）为 `null`，界面按标题推断。
+    pub kind: Option<String>,
     /// 提醒现在处于什么状态：`none` / `scheduled` / `fired` / `missed` / `unsupported`。
     pub reminder_state: String,
     pub reminder_scheduled_for_utc: Option<String>,
@@ -102,6 +105,9 @@ pub struct NewTodoArgs {
     /// **不会**另写一套调度（#26 验收第 5 条）。
     #[serde(default)]
     pub source_event_id: Option<String>,
+    /// `assessment` / `written` / `interview` / `other`；不给就是没选。
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,6 +132,9 @@ pub struct EditTodoArgs {
     pub remind_at_utc: Option<Option<String>>,
     #[serde(default, deserialize_with = "present")]
     pub interview_round: Option<Option<i64>>,
+    /// 同上：不给不动，显式 `null` 清掉类型。
+    #[serde(default, deserialize_with = "present")]
+    pub kind: Option<Option<String>>,
 }
 
 /// 字段出现了就是 `Some`，值是 `null` 时里面是 `None`；字段缺省时由 `default` 给 `None`。
@@ -155,6 +164,16 @@ pub(crate) fn parse_due(
             .ok_or_else(|| bad("按日期到期需要一个日期。")),
         "none" => Ok(TodoDue::None),
         other => Err(bad(&format!("不认识的到期精度 `{other}`。"))),
+    }
+}
+
+/// 空串当没选；认不出的类型直接拒绝，不悄悄存成别的。
+fn parse_kind(raw: Option<String>) -> Result<Option<TodoKind>, CommandError> {
+    match blank_to_none(raw) {
+        None => Ok(None),
+        Some(text) => TodoKind::parse(text.trim())
+            .map(Some)
+            .ok_or_else(|| bad(&format!("不认识的待办类型 `{text}`。"))),
     }
 }
 
@@ -200,6 +219,7 @@ fn view(todo: &Todo, app: Option<&ApplicationDetail>) -> TodoView {
         status: todo.status.as_str().into(),
         interview_round: todo.interview_round,
         source_event_id: todo.source_event_id.clone(),
+        kind: todo.kind.map(|kind| kind.as_str().into()),
         reminder_state: todo.reminder_state.as_str().into(),
         reminder_scheduled_for_utc: todo.reminder_scheduled_for_utc.clone(),
         company: app.map(|a| a.company.clone()),
@@ -347,6 +367,7 @@ pub fn create_todo(
         args.due_at_utc.as_deref(),
         args.due_date.as_deref(),
     )?;
+    let kind = parse_kind(args.kind)?;
     let created = store
         .create_todo(NewTodo {
             application_id: args.application_id,
@@ -356,6 +377,7 @@ pub fn create_todo(
             remind_at_utc: blank_to_none(args.remind_at_utc),
             interview_round: args.interview_round,
             source_event_id: args.source_event_id,
+            kind,
         })
         .map_err(store_error)?;
 
@@ -380,12 +402,17 @@ pub fn edit_todo(
         )?),
         None => None,
     };
+    let kind = match args.kind {
+        Some(raw) => Some(parse_kind(raw)?),
+        None => None,
+    };
     let patch = TodoPatch {
         title: args.title,
         due,
         time_zone: args.time_zone.map(blank_to_none),
         remind_at_utc: args.remind_at_utc.map(blank_to_none),
         interview_round: args.interview_round,
+        kind,
     };
     let updated = store.update_todo(&args.id, patch).map_err(store_error)?;
 
