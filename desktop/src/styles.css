@@ -795,6 +795,8 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .cal-overdue-dot { width: var(--ui-dot-size); height: var(--ui-dot-size); border-radius: 50%; background: var(--ui-danger); }
 /* 状态提示：浮在左侧栏底部，出现和消失都不会把月历顶动。 */
 .cal-toast { position: fixed; z-index: 20; left: 24px; bottom: 18px; display: flex; align-items: center; gap: 8px; max-width: min(520px, calc(100% - clamp(360px, 36%, 460px) - 48px)); padding: 8px 12px; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); box-shadow: 0 6px 20px #18181b1a; }
+/* 没有提示时不用 hidden 隐藏（那样读屏听不到随后写进去的文字），而是缩成看不见的一点，live region 一直在。 */
+.cal-toast[data-empty="true"] { padding: 0; gap: 0; border: 0; box-shadow: none; opacity: 0; pointer-events: none; width: 1px; height: 1px; max-width: 1px; overflow: hidden; }
 .cal-toast .note { margin: 0; font-size: 13px; }
 .cal-toast-close { flex: none; display: grid; place-items: center; width: 22px; min-height: 22px; padding: 0; border: 0; border-radius: 11px; background: transparent; color: var(--ui-muted); font-size: 16px; line-height: 1; }
 .cal-toast-close:hover:not(:disabled) { background: var(--ui-line-soft); color: var(--ui-ink); }

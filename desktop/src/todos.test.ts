@@ -387,6 +387,23 @@ test('提醒预设：编辑时从已有提醒时刻还原，对不上就是自�
   assert.equal(presetFromRemind('2026-11-22T05:47:00Z', '2026-11-22', '14:30', 'Asia/Shanghai'), 'custom');
 });
 
+test('只认完整的面试说法，不把单个「面」字当面试', () => {
+  for (const title of ['技术二面', 'HR 面', '终面', '一面', '第三面', '电话面试', '群面', '复试', '主管面', '视频 面']) {
+    assert.equal(inferKind(todo({ title })), 'interview', title);
+  }
+  for (const title of ['简历方面整理', '整理面经', '见面确认', '当面沟通', '上面的材料', '跟进结果']) {
+    assert.equal(inferKind(todo({ title })), 'other', title);
+  }
+  assert.equal(inferKind(todo({ title: '整理面经', interviewRound: 1 })), 'interview', '有面试轮次仍算面试');
+  assert.equal(inferKind(todo({ title: '在线测评' })), 'assessment');
+});
+
+test('逾期数量只算有日期、跳得过去的', () => {
+  const summary = summarizeOverdue([todo({ id: 'a', duePrecision: 'date', dueDate: daysFromToday(-2) })], NOW);
+  assert.equal(summary.count, 1);
+  assert.deepEqual(summary.earliest, { day: daysFromToday(-2), id: 'a' });
+});
+
 test('用户选过的类型优先于标题推断；没选过才推断', () => {
   assert.equal(inferKind(todo({ title: '技术二面', kind: 'written' })), 'written', '标题写着面试也按他选的');
   assert.equal(inferKind(todo({ title: '随便', kind: 'other' })), 'other');

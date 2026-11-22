@@ -42,17 +42,20 @@ export function consumeEscapeClose(): boolean {
   return swallowed;
 }
 
+const instances = new WeakMap<HTMLSelectElement, Dropdown>();
+
 export function enhanceSelect(select: HTMLSelectElement): Dropdown {
   const parent = select.parentElement;
   // 没有真实的 DOM（单元测试里的假节点）就保持原样。
   if (!parent || typeof document.createElement !== "function") return { sync() {} };
-  if (select.dataset.dropdown === "ready") return { sync() {} };
+  // 同一个 select 被挂两次（热更新等）：返回第一次那份，按钮文字照样能同步。
+  const existing = instances.get(select);
+  if (existing) return existing;
 
   const wrap = document.createElement("span");
   wrap.className = "dd";
   parent.insertBefore(wrap, select);
   wrap.appendChild(select);
-  select.dataset.dropdown = "ready";
   select.classList.add("dd-native");
   select.tabIndex = -1;
   select.setAttribute("aria-hidden", "true");
@@ -274,5 +277,7 @@ export function enhanceSelect(select: HTMLSelectElement): Dropdown {
     new MutationObserver(sync).observe(select, { childList: true, subtree: true, characterData: true });
   }
   sync();
-  return { sync };
+  const dropdown: Dropdown = { sync };
+  instances.set(select, dropdown);
+  return dropdown;
 }

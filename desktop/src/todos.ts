@@ -281,15 +281,20 @@ export const KIND_LABEL: Record<TodoKind, string> = {
 /** 类型按钮的顺序：按求职里通常发生的先后——先测评，再笔试，再面试，「其他」放最后。 */
 export const KIND_ORDER: TodoKind[] = ["assessment", "written", "interview", "other"];
 
+/** 标题里算「面试」的完整说法：面试、面谈、复试、终面、初面、群面、「几面」（一面、二面）、「技术 / HR 面」等。
+ *  不认单独一个「面」字：「简历方面整理」「整理面经」「见面确认」都不是面试。 */
+const INTERVIEW_WORDS =
+  /面试|面谈|复试|终面|初面|群面|[一二三四五六七八九十\d]\s*面|(?:hr|技术|主管|总监|交叉|电话|视频|业务|部门)\s*面/i;
+
 /**
  * 这条待办算哪一类。用户选过类型就用他选的；没选过的（旧待办、AI 从邮件里建的）按轮次与
- * 标题关键词推断：有面试轮次或标题含「面」→ 面试；含「测评」→ 测评；含「笔试」→ 笔试；
+ * 标题关键词推断：有面试轮次或标题里有完整的面试说法 → 面试；含「测评」→ 测评；含「笔试」→ 笔试；
  * 其余 →「其他」。判断顺序就是这个顺序。
  */
 export function inferKind(todo: Pick<TodoView, "title" | "interviewRound" | "kind">): TodoKind {
   if (todo.kind) return todo.kind;
   const title = todo.title ?? "";
-  if (todo.interviewRound || title.includes("面")) return "interview";
+  if (todo.interviewRound || INTERVIEW_WORDS.test(title)) return "interview";
   if (title.includes("测评")) return "assessment";
   if (title.includes("笔试")) return "written";
   return "other";
@@ -478,9 +483,10 @@ export function summarizeOverdue(todos: TodoView[], now: Date): OverdueSummary {
   let earliest: { day: string; id: string; clock: string } | null = null;
   for (const todo of todos) {
     if (bucketOf(todo, now) !== "overdue") continue;
-    count += 1;
+    // 数量只算有日期、跳得过去的，标签上的数字和点了能到的地方永远一致。
     const day = todoDay(todo);
     if (!day) continue;
+    count += 1;
     const clock = todoClock(todo) ?? "";
     if (!earliest || day < earliest.day || (day === earliest.day && clock < earliest.clock)) {
       earliest = { day, id: todo.id, clock };

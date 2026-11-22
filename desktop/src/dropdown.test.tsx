@@ -94,3 +94,12 @@ test("clicking elsewhere closes it, only one dropdown is open at a time, and reb
   await Promise.resolve();
   expect(button.textContent).toBe("换了一批");
 });
+
+test("enhancing the same select twice hands back the first instance, so the button text still follows", () => {
+  const { select, dropdown, button } = mount();
+  expect(enhanceSelect(select)).toBe(dropdown);
+  expect(document.querySelectorAll(".dd-btn")).toHaveLength(1);
+  select.selectedIndex = 2;
+  enhanceSelect(select).sync();
+  expect(button.textContent).toBe("1 点");
+});

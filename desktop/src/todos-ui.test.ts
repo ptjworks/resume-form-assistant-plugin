@@ -722,10 +722,10 @@ test('状态提示是浮着的小条：成功几秒后自己消失，出问题�
     ok.el("todo-application").value = "a1";
     await ok.el("todo-form").emit("submit");
     assert.match(ok.el("todo-status").textContent, /已添加/);
-    assert.equal(ok.el("todo-toast").hidden, false);
+    assert.equal(ok.el("todo-toast").dataset.empty, "false");
     assert.equal(ok.el("todo-toast-close").hidden, true, "成功的不用关，会自己消失");
     mock.timers.tick(3000);
-    assert.equal(ok.el("todo-toast").hidden, true);
+    assert.equal(ok.el("todo-toast").dataset.empty, "true", "提示条一直在页面里（读屏才听得到），没内容时缩成看不见");
     assert.equal(ok.el("todo-status").textContent, "");
 
     // 保存成功但提醒没登记上：留着，等用户关。
@@ -735,9 +735,9 @@ test('状态提示是浮着的小条：成功几秒后自己消失，出问题�
     assert.match(h.el("todo-status").textContent, /Mars/);
     assert.equal(h.el("todo-toast-close").hidden, false);
     mock.timers.tick(60_000);
-    assert.equal(h.el("todo-toast").hidden, false, "出问题的不自动消失");
+    assert.equal(h.el("todo-toast").dataset.empty, "false", "出问题的不自动消失");
     await h.el("todo-toast-close").emit("click");
-    assert.equal(h.el("todo-toast").hidden, true);
+    assert.equal(h.el("todo-toast").dataset.empty, "true");
   } finally {
     mock.timers.reset();
   }
@@ -755,4 +755,21 @@ test('「在这天添加日程」：有日程时固定在右栏底栏，没日�
   assert.doesNotMatch(empty, /cal-side-foot/);
   assert.match(empty, /cal-side-empty[\s\S]*data-add-day="2026-09-14"[\s\S]*在这天添加日程/);
   assert.equal(empty.match(/data-add-day/g)?.length, 1);
+});
+
+test('自己选提醒时间：没选几点，几分灰掉并回到 00', async () => {
+  const h = harness();
+  await h.show();
+  await h.el("todo-new").emit("click");
+  h.el("todo-remind-preset").value = "custom";
+  await h.el("todo-remind-preset").emit("change");
+  assert.equal(h.el("todo-remind-minute").disabled, true);
+  h.el("todo-remind-hour").value = "08";
+  await h.el("todo-remind-hour").emit("change");
+  assert.equal(h.el("todo-remind-minute").disabled, false);
+  h.el("todo-remind-minute").value = "45";
+  h.el("todo-remind-hour").value = "";
+  await h.el("todo-remind-hour").emit("change");
+  assert.equal(h.el("todo-remind-minute").disabled, true);
+  assert.equal(h.el("todo-remind-minute").value, "00");
 });

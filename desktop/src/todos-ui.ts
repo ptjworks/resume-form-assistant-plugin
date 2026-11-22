@@ -225,7 +225,7 @@ export function mountTodos(
     toastTimer = null;
     status.textContent = message?.text ?? "";
     status.className = message ? `note ${message.tone}` : "note";
-    toast.hidden = !message;
+    toast.dataset.empty = message ? "false" : "true";
     const sticky = message?.tone === "warn" || message?.tone === "pending";
     toastClose.hidden = !sticky;
     if (message && !sticky) {
@@ -284,6 +284,9 @@ export function mountTodos(
     const hasDate = Boolean(dateInput.value);
     const clock = readClock(hourSelect, minuteSelect);
     minuteSelect.disabled = !hourSelect.value;
+    // 自己选提醒时间时也一样：没选几点，几分就灰掉并回到 00。
+    remindMinute.disabled = !remindHour.value;
+    if (!remindHour.value) remindMinute.value = "00";
     dateClear.hidden = !hasDate;
     let preset = remindPreset.value || "default";
     if (!hasDate && preset !== "custom") preset = "default";
