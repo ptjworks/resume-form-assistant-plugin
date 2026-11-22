@@ -773,7 +773,7 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .todo-list-head { flex: none; padding: 12px 14px 0; }
 .todo-list-head .segmented { margin: 0; }
 #todo-status { flex: none; margin: 9px 14px 0; font-size: 13px; }
-#todo-status:empty, #todo-form-status:empty, #inbox-paste-status:empty { display: none; }
+#todo-status:empty, #todo-form-status:empty, #inbox-paste-status:empty, #inbox-associate-status:empty { display: none; }
 .todo-list-note { margin: 12px 6px; font-size: 13px; }
 #todo-list { padding: 10px 14px 16px; }
 .todo-group + .todo-group { margin-top: 16px; }
@@ -1031,6 +1031,9 @@ dialog.ai-review-dialog.is-wide { max-width: 860px; }
 [data-platform][data-platform-off] { display: none !important; }
 
 /* 通知页（#552）：纯白两栏。左边按邮件流转顺序排列表，右边读原文，底部固定一条 AI 整理。 */
+/* 页面上方出现提示条（云备份、更新等）时，通知页只占剩下的高度，不把底部 AI 整理条挤出窗口。 */
+main:has(> #view-inbox:not(.hidden)) { display: flex; flex-direction: column; overflow: hidden; }
+main:has(> #view-inbox:not(.hidden)) > #view-inbox { flex: 1; height: auto; }
 #view-inbox { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 0; gap: 0; background: var(--ui-surface); font-family: var(--ui-font); }
 #view-inbox .workspace-status { margin: 0; padding: 7px 20px; border: 0; border-bottom: 1px solid var(--ui-line); border-radius: 0; font-size: 12.5px; line-height: 1.6; }
 .inbox-workbench { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); background: var(--ui-surface); }

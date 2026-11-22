@@ -544,7 +544,7 @@ export function mountInbox(
       }, { compact: true });
     }
     const attachmentRoot = preview.querySelector<HTMLElement>("#inbox-mail-attachments");
-    if (attachmentRoot) clearAttachments = mountAttachmentList(attachmentRoot, invoke, item.id, evidenceTitle(item), preview.querySelector<HTMLElement>("[data-mail-body]"));
+    if (attachmentRoot) clearAttachments = mountAttachmentList(attachmentRoot, invoke, item.id, evidenceTitle(item), preview.querySelector<HTMLElement>("[data-mail-body]"), { hideEmpty: true });
     preview.querySelectorAll<HTMLElement>("button[data-act]").forEach((button) => {
       button.addEventListener("click", () => {
         const action = button.dataset.act;

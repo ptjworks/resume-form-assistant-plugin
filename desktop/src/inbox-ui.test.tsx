@@ -453,3 +453,14 @@ test("a new mail that has just been kept leaves the list and the reader goes bac
   expect(el("inbox-list").querySelector("[data-row]")).toBeNull();
   expect(el("inbox-preview").textContent).not.toContain("原文还没有下载");
 });
+
+test("a mail without file attachments shows its body straight away, no empty attachment box", async () => {
+  const h = setup({
+    list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL),
+    list_evidence_attachments_cmd: () => ({ sourceSha256: "x", items: [] }),
+  });
+  await h.inbox.refresh();
+  fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
+  await waitFor(() => expect(h.called("list_evidence_attachments_cmd")).toHaveLength(1));
+  await waitFor(() => expect((el("inbox-mail-attachments") as HTMLElement).hidden).toBe(true));
+});
