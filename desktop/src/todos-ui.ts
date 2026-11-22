@@ -227,10 +227,15 @@ export function mountTodos(
     const classes = ["cal-cell", inMonth ? "" : "is-out", day === today ? "is-today" : "", selected ? "is-selected" : ""]
       .filter(Boolean)
       .join(" ");
+    const more = rest > 0
+      ? `<button type="button" class="cal-more" data-day="${escapeHtml(day)}" aria-label="${escapeHtml(`${cellLabel(day, entries.length)}，查看全部`)}">+${rest}</button>`
+      : "";
     return `<div class="${classes}" role="gridcell" data-day="${escapeHtml(day)}">
-      <button type="button" class="cal-day" data-day="${escapeHtml(day)}" aria-pressed="${selected}"
-        ${day === today ? 'aria-current="date"' : ""} aria-label="${escapeHtml(cellLabel(day, entries.length))}">${num}</button>
-      <ul class="cal-pills">${shown.map(pill).join("")}${rest > 0 ? `<li><button type="button" class="cal-more" data-day="${escapeHtml(day)}" aria-label="${escapeHtml(`${cellLabel(day, entries.length)}，查看全部`)}">+${rest}</button></li>` : ""}</ul>
+      <div class="cal-cell-head">
+        <button type="button" class="cal-day" data-day="${escapeHtml(day)}" aria-pressed="${selected}"
+          ${day === today ? 'aria-current="date"' : ""} aria-label="${escapeHtml(cellLabel(day, entries.length))}">${num}</button>${more}
+      </div>
+      <ul class="cal-pills">${shown.map(pill).join("")}</ul>
     </div>`;
   }
 

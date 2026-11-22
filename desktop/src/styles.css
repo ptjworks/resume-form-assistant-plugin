@@ -791,20 +791,21 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .cal-overdue .link-button { color: var(--ui-danger); text-decoration: underline; text-underline-offset: 2px; }
 #todo-status { flex: none; margin: 0; font-size: 12.5px; }
 #todo-status:empty, #todo-form-status:empty, #inbox-paste-status:empty { display: none; }
-.cal-board { flex: none; }
+.cal-board { flex: 1 0 auto; display: flex; flex-direction: column; }
 .cal-board .pane-error { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.cal-grid { border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); overflow: hidden; }
+.cal-grid { flex: 1; display: flex; flex-direction: column; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); overflow: hidden; }
 .cal-week, .cal-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .cal-week { border-bottom: 1px solid var(--ui-line-soft); background: var(--ui-canvas); }
 .cal-week span { padding: 6px 0; text-align: center; color: var(--ui-muted); font-size: 12px; }
-.cal-days { grid-auto-rows: minmax(88px, auto); }
-.cal-cell { position: relative; min-width: 0; min-height: 60px; display: flex; flex-direction: column; gap: 2px; padding: 4px 4px 5px; border-right: 1px solid var(--ui-line-soft); border-bottom: 1px solid var(--ui-line-soft); cursor: pointer; }
+.cal-days { flex: 1; grid-auto-rows: minmax(68px, 1fr); }
+.cal-cell { position: relative; min-width: 0; min-height: 60px; display: flex; flex-direction: column; gap: 1px; padding: 4px 4px 5px; border-right: 1px solid var(--ui-line-soft); border-bottom: 1px solid var(--ui-line-soft); cursor: pointer; }
 .cal-cell:nth-child(7n) { border-right: 0; }
 .cal-cell.is-out .cal-day { color: var(--ui-faint); font-weight: 400; }
 .cal-cell.is-out .cal-pills { opacity: .6; }
 .cal-cell:hover { background: var(--ui-canvas); }
 .cal-cell.is-selected { background: var(--ui-brand-wash); box-shadow: inset 0 0 0 1px var(--ui-brand-edge); }
-.cal-day { align-self: flex-start; display: grid; place-items: center; min-width: 22px; min-height: 22px; padding: 0 5px; border: 0; border-radius: 11px; background: transparent; color: var(--ui-ink); font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.cal-cell-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; }
+.cal-day { display: grid; place-items: center; min-width: 22px; min-height: 22px; padding: 0 5px; border: 0; border-radius: 11px; background: transparent; color: var(--ui-ink); font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .cal-day:hover:not(:disabled) { background: var(--ui-line-soft); }
 .cal-cell.is-today .cal-day, .cal-cell.is-today .cal-day:hover:not(:disabled) { background: var(--ui-brand); color: #fff; font-weight: 600; }
 .cal-pills { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -817,7 +818,7 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .cal-pill:hover:not(:disabled) { border-color: transparent; filter: brightness(.97); }
 .cal-pill[data-state="done"] { background: var(--ui-line-soft); color: var(--ui-faint); text-decoration: line-through; }
 .cal-pill[data-state="overdue"] { background: var(--ui-danger-pale); color: var(--ui-danger); box-shadow: inset 0 0 0 1px var(--ui-danger-line); }
-.cal-more { width: auto; background: transparent; color: var(--ui-muted); padding-inline: 4px; }
+.cal-more { width: auto; flex: none; background: transparent; color: var(--ui-muted); padding-inline: 5px; font-weight: 600; }
 .cal-more:hover:not(:disabled) { background: var(--ui-line-soft); border-color: transparent; color: var(--ui-ink); }
 .cal-day:focus-visible, .cal-pill:focus-visible, .cal-more:focus-visible { outline-offset: 1px; }
 
@@ -890,7 +891,7 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .todo-detail-menu > summary::-webkit-details-marker { display: none; }
 .todo-detail-menu > summary:hover { background: var(--ui-line-soft); }
 .todo-detail-menu > summary .icon { stroke-width: 3; }
-.todo-detail-menu > button { position: absolute; z-index: 2; right: 0; display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border-color: var(--ui-line); border-radius: 7px; background: var(--ui-surface); font-size: 12.5px; white-space: nowrap; box-shadow: 0 4px 14px #18181b1a; }
+.todo-detail-menu > button { position: absolute; z-index: 2; right: 0; min-width: 116px; display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border-color: var(--ui-line); border-radius: 7px; background: var(--ui-surface); font-size: 12.5px; white-space: nowrap; box-shadow: 0 4px 14px #18181b1a; }
 .todo-detail-menu > button:nth-of-type(1) { top: calc(100% + 4px); }
 .todo-detail-menu > button:nth-of-type(2) { top: calc(100% + 38px); }
 .todo-cancel-action { color: var(--ui-danger); }
