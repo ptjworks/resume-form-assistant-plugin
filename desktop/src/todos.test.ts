@@ -12,6 +12,8 @@ import {
   describeDue,
   describeReminder,
   describeSave,
+  describeWhenNote,
+  fillKind,
   describeStatusChange,
   localDay,
   buildCalendar,
@@ -349,4 +351,17 @@ test('公司简称：去掉有限公司和括号，过长截断', () => {
   assert.equal(companyShort('北京字节跳动网络技术有限公司'), '北京字节跳动');
   assert.equal(companyShort('有限公司'), '有限公司', '去空了就用原名');
   assert.equal(companyShort(null), '');
+});
+
+test('弹窗小字：提醒能不能响如实写，没有日期就说不提醒', () => {
+  assert.equal(describeWhenNote(true, '本机时区（Asia/Shanghai）', AVAILABLE), '按本机时区（Asia/Shanghai）。到期时按系统通知提醒。');
+  assert.equal(describeWhenNote(true, '', BLOCKED), '系统通知未授权，到期时不会弹提醒。');
+  assert.match(describeWhenNote(false, 'Asia/Shanghai', AVAILABLE), /不会提醒/);
+});
+
+test('类型按钮填标题：空的直接填，写过的加在前面', () => {
+  assert.equal(fillKind('', '面试'), '面试');
+  assert.equal(fillKind('测评', '笔试'), '笔试');
+  assert.equal(fillKind('二面', '面试'), '面试 二面');
+  assert.equal(fillKind('面试 二面', '面试'), '面试 二面');
 });

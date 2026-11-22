@@ -23,6 +23,8 @@ import { localInputToUtc, utcToLocalInput } from "./zoned.ts";
 import type { CalendarEntry, Message, MonthRef } from "./todos.ts";
 import {
   DELIVERY_WINDOW_NOTE,
+  describeWhenNote,
+  fillKind,
   EMPTY_TODOS,
   KIND_LABEL,
   LIFECYCLE_STATES,
@@ -129,12 +131,13 @@ export function mountTodos(
   const lifecycle = must("todo-lifecycle");
   const form = must<HTMLFormElement>("todo-form");
   const applicationSelect = selectEl("todo-application");
-  const precisionSelect = selectEl("todo-precision");
   const dateInput = input("todo-date");
-  const datetimeInput = input("todo-datetime");
+  const timeInput = input("todo-time");
+  const whenNote = must("todo-when-note");
+  const moreToggle = must<HTMLButtonElement>("todo-more-toggle");
   const dialog = must<HTMLDialogElement>("todo-dialog");
   const formStatus = must("todo-form-status");
-  const formOptions = must<HTMLDetailsElement>("todo-form-options");
+  const formOptions = must("todo-form-options");
 
   let capability: ReminderCapability = { available: false, reason: null };
   let applications: ApplicationSummary[] = [];
@@ -170,15 +173,19 @@ export function mountTodos(
     formStatus.className = message ? `note ${message.tone}` : "note";
   }
 
-  /** 到期精度决定哪个输入框可用。三个精度互斥，不会同时填两个。 */
-  function syncPrecision() {
-    const precision = precisionSelect.value;
-    dateInput.hidden = precision !== "date";
-    datetimeInput.hidden = precision !== "datetime";
-    const dateField = maybe("todo-date-field");
-    const datetimeField = maybe("todo-datetime-field");
-    if (dateField) dateField.hidden = precision !== "date";
-    if (datetimeField) datetimeField.hidden = precision !== "datetime";
+  /** 更多设置（提醒时刻、时区、面试轮次）：只在编辑时出现；已经设过值的会自动展开，保证保存时不被悄悄清掉。 */
+  function setMore(open: boolean) {
+    formOptions.hidden = !open;
+    moreToggle.setAttribute("aria-expanded", String(open));
+    moreToggle.textContent = open ? "收起更多设置" : "更多设置：提醒时刻、时区、面试轮次";
+  }
+
+  /** 日期时间下面那行小字：按哪个时区、提醒会不会响。 */
+  function syncWhenNote() {
+    const custom = valueOf("todo-timezone").trim();
+    const local = localTimeZone();
+    const label = custom ? ` ${custom} 时区` : local ? `本机时区（${local}）` : "本机时区";
+    whenNote.textContent = describeWhenNote(Boolean(dateInput.value), label, capability);
   }
 
   function renderCapability() {
@@ -456,8 +463,11 @@ export function mountTodos(
     if (keep !== undefined) applicationSelect.value = keep;
   }
 
+  /** 日期空 = 未设具体日期；只有日期 = 仅日历日；日期加时间 = 具体时刻。 */
   function argsFromForm() {
-    const precision = precisionSelect.value;
+    const date = dateInput.value;
+    const time = timeInput.value;
+    const precision = !date ? "none" : time ? "datetime" : "date";
     const zone = valueOf("todo-timezone").trim() || null;
     const round = valueOf("todo-round").trim();
     return {
@@ -468,7 +478,7 @@ export function mountTodos(
       // （没填就按本机），不是无条件按本机解释——否则给上海的面试在纽约的机器上
       // 会存成差 12 小时的时刻。
       dueAtUtc:
-        precision === "datetime" ? localInputToUtc(valueOf("todo-datetime"), zone) : null,
+        precision === "datetime" ? localInputToUtc(`${date}T${time}`, zone) : null,
       // 编辑时这几项都显式发出去：命令层把「没给」当成「别动」，显式的 null 才是
       // 「清空」。否则用户删掉提醒时刻、时区或轮次会被悄悄保留。
       timeZone: zone,
@@ -483,11 +493,11 @@ export function mountTodos(
       return { text: "请选择这条待办属于哪条申请。", field: "todo-application" };
     }
     if (!args.title) return { text: "待办要有一个标题。", field: "todo-title" };
-    if (args.duePrecision === "date" && !args.dueDate) {
-      return { text: "选了「只有日期」，请填上日期。", field: "todo-date" };
+    if (!dateInput.value && timeInput.value) {
+      return { text: "填了时间，请也选一个日期。", field: "todo-date" };
     }
     if (args.duePrecision === "datetime" && !args.dueAtUtc) {
-      return { text: "选了「具体到几点」，请填上完整的日期和时刻。", field: "todo-datetime" };
+      return { text: "日期和时间读不出来，请重新选一下。", field: "todo-time" };
     }
     if (args.timeZone && !knownTimeZone(args.timeZone)) {
       return { text: "认不出这个时区。请写成 IANA 名称，例如 Asia/Shanghai；留空按本机时区。", field: "todo-timezone" };
@@ -518,10 +528,12 @@ export function mountTodos(
     editing = null;
     form.reset();
     fillApplications("");
-    syncPrecision();
+    // 只有一条申请时不用再选。
+    if (applications.length === 1 && applications[0]) applicationSelect.value = applications[0].id;
     sayInForm(null);
     must("todo-form-heading").textContent = "新增日程";
-    formOptions.open = false;
+    setMore(false);
+    moreToggle.hidden = true;
     const noApps = applicationsLoaded && !applications.length;
     must("todo-no-apps").hidden = !noApps;
     must("todo-application-hint").hidden = true;
@@ -529,6 +541,7 @@ export function mountTodos(
     input("todo-timezone").placeholder = localTimeZone()
       ? `留空按本机时区（${localTimeZone()}）`
       : "留空按本机时区，例如 Asia/Shanghai";
+    syncWhenNote();
     setFormBusy(false);
   }
 
@@ -549,10 +562,8 @@ export function mountTodos(
   function openCreate(day: string) {
     if (saving || editLoading) return;
     resetForm();
-    const prefill = prefillForDay(day);
-    precisionSelect.value = prefill.duePrecision;
-    dateInput.value = prefill.dueDate;
-    syncPrecision();
+    dateInput.value = prefillForDay(day).dueDate;
+    syncWhenNote();
     openDialog();
     if (applicationsLoaded && !applications.length) maybe("todo-go-applications")?.focus();
     else input("todo-title").focus();
@@ -582,20 +593,23 @@ export function mountTodos(
       }
       applicationSelect.value = todo.applicationId;
       input("todo-title").value = todo.title;
-      precisionSelect.value = todo.duePrecision;
-      dateInput.value = todo.dueDate ?? "";
-      // 存的是 UTC，控件要的是墙钟。直接把 ISO 串切前 16 位塞进去，保存时又被
-      // 按本机重新解释一遍，到期时间会平移一个时区偏移。
-      datetimeInput.value = todo.dueAtUtc ? utcToLocalInput(todo.dueAtUtc, todo.timeZone) : "";
+      // 存的是 UTC，控件要的是墙钟：按待办自己的时区换算成日期和时间两格，保存时再按同一个
+      // 时区换回去，否则到期时间会平移一个时区偏移。
+      const wall = todo.duePrecision === "datetime" && todo.dueAtUtc ? utcToLocalInput(todo.dueAtUtc, todo.timeZone) : "";
+      dateInput.value = wall ? wall.slice(0, 10) : (todo.duePrecision === "date" ? (todo.dueDate ?? "") : "");
+      timeInput.value = wall ? wall.slice(11, 16) : "";
       input("todo-timezone").value = todo.timeZone ?? "";
       // 提醒时刻也要回填，否则用户看不到现在设的是几点，一保存还会被当成「清空」。
       input("todo-remind").value = todo.remindAtUtc
         ? utcToLocalInput(todo.remindAtUtc, todo.timeZone)
         : "";
       input("todo-round").value = todo.interviewRound ? String(todo.interviewRound) : "";
-      syncPrecision();
       must("todo-form-heading").textContent = "编辑日程";
-      formOptions.open = Boolean(todo.timeZone || todo.remindAtUtc || todo.interviewRound);
+      // 编辑时留一个「更多设置」链接；单独设过提醒时刻或轮次的直接展开。时区只有一个名字，
+      // 小字里已经写了，收着也照样随表单一起保存，不会被清掉。
+      moreToggle.hidden = false;
+      setMore(Boolean(todo.remindAtUtc || todo.interviewRound));
+      syncWhenNote();
       must("todo-no-apps").hidden = true;
       must("todo-application-hint").hidden = false;
       must("todo-edit-note").hidden = false;
@@ -683,7 +697,7 @@ export function mountTodos(
     if (problem) {
       sayInForm({ tone: "warn", text: problem.text });
       const field = maybe(problem.field);
-      if (field?.closest?.("#todo-form-options")) formOptions.open = true;
+      if (field?.closest?.("#todo-form-options")) setMore(true);
       field?.focus();
       return;
     }
@@ -800,7 +814,17 @@ export function mountTodos(
     menu.open = false;
     menu.querySelector("summary")?.focus();
   });
-  precisionSelect.addEventListener("change", syncPrecision);
+  dateInput.addEventListener("input", syncWhenNote);
+  dateInput.addEventListener("change", syncWhenNote);
+  input("todo-timezone").addEventListener("input", syncWhenNote);
+  moreToggle.addEventListener("click", () => setMore(formOptions.hidden));
+  form.addEventListener("click", (event) => {
+    const fill = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-kind-fill]");
+    if (!fill) return;
+    const title = input("todo-title");
+    title.value = fillKind(title.value, fill.dataset.kindFill ?? "");
+    title.focus();
+  });
 
   render();
 
@@ -820,7 +844,7 @@ export function mountTodos(
       capability = { available: false, reason: "读不到系统通知的状态。" };
     }
     renderCapability();
-    syncPrecision();
+    syncWhenNote();
     await loadApplications();
     await refresh();
     if (pendingTarget) {

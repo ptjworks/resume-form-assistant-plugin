@@ -515,3 +515,27 @@ export function cellLabel(day: string, count: number): string {
 export function prefillForDay(day: string): { duePrecision: "date"; dueDate: string } {
   return { duePrecision: "date", dueDate: day };
 }
+
+/**
+ * 表单里日期时间下面那一行小字：时区按谁（`zoneLabel` 是现成的短语，如「本机时区（Asia/Taipei）」）、提醒会不会响。
+ * 提醒能不能响如实说：这台机器弹不出来就写原因，没有日期就写不提醒。
+ */
+export function describeWhenNote(
+  hasDate: boolean,
+  zoneLabel: string,
+  capability: ReminderCapability,
+): string {
+  if (!hasDate) return "没有日期的待办会放进「未设具体日期」，不会提醒。";
+  const zone = zoneLabel ? `按${zoneLabel}。` : "";
+  const remind = capability.available
+    ? "到期时按系统通知提醒。"
+    : `${capability.reason ?? "这台机器上弹不出定时提醒"}，到期时不会弹提醒。`;
+  return `${zone}${remind}`.replace(/。，/g, "，");
+}
+
+/** 点「面试 / 测评 / 笔试」：标题是空的或已是这几个词之一就直接换成它，否则加在前面，不覆盖用户写的字。 */
+export function fillKind(title: string, word: string): string {
+  const current = title.trim();
+  if (!current || ["面试", "测评", "笔试"].includes(current)) return word;
+  return current.startsWith(word) ? current : `${word} ${current}`;
+}

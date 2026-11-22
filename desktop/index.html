@@ -255,50 +255,51 @@
                   <p>待办需要关联一条申请。还没有申请记录，请先新增申请，或在浏览器扩展里保存岗位。</p>
                   <button type="button" id="todo-go-applications">去新增申请</button>
                 </div>
-                <label>做什么
-                  <input id="todo-title" name="title" autocomplete="off" maxlength="200" required placeholder="例如：完成在线测评" />
-                </label>
+                <div class="field">
+                  <label>做什么
+                    <input id="todo-title" name="title" autocomplete="off" maxlength="200" required placeholder="例如：技术二面" />
+                  </label>
+                  <div class="todo-kinds" role="group" aria-label="常用类型">
+                    <button type="button" data-kind-fill="面试">面试</button>
+                    <button type="button" data-kind-fill="测评">测评</button>
+                    <button type="button" data-kind-fill="笔试">笔试</button>
+                  </div>
+                </div>
                 <div class="field">
                   <label>属于哪条申请
                     <select id="todo-application" name="applicationId" required aria-describedby="todo-application-hint"></select>
                   </label>
                   <p id="todo-application-hint" class="field-hint" hidden>待办建好后不能换到另一条申请。</p>
                 </div>
-                <div class="field-row" id="todo-schedule">
-                  <label>什么时候
-                    <select id="todo-precision" name="duePrecision">
-                      <option value="none">没有到期</option>
-                      <option value="date">只有日期</option>
-                      <option value="datetime">具体到几点</option>
-                    </select>
-                  </label>
-                  <label id="todo-date-field" hidden>到期日期
-                    <input id="todo-date" name="dueDate" type="date" hidden />
-                  </label>
-                  <label id="todo-datetime-field" hidden>到期时间
-                    <input id="todo-datetime" name="dueAtUtc" type="datetime-local" hidden />
-                  </label>
-                </div>
-                <details id="todo-form-options" class="todo-form-options">
-                  <summary>提醒、时区和面试轮次</summary>
-                  <div class="todo-form-extra">
-                    <div class="field">
-                      <label>提醒时刻
-                        <input id="todo-remind" name="remindAtUtc" type="datetime-local" aria-describedby="todo-remind-hint" />
-                      </label>
-                      <p id="todo-remind-hint" class="field-hint">留空则按到期时间提醒。日期和时刻按待办的时区理解。</p>
-                    </div>
-                    <div class="field-row">
-                      <label>时区
-                        <input id="todo-timezone" name="timeZone" autocomplete="off" spellcheck="false" placeholder="留空按本机时区" />
-                      </label>
-                      <label>面试第几轮
-                        <input id="todo-round" name="interviewRound" type="number" min="1" max="99" step="1" placeholder="不需要就留空" />
-                      </label>
-                    </div>
-                    <p id="todo-edit-note" class="field-hint" hidden>改期或修改提醒时刻会撤掉原来登记的提醒，再按新的时间重新登记。</p>
+                <div class="field">
+                  <div class="field-row" id="todo-schedule">
+                    <label>日期
+                      <input id="todo-date" name="dueDate" type="date" />
+                    </label>
+                    <label>时间（可不填）
+                      <input id="todo-time" name="dueTime" type="time" />
+                    </label>
                   </div>
-                </details>
+                  <p id="todo-when-note" class="field-hint"></p>
+                </div>
+                <button type="button" id="todo-more-toggle" class="link-button todo-more-toggle" aria-expanded="false" aria-controls="todo-form-options" hidden>更多设置：提醒时刻、时区、面试轮次</button>
+                <div id="todo-form-options" class="todo-form-extra" hidden>
+                  <div class="field">
+                    <label>提醒时刻
+                      <input id="todo-remind" name="remindAtUtc" type="datetime-local" aria-describedby="todo-remind-hint" />
+                    </label>
+                    <p id="todo-remind-hint" class="field-hint">留空则按到期时间提醒。日期和时刻按待办的时区理解。</p>
+                  </div>
+                  <div class="field-row">
+                    <label>时区
+                      <input id="todo-timezone" name="timeZone" autocomplete="off" spellcheck="false" placeholder="留空按本机时区" />
+                    </label>
+                    <label>面试第几轮
+                      <input id="todo-round" name="interviewRound" type="number" min="1" max="99" step="1" placeholder="不需要就留空" />
+                    </label>
+                  </div>
+                  <p id="todo-edit-note" class="field-hint" hidden>改期或修改提醒时刻会撤掉原来登记的提醒，再按新的时间重新登记。</p>
+                </div>
                 <p id="todo-form-status" class="note" role="alert"></p>
               </div>
               <div class="resume-dialog-actions">

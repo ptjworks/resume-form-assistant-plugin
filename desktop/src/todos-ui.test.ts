@@ -229,14 +229,17 @@ test('五种提醒状态在详情卡里各说各的话', async () => {
   }
 });
 
-test('新增日程：日期预填为选中那天，精度默认「只有日期」', async () => {
+test('新增日程：日期预填为选中那天，时间留空就是「只有日期」，不出现「更多设置」', async () => {
   const h = harness();
   await h.show();
 
   await h.el("todo-new").emit("click");
   assert.equal(h.el("todo-dialog").open, true);
-  assert.equal(h.el("todo-precision").value, "date");
   assert.equal(h.el("todo-date").value, "2026-09-13", "没点过别的日子就是今天");
+  assert.equal(h.el("todo-time").value, "");
+  assert.equal(h.el("todo-more-toggle").hidden, true, "新增时没有折叠区或展开链接");
+  assert.equal(h.el("todo-form-options").hidden, true);
+  assert.match(h.el("todo-when-note").textContent, /按系统通知提醒/);
 
   h.el("todo-dialog").close();
   await h.el("todo-list").clickDay("2026-09-25");
@@ -249,8 +252,8 @@ test('新建待办把当地时刻换算成 UTC 再交给命令层，保存后月
   await h.show();
 
   h.el("todo-title").value = "二面";
-  h.el("todo-precision").value = "datetime";
-  h.el("todo-datetime").value = "2026-10-14T10:00";
+  h.el("todo-date").value = "2026-10-14";
+  h.el("todo-time").value = "10:00";
   h.el("todo-application").value = "a1";
   await h.el("todo-form").emit("submit");
 
@@ -472,7 +475,10 @@ test('编辑时清空提醒、时区和轮次，会显式发 null 让命令层�
   await h.el("todo-detail").clickButton("t1", "edit");
 
   assert.equal(h.el("todo-dialog").open, true);
-  assert.equal(h.el("todo-datetime").value, "2026-09-20T14:00", "按待办自己的时区回填墙钟");
+  assert.equal(h.el("todo-date").value, "2026-09-20", "按待办自己的时区回填墙钟");
+  assert.equal(h.el("todo-time").value, "14:00");
+  assert.equal(h.el("todo-more-toggle").hidden, false, "编辑时留一个「更多设置」链接");
+  assert.equal(h.el("todo-form-options").hidden, false, "设过提醒、时区、轮次的自动展开");
   assert.equal(h.el("todo-remind").value, "2026-09-20T13:00");
   assert.equal(h.el("todo-round").value, "2");
   assert.equal(h.el("todo-application").disabled, true, "编辑时关联申请只读");
@@ -490,17 +496,18 @@ test('编辑时清空提醒、时区和轮次，会显式发 null 让命令层�
   assert.equal(args.applicationId, undefined, "编辑不换申请");
 });
 
-test('具体到几点却没填时刻、时区写错、轮次不是整数，都不发请求并就近说明', async () => {
+test('只有时间没有日期、时区写错、轮次不是整数，都不发请求并就近说明', async () => {
   const h = harness();
   await h.show();
   h.el("todo-title").value = "测评";
   h.el("todo-application").value = "a1";
 
-  h.el("todo-precision").value = "datetime";
+  h.el("todo-date").value = "";
+  h.el("todo-time").value = "10:00";
   await h.el("todo-form").emit("submit");
-  assert.match(h.el("todo-form-status").textContent, /日期和时刻/);
+  assert.match(h.el("todo-form-status").textContent, /也选一个日期/);
 
-  h.el("todo-datetime").value = "2026-09-14T10:00";
+  h.el("todo-date").value = "2026-09-14";
   h.el("todo-timezone").value = "Mars/Olympus";
   await h.el("todo-form").emit("submit");
   assert.match(h.el("todo-form-status").textContent, /时区/);
@@ -520,4 +527,71 @@ test('一条申请都没有时，新增日程先领去建申请，不让提交',
   await nodes.el("todo-new").emit("click");
   assert.equal(nodes.el("todo-no-apps").hidden, false);
   assert.equal(nodes.el("todo-submit").disabled, true);
+});
+
+test('日期清空就是「未设具体日期」，只有日期时不带时刻', async () => {
+  const h = harness();
+  await h.show();
+  h.el("todo-title").value = "整理作品集";
+  h.el("todo-application").value = "a1";
+  h.el("todo-date").value = "";
+  h.el("todo-time").value = "";
+  await h.el("todo-form").emit("submit");
+  let args = h.called("create_todo_cmd").at(0)?.args?.args as Record<string, unknown>;
+  assert.equal(args.duePrecision, "none");
+  assert.equal(args.dueDate, null);
+  assert.equal(args.dueAtUtc, null);
+
+  h.el("todo-title").value = "交材料";
+  h.el("todo-date").value = "2026-09-30";
+  await h.el("todo-form").emit("submit");
+  args = h.called("create_todo_cmd").at(1)?.args?.args as Record<string, unknown>;
+  assert.equal(args.duePrecision, "date");
+  assert.equal(args.dueDate, "2026-09-30");
+  assert.equal(args.dueAtUtc, null, "没填时间就不会编出一个 00:00");
+});
+
+test('「面试 / 测评 / 笔试」按钮往标题里填词，不覆盖用户写的字', async () => {
+  const h = harness();
+  await h.show();
+  const click = (word: string) => h.el("todo-form").emit("click", {
+    target: { closest: (selector: string) => (selector.includes("data-kind-fill") ? { dataset: { kindFill: word } } : null) },
+  });
+  h.el("todo-title").value = "";
+  await click("面试");
+  assert.equal(h.el("todo-title").value, "面试");
+  await click("笔试");
+  assert.equal(h.el("todo-title").value, "笔试", "只是上一次点的词，直接换");
+  h.el("todo-title").value = "星河 二面";
+  await click("面试");
+  assert.equal(h.el("todo-title").value, "面试 星河 二面");
+});
+
+test('弹窗小字如实说提醒会不会响', async () => {
+  const blocked = harness((name) =>
+    name === "reminder_capability_cmd" ? { available: false, reason: "系统通知未授权。" } : undefined,
+  );
+  await blocked.show();
+  await blocked.el("todo-new").emit("click");
+  assert.match(blocked.el("todo-when-note").textContent, /系统通知未授权，到期时不会弹提醒/);
+  blocked.el("todo-date").value = "";
+  await blocked.el("todo-date").emit("input");
+  assert.match(blocked.el("todo-when-note").textContent, /未设具体日期/);
+});
+
+test('编辑只设过时区的待办：「更多设置」收着，保存时时区原样带回，不被清掉', async () => {
+  const h = harness((name) =>
+    name === "list_todos_cmd"
+      ? [todo({ duePrecision: "datetime", dueDate: null, dueAtUtc: "2026-09-20T06:00:00Z", timeZone: "Asia/Shanghai" })]
+      : undefined,
+  );
+  await h.show({ id: "t1" });
+  await h.el("todo-detail").clickButton("t1", "edit");
+  assert.equal(h.el("todo-more-toggle").hidden, false);
+  assert.equal(h.el("todo-form-options").hidden, true, "只有时区不用展开");
+  assert.match(h.el("todo-when-note").textContent, /Asia\/Shanghai 时区/);
+  await h.el("todo-form").emit("submit");
+  const args = h.called("edit_todo_cmd").at(0)?.args?.args as Record<string, unknown>;
+  assert.equal(args.timeZone, "Asia/Shanghai");
+  assert.equal(args.dueAtUtc, "2026-09-20T06:00:00.000Z", "按同一个时区换回去，时刻不平移");
 });

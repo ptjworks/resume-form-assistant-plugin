@@ -904,9 +904,11 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
   .cal-side-body { overflow: visible; }
 }
 
-.todo-form-options { border-top: 1px solid var(--line); padding-top: 8px; }
-.todo-form-options > summary { padding: 4px 0; color: var(--accent-strong); font-weight: 600; }
-.todo-form-extra { display: grid; gap: 10px; padding-top: 8px; }
+.todo-form-extra { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--ui-line-soft); }
+.todo-more-toggle { align-self: flex-start; justify-self: start; font-size: 13px; }
+.todo-kinds { display: flex; gap: 6px; }
+.todo-kinds button { min-height: 26px; padding: 0 12px; border-color: var(--ui-line); border-radius: 13px; background: var(--ui-surface); color: var(--ui-sub); font-size: 12.5px; }
+.todo-kinds button:hover:not(:disabled) { background: var(--ui-brand-wash); border-color: var(--ui-brand-edge); color: var(--ui-brand); }
 
 /* 首次空状态：整张卡片给它。 */
 .workspace-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 560px; margin: 0 auto; padding: 56px 24px; text-align: center; }
