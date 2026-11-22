@@ -13,7 +13,7 @@ import { useInvoke } from "../react/invoke.tsx";
 import { AnalyzeDialog } from "./AnalyzeDialog.tsx";
 import { ReviewPanel } from "./ReviewPanel.tsx";
 import { replyClassLabel } from "../inbox.ts";
-import { confirmArgs, confirmBlocker, describeFailure, initialDraft } from "./review.ts";
+import { confirmArgs, confirmBlocker, describeDue, describeFailure, initialDraft } from "./review.ts";
 import type { Draft, Failure, Phase } from "./review.ts";
 
 /** 每页取多少条申请，以及最多翻几页。存储层把 limit 卡在 1000 以内。 */
@@ -479,21 +479,28 @@ export function AiReview({
   const summaryBlocker = suggestion && draft ? confirmBlocker(draft, suggestion) : null;
   const summaryLine =
     compact && phase === "summary" && suggestion && draft ? (
-      <div className="ai-bar-line" data-ai-summary>
-        <span className="ai-bar-text">
-          {suggestion.todos.length
-            ? `识别到 ${suggestion.todos.length} 个日程`
-            : `识别为「${replyClassLabel(suggestion.replyClass)}」，没有识别到日程`}
-        </span>
-        {summaryBlocker ? <span className="ai-bar-note">{summaryBlocker}</span> : null}
+      <div className="ai-bar-summary" data-ai-summary>
+        <div className="ai-summary-body">
+          <p className="ai-summary-title">
+            {suggestion.todos.length
+              ? "AI 识别到这些日程，你确认后才会加入日历："
+              : `AI 识别为「${replyClassLabel(suggestion.replyClass)}」，没有识别到日程。`}
+          </p>
+          {suggestion.todos.length ? (
+            <ul className="ai-summary-todos">
+              {suggestion.todos.map((todo, index) => (
+                <li key={index}>
+                  <strong>{todo.title}</strong>
+                  <span>{describeDue(todo)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {summaryBlocker ? <p className="ai-bar-note">{summaryBlocker}</p> : null}
+        </div>
         <span className="ai-bar-actions">
-          <button
-            type="button"
-            className="primary"
-            onClick={confirm}
-            disabled={busy || alreadyConfirmed || !!summaryBlocker}
-          >
-            确认
+          <button type="button" className="primary" onClick={confirm} disabled={busy || alreadyConfirmed || !!summaryBlocker}>
+            {suggestion.todos.length ? "确认加入日历" : "确认"}
           </button>
           <button type="button" className="linkish" onClick={() => void openReview(suggestion)} disabled={busy}>
             修改
@@ -513,7 +520,7 @@ export function AiReview({
               ? "正在看这封以前有没有整理过…"
               : alreadyConfirmed
                 ? "这封已经整理确认过了"
-                : "让 AI 读这封，找出日程和分类"}
+                : "让 AI 读这封，找出里面的日程"}
           </span>
           <span className="ai-bar-actions">
             {compactRejected.map((row) => (

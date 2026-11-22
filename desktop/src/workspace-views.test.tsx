@@ -210,7 +210,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-test.each([false, true])("classification stays locked during refresh; selection changed=%s", async (switchSelection) => {
+test.each([false, true])("a delete stays locked during refresh; selection changed=%s", async (switchSelection) => {
   const items = [
     { id: "e1", kind: "paste", subject: "第一封", importedAt: "2026-10-09", bodyExtract: "第一封正文" },
     { id: "e2", kind: "paste", subject: "第二封", importedAt: "2026-10-08", bodyExtract: "第二封正文" },
@@ -221,28 +221,25 @@ test.each([false, true])("classification stays locked during refresh; selection 
   const invoke: Invoke = async <T,>(name: string, args?: Record<string, unknown>): Promise<T> => {
     calls(name, args);
     if (name === "list_inbox_cmd") return (++reads === 2 ? refresh.promise : items) as T;
-    if (name === "get_evidence_preview_cmd" || name === "classify_evidence_cmd") return items.find((item) => item.id === args?.evidenceId) as T;
-    if (name === "list_applications_cmd") return { items: apps } as T;
+    if (name === "get_evidence_preview_cmd") return items.find((item) => item.id === args?.evidenceId) as T;
     return {} as T;
   };
   const h = mountInbox(invoke); await h.refresh();
-  const control = () => document.getElementById("inbox-reply-class") as HTMLSelectElement;
+  const remove = () => document.querySelector('[data-act="recycle"]') as HTMLButtonElement;
   fireEvent.click(document.querySelector('[data-row="e:e1"]')!);
-  await waitFor(() => expect(control()).toBeTruthy());
-  fireEvent.change(control(), { target: { value: "interview_invite" } });
+  await waitFor(() => expect(remove()).toBeTruthy());
+  fireEvent.click(remove());
   await waitFor(() => expect(reads).toBe(2));
   if (switchSelection) {
     fireEvent.click(document.querySelector('[data-row="e:e2"]')!);
     await waitFor(() => expect(document.querySelector(".evidence-body")!.textContent).toBe("第二封正文"));
   }
-  expect(control().disabled).toBe(true);
-  fireEvent.change(control(), { target: { value: "offer" } });
-  expect(calls.mock.calls.filter(([name]) => name === "classify_evidence_cmd")).toHaveLength(1);
+  expect(remove().disabled).toBe(true);
+  fireEvent.click(remove());
+  expect(calls.mock.calls.filter(([name]) => name === "set_evidence_recycled_cmd")).toHaveLength(1);
   refresh.resolve(items);
-  await waitFor(() => expect(control().disabled).toBe(false));
+  await waitFor(() => expect(remove().disabled).toBe(false));
   expect(document.querySelector(".evidence-body")!.textContent).toBe(switchSelection ? "第二封正文" : "第一封正文");
-  fireEvent.change(control(), { target: { value: "offer" } });
-  await waitFor(() => expect(calls.mock.calls.filter(([name]) => name === "classify_evidence_cmd")).toHaveLength(2));
 });
 
 test.each([false, true])("todo read failure has retry and keeps previously loaded data=%s", async (previouslyLoaded) => {

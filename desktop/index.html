@@ -176,19 +176,16 @@
           <dialog id="inbox-associate-dialog" class="resume-dialog" aria-labelledby="inbox-associate-heading">
             <form id="inbox-associate-form" class="dialog-form" novalidate>
               <div class="resume-dialog-head">
-                <h2 id="inbox-associate-heading">关联到投递</h2>
+                <h2 id="inbox-associate-heading">关联到哪条投递</h2>
               </div>
               <div class="resume-dialog-body">
-                <label for="inbox-associate-application">属于哪条投递</label>
-                <select id="inbox-associate-application"></select>
+                <input id="inbox-associate-search" type="search" placeholder="搜公司或岗位" autocomplete="off" aria-label="搜公司或岗位">
+                <ul id="inbox-associate-list" class="associate-list"></ul>
                 <p id="inbox-associate-hint" class="field-hint"></p>
-                <label for="inbox-associate-class">这是什么信（可不选）</label>
-                <select id="inbox-associate-class"></select>
                 <p id="inbox-associate-status" class="note" role="alert"></p>
               </div>
               <div class="resume-dialog-actions">
                 <button type="button" id="inbox-associate-cancel">取消</button>
-                <button type="submit" id="inbox-associate-save" class="primary">关联</button>
               </div>
             </form>
           </dialog>

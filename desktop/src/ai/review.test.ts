@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AiSuggestion } from "../api.ts";
 import {
+  describeDue,
   confirmArgs,
   confirmBlocker,
   confirmLabel,
@@ -346,4 +347,12 @@ test("地址里夹带凭据的错误码有自己的指引", () => {
   });
   assert.equal(failure.retryable, false);
   assert.match(failure.next, /设置页/);
+});
+
+test('describeDue writes a time for people, never invents 00:00 for a date-only todo', () => {
+  assert.equal(describeDue({ title: 't', duePrecision: 'date', dueDate: '2026-11-27' }), '11月27日');
+  assert.equal(describeDue({ title: 't', duePrecision: 'datetime', dueAtUtc: '2026-11-27T11:30:00Z', timeZone: 'Asia/Shanghai' }), '11月27日 19:30');
+  assert.equal(describeDue({ title: 't', duePrecision: 'datetime', dueAtUtc: '2026-11-27T16:00:00Z', timeZone: 'Asia/Shanghai' }), '11月28日 00:00');
+  assert.equal(describeDue({ title: 't', duePrecision: 'none' }), '没有具体时间');
+  assert.equal(describeDue({ title: 't', duePrecision: 'datetime', dueAtUtc: 'garbage' }), '没有具体时间');
 });

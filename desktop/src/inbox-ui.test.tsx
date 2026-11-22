@@ -169,8 +169,7 @@ test("a filed mail offers only 关联到投递 and 删除, shows who sent it, an
   expect(el("inbox-preview").querySelector(".evidence-body img")).toBeNull();
   expect(el("inbox-preview").querySelector(".evidence-body")!.textContent).toContain("<img src=x onerror=alert(1)>");
   expect(el("inbox-preview").innerHTML).not.toMatch(/src="http/);
-  // 分类与发送方式只是正文上方两个小标签。
-  expect(el("inbox-preview").querySelectorAll(".mail-tags select")).toHaveLength(2);
+  expect(el("inbox-preview").querySelectorAll("select")).toHaveLength(0);
 });
 
 test("a screenshot is shown from a data URL, a PDF offers the system viewer instead", async () => {
@@ -191,7 +190,7 @@ test("a screenshot is shown from a data URL, a PDF offers the system viewer inst
   await waitFor(() => expect(h.called("open_evidence_cmd")).toHaveLength(1));
 });
 
-test("associating opens a dialog: two jobs at one company are never guessed, class is optional", async () => {
+test("associating opens a searchable list of jobs; a click on one links it, nothing is preselected", async () => {
   let filed = [MAIL] as unknown[];
   const h = setup({
     list_inbox_cmd: () => filed,
@@ -204,53 +203,25 @@ test("associating opens a dialog: two jobs at one company are never guessed, cla
   fireEvent.click(await h.reader.findByRole("button", { name: "关联到投递…" }));
   const dialog = el("inbox-associate-dialog") as HTMLDialogElement;
   await waitFor(() => expect(dialog.open).toBe(true));
-  const select = el("inbox-associate-application") as HTMLSelectElement;
-  expect([...select.options].map((option) => option.textContent)).toEqual(["请选择一条投递…", "星河科技 · 后端开发", "星河科技 · 数据平台"]);
-  expect(select.value).toBe("");
+  const rows = [...el("inbox-associate-list").querySelectorAll("button")].map((button) => button.textContent);
+  expect(rows).toEqual(["星河科技后端开发", "星河科技数据平台"]);
   expect(el("inbox-associate-hint").textContent).toBe("");
-  // 不选就关联：不发命令，只提醒。
-  fireEvent.click(el("inbox-associate-save"));
-  expect(el("inbox-associate-status").textContent).toContain("请先选一条投递");
+  expect(dialog.querySelector("select")).toBeNull();
   expect(h.called("associate_evidence_cmd")).toHaveLength(0);
-  // 选了投递，分类不选也能关联。
-  fireEvent.change(select, { target: { value: "app-2" } });
-  fireEvent.click(el("inbox-associate-save"));
+  // 搜一搜。
+  fireEvent.input(el("inbox-associate-search"), { target: { value: "数据" } });
+  expect([...el("inbox-associate-list").querySelectorAll("button")]).toHaveLength(1);
+  fireEvent.input(el("inbox-associate-search"), { target: { value: "没有这家" } });
+  expect(el("inbox-associate-list").textContent).toContain("没有匹配的投递");
+  fireEvent.input(el("inbox-associate-search"), { target: { value: "数据" } });
+  // 点哪条就关联到哪条。
+  fireEvent.click(within(el("inbox-associate-list")).getByRole("button", { name: /数据平台/ }));
   await waitFor(() => expect(h.called("associate_evidence_cmd")[0]?.args).toEqual({ evidenceId: "e1", applicationId: "app-2" }));
   await waitFor(() => expect(dialog.open).toBe(false));
   expect(h.called("classify_evidence_cmd")).toHaveLength(0);
   expect(el("inbox-status").textContent).toContain("已关联到「星河科技 · 数据平台」");
   expect(el("inbox-status").textContent).toContain("已处理");
   await waitFor(() => expect(el("inbox-list").querySelector("[data-row]")).toBeNull());
-});
-
-test("associating with a chosen kind of mail classifies it after linking, and says if only the class failed", async () => {
-  let fail = false;
-  const h = setup({
-    list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL), list_applications_cmd: () => APPS,
-    classify_evidence_cmd: () => { if (fail) throw { message: "分类库暂时不可写" }; return {}; },
-  });
-  await h.inbox.refresh();
-  const open = async () => {
-    fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
-    fireEvent.click(await h.reader.findByRole("button", { name: "关联到投递…" }));
-    await waitFor(() => expect((el("inbox-associate-dialog") as HTMLDialogElement).open).toBe(true));
-  };
-  await open();
-  fireEvent.change(el("inbox-associate-application"), { target: { value: "app-1" } });
-  fireEvent.change(el("inbox-associate-class"), { target: { value: "interview_invite" } });
-  fireEvent.click(el("inbox-associate-save"));
-  await waitFor(() => expect(h.called("classify_evidence_cmd")[0]?.args).toEqual({ evidenceId: "e1", replyClass: "interview_invite", sendMode: "unknown" }));
-  const order = h.calls.map((call) => call.name);
-  expect(order.indexOf("associate_evidence_cmd")).toBeLessThan(order.indexOf("classify_evidence_cmd"));
-  await waitFor(() => expect(el("inbox-status").textContent).toContain("已记为「面试邀请」"));
-
-  fail = true;
-  await open();
-  fireEvent.change(el("inbox-associate-application"), { target: { value: "app-1" } });
-  fireEvent.change(el("inbox-associate-class"), { target: { value: "offer" } });
-  fireEvent.click(el("inbox-associate-save"));
-  await waitFor(() => expect(el("inbox-status").textContent).toContain("但分类没存上：分类库暂时不可写"));
-  expect(el("inbox-status").textContent).toContain("已关联到");
 });
 
 test("a failed association keeps the dialog open with the reason, and cancel writes nothing", async () => {
@@ -262,46 +233,34 @@ test("a failed association keeps the dialog open with the reason, and cancel wri
   fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
   fireEvent.click(await h.reader.findByRole("button", { name: "关联到投递…" }));
   await waitFor(() => expect((el("inbox-associate-dialog") as HTMLDialogElement).open).toBe(true));
-  fireEvent.change(el("inbox-associate-application"), { target: { value: "app-1" } });
-  fireEvent.click(el("inbox-associate-save"));
+  fireEvent.click(within(el("inbox-associate-list")).getByRole("button", { name: /后端开发/ }));
   await waitFor(() => expect(el("inbox-associate-status").textContent).toContain("这条投递已被删除"));
   expect((el("inbox-associate-dialog") as HTMLDialogElement).open).toBe(true);
-  expect((el("inbox-associate-save") as HTMLButtonElement).disabled).toBe(false);
+  await waitFor(() => expect((el("inbox-associate-list").querySelector("button") as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(el("inbox-associate-cancel"));
   expect((el("inbox-associate-dialog") as HTMLDialogElement).open).toBe(false);
   expect(h.reader.getByRole("button", { name: "关联到投递…" }).hasAttribute("disabled")).toBe(false);
 });
 
-test("without any job the dialog says where to add one and cannot be confirmed", async () => {
+test("without any job the dialog says where to add one", async () => {
   const h = setup({ list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL) });
   await h.inbox.refresh();
   fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
   fireEvent.click(await h.reader.findByRole("button", { name: "关联到投递…" }));
   await waitFor(() => expect((el("inbox-associate-dialog") as HTMLDialogElement).open).toBe(true));
   expect(el("inbox-associate-hint").textContent).toContain("先到「投递」页新增一条");
-  fireEvent.click(el("inbox-associate-save"));
+  expect(el("inbox-associate-list").textContent).toContain("还没有在办的投递");
   expect(h.called("associate_evidence_cmd")).toHaveLength(0);
 });
 
-test("the two tags classify on change, send both fields, and fall back when saving fails", async () => {
-  let fail = false;
-  const h = setup({
-    list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL),
-    classify_evidence_cmd: () => { if (fail) throw { message: "磁盘暂时不可写" }; return { ...MAIL, replyClass: "interview_invite", sendMode: "unknown" }; },
-  });
+test("there are no classification controls to operate; a known class only shows as a plain label", async () => {
+  const classified = { ...MAIL, replyClass: "interview_invite", sendMode: "human" };
+  const h = setup({ list_inbox_cmd: () => [classified], get_evidence_preview_cmd: () => body(classified) });
   await h.inbox.refresh();
   fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
   await h.reader.findByRole("heading", { name: "面试邀请" });
-  fireEvent.change(el("inbox-reply-class"), { target: { value: "interview_invite" } });
-  await waitFor(() => expect(h.called("classify_evidence_cmd")[0]?.args).toEqual({ evidenceId: "e1", replyClass: "interview_invite", sendMode: "unknown" }));
-  await waitFor(() => expect(el("inbox-status").textContent).toContain("面试邀请"));
-  expect(el("inbox-status").textContent).not.toContain("人工");
-  await waitFor(() => expect((el("inbox-send-mode") as HTMLSelectElement).disabled).toBe(false));
-  fail = true;
-  fireEvent.change(el("inbox-send-mode"), { target: { value: "human" } });
-  await waitFor(() => expect(el("inbox-status").textContent).toContain("磁盘暂时不可写"));
-  expect((el("inbox-send-mode") as HTMLSelectElement).value).toBe("unknown");
-  expect((el("inbox-reply-class") as HTMLSelectElement).value).toBe("interview_invite");
+  expect(el("inbox-preview").querySelector("select")).toBeNull();
+  expect(el("inbox-preview").querySelector(".mail-tags")!.textContent).toBe("面试邀请");
 });
 
 test("已处理 lists linked mail with company and job; it can be unlinked or deleted, nothing else", async () => {
@@ -318,7 +277,7 @@ test("已处理 lists linked mail with company and job; it can be unlinked or de
   fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
   await h.reader.findByText("已关联「星河科技 · 后端开发」");
   expect([...el("inbox-preview").querySelectorAll(".mail-actions button")].map((button) => button.textContent)).toEqual(["取消关联", "删除"]);
-  expect((el("inbox-reply-class") as HTMLSelectElement).value).toBe("interview_invite");
+  expect(el("inbox-preview").querySelector(".mail-tags")!.textContent).toBe("面试邀请");
   fireEvent.click(h.reader.getByRole("button", { name: "取消关联" }));
   await waitFor(() => expect(h.called("unassociate_evidence_cmd")).toHaveLength(1));
   await waitFor(() => expect(el("inbox-status").textContent).toContain("回到了「待处理」"));
@@ -350,7 +309,7 @@ test("a job with no mail says so instead of showing someone else's", async () =>
   expect(el("inbox-preview").textContent).toContain("远山 · 设计 还没有邮件");
 });
 
-test("the AI bar is mounted compactly under each mail that is not in the recycle bin", async () => {
+test("the AI bar is mounted compactly right under the title of each mail that is not in the recycle bin", async () => {
   const mounted: Array<{ id: string; options?: { compact?: boolean }; report: (message: string) => void }> = [];
   const unmount = vi.fn();
   const h = setup({ list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL) }, {
@@ -361,6 +320,8 @@ test("the AI bar is mounted compactly under each mail that is not in the recycle
   await waitFor(() => expect(mounted).toHaveLength(1));
   expect(mounted[0]).toMatchObject({ id: "e1", options: { compact: true } });
   expect(el("inbox-ai").closest(".mail-view")).toBeTruthy();
+  expect(el("inbox-ai").previousElementSibling?.tagName).toBe("HEADER");
+  expect(el("inbox-ai").nextElementSibling?.classList.contains("mail-scroll")).toBe(true);
   // 面板确认完以后那句话由状态栏说；确认会把它关联走，状态栏还要说去了哪儿。
   mounted[0]!.report("已确认。分类、时间线和 1 条待办都写好了。");
   expect(el("inbox-status").textContent).toContain("已确认");

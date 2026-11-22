@@ -339,3 +339,22 @@ export function waitingText(elapsedSeconds: number, slowHintSeconds: number): st
     ? `还在等（已经 ${Math.floor(elapsedSeconds)} 秒）。可以随时取消。`
     : "正在发送…";
 }
+
+/** 一条建议待办的时间，写给人看：「11月27日 19:30」。只有日期就只写日期，绝不编出 00:00。 */
+export function describeDue(todo: SuggestedTodoView): string {
+  if (todo.duePrecision === "date" && todo.dueDate) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(todo.dueDate.trim());
+    return match ? `${Number(match[2])}月${Number(match[3])}日` : todo.dueDate;
+  }
+  if (todo.duePrecision === "datetime" && todo.dueAtUtc) {
+    const at = new Date(todo.dueAtUtc);
+    if (!Number.isNaN(at.getTime())) {
+      const zone = todo.timeZone && validTimeZone(todo.timeZone) && todo.timeZone.trim() ? todo.timeZone.trim() : undefined;
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(at);
+      const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+      const hour = pick("hour") === "24" ? "00" : pick("hour");
+      return `${pick("month")}月${pick("day")}日 ${hour}:${pick("minute")}`;
+    }
+  }
+  return "没有具体时间";
+}

@@ -151,19 +151,15 @@ test("external refresh updates the badge without replacing a new-mail preview", 
   expect(h.preview.getByRole("heading", {name:"候选邮件标题"})).toBeTruthy();
 });
 
-test("unchanged foreground reads preserve the focused list row and the open tag", async () => {
+test("unchanged foreground reads preserve the focused list row", async () => {
   const h = setup(); await h.inbox.refresh();
   fireEvent.click(within(el("inbox-list")).getByRole("button", {name:/功能验证通知 one/}));
   await h.preview.findByRole("heading", {name:/功能验证通知 one/});
-  const input = el("inbox-reply-class") as HTMLSelectElement;
-  input.value = "interview_invite";
   const row = within(el("inbox-list")).getByRole("button", {name:/功能验证通知 one/});
   row.focus();
   await h.inbox.refresh();
   expect(within(el("inbox-list")).getByRole("button", {name:/功能验证通知 one/})).toBe(row);
   expect(document.activeElement).toBe(row);
-  expect(el("inbox-reply-class")).toBe(input);
-  expect(input.value).toBe("interview_invite");
 });
 
 test.each([

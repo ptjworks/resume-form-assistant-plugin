@@ -1118,10 +1118,10 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .mail-scroll .evidence-open button { display: inline-flex; align-items: center; gap: 6px; min-height: 0; padding: 5px 13px; border-radius: 6px; font-size: 13px; }
 .mail-scroll .pending-mail-content { max-width: 680px; margin: 0; padding: 18px 28px; }
 .mail-scroll .pending-mail-content:not(:has(*)) { display: none; }
-.pending-mail-content > h3, .mail-ai-bar { flex: none; padding: 10px 28px; border-top: 1px solid var(--ui-line); background: var(--ui-canvas); }
+.mail-ai-bar { flex: none; padding: 10px 28px; border-bottom: 1px solid var(--ui-brand-line); background: var(--ui-brand-pale); }
 .ai-panel.is-compact { gap: 6px; }
 .ai-bar-line { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 32px; }
-.ai-bar-text { min-width: 0; color: var(--ui-sub); font-size: 13px; }
+.ai-bar-text { min-width: 0; color: #235d52; font-size: 13.5px; font-weight: 500; }
 .ai-bar-note { min-width: 0; color: #7c5a12; font-size: 12px; }
 .ai-bar-actions { flex: none; display: flex; align-items: center; gap: 14px; }
 .ai-panel.is-compact .ai-bar-actions button { height: auto; min-height: 0; padding: 5px 14px; border-radius: 6px; font-size: 13px; }
@@ -1129,7 +1129,25 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .ai-panel.is-compact .ai-bar-actions button.primary:hover:not(:disabled) { border-color: var(--ui-brand-hover); background: var(--ui-brand-hover); }
 .ai-panel.is-compact .ai-bar-actions button.linkish { padding: 0; border: 0; background: transparent; color: var(--ui-brand); }
 .ai-panel.is-compact > .note { margin: 0; font-size: 12.5px; }
-#inbox-associate-dialog { width: min(560px, calc(100vw - 48px)); }
+#inbox-associate-dialog { width: min(520px, calc(100vw - 48px)); }
+#inbox-associate-search { width: 100%; min-height: 38px; }
+.associate-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; border: 1px solid var(--ui-line); border-radius: 10px; }
+.associate-list li + li { border-top: 1px solid var(--ui-line-soft); }
+.associate-list button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 0; padding: 11px 14px; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.associate-list button:hover:not(:disabled) { background: var(--ui-brand-pale); }
+.assoc-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.assoc-name strong { font-size: 14px; color: var(--ui-ink); }
+.assoc-name span { font-size: 12.5px; color: var(--ui-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.associate-list small { flex: none; padding: 0 8px; border-radius: 4px; background: var(--ui-line-soft); color: var(--ui-sub); font-size: 11.5px; line-height: 20px; }
+.assoc-empty { padding: 18px 14px; color: var(--ui-muted); font-size: 13px; text-align: center; }
+/* AI 识别结果：直接列出识别到的日程，点「确认加入日历」才写入。 */
+.ai-bar-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.ai-summary-body { min-width: 0; }
+.ai-summary-title { margin: 0; color: #235d52; font-size: 13.5px; font-weight: 500; }
+.ai-summary-todos { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ai-summary-todos li { display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; color: var(--ui-ink); }
+.ai-summary-todos span { color: #235d52; font-variant-numeric: tabular-nums; }
+.ai-bar-summary .ai-bar-note { margin: 6px 0 0; }
 #inbox-associate-dialog select { width: 100%; min-height: 40px; }
 #inbox-associate-dialog .resume-dialog-body { display: flex; flex-direction: column; gap: 8px; }
 #inbox-associate-dialog .resume-dialog-body > label:not(:first-child) { margin-top: 10px; }

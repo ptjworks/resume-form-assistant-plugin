@@ -22,20 +22,17 @@ import type {
 } from "./api.ts";
 import { maybe, must, select as selectEl, textarea } from "./dom.ts";
 import { showStatus } from "./status-bar.ts";
+import { stageLabel } from "./applications.ts";
 import type { InboxRow, InboxTab, MailboxInboxState, Message } from "./inbox.ts";
 import {
   EMPTY_INBOX,
   INBOX_TABS,
   PRIVACY_NOTE,
-  REPLY_CLASS_OPTIONS,
-  SEND_MODE_OPTIONS,
-  SEND_MODE_TAG_LABEL,
   STEP_LABEL,
   buildInboxRows,
   candidateSender,
   candidateTitle,
   describeAssociation,
-  describeClassification,
   describeImport,
   describeUnassociation,
   duplicateNote,
@@ -461,12 +458,6 @@ export function mountInbox(
       : `<button type="button" class="primary" data-act="associate">关联到投递…</button>${remove}`;
   }
 
-  function tagSelect(id: string, kind: "reply" | "send", label: string, options: Array<{ value: string; label: string }>, value: string) {
-    return `<label class="tag-pill"><span class="sr-only">${label}</span><select id="${id}" data-tag="${kind}" aria-label="${label}">${options
-      .map((option) => `<option value="${escapeHtml(option.value)}"${option.value === value ? " selected" : ""}>${escapeHtml(option.label)}</option>`)
-      .join("")}</select></label>`;
-  }
-
   function renderPreview(item: EvidencePreview, row: InboxRow) {
     clearAttachments?.(); clearAttachments = null;
     // 谁调 renderPreview 都先把上一块 React 卸掉：漏掉这一步，旧面板的清理
@@ -488,10 +479,10 @@ export function mountInbox(
     const sender = (item.fromAddr || "").trim() || kindLabel(item.kind);
     const when = item.sentAt ? importedAtLabel(item.sentAt) : `导入于 ${importedAtLabel(item.importedAt)}`;
     const linkedTo = state === "done" ? row.sub || "所选投递" : "";
-    const tags = recycled
-      ? `<span class="tag-pill is-static">${escapeHtml(replyClassLabel(item.replyClass))}</span><span class="tag-pill is-static">${escapeHtml(SEND_MODE_TAG_LABEL[item.sendMode ?? "unknown"])}</span>`
-      : tagSelect("inbox-reply-class", "reply", "通知类型", REPLY_CLASS_OPTIONS, item.replyClass ?? "") +
-        tagSelect("inbox-send-mode", "send", "发送方式", SEND_MODE_OPTIONS.map((option) => ({ value: option.value, label: SEND_MODE_TAG_LABEL[option.value] })), item.sendMode ?? "unknown");
+    // 分类不再是要用户操心的一步：AI 整理确认时会记下，这里只在有的时候显示成一个小标签。
+    const tags = item.replyClass && item.replyClass !== "unknown"
+      ? `<span class="tag-pill is-static">${escapeHtml(replyClassLabel(item.replyClass))}</span>`
+      : "";
 
     preview.innerHTML = `
       <article class="mail-view" data-state="${state}" data-kind="${escapeHtml(item.kind)}">
@@ -504,6 +495,7 @@ export function mountInbox(
           ${linkedTo ? `<p class="mail-link">已关联「${escapeHtml(linkedTo)}」</p>` : ""}
           <div class="mail-tags">${tags}</div>
         </header>
+        ${recycled ? "" : '<div id="inbox-ai" class="mail-ai-bar"></div>'}
         <div class="mail-scroll evidence-reader-scroll">
           <section class="evidence-original" aria-label="${item.kind === "eml" ? "邮件正文" : "原文"}">
             ${item.kind === "eml" ? '<div id="inbox-mail-attachments"></div>' : ""}
@@ -516,7 +508,6 @@ export function mountInbox(
             ${nothing}
           </section>
         </div>
-        ${recycled ? "" : '<footer id="inbox-ai" class="mail-ai-bar"></footer>'}
       </article>
     `;
     const slot = maybe("inbox-ai");
@@ -542,16 +533,13 @@ export function mountInbox(
         if (action) void act(action, item, row);
       });
     });
-    preview.querySelectorAll<HTMLSelectElement>("select[data-tag]").forEach((control) => {
-      control.addEventListener("change", () => void act("classify", item, row));
-    });
     // 保存期间切换通知或重画详情，新按钮也必须遵守同一个操作锁。
     setActing(acting);
   }
 
   function setActing(busy: boolean) {
     acting = busy;
-    preview.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(".mail-view button[data-act], .mail-view select[data-tag]").forEach((control) => {
+    preview.querySelectorAll<HTMLButtonElement>(".mail-view button[data-act]").forEach((control) => {
       control.disabled = busy;
     });
   }
@@ -623,25 +611,6 @@ export function mountInbox(
         await refresh();
         return;
       }
-      if (action === "classify") {
-        const replyClass = selectEl("inbox-reply-class").value || "unknown";
-        const sendMode = selectEl("inbox-send-mode").value || "unknown";
-        setActing(true);
-        try {
-          const updated = await invoke<EvidenceSummary>("classify_evidence_cmd", { evidenceId: item.id, replyClass, sendMode });
-          item.replyClass = (updated?.replyClass ?? replyClass) as EvidencePreview["replyClass"];
-          item.sendMode = (updated?.sendMode ?? sendMode) as EvidencePreview["sendMode"];
-          say(describeClassification(updated ?? ({ replyClass, sendMode } as Partial<EvidenceSummary>)));
-        } catch (error) {
-          // 没存上：标签退回原来的值，免得界面写着一个并没有记下的分类。
-          const reply = maybe<HTMLSelectElement>("inbox-reply-class");
-          const send = maybe<HTMLSelectElement>("inbox-send-mode");
-          if (reply) reply.value = item.replyClass ?? "";
-          if (send) send.value = item.sendMode ?? "unknown";
-          throw error;
-        }
-        await refresh();
-      }
     } catch (error) {
       say({ tone: "warn", text: `没能完成这一步：${invokeError(error)}` });
     } finally {
@@ -649,7 +618,9 @@ export function mountInbox(
     }
   }
 
-  // ---- 关联到投递（弹窗里顺带可选分类） ----
+  // ---- 关联到投递：弹窗里一个可搜索的投递列表，点哪条就关联到哪条 ----
+
+  let associateBusy = false;
 
   function sayInAssociate(text: string) {
     const node = maybe("inbox-associate-status");
@@ -658,33 +629,38 @@ export function mountInbox(
     node.className = text ? "note warn" : "note";
   }
 
+  function renderAssociateList() {
+    const list = maybe("inbox-associate-list");
+    if (!list) return;
+    const query = (maybe<HTMLInputElement>("inbox-associate-search")?.value ?? "").trim().toLowerCase();
+    const shown = applications.filter((app) => !query || `${app.company} ${app.title}`.toLowerCase().includes(query));
+    list.innerHTML = shown.length
+      ? shown
+          .map((app) => `<li><button type="button" data-app="${escapeHtml(app.id)}"${associateBusy ? " disabled" : ""}><span class="assoc-name"><strong>${escapeHtml(app.company)}</strong><span>${escapeHtml(app.title)}</span></span>${app.current_stage ? `<small>${escapeHtml(stageLabel(app.current_stage))}</small>` : ""}</button></li>`)
+          .join("")
+      : `<li class="assoc-empty">${applications.length ? "没有匹配的投递" : "还没有在办的投递"}</li>`;
+  }
+
   async function openAssociate(item: EvidencePreview) {
     if (!associateDialog) return;
     await loadApplications();
-    const application = selectEl("inbox-associate-application");
-    application.innerHTML = `<option value="">请选择一条投递…</option>${applications
-      .map((app) => `<option value="${escapeHtml(app.id)}">${escapeHtml(app.company)} · ${escapeHtml(app.title)}</option>`)
-      .join("")}`;
-    const classes = selectEl("inbox-associate-class");
-    classes.innerHTML = `<option value="">先不选</option>${REPLY_CLASS_OPTIONS.filter((option) => option.value)
-      .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
-      .join("")}`;
-    classes.value = item.replyClass ?? "";
+    associateBusy = false;
+    const search = maybe<HTMLInputElement>("inbox-associate-search");
+    if (search) search.value = "";
+    renderAssociateList();
     // 只在有话非说不可时才出现：没有投递可选，或投递太多没列全。
     const hint = maybe("inbox-associate-hint");
     if (hint) {
       hint.textContent = !applications.length
-        ? "还没有在办的投递。先到「投递」页新增一条，再回来关联。"
-        : applicationsTruncated ? "投递太多，这里只列出了最近 500 条。" : "";
+        ? "先到「投递」页新增一条，再回来关联。"
+        : applicationsTruncated ? "投递太多，这里只列出了最近 500 条，可以用上面的搜索找。" : "";
     }
-    const save = maybe<HTMLButtonElement>("inbox-associate-save");
-    if (save) { save.disabled = false; save.textContent = "关联"; }
     sayInAssociate("");
     associating = item;
     const active = document.activeElement;
     associateOpener = active && "focus" in active ? (active as HTMLElement) : null;
     if (!associateDialog.open) associateDialog.showModal();
-    application.focus();
+    search?.focus();
   }
 
   function closeAssociate() {
@@ -696,39 +672,23 @@ export function mountInbox(
     associateOpener = null;
   }
 
-  async function submitAssociate() {
+  async function associateTo(applicationId: string) {
     const item = associating;
-    if (!item) return;
-    const applicationId = selectEl("inbox-associate-application").value;
-    if (!applicationId) {
-      sayInAssociate("请先选一条投递。");
-      selectEl("inbox-associate-application").focus();
-      return;
-    }
-    const replyClass = selectEl("inbox-associate-class").value;
-    const save = maybe<HTMLButtonElement>("inbox-associate-save");
-    if (save) { save.disabled = true; save.textContent = "正在关联…"; }
+    if (!item || associateBusy) return;
+    associateBusy = true;
+    renderAssociateList();
     const chosen = applications.find((app) => app.id === applicationId);
     try {
       await invoke("associate_evidence_cmd", { evidenceId: item.id, applicationId });
     } catch (error) {
+      associateBusy = false;
+      renderAssociateList();
       sayInAssociate(`没能关联：${invokeError(error)}`);
-      if (save) { save.disabled = false; save.textContent = "关联"; }
       return;
     }
-    const message = describeAssociation({ id: item.id }, chosen ? `${chosen.company} · ${chosen.title}` : undefined);
-    let classFailure = "";
-    if (replyClass) {
-      try {
-        await invoke("classify_evidence_cmd", { evidenceId: item.id, replyClass, sendMode: item.sendMode ?? "unknown" });
-      } catch (error) {
-        classFailure = `但分类没存上：${invokeError(error)}，可以在邮件上方的标签里再设一次。`;
-      }
-    }
+    associateBusy = false;
     closeAssociate();
-    say(classFailure
-      ? { tone: "warn", text: `${message.text}${classFailure}` }
-      : replyClass ? { tone: "success", text: `${message.text}已记为「${replyClassLabel(replyClass as EvidencePreview["replyClass"])}」。` } : message);
+    say(describeAssociation({ id: item.id }, chosen ? `${chosen.company} · ${chosen.title}` : undefined));
     if (await refresh() === false) say({ tone: "warn", text: `${status.textContent}列表暂时无法刷新，请稍后重新读取。` });
   }
 
@@ -916,9 +876,11 @@ export function mountInbox(
     event.preventDefault();
     closeAssociate();
   });
-  maybe<HTMLFormElement>("inbox-associate-form")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void submitAssociate();
+  maybe<HTMLFormElement>("inbox-associate-form")?.addEventListener("submit", (event) => event.preventDefault());
+  maybe("inbox-associate-search")?.addEventListener("input", renderAssociateList);
+  maybe("inbox-associate-list")?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement | null)?.closest?.<HTMLElement>("button[data-app]");
+    if (button?.dataset.app) void associateTo(button.dataset.app);
   });
   preview.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement | null)?.closest?.<HTMLElement>("button[data-empty-act]");
