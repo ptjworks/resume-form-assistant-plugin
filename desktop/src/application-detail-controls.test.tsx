@@ -259,6 +259,8 @@ test("expand: no mail preview or unlink here, the company-experience link is gat
   await waitFor(() => expect(row("A").querySelector("[data-go=inbox]")).toBeTruthy());
   fireEvent.click(row("A").querySelector("[data-go=inbox]")!);
   expect(openInbox).toHaveBeenCalledTimes(1);
+  // 带上是哪一条投递，通知页才能只显示它的邮件。
+  expect(openInbox).toHaveBeenCalledWith("A", "公司A · 工程师");
   expect(row("A").textContent).not.toMatch(/取消关联|查看通知/);
   const community = row("A").querySelector<HTMLElement>('[data-go=community]')!;
   expect(community.getAttribute("data-platform")).toBe("community-remote");
