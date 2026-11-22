@@ -202,11 +202,13 @@ test("a screenshot is shown from a data URL, a PDF offers the system viewer inst
 
 test("associating opens a searchable list of jobs; a click on one links it, nothing is preselected", async () => {
   let filed = [MAIL] as unknown[];
+  let linked = [] as unknown[];
   const h = setup({
     list_inbox_cmd: () => filed,
-    get_evidence_preview_cmd: () => body(MAIL),
+    list_associated_evidence_cmd: () => linked,
+    get_evidence_preview_cmd: () => body(linked.length ? { ...MAIL, applicationId: "app-2" } : MAIL),
     list_applications_cmd: () => APPS,
-    associate_evidence_cmd: () => { filed = []; return {}; },
+    associate_evidence_cmd: () => { filed = []; linked = [{ ...MAIL, applicationId: "app-2", company: "星河科技", title: "数据平台" }]; return {}; },
   });
   await h.inbox.refresh();
   fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
@@ -231,7 +233,10 @@ test("associating opens a searchable list of jobs; a click on one links it, noth
   expect(h.called("classify_evidence_cmd")).toHaveLength(0);
   expect(el("inbox-status").textContent).toContain("已关联到「星河科技 · 数据平台」");
   expect(el("inbox-status").textContent).toContain("已处理");
-  await waitFor(() => expect(el("inbox-list").querySelector("[data-row]")).toBeNull());
+  // 邮件跟着去了「已处理」，右边继续显示它，不会凭空消失。
+  await waitFor(() => expect(el("inbox-tab-done").getAttribute("aria-selected")).toBe("true"));
+  await h.reader.findByText("已关联「星河科技 · 数据平台」");
+  expect(el("inbox-preview").textContent).toContain("面试邀请");
 });
 
 test("a failed association keeps the dialog open with the reason, and cancel writes nothing", async () => {
@@ -276,9 +281,10 @@ test("there are no classification controls to operate; a known class only shows 
 test("已处理 lists linked mail with company and job; it can be unlinked or deleted, nothing else", async () => {
   const linked = { ...MAIL, id: "d1", applicationId: "app-1", company: "星河科技", title: "后端开发", replyClass: "interview_invite" };
   let done = [linked] as unknown[];
+  let todo = [] as unknown[];
   const h = setup({
-    list_associated_evidence_cmd: () => done, get_evidence_preview_cmd: () => body(linked),
-    unassociate_evidence_cmd: () => { done = []; return {}; },
+    list_associated_evidence_cmd: () => done, list_inbox_cmd: () => todo, get_evidence_preview_cmd: () => body(done.length ? linked : { ...linked, applicationId: null }),
+    unassociate_evidence_cmd: () => { done = []; todo = [{ ...linked, applicationId: null }]; return {}; },
   });
   await h.inbox.refresh();
   fireEvent.click(el("inbox-tab-done"));
@@ -291,8 +297,10 @@ test("已处理 lists linked mail with company and job; it can be unlinked or de
   fireEvent.click(h.reader.getByRole("button", { name: "取消关联" }));
   await waitFor(() => expect(h.called("unassociate_evidence_cmd")).toHaveLength(1));
   await waitFor(() => expect(el("inbox-status").textContent).toContain("回到了「待处理」"));
-  await waitFor(() => expect(el("inbox-list").querySelector("[data-row]")).toBeNull());
-  expect(el("inbox-list").textContent).toContain("还没有处理过的通知");
+  // 邮件跟着回到「待处理」，右边继续显示它。
+  await waitFor(() => expect(el("inbox-tab-todo").getAttribute("aria-selected")).toBe("true"));
+  await h.reader.findByRole("button", { name: "关联到投递" });
+  expect(el("inbox-preview").textContent).toContain("面试邀请");
 });
 
 test("jumping in from a job shows only its mail with a removable filter; clearing shows all processed mail", async () => {

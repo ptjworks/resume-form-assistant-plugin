@@ -333,8 +333,8 @@ export function mountInbox(
     });
   }
 
-  async function showTab(next: InboxTab) {
-    if (next === tab && loaded[tab]) {
+  async function showTab(next: InboxTab, force = false) {
+    if (next === tab && loaded[tab] && !force) {
       renderTabs();
       return;
     }
@@ -345,6 +345,14 @@ export function mountInbox(
     resetPreview('<p class="pane-loading muted" data-list-loading>正在读取通知…</p>');
     renderList();
     await refresh();
+  }
+
+  /** 邮件换了位置（关联了、取消关联了）：跟着它走，在新位置上继续显示这封，别让它凭空消失。 */
+  async function reveal(next: InboxTab, evidenceId: string) {
+    if (next === "done") doneFilter = null;
+    await showTab(next, true);
+    const row = currentRows().find((entry) => entry.kind === "evidence" && entry.id === evidenceId);
+    if (row) await selectRow(row.key);
   }
 
   /** 从投递页点「N 封相关邮件」进来：已处理里只看这一条投递的邮件。 */
@@ -517,14 +525,8 @@ export function mountInbox(
       // 确认成功那句话由状态栏说：面板本身马上会随着重画被卸掉。
       aiPanel = mountAi(slot as unknown as Element, item.id, (message) => {
         say({ tone: "success", text: message });
-        void refresh().then(() => {
-          if (currentRows().some((entry) => entry.id === item.id)) {
-            if (selectedKey === row.key) void selectEvidence(row);
-            return;
-          }
-          // 确认会把材料关联到投递上，它就不在待处理里了：说清楚去了哪儿。
-          say({ tone: "success", text: `${message}这封已移到「已处理」。` });
-        });
+        // 确认会把这封关联到投递上：跟过去，在「已处理」里继续显示它。
+        void reveal("done", item.id);
       }, { compact: true });
     }
     const attachmentRoot = preview.querySelector<HTMLElement>("#inbox-mail-attachments");
@@ -610,7 +612,7 @@ export function mountInbox(
         setActing(true);
         await invoke("unassociate_evidence_cmd", { evidenceId: item.id });
         say(describeUnassociation());
-        await refresh();
+        await reveal("todo", item.id);
         return;
       }
     } catch (error) {
@@ -691,7 +693,7 @@ export function mountInbox(
     associateBusy = false;
     closeAssociate();
     say(describeAssociation({ id: item.id }, chosen ? `${chosen.company} · ${chosen.title}` : undefined));
-    if (await refresh() === false) say({ tone: "warn", text: `${status.textContent}列表暂时无法刷新，请稍后重新读取。` });
+    await reveal("done", item.id);
   }
 
   // ---- 导入 ----
