@@ -120,7 +120,7 @@ async function openNote(initialText: string | null) {
   root.querySelector<HTMLButtonElement>('[data-folder-id="source"] .notes-folder-header > button')!.click();
   root.querySelector<HTMLButtonElement>(".notes-item")!.click();
   await vi.waitFor(() => expect(root.querySelector(".notes-ocr-toggle")).not.toBeNull());
-  return { root, invoke, removeTarget: () => { folders = [source]; } };
+  return { root, invoke };
 }
 
 test("re-recognition keeps corrected text searchable until a replacement is confirmed", async () => {
@@ -158,23 +158,6 @@ test("re-recognition keeps corrected text searchable until a replacement is conf
   await vi.waitFor(() => expect(root.querySelector(".notes-ocr-result")?.textContent).toBe("new result"));
   expect(hits("STAR")).toBe(0);
   expect(hits("new result")).toBe(1);
-});
-
-test("the move dialog reports a destination removed during a background index refresh", async () => {
-  let complete!: (text: string) => void;
-  recognizeImage.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
-  const { root, invoke, removeTarget } = await openNote(null);
-  await vi.waitFor(() => expect(recognizeImage).toHaveBeenCalledOnce());
-  button("移动到…", root).click();
-  removeTarget();
-  complete("首次识别结果");
-  await vi.waitFor(() => expect(root.querySelector('[data-folder-id="target"]')).toBeNull());
-
-  const dialog = document.querySelector("dialog")!;
-  button("移动", dialog).click();
-  await vi.waitFor(() => expect(dialog.querySelector('[role="alert"]')?.textContent).toBe("目标文件夹已不可用，请重新选择。"));
-  expect(root.querySelector('[data-folder-id="source"] .notes-item')).not.toBeNull();
-  expect(invoke.mock.calls.filter(([name]) => name === "change_note_cmd")).toHaveLength(1);
 });
 
 test("recycling a different folder keeps the current note and reading position", async () => {
@@ -341,4 +324,81 @@ test("the publish-to-square slot exists but stays hidden and never calls the pla
   } finally {
     configurePlatformServices(original);
   }
+});
+
+async function openFirstNote(root: HTMLElement) {
+  root.querySelector<HTMLButtonElement>('[data-folder-id="xh-fe"] .notes-folder-header > button')!.click();
+  root.querySelector<HTMLButtonElement>(".notes-item")!.click();
+  await vi.waitFor(() => expect(root.querySelector(".notes-read-header")).not.toBeNull());
+}
+
+test("the reader has 编辑 and a plain 删除 button, no ⋯ menu and no 移动到…; 删除 recycles after confirming", async () => {
+  const invoke = vi.fn<Invoke>().mockImplementation(async <T,>(command: string) => {
+    if (command === "note_index_cmd") return library() as T;
+    if (command === "note_body_cmd") return "<p>正文</p>" as T;
+    if (command === "change_note_cmd") return null as T;
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const root = document.createElement("div");
+  document.body.append(root);
+  await mountNotes(root, invoke as Invoke, () => {}).activate();
+  await openFirstNote(root);
+  const actions = root.querySelector<HTMLElement>(".notes-read-header .notes-actions")!;
+  expect(actions.querySelector("details")).toBeNull();
+  expect([...actions.querySelectorAll("button")].map(node => node.textContent?.trim()).filter(Boolean)).toEqual(["脱敏发布到广场", "编辑", "删除"]);
+  expect(root.textContent).not.toContain("移动到");
+
+  button("删除", actions).click();
+  const dialog = await vi.waitFor(() => {
+    const found = document.querySelector("dialog");
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  expect(invoke.mock.calls.some(([command]) => command === "change_note_cmd")).toBe(false);
+  button("删除", dialog).click();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("change_note_cmd", expect.objectContaining({
+    change: { kind: "recycleNote", id: "n1", recycled: true },
+  })));
+});
+
+test("the editor has no ⋯ menu", async () => {
+  const invoke = vi.fn<Invoke>().mockImplementation(async <T,>(command: string) => {
+    if (command === "note_index_cmd") return library() as T;
+    if (command === "note_body_cmd") return "<p>正文</p>" as T;
+    if (command === "set_note_editing_cmd") return null as T;
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const root = document.createElement("div");
+  document.body.append(root);
+  await mountNotes(root, invoke as Invoke, () => {}).activate();
+  await openFirstNote(root);
+  button("编辑", root).click();
+  const header = await vi.waitFor(() => {
+    const found = root.querySelector<HTMLElement>(".notes-edit-header");
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  expect(header.querySelector('summary[aria-label="更多心得操作"]')).toBeNull();
+  expect(button("完成编辑", header)).toBeDefined();
+});
+
+test("a folder ⋯ menu closes on a click elsewhere and on Escape, and opening another closes the first", async () => {
+  const { root } = await mountLibrary();
+  const menus = () => [...root.querySelectorAll<HTMLDetailsElement>(".notes-folder-header > details.notes-menu")];
+  expect(menus()).toHaveLength(4);
+  const [first, second] = menus();
+  first.open = true;
+  document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  expect(first.open).toBe(false);
+
+  first.open = true;
+  first.querySelector("summary")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  expect(first.open).toBe(true);
+  second.open = true;
+  second.querySelector("summary")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  expect(first.open).toBe(false);
+  expect(second.open).toBe(true);
+
+  second.querySelector("summary")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(second.open).toBe(false);
 });

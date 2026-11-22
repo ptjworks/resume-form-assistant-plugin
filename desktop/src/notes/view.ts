@@ -572,6 +572,14 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       });
     }
   }
+  // 点菜单以外的任何地方、或按 Esc，就把打开的 ⋯ 菜单收起来。
+  const closeMenus = (except?: Node) => {
+    for (const menu of root.querySelectorAll<HTMLDetailsElement>("details.notes-menu[open]")) {
+      if (!except || !menu.contains(except)) menu.open = false;
+    }
+  };
+  document.addEventListener("pointerdown", event => closeMenus(event.target as Node));
+  root.addEventListener("keydown", event => { if (event.key === "Escape") closeMenus(); });
   window.addEventListener("pointerup", event => finishDrag(event, true));
   window.addEventListener("pointercancel", event => finishDrag(event, false));
   window.addEventListener("keydown", event => {
@@ -713,32 +721,21 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       favorite.title = item.favorite ? "取消收藏" : "收藏";
       favorite.setAttribute("aria-label", favorite.title);
       favorite.setAttribute("aria-pressed", String(item.favorite));
-      const more = element("details", undefined, "notes-menu notes-reader-menu");
-      const menuLabel = element("summary", "⋯");
-      menuLabel.setAttribute("aria-label", "更多心得操作");
-      const menu = element("div");
-      menu.append(
-        button("移动到…", () => { more.open = false; void openMove(item); }),
-        button("移到回收站", () => {
-          more.open = false;
-          withTransition(async () => {
-            const confirmed = await openSettingsDialog({
-              title: "回收心得", intro: "可以从心得回收站恢复。", confirmLabel: "移到回收站",
-              action: async () => { await change({ kind: "recycleNote", id: item.id, recycled: true }); },
-            });
-            if (!confirmed) return;
-            selectedNote = undefined;
-            rememberWorkspace();
-            await refreshIndex();
-            renderEmpty();
-          });
-        }),
-      );
-      appendImport(menu, parent, () => { more.open = false; });
-      more.append(menuLabel, menu);
+      // 移动靠拖拽；回收（删除）直接放在外面，不藏进菜单。
+      const remove = button("删除", () => withTransition(async () => {
+        const confirmed = await openSettingsDialog({
+          title: "删除心得", intro: "会放进回收站，可以在「回收站」里恢复。", confirmLabel: "删除",
+          action: async () => { await change({ kind: "recycleNote", id: item.id, recycled: true }); },
+        });
+        if (!confirmed) return;
+        selectedNote = undefined;
+        rememberWorkspace();
+        await refreshIndex();
+        renderEmpty();
+      }), "notes-delete");
       const editNote = button("编辑", () => showEditor(parent, item, body), "primary");
       editNote.prepend(notesIcon("edit"));
-      actions.append(favorite, more, publishSlot(item), editNote);
+      actions.append(favorite, publishSlot(item), editNote, remove);
       applyPlatformVisibility(actions, getPlatformServices().capabilities);
     }
     heading.append(context, actions);
@@ -1487,17 +1484,11 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     }
     favorite.classList.add("notes-favorite-button");
     updateFavorite(Boolean(item?.favorite));
-    const more = element("details", undefined, "notes-menu notes-reader-menu");
-    const moreLabel = element("summary", "⋯");
-    moreLabel.setAttribute("aria-label", "更多心得操作");
-    const menu = element("div");
-    menu.append(button("立即保存", () => { more.open = false; void flush(session); }));
-    more.append(moreLabel, menu);
     const done = button("完成编辑", () => withTransition(async () => {
       if (await finishEdit()) await readNote(session.id);
     }), "primary");
     done.prepend(notesIcon("check"));
-    actions.append(status, favorite, more, done);
+    actions.append(status, favorite, done);
     const header = element("div", undefined, "notes-edit-header");
     const heading = element("div", undefined, "notes-heading");
     const context = element("div", undefined, "notes-edit-context");
@@ -1935,24 +1926,6 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
         await moveNote(moved.id, from.id, epoch, true);
       })));
     }
-  }
-
-  function openMove(item: Note) {
-    withTransition(async () => {
-      const epoch = index.epoch;
-      const destinations = index.folders.filter(parent => !parent.recycled && parent.id !== item.folderId);
-      if (!destinations.length) { notify("先新建一个目标文件夹。"); return; }
-      const choices = element("select");
-      for (const target of destinations) {
-        const option = element("option", [target.name, target.company, target.position].filter(Boolean).join(" · "));
-        option.value = target.id;
-        choices.append(option);
-      }
-      await openSettingsDialog({
-        title: "移动心得", body: field("目标文件夹", choices), confirmLabel: "移动",
-        action: () => moveNote(item.id, choices.value, epoch),
-      });
-    });
   }
 
   async function activate(application?: NotesApplication, suggested?: string) {

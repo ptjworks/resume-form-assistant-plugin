@@ -73,10 +73,15 @@
 .notes-folder-header[data-current="true"] > button:first-child,
 .notes-folder-header[data-current="true"] > button:first-child .icon { color: var(--ui-brand); }
 .notes-folder-header button[aria-expanded="true"] .notes-folder-chevron { transform: rotate(90deg); }
-.notes-folder-header > .notes-menu { position: absolute; right: 0; }
+/* 文件夹右边：平时是篇数，鼠标移上去或菜单打开时 ⋯ 换到同一个位置，不叠在一起。 */
+.notes-folder-header > .notes-menu { position: absolute; top: 50%; right: 0; transform: translateY(-50%); }
 .notes-folder-header > .notes-menu:not([open]) { opacity: 0; }
-.notes-folder-header:hover > .notes-menu, .notes-folder-header:focus-within > .notes-menu { opacity: 1; background: var(--panel); border-radius: 6px; }
-.notes-folder-header:hover > .notes-menu:not([open]) { opacity: 1; }
+.notes-folder-header:hover > .notes-menu, .notes-folder-header:focus-within > .notes-menu, .notes-folder-header > .notes-menu[open] { opacity: 1; }
+.notes-folder-header:hover > .notes-folder-count, .notes-folder-header:focus-within > .notes-folder-count,
+.notes-folder-header:has(> .notes-menu[open]) > .notes-folder-count { visibility: hidden; }
+.notes-folder-header:has(> .notes-menu[open]) { z-index: 5; }
+.notes-folder-header > .notes-menu > summary { min-width: 29px; padding: 1px 4px; text-align: center; line-height: 1.5; border-radius: 999px; color: var(--ui-sub); }
+.notes-folder-header > .notes-menu > summary:hover, .notes-folder-header > .notes-menu[open] > summary { background: var(--ui-line-soft); }
 .notes-folder-header > button:first-child:hover { background: var(--surface); }
 .notes-folder-count { min-width: 21px; padding: 1px 4px; text-align: center; border-radius: 999px; background: var(--ui-line-soft); color: var(--ui-sub); font-size: 11px; }
 .notes-folder-header.notes-drop-target { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -89,14 +94,18 @@
   z-index: 4;
   right: 0;
   display: grid;
-  gap: 3px;
+  gap: 1px;
   width: max-content;
+  min-width: 140px;
   padding: 5px;
-  background: var(--panel);
-  border: 1px solid var(--card-line);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px #18181b1f;
 }
+/* 菜单里的项：小字、靠左、无边框，和投递页「记进度」菜单同款。 */
+.notes-folder-header .notes-menu > div > button { min-height: 30px; padding: 5px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ui-ink); font-size: 13px; text-align: left; white-space: nowrap; }
+.notes-folder-header .notes-menu > div > button:hover:not(:disabled) { background: var(--ui-canvas); }
 .notes-item { display: flex; align-items: flex-start; gap: 8px; text-align: left; width: 100%; margin: 4px 0; padding: 8px 9px; line-height: 1.45; border-color: transparent; background: transparent; border-radius: 9px; overflow-wrap: anywhere; }
 .notes-item[aria-current="true"] { color: var(--ui-ink); background: var(--ui-brand-pale); border-color: transparent; box-shadow: inset 2px 0 var(--ui-brand); }
 .notes-folder .notes-item { margin-left: 17px; width: calc(100% - 17px); }
@@ -155,7 +164,8 @@
 input.notes-title-input { width: 100%; min-width: 0; min-height: 27px; font-size: 16px; line-height: 1.4; font-weight: 600; color: var(--ink); padding: 1px 3px; border-color: transparent; background: transparent; }
 input.notes-title-input::placeholder { color: var(--muted); font-weight: 400; }
 input.notes-title-input:hover { border-color: var(--card-line); }
-.notes-reader-menu > summary { border: 1px solid transparent; min-height: 34px; }
+.notes-delete { color: var(--ui-muted); }
+.notes-heading .notes-actions > button.notes-delete:hover:not(:disabled) { color: #b42318; background: #fef3f2; }
 .notes-heading .notes-actions > button:not(.primary) { border-color: transparent; color: var(--muted); }
 .notes-heading .notes-actions > button[aria-pressed="true"] { color: var(--ui-brand); }
 .notes-format-toolbar, .notes-hit-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 7px 12px; background: var(--notes-chrome); border-top: 1px solid #ebeeed; }
