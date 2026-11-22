@@ -582,6 +582,16 @@ fn list_inbox_cmd(state: State<AppState>) -> Result<Vec<evidence_commands::Evide
 }
 
 #[tauri::command]
+fn list_associated_evidence_cmd(
+    state: State<AppState>,
+    application_id: Option<String>,
+) -> Result<Vec<evidence_commands::AssociatedEvidence>, CommandError> {
+    with_store(&state, |store| {
+        evidence_commands::list_associated(store, application_id.as_deref())
+    })
+}
+
+#[tauri::command]
 fn list_recycled_evidence_cmd(
     state: State<AppState>,
 ) -> Result<Vec<evidence_commands::EvidenceSummary>, CommandError> {
@@ -2436,6 +2446,7 @@ pub fn run() {
             import_evidence_cmd,
             list_inbox_cmd,
             list_recycled_evidence_cmd,
+            list_associated_evidence_cmd,
             set_evidence_recycled_cmd,
             preview_evidence_purge_cmd,
             purge_recycled_evidence_cmd,

@@ -540,9 +540,10 @@ const applications = mountApplications(command, {
   companyNoteCount: async company => countCompanyNotes(
     await command<{ folders: CompanyFolder[]; notes: CompanyNote[] }>("note_index_cmd"), company),
   openCompanyNotes: company => void navigate("notes").then(moved => { if (moved) void notes.showCompany(company); }),
-  // 跨页入口这一项只负责切到目标页；定位到具体日期、邮件分别留给 #551、#552。
-  openTodos: () => void navigate("todos").then((moved) => { if (moved) void showTodos().catch(() => {}); }),
-  openInbox: () => void navigate("inbox"),
+  // 跨页入口只负责切到目标页。日历页带着待办 id 进去，选中那一天那一条。
+  openTodos: (target) => void navigate("todos").then((moved) => { if (moved) void showTodos(target).catch(() => {}); }),
+  // 通知页切到「已处理」，只显示这一条投递的邮件。
+  openInbox: (applicationId, label) => void navigate("inbox").then((moved) => { if (moved) void inbox.showApplication(applicationId, label); }),
   listen: events?.listen
     ? (name, handler) => events.listen?.(name, (event) => handler({ payload: event?.payload }))
     : undefined,
@@ -605,8 +606,8 @@ if (events?.listen) {
 }
 
 const inbox = mountInbox(command, {
-  mountAi: (container, evidenceId, onConfirmed) =>
-    mountAiReview(container, invoke ?? null, evidenceId, onConfirmed),
+  mountAi: (container, evidenceId, onConfirmed, options) =>
+    mountAiReview(container, invoke ?? null, evidenceId, onConfirmed, options),
   pickFiles: dialog?.open
     ? async () => {
         const chosen = await dialog.open?.({
@@ -660,6 +661,12 @@ document.addEventListener("keydown", event => {
 // 待办只能挂在申请下面：一条申请都没有时，「去新增申请」切到申请页并打开新增表单。
 const showTodos = mountTodos(command, undefined, {
   writeNote: (application, suggested) => void openNotes(application, suggested),
+  // 日历详情里的「查看对应投递 →」：切到投递页并展开那一条申请。
+  openApplication: (id) => {
+    void navigate("applications", false).then((moved) => {
+      if (moved) void applications.openApplication(id);
+    });
+  },
   createApplication: () => {
     void navigate("applications").then((moved) => {
       if (moved) applications.openNewBar();

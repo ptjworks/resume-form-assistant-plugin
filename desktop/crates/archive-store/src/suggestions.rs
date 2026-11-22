@@ -317,6 +317,7 @@ impl StoreTx<'_> {
                     remind_at_utc: None,
                     interview_round: st.interview_round,
                     source_event_id: source_event_id.clone(),
+                    kind: None,
                 })?;
                 todos.push(todo);
             }
