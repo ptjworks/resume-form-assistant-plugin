@@ -108,6 +108,10 @@ export interface ApplicationsOptions {
   undoMs?: number;
   now?: () => Date;
   openNotes?: (application: ApplicationSummary) => void;
+  /** 这家公司（所有岗位）有几篇未回收的心得；读失败就抛错，界面不显示入口。只在展开一行时调用。 */
+  companyNoteCount?: (company: string) => Promise<number>;
+  /** 点「该公司心得 N 篇」：切到心得页，只看这家公司。 */
+  openCompanyNotes?: (company: string) => void;
   /** 点第 3 列的日程：只负责切到日历页（定位到当天留给 #551）。 */
   openTodos?: () => void;
   /** 点「N 封相关邮件」：只负责切到通知页（定位留给 #552）。 */
@@ -171,6 +175,8 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
   let detailToken = 0;
   let timelineOpen = false;
   let snapshotsOpen = false;
+  /** 展开的这条投递所属公司的心得篇数；还没读到或读失败时没有记录，入口不显示。 */
+  let companyNotes: { id: string; count: number } | null = null;
   const snapshotFieldCounts = new Map<string, number | null>();
 
   // 行内改阶段。overlay 是「界面上应该显示的阶段」，pending 是「还没写库的那一条」。
@@ -449,6 +455,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     detailToken += 1;
     ctl.setSelected(null);
     expandedView = null;
+    companyNotes = null;
     snapshotsOpen = false;
     timelineOpen = false;
     if (redraw) render();
@@ -459,6 +466,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       timelineOpen = false;
       snapshotsOpen = false;
       expandedView = null;
+      companyNotes = null;
     }
     ctl.setSelected(id);
     // 程序化展开（从心得页跳来、刚新建的那条）时，它所在的组要先展开：已结束组默认折叠，
@@ -480,6 +488,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       if (token !== detailToken || ctl.selectedId !== id) return;
       expandedView = view;
       renderPanel();
+      void loadCompanyNotes(id, view, token);
     } catch (err) {
       if (token !== detailToken || ctl.selectedId !== id) return;
       const target = panelFor(id);
@@ -571,6 +580,29 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     }).join("")}</ul><p class="app-snapshot-note">${escapeHtml(SNAPSHOT_DISCLAIMER)}</p>`;
   }
 
+  /** 「该公司心得 N 篇」：本机入口，只有读到至少一篇才画。 */
+  function companyNotesLink(app: ApplicationSummary) {
+    const count = companyNotes?.id === app.id ? companyNotes.count : 0;
+    if (!options.openCompanyNotes || count <= 0) return "";
+    return `<button type="button" class="app-link" data-go="company-notes" data-company="${escapeHtml(app.company)}">该公司心得 ${count} 篇${ICON.arrow}</button>`;
+  }
+
+  /** 展开后单独去读心得数：不挡展开行本身，读失败（或这期间换了一行）就当没有。 */
+  async function loadCompanyNotes(id: string, view: ApplicationView, token: number) {
+    if (!options.companyNoteCount) return;
+    const app = (view.application.summary || view.application) as ApplicationSummary;
+    let count = 0;
+    try {
+      count = await options.companyNoteCount(app.company);
+    } catch {
+      count = 0;
+    }
+    if (token !== detailToken || ctl.selectedId !== id) return;
+    const known = companyNotes?.id === id ? companyNotes.count : 0;
+    companyNotes = { id, count };
+    if (count !== known && expandedView) renderPanel();
+  }
+
   function panelHtml(view: ApplicationView) {
     const app = (view.application.summary || view.application) as ApplicationSummary;
     const notes = view.application.notes ?? "";
@@ -616,6 +648,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
             ? `<button type="button" class="app-link" data-go="inbox">${evidenceCount} 封相关邮件${ICON.arrow}</button>`
             : `<span class="app-side-none">暂无相关邮件</span>`}
           <button type="button" class="app-link" data-platform="community-remote" data-platform-off data-go="community">该公司面经${ICON.arrow}</button>
+          ${companyNotesLink(app)}
         </div>
         <div class="app-side-row app-side-actions">
           <button type="button" class="app-quiet" data-act="snapshots" aria-expanded="${snapshotsOpen}">当时交的简历</button>
@@ -934,6 +967,7 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
     if (go) {
       if (go.dataset.go === "todos") options.openTodos?.();
       else if (go.dataset.go === "inbox") options.openInbox?.();
+      else if (go.dataset.go === "company-notes") options.openCompanyNotes?.(go.dataset.company ?? "");
       return;
     }
     const actButton = target.closest<HTMLElement>("[data-act]");

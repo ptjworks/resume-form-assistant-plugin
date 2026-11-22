@@ -2,6 +2,7 @@ import "./attachments.css";
 import "./mailbox.css";
 import "./notes/notes.css";
 import { mountNotes, type NotesApplication } from "./notes/view.ts";
+import { countCompanyNotes, type CompanyFolder, type CompanyNote } from "./notes/company.ts";
 import { installFrontendErrors } from "./feedback.ts";
 import { mountFeedbackSettings } from "./react/feedback-mount.tsx";
 import { mountUsageSettings } from "./react/usage-mount.tsx";
@@ -535,6 +536,10 @@ if (events?.listen) void events.listen("note-quit-requested", async () => {
 });
 const applications = mountApplications(command, {
   openNotes: application => void openNotes(application),
+  // 展开一行时才读一次心得索引；读失败就抛错，投递页不显示「该公司心得」。
+  companyNoteCount: async company => countCompanyNotes(
+    await command<{ folders: CompanyFolder[]; notes: CompanyNote[] }>("note_index_cmd"), company),
+  openCompanyNotes: company => void navigate("notes").then(moved => { if (moved) void notes.showCompany(company); }),
   // 跨页入口这一项只负责切到目标页；定位到具体日期、邮件分别留给 #551、#552。
   openTodos: () => void navigate("todos").then((moved) => { if (moved) void showTodos().catch(() => {}); }),
   openInbox: () => void navigate("inbox"),
