@@ -362,6 +362,44 @@ pub fn list_for_application(
         .collect())
 }
 
+/// 「已处理」列表的一行：现有的证据摘要，加上它挂在哪条申请下面（公司、岗位）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssociatedEvidence {
+    #[serde(flatten)]
+    pub summary: EvidenceSummary,
+    pub company: String,
+    pub title: String,
+}
+
+/// 已关联到申请的通知，最近导入的在前。只读；`application_id` 给了就只看那一条申请的。
+pub fn list_associated(
+    store: &ArchiveStore,
+    application_id: Option<&str>,
+) -> Result<Vec<AssociatedEvidence>, CommandError> {
+    let mut names: std::collections::HashMap<String, (String, String)> = Default::default();
+    let mut items = Vec::new();
+    for record in store.list_associated_evidence(application_id)? {
+        let Some(app_id) = record.application_id.clone() else {
+            continue;
+        };
+        if !names.contains_key(&app_id) {
+            let pair = store
+                .get_application(&app_id)?
+                .map(|app| (app.company.clone(), app.title.clone()))
+                .unwrap_or_default();
+            names.insert(app_id.clone(), pair);
+        }
+        let (company, title) = names[&app_id].clone();
+        items.push(AssociatedEvidence {
+            summary: summarise(store, record),
+            company,
+            title,
+        });
+    }
+    Ok(items)
+}
+
 pub fn list_recycled(store: &ArchiveStore) -> Result<Vec<EvidenceSummary>, CommandError> {
     Ok(store
         .list_recycled_evidence()?

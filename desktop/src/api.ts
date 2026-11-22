@@ -120,6 +120,12 @@ export interface EvidenceSummary {
   recycled?: boolean;
 }
 
+/** 「已处理」列表的一行：证据摘要加上它挂在哪条申请下面。 */
+export interface AssociatedEvidence extends EvidenceSummary {
+  company: string;
+  title: string;
+}
+
 export interface EvidencePreview extends EvidenceSummary {
   bodyExtract: string | null;
   imageDataUrl: string | null;
