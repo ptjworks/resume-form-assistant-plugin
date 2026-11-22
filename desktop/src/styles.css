@@ -1116,13 +1116,9 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .mail-scroll .evidence-image { max-width: 100%; max-height: none; margin: 0 0 14px; }
 .mail-scroll .evidence-open { margin: 0 0 14px; }
 .mail-scroll .evidence-open button { display: inline-flex; align-items: center; gap: 6px; min-height: 0; padding: 5px 13px; border-radius: 6px; font-size: 13px; }
-.mail-scroll .pending-mail-content { max-width: 680px; margin: 0; padding: 22px 28px 28px; }
-.pending-mail-content > h3, .pending-mail-reasons h3 { margin: 0 0 10px; font-size: 13.5px; }
-.pending-mail-reasons { margin-top: 20px; }
-.pending-mail-reasons ul { margin: 0; padding: 12px 16px 12px 32px; border: 1px solid var(--ui-brand-line); border-radius: 8px; background: var(--ui-brand-pale); color: #355a54; font-size: 13px; }
-.pending-mail-reasons li + li { margin-top: 4px; }
-.pending-mail-note { margin: 20px 0 0; padding: 11px 14px; border-radius: 8px; background: var(--ui-canvas); color: var(--ui-muted); font-size: 12.5px; line-height: 1.7; }
-.mail-ai-bar { flex: none; padding: 10px 28px; border-top: 1px solid var(--ui-line); background: var(--ui-canvas); }
+.mail-scroll .pending-mail-content { max-width: 680px; margin: 0; padding: 18px 28px; }
+.mail-scroll .pending-mail-content:not(:has(*)) { display: none; }
+.pending-mail-content > h3, .mail-ai-bar { flex: none; padding: 10px 28px; border-top: 1px solid var(--ui-line); background: var(--ui-canvas); }
 .ai-panel.is-compact { gap: 6px; }
 .ai-bar-line { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 32px; }
 .ai-bar-text { min-width: 0; color: var(--ui-sub); font-size: 13px; }
@@ -1133,7 +1129,22 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .ai-panel.is-compact .ai-bar-actions button.primary:hover:not(:disabled) { border-color: var(--ui-brand-hover); background: var(--ui-brand-hover); }
 .ai-panel.is-compact .ai-bar-actions button.linkish { padding: 0; border: 0; background: transparent; color: var(--ui-brand); }
 .ai-panel.is-compact > .note { margin: 0; font-size: 12.5px; }
-#inbox-associate-dialog select { width: 100%; }
+#inbox-associate-dialog { width: min(560px, calc(100vw - 48px)); }
+#inbox-associate-dialog select { width: 100%; min-height: 40px; }
+#inbox-associate-dialog .resume-dialog-body { display: flex; flex-direction: column; gap: 8px; }
+#inbox-associate-dialog .resume-dialog-body > label:not(:first-child) { margin-top: 10px; }
+#inbox-associate-hint:empty { display: none; }
+/* 顶上的操作提示：出问题的留着，右边一个 × 能关。 */
+#view-inbox .workspace-status { position: relative; }
+#view-inbox .workspace-status:has(.status-close) { padding-right: 44px; }
+.status-close { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); width: 24px; min-height: 0; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font-size: 17px; line-height: 1; }
+.status-close:hover:not(:disabled) { background: #00000012; }
+/* AI 整理出错：不要一个高高的红框，一两行字加一个小按钮。 */
+.ai-panel.is-compact .ai-failure { gap: 2px; padding-top: 4px; }
+.ai-panel.is-compact .ai-failure .note { margin: 0; padding: 0; border: 0; background: transparent; color: #b42318; font-size: 12.5px; }
+.ai-panel.is-compact .ai-failure .muted { margin: 0; font-size: 12px; }
+.ai-panel.is-compact .ai-failure .ai-actions { gap: 14px; }
+.ai-panel.is-compact .ai-failure .ai-actions button { height: auto; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--ui-brand); font-size: 12.5px; }
 @media (max-width: 960px) {
   .inbox-workbench { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); }
   .mail-head { padding: 14px 20px 10px; }

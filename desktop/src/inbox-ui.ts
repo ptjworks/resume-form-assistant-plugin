@@ -21,9 +21,9 @@ import type {
   Page,
 } from "./api.ts";
 import { maybe, must, select as selectEl, textarea } from "./dom.ts";
+import { showStatus } from "./status-bar.ts";
 import type { InboxRow, InboxTab, MailboxInboxState, Message } from "./inbox.ts";
 import {
-  CHOOSE_APPLICATION_HINT,
   EMPTY_INBOX,
   INBOX_TABS,
   PRIVACY_NOTE,
@@ -160,8 +160,10 @@ export function mountInbox(
   }
 
   function say(message: Message | null) {
-    status.textContent = message?.text ?? "";
-    status.dataset.tone = message?.tone ?? "info";
+    showStatus(status, message?.text ?? "", {
+      tone: message?.tone ?? "info",
+      transient: message?.tone === "success" || message?.tone === "info",
+    });
   }
 
   function currentRows(): InboxRow[] {
@@ -438,22 +440,11 @@ export function mountInbox(
             </div>
           </div>
           <p class="mail-meta"><span class="mail-from">${escapeHtml(sender)}</span><span>${escapeHtml(sentAt)}</span></p>
-          <p class="mail-link">新邮件 · 只读取了信头，原文还没有下载</p>
+          <p class="mail-link">新邮件 · 来自 ${escapeHtml(candidate.email)} · 只读取了信头，原文还没有下载</p>
         </header>
         <div class="mail-scroll pending-mail-scroll">
-          <section class="pending-mail-content" aria-labelledby="pending-mail-heading">
-            <h3 id="pending-mail-heading">邮件信息</h3>
-            <dl class="evidence-mail">
-              <div><dt>发件人</dt><dd>${escapeHtml(sender)}</dd></div>
-              <div><dt>发送时间</dt><dd>${escapeHtml(sentAt)}</dd></div>
-              <div><dt>发现于</dt><dd>${escapeHtml(candidate.email)}</dd></div>
-            </dl>
-            <div class="pending-mail-reasons">
-              <h3>为什么出现在这里</h3>
-              <ul>${candidate.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>
-            </div>
+          <section class="pending-mail-content" aria-label="新邮件">
             ${failure ? `<p class="note warn" role="alert">${escapeHtml(failure)}</p>` : ""}
-            <p class="pending-mail-note">为保护隐私和减少下载，目前只显示邮件信头和入选原因。点击“留下”后才会下载完整原文，放进「待处理」里等你关联到投递。</p>
           </section>
         </div>
       </article>`;
@@ -679,16 +670,13 @@ export function mountInbox(
       .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
       .join("")}`;
     classes.value = item.replyClass ?? "";
+    // 只在有话非说不可时才出现：没有投递可选，或投递太多没列全。
     const hint = maybe("inbox-associate-hint");
     if (hint) {
       hint.textContent = !applications.length
         ? "还没有在办的投递。先到「投递」页新增一条，再回来关联。"
-        : applicationsTruncated
-          ? `${CHOOSE_APPLICATION_HINT} 投递太多，这里只列出了最近 500 条。`
-          : CHOOSE_APPLICATION_HINT;
+        : applicationsTruncated ? "投递太多，这里只列出了最近 500 条。" : "";
     }
-    const intro = maybe("inbox-associate-intro");
-    if (intro) intro.textContent = evidenceTitle(item);
     const save = maybe<HTMLButtonElement>("inbox-associate-save");
     if (save) { save.disabled = false; save.textContent = "关联"; }
     sayInAssociate("");

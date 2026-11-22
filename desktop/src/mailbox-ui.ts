@@ -3,6 +3,7 @@ import { MAIL_GUIDES, mailboxProvider, localMailConnection, requiresEndpointConf
 import type { MailConnection, MailProvider, MailEndpointConfirmation } from "./mailbox-providers.ts";
 import { openSettingsDialog, paragraph } from "./settings-dialog.ts";
 import type { InboxTab, MailboxInboxState } from "./inbox.ts";
+import { showStatus } from "./status-bar.ts";
 export { mailboxProvider } from "./mailbox-providers.ts";
 
 interface MailHeader { fromAddr: string | null; fromName: string | null; subject: string | null; sentAt: string | null }
@@ -173,6 +174,11 @@ export function mountMailboxes(
   const actionIds = ["mailbox-save", "mailbox-settings-check", "mailbox-inbox-check", "mailbox-detect"];
   function say(where: "settings" | "inbox", text: string, error = false) {
     const el = get(`mailbox-${where}-status`);
+    if (where === "inbox") {
+      // 做完的事几秒后自己消失；进行中（以「…」结尾）和出错的留着，出错的能点 × 关掉。
+      showStatus(el, text, { tone: error ? "error" : "info", transient: !error && !/…$/.test(text) });
+      return;
+    }
     el.textContent = text;
     el.dataset.tone = error ? "error" : "info";
   }

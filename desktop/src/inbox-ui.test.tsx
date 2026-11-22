@@ -84,7 +84,7 @@ test("待处理 lists new mail and filed mail together, newest first, each tagge
   expect(document.querySelector("#inbox-list .evidence-dot, #inbox-list .unread-dot")).toBeNull();
 });
 
-test("a new mail shows only its header and why it was picked, with just keep and ignore", async () => {
+test("a new mail shows only its header, with just keep and ignore and no explanations", async () => {
   const h = setup();
   const mail = mailbox([candidate("c1")]);
   h.inbox.setMailbox(mail);
@@ -92,8 +92,8 @@ test("a new mail shows only its header and why it was picked, with just keep and
   fireEvent.click(h.list.getByRole("button", { name: /星河科技笔试通知/ }));
   const buttons = [...el("inbox-preview").querySelectorAll(".mail-actions button")].map((button) => button.textContent);
   expect(buttons).toEqual(["留下", "忽略"]);
-  expect(el("inbox-preview").textContent).toContain("匹配投递公司：星河科技");
   expect(el("inbox-preview").textContent).toContain("原文还没有下载");
+  expect(el("inbox-preview").textContent).not.toMatch(/匹配投递公司|为什么出现在这里/);
   expect(el("inbox-preview").querySelector(".evidence-body, #inbox-ai, select")).toBeNull();
   fireEvent.click(h.reader.getByRole("button", { name: "留下" }));
   expect(mail.save).toHaveBeenCalledWith(["c1"]);
@@ -207,7 +207,7 @@ test("associating opens a dialog: two jobs at one company are never guessed, cla
   const select = el("inbox-associate-application") as HTMLSelectElement;
   expect([...select.options].map((option) => option.textContent)).toEqual(["请选择一条投递…", "星河科技 · 后端开发", "星河科技 · 数据平台"]);
   expect(select.value).toBe("");
-  expect(el("inbox-associate-hint").textContent).toContain("不会替你猜");
+  expect(el("inbox-associate-hint").textContent).toBe("");
   // 不选就关联：不发命令，只提醒。
   fireEvent.click(el("inbox-associate-save"));
   expect(el("inbox-associate-status").textContent).toContain("请先选一条投递");
@@ -463,4 +463,30 @@ test("a mail without file attachments shows its body straight away, no empty att
   fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
   await waitFor(() => expect(h.called("list_evidence_attachments_cmd")).toHaveLength(1));
   await waitFor(() => expect((el("inbox-mail-attachments") as HTMLElement).hidden).toBe(true));
+});
+
+test("a finished action's notice fades by itself; a problem stays until closed with ×", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
+  try {
+    let fail = false;
+    const h = setup({
+      list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL),
+      set_evidence_recycled_cmd: () => { if (fail) throw { message: "磁盘暂时不可写" }; return {}; },
+    });
+    await h.inbox.refresh();
+    fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
+    fireEvent.click(await h.reader.findByRole("button", { name: "删除" }));
+    await vi.waitFor(() => expect(el("inbox-status").textContent).toContain("已移到回收站"));
+    expect(el("inbox-status").querySelector(".status-close")).toBeNull();
+    vi.advanceTimersByTime(3100);
+    expect(el("inbox-status").textContent).toBe("");
+    // 出问题的不会自己消失，能关。
+    fail = true;
+    fireEvent.click(await h.reader.findByRole("button", { name: "删除" }));
+    await vi.waitFor(() => expect(el("inbox-status").textContent).toContain("磁盘暂时不可写"));
+    vi.advanceTimersByTime(10000);
+    expect(el("inbox-status").textContent).toContain("磁盘暂时不可写");
+    fireEvent.click(within(el("inbox-status")).getByRole("button", { name: "关闭提示" }));
+    expect(el("inbox-status").textContent).toBe("");
+  } finally { vi.useRealTimers(); }
 });
