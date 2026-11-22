@@ -2,6 +2,8 @@ import type { Invoke } from "./api.ts";
 import { MAIL_GUIDES, mailboxProvider, localMailConnection, requiresEndpointConfirmation, endpointConfirmation, matchesEndpointConfirmation } from "./mailbox-providers.ts";
 import type { MailConnection, MailProvider, MailEndpointConfirmation } from "./mailbox-providers.ts";
 import { openSettingsDialog, paragraph } from "./settings-dialog.ts";
+import type { InboxTab, MailboxInboxState } from "./inbox.ts";
+import { showStatus } from "./status-bar.ts";
 export { mailboxProvider } from "./mailbox-providers.ts";
 
 interface MailHeader { fromAddr: string | null; fromName: string | null; subject: string | null; sentAt: string | null }
@@ -18,10 +20,11 @@ interface CheckReport {
   skippedPaused: number;
 }
 
+/** 通知页那一头：邮箱把「新邮件」整理好交过去，通知页自己负责列表和右栏。 */
 export interface MailboxInboxBridge {
-  showPending(candidate: MailCandidate | null, actions?: { save(): void; ignore(): void }): void;
-  showStored(): void | Promise<void>;
-  showRecycled?(): void | Promise<void>;
+  setMailbox(state: MailboxInboxState): void;
+  setMailboxBusy?(busy: boolean): void;
+  showTab?(tab: InboxTab): void | Promise<void>;
 }
 
 const ERRORS: Record<string, string> = {
@@ -159,7 +162,6 @@ export function mountMailboxes(
     detection.hidden = ["empty", "typing", "found"].includes(state);
   }
   let schoolHelpUrl: string | null = null;
-  const selected = new Set<string>();
   const failures = new Map<string, string>();
   let current: MailboxView = { accounts: [], candidates: [], pendingCount: 0 };
   let busy = false;
@@ -169,16 +171,19 @@ export function mountMailboxes(
   let limit = 100;
   let refreshToken = 0;
   let signature = "";
-  let inboxState: "pending" | "stored" | "recycled" = "stored";
-  let activeCandidateId: string | null = null;
-  const actionIds = ["mailbox-save", "mailbox-settings-check", "mailbox-inbox-check", "mailbox-save-selected", "mailbox-ignore-selected", "mailbox-load-more", "mailbox-detect"];
+  const actionIds = ["mailbox-save", "mailbox-settings-check", "mailbox-inbox-check", "mailbox-detect"];
   function say(where: "settings" | "inbox", text: string, error = false) {
     const el = get(`mailbox-${where}-status`);
+    if (where === "inbox") {
+      // 做完的事几秒后自己消失；进行中（以「…」结尾）和出错的留着，出错的能点 × 关掉。
+      showStatus(el, text, { tone: error ? "error" : "info", transient: !error && !/…$/.test(text) });
+      return;
+    }
     el.textContent = text;
     el.dataset.tone = error ? "error" : "info";
   }
   function syncButtons() {
-    actionIds.forEach((id) => { get<HTMLButtonElement>(id).disabled = busy || ((id === "mailbox-save-selected" || id === "mailbox-ignore-selected") && !selected.size); });
+    actionIds.forEach((id) => { get<HTMLButtonElement>(id).disabled = busy; });
     const awaitingReview = needsEndpointReview();
     get<HTMLButtonElement>("mailbox-save").disabled = busy || awaitingReview;
     get("mailbox-save").textContent = busy && detection.dataset.state === "connecting" ? "正在连接…" : editingAccount ? "连接并更新" : "连接并添加";
@@ -192,11 +197,8 @@ export function mountMailboxes(
     get<HTMLButtonElement>("mailbox-toggle-secret").disabled = busy;
     host.readOnly = busy; port.readOnly = busy; username.readOnly = busy;
     encryption.disabled = busy; sendId.disabled = busy;
-    document.querySelectorAll<HTMLInputElement | HTMLButtonElement>("#mailbox-accounts button, #mailbox-candidates input, #mailbox-candidates button, #mailbox-select-all, #inbox-preview [data-pending-action]").forEach((el) => { el.disabled = busy; });
-    document.querySelectorAll<HTMLInputElement>("#mailbox-candidates input[type=checkbox]").forEach((el) => { el.checked = selected.has(el.dataset.mailboxCandidateId!); });
-    const all = get<HTMLInputElement>("mailbox-select-all");
-    all.checked = current.candidates.length > 0 && current.candidates.every((item) => selected.has(item.id));
-    all.indeterminate = selected.size > 0 && !all.checked;
+    document.querySelectorAll<HTMLButtonElement>("#mailbox-accounts button").forEach((el) => { el.disabled = busy; });
+    inboxBridge?.setMailboxBusy?.(busy);
   }
   async function action(where: "settings" | "inbox", progress: string, run: () => Promise<void>) {
     if (busy || disposed) return;
@@ -207,45 +209,6 @@ export function mountMailboxes(
   }
   function button(text: string, click: () => void) {
     const el = node("button", text); el.type = "button"; el.addEventListener("click", () => { el.focus(); click(); }); return el;
-  }
-  function selectInboxState(state: "pending" | "stored" | "recycled") {
-    inboxState = state;
-    const pending = state === "pending";
-    const pendingTab = get<HTMLButtonElement>("mailbox-tab-pending");
-    const storedTab = get<HTMLButtonElement>("mailbox-tab-stored");
-    pendingTab.setAttribute("aria-selected", String(pending));
-    storedTab.setAttribute("aria-selected", String(state === "stored"));
-    document.getElementById("mailbox-tab-recycled")?.setAttribute("aria-selected", String(state === "recycled"));
-    for (const [id, active] of [["mailbox-tab-pending", pending], ["mailbox-tab-stored", state === "stored"], ["mailbox-tab-recycled", state === "recycled"]] as const) {
-      const tab = document.getElementById(id); if (tab) tab.tabIndex = active ? 0 : -1;
-    }
-    get("mailbox-discovery").hidden = !pending;
-    get("inbox-stored-panel").hidden = state !== "stored";
-    const recycledPanel = document.getElementById("inbox-recycled-panel");
-    if (recycledPanel) recycledPanel.hidden = state !== "recycled";
-    if (pending) showActiveCandidate();
-    else if (state === "recycled") void inboxBridge?.showRecycled?.();
-    else if (typeof inboxBridge?.showStored === "function") void inboxBridge.showStored();
-  }
-  function showActiveCandidate() {
-    const candidate = current.candidates.find((item) => item.id === activeCandidateId) ?? current.candidates[0] ?? null;
-    activeCandidateId = candidate?.id ?? null;
-    get("mailbox-candidates").querySelectorAll<HTMLElement>("li[data-candidate]").forEach((item) => {
-      const active = item.dataset.candidate === activeCandidateId;
-      item.classList.toggle("active", active);
-      item.querySelector("button[data-candidate-open]")?.setAttribute("aria-current", String(active));
-    });
-    if (typeof inboxBridge?.showPending === "function") {
-      inboxBridge.showPending(candidate, candidate ? {
-        save: () => void saveCandidates([candidate.id]),
-        ignore: () => void ignore([candidate.id]),
-      } : undefined);
-    }
-    syncButtons();
-  }
-  function selectCandidate(candidate: MailCandidate) {
-    activeCandidateId = candidate.id;
-    showActiveCandidate();
   }
   async function checkNow(where: "settings" | "inbox", prefix = "") {
     const report = await invoke<CheckReport>("mailbox_check");
@@ -290,9 +253,6 @@ export function mountMailboxes(
     }
   }
   function render() {
-    const valid = new Set(current.candidates.map((item) => item.id));
-    for (const id of selected) if (!valid.has(id)) selected.delete(id);
-    if (activeCandidateId && !valid.has(activeCandidateId)) activeCandidateId = null;
     const accounts = get("mailbox-accounts"); accounts.replaceChildren();
     get("mailbox-empty").hidden = current.accounts.length > 0;
     get("mailbox-account-card").hidden = !current.accounts.length;
@@ -302,7 +262,6 @@ export function mountMailboxes(
     get("mailbox-inbox-overview").textContent = current.accounts.length
       ? `${current.accounts.length} 个邮箱已连接${checking ? " · 正在检查来信…" : ""}` : "";
     get("mailbox-result-actions").hidden = !current.pendingCount;
-    document.getElementById("inbox-shell")?.classList.toggle("has-mailboxes", current.accounts.length > 0 || current.pendingCount > 0);
     current.accounts.forEach((account) => {
       const card = node("article", undefined, "mailbox-account");
       card.dataset.accountId = account.id; card.tabIndex = -1;
@@ -348,43 +307,29 @@ export function mountMailboxes(
       }); }));
       card.append(details, controls); accounts.append(card);
     });
-    get("mailbox-pending-count").textContent = String(current.pendingCount);
-    const broken = current.accounts.filter((account) => account.lastError).length;
-    get("mailbox-discovery-note").textContent = broken
-      ? `${broken} 个邮箱检查异常，请到邮箱设置查看原因。已发现的邮件仍可确认或忽略。`
-      : current.accounts.length ? "只显示信头和入选原因，存进档案时才下载原文。筛选可能漏信，仍可手动导入。" : "连接邮箱后，招聘相关来信会先出现在这里，确认才下载原文并存进档案。";
-    const issues = current.candidateIssues ?? 0;
-    if (issues) get("mailbox-discovery-note").textContent += ` 另有 ${issues} 条候选记录异常，暂时无法显示，未删除；其他邮件可正常处理。可从邮箱下载原件后手动导入。`;
-    get("mailbox-connect-link").textContent = current.accounts.length ? "邮箱设置" : "连接邮箱";
-    get("mailbox-pending-actions").hidden = !current.candidates.length;
-    get("mailbox-load-more").hidden = current.candidates.length >= current.pendingCount || limit >= 2000;
-    const list = get("mailbox-candidates"); list.replaceChildren();
-    current.candidates.forEach((item) => {
-      const li = node("li");
-      li.dataset.candidate = item.id;
-      li.classList.toggle("active", item.id === activeCandidateId);
-      const label = node("label", undefined, "mailbox-candidate-title");
-      const check = node("input"); check.type = "checkbox"; check.checked = selected.has(item.id);
-      check.dataset.mailboxCandidateId = item.id;
-      check.setAttribute("aria-label", `选择 ${item.header.subject || "无主题邮件"}`);
-      check.addEventListener("change", () => { if (check.checked) selected.add(item.id); else selected.delete(item.id); syncButtons(); });
-      label.append(check, node("strong", item.header.subject || "无主题邮件")); li.append(label);
-      li.append(node("p", `${item.header.fromName || ""} ${item.header.fromAddr || "未知发件人"} · ${item.header.sentAt ? new Date(item.header.sentAt).toLocaleString() : "发送时间未知"}`, "settings-caption"));
-      li.append(node("p", `发现于 ${item.email}`, "settings-caption"));
-      li.append(node("p", `入选原因：${item.reasons.join("；")}`, "mailbox-reasons"));
-      if (failures.has(item.id)) li.append(node("p", failures.get(item.id), "mailbox-error"));
-      const controls = node("div", undefined, "settings-actions");
-      const inspect = button("查看", () => selectCandidate(item));
-      inspect.dataset.candidateOpen = item.id;
-      inspect.setAttribute("aria-current", String(item.id === activeCandidateId));
-      controls.append(inspect);
-      controls.append(button("存进档案", () => void saveCandidates([item.id])));
-      controls.append(button("忽略", () => void ignore([item.id])));
-      li.append(controls); list.append(li);
-    });
-    if (limit >= 2000 && current.pendingCount > current.candidates.length) list.append(node("li", "先处理当前显示的邮件，后续候选会继续补入。"));
-    if (inboxState === "pending") showActiveCandidate();
+    pushInbox();
     syncButtons();
+  }
+  /** 把「新邮件」交给通知页。邮箱自己只管账号；候选怎么排、怎么显示，是通知页的事。 */
+  function pushInbox() {
+    const broken = current.accounts.filter((account) => account.lastError).length;
+    const issues = current.candidateIssues ?? 0;
+    const notes: string[] = [];
+    if (broken) notes.push(`${broken} 个邮箱检查异常，请到「设置 → 邮箱」查看原因。已发现的邮件仍可留下或忽略。`);
+    if (issues) notes.push(`另有 ${issues} 条候选记录异常，暂时无法显示，未删除；其他邮件可正常处理。可从邮箱下载原件后手动导入。`);
+    if (limit >= 2000 && current.pendingCount > current.candidates.length) notes.push("先处理当前显示的邮件，后续候选会继续补入。");
+    inboxBridge?.setMailbox({
+      candidates: current.candidates,
+      pendingCount: current.pendingCount,
+      note: notes.length ? notes.join(" ") : null,
+      failures: Object.fromEntries(failures),
+      canLoadMore: current.candidates.length < current.pendingCount && limit < 2000,
+      actions: {
+        save: (ids) => saveCandidates(ids),
+        ignore: (ids) => ignore(ids),
+        loadMore: () => { limit += 100; void refresh(); },
+      },
+    });
   }
   async function refresh() {
     if (busy || disposed) return false;
@@ -408,7 +353,6 @@ export function mountMailboxes(
   async function saveCandidates(ids: string[]) {
     await action("inbox", "正在下载并存进档案…", async () => {
       let imported = 0, duplicates = 0, failed = 0;
-      let completed = false;
       // Host bounds each batch; partial failures keep their candidates and reasons.
       try {
         for (let start = 0; start < ids.length; start += 100) {
@@ -416,15 +360,13 @@ export function mountMailboxes(
           imported += report.imported; duplicates += report.duplicates; failed += report.failed.length;
           const bad = new Set(report.failed.map((item) => item.id));
           report.failed.forEach((item) => failures.set(item.id, item.message));
-          ids.slice(start, start + 100).filter((id) => !bad.has(id)).forEach((id) => { selected.delete(id); failures.delete(id); });
+          ids.slice(start, start + 100).filter((id) => !bad.has(id)).forEach((id) => { failures.delete(id); });
         }
-        completed = true;
-        say("inbox", `已存进档案 ${imported} 封，已有 ${duplicates} 封${failed ? `，失败 ${failed} 封，请查看对应原因后重试` : ""}。`, failed > 0);
+        say("inbox", `已留下 ${imported} 封，已有 ${duplicates} 封${failed ? `，失败 ${failed} 封，请查看对应原因后重试` : ""}。这些邮件在「待处理」里，可以关联到投递。`, failed > 0);
       } finally {
         // Refresh committed chunks even if a later chunk's IPC request fails.
         if (imported + duplicates > 0) {
           try { await onImported(); } catch { say("inbox", "邮件已处理，档案列表刷新失败，请刷新列表查看，无需重复导入。", true); }
-          selectInboxState(completed && failed === 0 ? "stored" : "pending");
         }
       }
     });
@@ -432,7 +374,7 @@ export function mountMailboxes(
   async function ignore(ids: string[]) {
     await action("inbox", "正在忽略…", async () => {
       const report = await invoke<IgnoreReport>("mailbox_ignore", { ids });
-      ids.forEach((id) => { selected.delete(id); failures.delete(id); });
+      ids.forEach((id) => { failures.delete(id); });
       const changed = report?.ignored ?? 0;
       const unchanged = report?.unchanged ?? ids.length - changed;
       say("inbox", changed
@@ -653,7 +595,6 @@ export function mountMailboxes(
     const where = id.includes("settings") ? "settings" : "inbox";
     void runCheck(where);
   }));
-  get("mailbox-connect-link").addEventListener("click", () => { if (current.accounts.length) openSettings(); else openSetup(); });
   get("mailbox-manage-link").addEventListener("click", openSettings);
   ["mailbox-add", "mailbox-empty-add", "inbox-add-mailbox"].forEach(id => get(id).addEventListener("click", event => {
     get<HTMLDetailsElement>("inbox-add-menu").open = false; openSetup(undefined, event.currentTarget as HTMLElement);
@@ -677,22 +618,7 @@ export function mountMailboxes(
     get("mailbox-toggle-secret").setAttribute("aria-label", visible ? "隐藏密码" : "显示密码");
     get("mailbox-toggle-secret").setAttribute("aria-pressed", String(visible));
   });
-  get("mailbox-view-pending").addEventListener("click", () => { openInbox?.(); selectInboxState("pending"); });
-  get("mailbox-tab-pending").addEventListener("click", () => selectInboxState("pending"));
-  get("mailbox-tab-stored").addEventListener("click", () => selectInboxState("stored"));
-  document.getElementById("mailbox-tab-recycled")?.addEventListener("click", () => selectInboxState("recycled"));
-  const stateTabs = ["mailbox-tab-pending", "mailbox-tab-stored", "mailbox-tab-recycled"].map(id => document.getElementById(id)).filter((tab): tab is HTMLElement => Boolean(tab));
-  stateTabs.forEach((tab, index) => tab.addEventListener("keydown", event => {
-    const next = ({ ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: stateTabs.length - 1 } as Record<string, number>)[event.key];
-    if (next === undefined) return;
-    event.preventDefault(); const target = stateTabs[(next + stateTabs.length) % stateTabs.length]; target.click(); target.focus();
-  }));
-  get<HTMLInputElement>("mailbox-select-all").addEventListener("change", (event) => {
-    current.candidates.forEach((item) => { if ((event.target as HTMLInputElement).checked) selected.add(item.id); else selected.delete(item.id); }); syncButtons();
-  });
-  get("mailbox-save-selected").addEventListener("click", () => void saveCandidates([...selected]));
-  get("mailbox-ignore-selected").addEventListener("click", () => void ignore([...selected]));
-  get("mailbox-load-more").addEventListener("click", () => { limit += 100; void refresh(); });
-  updateGuide(); updateProvider(); selectInboxState("stored");
+  get("mailbox-view-pending").addEventListener("click", () => { openInbox?.(); void inboxBridge?.showTab?.("todo"); });
+  updateGuide(); updateProvider();
   return { refresh, openSetup, dispose: () => { disposed = true; ++discoveryToken; ++refreshToken; closeSetup(true); dialog.remove(); } };
 }

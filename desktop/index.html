@@ -153,45 +153,42 @@
         </section>
 
         <section id="view-inbox" class="view hidden">
-          <header class="workspace-header">
-            <div><h1>招聘通知</h1><p>集中保存招聘邮件、聊天截图和文件，关联到对应申请。</p></div>
-            <div class="workspace-header-actions">
-              <button type="button" id="mailbox-inbox-check" hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>立即检查</button>
-              <details id="inbox-add-menu" class="inbox-add-menu"><summary class="primary">＋ 添加通知</summary><div class="inbox-add-options"><button id="inbox-add-mailbox" type="button"><strong>连接邮箱</strong><span>自动发现可能与求职有关的来信</span></button><button id="inbox-pick" type="button"><strong>导入文件</strong><span>已有邮件原件、图片、PDF 或文本</span></button><button id="inbox-paste-open" type="button"><strong>粘贴文本</strong><span>保存一段邮件或聊天内容</span></button></div></details>
-            </div>
-          </header>
-          <div class="mailbox-inbox-overview"><span id="mailbox-inbox-overview"></span><button id="mailbox-manage-link" type="button" hidden>管理邮箱</button></div>
           <p id="mailbox-inbox-status" class="workspace-status" role="status"></p>
           <p id="inbox-status" class="workspace-status" role="status"></p>
-          <div id="inbox-shell" class="workspace-shell inbox-shell inbox-workbench">
-            <aside class="workspace-list-card inbox-source-list" aria-label="招聘通知列表">
-              <div class="inbox-state-tabs" role="tablist" aria-label="招聘通知状态">
-                <button type="button" id="mailbox-tab-pending" role="tab" aria-selected="false" aria-controls="mailbox-discovery">待确认 <span id="mailbox-pending-count" class="tab-count">0</span></button>
-                <button type="button" id="mailbox-tab-stored" role="tab" aria-selected="true" aria-controls="inbox-stored-panel">待关联 <span id="inbox-count" class="tab-count"></span></button>
-                <button type="button" id="mailbox-tab-recycled" role="tab" aria-selected="false" aria-controls="inbox-recycled-panel">回收站</button>
+          <div id="inbox-shell" class="inbox-shell inbox-workbench">
+            <aside class="inbox-source-list" aria-label="通知列表">
+              <header class="inbox-list-header">
+                <h1>收件箱</h1>
+                <details id="inbox-add-menu" class="inbox-add-menu"><summary>+ 导入</summary><div class="inbox-add-options"><button id="inbox-add-mailbox" type="button"><strong>连接邮箱</strong><span>自动发现可能与求职有关的来信</span></button><button id="inbox-pick" type="button"><strong>导入文件</strong><span>.eml、PNG / JPEG、PDF 或文本（.txt），也可以直接拖进窗口；单个不超过 25 MiB，一次最多 20 个</span></button><button id="inbox-paste-open" type="button"><strong>粘贴文本</strong><span>保存一段邮件或聊天内容</span></button><button id="mailbox-inbox-check" type="button" hidden><strong>立即检查</strong><span>现在就去邮箱看有没有新来信</span></button></div></details>
+              </header>
+              <div class="mailbox-inbox-overview"><span id="mailbox-inbox-overview"></span><button id="mailbox-manage-link" type="button" hidden>管理邮箱</button></div>
+              <div class="inbox-state-tabs" role="tablist" aria-label="通知状态">
+                <button type="button" id="inbox-tab-todo" role="tab" aria-selected="true" aria-controls="inbox-list">待处理 <span id="inbox-count" class="tab-count"></span></button>
+                <button type="button" id="inbox-tab-done" role="tab" aria-selected="false" aria-controls="inbox-list">已处理</button>
+                <button type="button" id="inbox-tab-bin" role="tab" aria-selected="false" aria-controls="inbox-list">回收站</button>
               </div>
-              <section id="mailbox-discovery" class="inbox-state-panel" role="tabpanel" aria-labelledby="mailbox-tab-pending" hidden>
-                <h2 id="mailbox-discovery-heading" class="sr-only">从邮箱发现的待确认邮件</h2>
-                <div class="inbox-panel-toolbar">
-                  <button id="mailbox-connect-link" type="button">邮箱设置</button>
-                  <span id="mailbox-discovery-note">只显示信头和入选原因，确认后才下载原文。</span>
-                </div>
-                <div id="mailbox-pending-actions" class="inbox-bulk-actions" hidden><label class="mailbox-select-all"><input id="mailbox-select-all" type="checkbox" />全选当前显示</label><button id="mailbox-save-selected" type="button" class="primary" disabled>存进档案</button><button id="mailbox-ignore-selected" type="button" disabled>忽略</button></div>
-                <ul id="mailbox-candidates" class="mailbox-candidates"></ul>
-                <button id="mailbox-load-more" type="button" hidden>显示更多</button>
-              </section>
-              <section id="inbox-stored-panel" class="inbox-state-panel" role="tabpanel" aria-labelledby="mailbox-tab-stored">
-                <div class="inbox-list-head"><p>已存进档案、尚未关联岗位的材料</p></div>
-                <div id="inbox-list" class="workspace-list-scroll"></div>
-              </section>
-              <section id="inbox-recycled-panel" class="inbox-state-panel" role="tabpanel" aria-labelledby="mailbox-tab-recycled" hidden>
-                <div class="inbox-list-head"><p>正文、附件和原关联均保留，可恢复。</p></div>
-                <div id="inbox-recycled-list" class="workspace-list-scroll"></div>
-              </section>
-              <details class="workspace-list-foot inbox-import-help"><summary>手动导入说明</summary><p><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m-4.5 4.5L12 4l4.5 4.5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>可以拖入 .eml、PNG / JPEG、PDF 或文本（.txt）；单个文件不超过 25 MiB，每次最多 20 个。</p></details>
+              <div id="inbox-filter" class="inbox-filter" hidden><span id="inbox-filter-label"></span><button id="inbox-filter-clear" type="button" aria-label="显示全部已处理">×</button></div>
+              <div id="inbox-batch" class="inbox-batch" hidden></div>
+              <div id="inbox-list" class="inbox-list-scroll" role="tabpanel" aria-label="通知列表"></div>
             </aside>
-            <div id="inbox-preview" class="workspace-detail-card" role="region" aria-label="通知预览与整理"><div class="pane-empty"><h2>选择一条通知</h2><p>预览原文，再关联申请或整理分类。</p></div></div>
+            <div id="inbox-preview" class="inbox-reader" role="region" aria-label="通知内容"><div class="pane-empty"><h2>选择一封通知</h2><p>点左边的一封，在这里看原文。</p></div></div>
           </div>
+          <dialog id="inbox-associate-dialog" class="resume-dialog" aria-labelledby="inbox-associate-heading">
+            <form id="inbox-associate-form" class="dialog-form" novalidate>
+              <div class="resume-dialog-head">
+                <h2 id="inbox-associate-heading">关联到哪条投递</h2>
+              </div>
+              <div class="resume-dialog-body">
+                <input id="inbox-associate-search" type="search" placeholder="搜公司或岗位" autocomplete="off" aria-label="搜公司或岗位">
+                <ul id="inbox-associate-list" class="associate-list"></ul>
+                <p id="inbox-associate-hint" class="field-hint"></p>
+                <p id="inbox-associate-status" class="note" role="alert"></p>
+              </div>
+              <div class="resume-dialog-actions">
+                <button type="button" id="inbox-associate-cancel">取消</button>
+              </div>
+            </form>
+          </dialog>
           <dialog id="inbox-paste-dialog" class="resume-dialog is-wide" aria-labelledby="inbox-paste-heading">
             <form id="inbox-paste-form" class="dialog-form" novalidate>
               <div class="resume-dialog-head">
@@ -424,7 +421,7 @@
                 <div id="mailbox-account-card" class="settings-card" hidden><div class="mailbox-list-toolbar"><h3>已连接的邮箱</h3><button type="button" id="mailbox-settings-check">立即检查</button></div><div id="mailbox-accounts" class="mailbox-accounts" aria-live="polite"></div></div>
                 <p class="settings-caption">应用运行时约每 10 分钟检查一次；退出后停止。只读邮箱，不标已读、不删除、不移动邮件。</p>
                 <details class="settings-fold"><summary>查看工作方式</summary><p class="settings-caption">候选只保存信头，确认后才下载原文。连续失败 3 次会暂停检查。连接、候选和忽略记录留在本机，不随档案备份迁移；断开连接后，已经存进档案的邮件仍保留。</p></details>
-                <div id="mailbox-result-actions" hidden><button type="button" id="mailbox-view-pending">查看待确认来信</button></div>
+                <div id="mailbox-result-actions" hidden><button type="button" id="mailbox-view-pending">查看新邮件</button></div>
                 <dialog id="mailbox-dialog" class="size-lg mailbox-dialog" aria-labelledby="mailbox-dialog-title" aria-describedby="mailbox-dialog-intro">
                   <form id="mailbox-form" novalidate>
                     <header class="settings-dialog-head"><div><h2 id="mailbox-dialog-title">添加邮箱</h2><p id="mailbox-dialog-intro">发现可能与求职有关的来信，由你确认后保存。</p></div><button id="mailbox-close" type="button" class="mailbox-close" aria-label="关闭添加邮箱">×</button></header>

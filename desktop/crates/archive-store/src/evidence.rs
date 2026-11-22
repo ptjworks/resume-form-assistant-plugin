@@ -447,6 +447,27 @@ impl StoreTx<'_> {
             .map_err(StoreError::from)
     }
 
+    /// 所有已关联到某条申请的证据（不含回收站里的），最近导入的在前。只读。
+    /// `application_id = Some(..)` 时只取那一条申请的。
+    pub fn list_associated_evidence(
+        &self,
+        application_id: Option<&str>,
+    ) -> Result<Vec<ReplyEvidence>, StoreError> {
+        let sql = "SELECT e.id, e.application_id, e.kind, e.reply_class, e.send_mode, \
+                   b.sha256, b.size_bytes, b.stored_rel_path, b.ref_count, b.mime, \
+                   e.original_filename, e.imported_at, e.subject, e.from_addr, e.sent_at, \
+                   e.sent_precision, e.sent_tz, e.body_extract \
+                   FROM reply_evidence e JOIN attachment_blobs b ON b.sha256 = e.blob_sha256 \
+                   WHERE e.application_id IS NOT NULL AND (?1 IS NULL OR e.application_id = ?1) \
+                   AND NOT EXISTS \
+                   (SELECT 1 FROM evidence_recycle r WHERE r.evidence_id=e.id) \
+                   ORDER BY e.imported_at DESC, e.id";
+        let mut stmt = self.conn().prepare(sql)?;
+        let rows = stmt.query_map(params![application_id], map_evidence_row)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
     pub fn is_evidence_recycled(&self, id: &str) -> Result<bool, StoreError> {
         Ok(self.conn().query_row(
             "SELECT EXISTS(SELECT 1 FROM evidence_recycle WHERE evidence_id=?1)",

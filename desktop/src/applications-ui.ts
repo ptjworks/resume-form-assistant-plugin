@@ -110,8 +110,8 @@ export interface ApplicationsOptions {
   openNotes?: (application: ApplicationSummary) => void;
   /** 点第 3 列的日程：切到日历页，并带上这条待办的 id 与所在日期，日历据此选中那一天那一条。 */
   openTodos?: (target?: { id: string; day: string | null }) => void;
-  /** 点「N 封相关邮件」：只负责切到通知页（定位留给 #552）。 */
-  openInbox?: () => void;
+  /** 点「N 封相关邮件」：切到通知页的「已处理」，只看这一条投递的邮件。 */
+  openInbox?: (applicationId: string, label: string) => void;
   /** 用系统浏览器打开官网。没传就走链接自己的 `target="_blank"`，由桌面的 opener 插件接手（只放行 http/https，见 capabilities）。 */
   openUrl?: (url: string) => void;
 }
@@ -935,7 +935,14 @@ export function mountApplications(invoke: Invoke, options: ApplicationsOptions =
       if (go.dataset.go === "todos") {
         const todo = nearest.get(go.closest<HTMLElement>("li[data-id]")?.dataset.id ?? "");
         options.openTodos?.(todo ? { id: todo.id, day: todoDay(todo) } : undefined);
-      } else if (go.dataset.go === "inbox") options.openInbox?.();
+      } else if (go.dataset.go === "inbox") {
+        const owner = go.closest<HTMLElement>("li[data-id]");
+        const id = owner?.dataset.id;
+        // 这个按钮就在展开的那一行里：公司和岗位直接取展开着的这条。
+        const open = expandedView?.application;
+        const summary = (open?.summary || open) as ApplicationSummary | undefined;
+        if (id) options.openInbox?.(id, summary && open?.id === id ? [summary.company, summary.title].filter(Boolean).join(" · ") : "");
+      }
       return;
     }
     const actButton = target.closest<HTMLElement>("[data-act]");

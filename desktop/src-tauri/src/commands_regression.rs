@@ -854,6 +854,57 @@ mod evidence {
     }
 
     #[test]
+    fn the_processed_list_holds_only_associated_mail_with_company_and_title() {
+        let (dir, store, app) = archive();
+        let other_app = create_application(
+            &store,
+            serde_json::from_value(json!({ "company": "Another", "title": "Role" })).unwrap(),
+        )
+        .unwrap()
+        .application
+        .unwrap()
+        .id
+        .clone();
+        let mut ids = Vec::new();
+        for name in ["a", "b", "c", "d"] {
+            let path = write(dir.path(), &format!("{name}.eml"), &eml(&format!("信 {name}")));
+            ids.push(import(&store, vec![path], None, None).imported[0].id.clone());
+        }
+        // a、b 挂到第一条申请，c 挂到第二条，d 留在待处理。
+        evidence_commands::associate(&store, &ids[0], &app).unwrap();
+        evidence_commands::associate(&store, &ids[1], &app).unwrap();
+        evidence_commands::associate(&store, &ids[2], &other_app).unwrap();
+
+        let all = evidence_commands::list_associated(&store, None).unwrap();
+        let listed: Vec<&str> = all.iter().map(|item| item.summary.id.as_str()).collect();
+        assert_eq!(all.len(), 3, "没关联的那封不在已处理里");
+        assert!(!listed.contains(&ids[3].as_str()));
+        let first = all.iter().find(|item| item.summary.id == ids[0]).unwrap();
+        assert_eq!((first.company.as_str(), first.title.as_str()), ("Synthetic", "Job"));
+        let third = all.iter().find(|item| item.summary.id == ids[2]).unwrap();
+        assert_eq!(third.company, "Another");
+
+        // 按申请过滤：只看那一条的。
+        let only = evidence_commands::list_associated(&store, Some(&app)).unwrap();
+        assert_eq!(only.len(), 2);
+        assert!(only.iter().all(|item| item.summary.application_id.as_deref() == Some(app.as_str())));
+
+        // 进回收站的不算已处理；取消关联后也回到待处理。
+        evidence_commands::set_recycled(&store, &ids[1], true).unwrap();
+        evidence_commands::unassociate(&store, &ids[0]).unwrap();
+        let rest = evidence_commands::list_associated(&store, None).unwrap();
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].summary.id, ids[2]);
+
+        // 线上形状：证据摘要的键原样平铺，再加 company / title，没有任何路径。
+        let json = serde_json::to_value(&rest[0]).unwrap();
+        for key in ["id", "applicationId", "kind", "importedAt", "subject", "fromAddr", "replyClass", "sendMode", "sameBytesAs", "recycled", "company", "title"] {
+            assert!(json.get(key).is_some(), "缺少键 {key}: {json}");
+        }
+        assert!(!json.to_string().contains("attachments/"));
+    }
+
+    #[test]
     fn a_preview_is_text_or_a_data_url_and_never_a_path() {
         let (dir, store, _app) = archive();
         let mail = write(dir.path(), "reply.eml", &eml("面试邀请"));

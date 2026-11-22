@@ -535,9 +535,10 @@ if (events?.listen) void events.listen("note-quit-requested", async () => {
 });
 const applications = mountApplications(command, {
   openNotes: application => void openNotes(application),
-  // 跨页入口只负责切到目标页；邮件的定位留给 #552。日历页带着待办 id 进去，选中那一天那一条。
+  // 跨页入口只负责切到目标页。日历页带着待办 id 进去，选中那一天那一条。
   openTodos: (target) => void navigate("todos").then((moved) => { if (moved) void showTodos(target).catch(() => {}); }),
-  openInbox: () => void navigate("inbox"),
+  // 通知页切到「已处理」，只显示这一条投递的邮件。
+  openInbox: (applicationId, label) => void navigate("inbox").then((moved) => { if (moved) void inbox.showApplication(applicationId, label); }),
   listen: events?.listen
     ? (name, handler) => events.listen?.(name, (event) => handler({ payload: event?.payload }))
     : undefined,
@@ -600,8 +601,8 @@ if (events?.listen) {
 }
 
 const inbox = mountInbox(command, {
-  mountAi: (container, evidenceId, onConfirmed) =>
-    mountAiReview(container, invoke ?? null, evidenceId, onConfirmed),
+  mountAi: (container, evidenceId, onConfirmed, options) =>
+    mountAiReview(container, invoke ?? null, evidenceId, onConfirmed, options),
   pickFiles: dialog?.open
     ? async () => {
         const chosen = await dialog.open?.({

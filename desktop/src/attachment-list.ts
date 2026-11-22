@@ -5,7 +5,7 @@ const errorText = (err: unknown) => typeof err === "string" ? err : (err as { me
 const kindName = (a: MailAttachment) => a.previewKind === "pdf" ? "PDF" : a.previewKind === "image" ? "图片" : a.name.includes(".") ? a.name.split(".").pop()!.toUpperCase() : "文件";
 const attachmentSize = (n: number) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / 1048576).toFixed(1)} MiB`;
 /** Same compact entry rows in inbox and application details. Metadata only; bytes load on click. */
-export function mountAttachmentList(container: HTMLElement, invoke: Invoke, evidenceId: string, title: string, bodyContainer?: HTMLElement | null) {
+export function mountAttachmentList(container: HTMLElement, invoke: Invoke, evidenceId: string, title: string, bodyContainer?: HTMLElement | null, options: { hideEmpty?: boolean } = {}) {
   let active = true;
   let clearBody: (() => void) | undefined;
   const heading = document.createElement("h3"); heading.textContent = "附件";
@@ -16,6 +16,8 @@ export function mountAttachmentList(container: HTMLElement, invoke: Invoke, evid
       const data = await invoke<MailAttachments>("list_evidence_attachments_cmd", { evidenceId });
       if (!active || !container.isConnected) return;
       if (bodyContainer) { clearBody?.(); clearBody = mountMailBody(bodyContainer, invoke, evidenceId, title, data); }
+      // 通知页：没有文件附件的邮件不摆一个空的「附件 · 0」框，直接看正文。
+      if (options.hideEmpty && !data.items.length) { container.hidden = true; return; }
       heading.textContent = `附件 · ${data.items.length}`;
       state.textContent = data.items.length ? "点击附件查看或另存为" : "这封邮件没有文件附件。";
       container.replaceChildren(heading, state);
