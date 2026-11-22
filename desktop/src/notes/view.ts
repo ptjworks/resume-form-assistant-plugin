@@ -8,6 +8,10 @@ import {
   MAX_FILES, MAX_BATCH_BYTES, MAX_FILE_BYTES,
 } from "./content.ts";
 import type { FileContents, PendingFile, StoredFile } from "./content.ts";
+import { folderBelongsToCompany, normalizeCompany } from "./company.ts";
+import { getPlatformServices } from "../platform/registry.ts";
+import { applyPlatformVisibility } from "../platform/visibility.ts";
+import { PLATFORM_UNAVAILABLE } from "../platform/types.ts";
 
 interface Folder {
   id: string;
@@ -90,6 +94,9 @@ const notesIcons = {
   numbered: '<path d="M10 6h10M10 12h10M10 18h10M3 4h1v4m-1 0h2m-2 5a1.4 1.4 0 1 1 2.2 1L3 17h3"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1.3"/><path d="m3 16 5-4 4 3 4-5 5 6"/>',
   highlight: '<path d="m6 16-2 4 4-1 11-11a2 2 0 0 0-4-4L6 16Zm6-6 4 4"/>',
+  star: '<path d="m12 3.6 2.5 5.1 5.6.8-4.05 3.95.95 5.6L12 16.4l-5 2.65.95-5.6L3.9 9.5l5.6-.8L12 3.6Z"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  share: '<path d="M12 15V4m0 0-4 4m4-4 4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>',
 };
 
 function notesIcon(name: keyof typeof notesIcons) {
@@ -98,6 +105,14 @@ function notesIcon(name: keyof typeof notesIcons) {
   icon.setAttribute("viewBox", "0 0 24 24");
   icon.setAttribute("aria-hidden", "true");
   icon.innerHTML = notesIcons[name];
+  return icon;
+}
+
+/** 收藏星：线条图标，已收藏时填满。 */
+function starIcon(active: boolean) {
+  const icon = notesIcon("star");
+  icon.classList.add("notes-star");
+  icon.classList.toggle("is-filled", active);
   return icon;
 }
 
@@ -212,13 +227,6 @@ function highlight(node: HTMLElement, query: string) {
 
 export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (id: string, recycled: boolean) => void) {
   root.innerHTML = `
-    <div class="notes-workspace-heading">
-      <span class="notes-workspace-icon"></span>
-      <div>
-        <h1 class="notes-workspace-title">笔面试心得</h1>
-        <p>记录遇到的问题、自己的作答和下次想改进的地方</p>
-      </div>
-    </div>
     <div class="notes-shell">
       <aside class="notes-sidebar" aria-label="心得文件夹">
         <div class="notes-tools"></div>
@@ -228,7 +236,6 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     </div>
     <p class="notes-status muted" role="status"></p>
   `;
-  root.querySelector(".notes-workspace-icon")?.append(notesIcon("book"));
   const detail = root.querySelector<HTMLElement>(".notes-detail")!;
   const list = root.querySelector<HTMLElement>(".notes-list")!;
   const tools = root.querySelector<HTMLElement>(".notes-tools")!;
@@ -270,29 +277,52 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     status.dataset.tone = error ? "error" : "";
   };
   const fail = (error: unknown) => notify(describeDialogError(error), true);
-  const favoriteMode = button("☆ 收藏", () => {
-    mode = mode === "favorites" ? "tree" : "favorites";
-    search.value = "";
-    search.dispatchEvent(new Event("input"));
-  });
-  favoriteMode.setAttribute("aria-label", "收藏");
-  const recycleMode = button("回收站", () => { mode = mode === "recycled" ? "tree" : "recycled"; renderList(); });
-  const allMode = button("全部", () => {
+  let companyFilter: { company: string } | null = null;
+  // 「全部 / 收藏 / 回收站」：和通知页一样的细文字切换。
+  const stateTab = (label: string, action: () => void) => {
+    const tab = button(label, action);
+    tab.setAttribute("role", "tab");
+    return tab;
+  };
+  const allMode = stateTab("全部", () => {
     mode = "tree";
     search.value = "";
     search.dispatchEvent(new Event("input"));
   });
+  const favoriteMode = stateTab("收藏", () => {
+    mode = "favorites";
+    search.value = "";
+    search.dispatchEvent(new Event("input"));
+  });
+  favoriteMode.setAttribute("aria-label", "收藏");
+  const favoriteCount = element("span", undefined, "tab-count");
+  favoriteMode.append(" ", favoriteCount);
+  const recycleMode = stateTab("回收站", () => { mode = "recycled"; renderList(); });
   const toolsHeading = element("div", undefined, "notes-sidebar-heading");
   const newFolder = button("新建", () => void openFolderForm(), "notes-new-folder");
   newFolder.setAttribute("aria-label", "新建文件夹");
   newFolder.prepend(notesIcon("plus"));
-  toolsHeading.append(element("strong", "心得文件夹"), newFolder);
+  toolsHeading.append(element("h1", "心得", "notes-workspace-title"), newFolder);
+  const subtitle = element("p", "记录笔面试遇到的问题和自己的作答。", "notes-subtitle");
   const filters = element("div", undefined, "notes-filters");
+  filters.setAttribute("role", "tablist");
+  filters.setAttribute("aria-label", "心得范围");
   filters.append(allMode, favoriteMode, recycleMode);
+  // 从投递页点「该公司心得」进来时的临时筛选；点 × 回到全部。
+  const companyBar = element("div", undefined, "notes-company-filter");
+  companyBar.hidden = true;
+  const companyLabel = element("span");
+  const clearCompany = button("", () => {
+    companyFilter = null;
+    renderList();
+  });
+  clearCompany.setAttribute("aria-label", "显示全部心得");
+  clearCompany.append(notesIcon("close"));
+  companyBar.append(companyLabel, clearCompany);
   const searchBox = element("label", undefined, "notes-search");
   searchBox.innerHTML = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>';
   searchBox.append(search);
-  tools.append(toolsHeading, searchBox, filters);
+  tools.append(toolsHeading, subtitle, filters, companyBar, searchBox);
 
   search.addEventListener("input", () => {
     renderList();
@@ -366,7 +396,8 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     const title = element("span", undefined, "notes-item-title");
     title.append(element("strong", noteTitle(item)));
     if (item.favorite) {
-      const star = element("span", "★", "notes-favorite-star");
+      const star = element("span", undefined, "notes-favorite-star");
+      star.append(starIcon(true));
       star.setAttribute("role", "img");
       star.setAttribute("aria-label", "已收藏");
       star.title = "已收藏";
@@ -395,17 +426,21 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
   }
 
   function renderList() {
-    allMode.setAttribute("aria-pressed", String(mode === "tree"));
-    favoriteMode.setAttribute("aria-pressed", String(mode === "favorites"));
-    recycleMode.setAttribute("aria-pressed", String(mode === "recycled"));
+    for (const [tab, name] of [[allMode, "tree"], [favoriteMode, "favorites"], [recycleMode, "recycled"]] as const) {
+      tab.setAttribute("aria-selected", String(mode === name));
+    }
+    companyBar.hidden = !companyFilter;
+    if (companyFilter) companyLabel.textContent = `${companyFilter.company} 的心得`;
     list.replaceChildren();
     const q = query();
     const isRecycled = (item: Note) => item.recycled || folder(item.folderId)?.recycled;
-    const favorites = index.notes.filter(item => item.favorite && !isRecycled(item));
-    favoriteMode.textContent = favorites.length ? `☆ 收藏 ${favorites.length}` : "☆ 收藏";
+    // 临时按公司筛：只留已关联这家公司申请的文件夹（各岗位都算）。
+    const inScope = (parent: Folder | undefined) => !companyFilter || folderBelongsToCompany(parent, companyFilter.company);
+    const favorites = index.notes.filter(item => item.favorite && !isRecycled(item) && inScope(folder(item.folderId)));
+    favoriteCount.textContent = favorites.length ? String(favorites.length) : "";
     favoriteMode.title = `${favorites.length} 篇收藏`;
     const notes = mode === "favorites" ? favorites
-      : index.notes.filter(item => Boolean(isRecycled(item)) === (mode === "recycled"));
+      : index.notes.filter(item => Boolean(isRecycled(item)) === (mode === "recycled") && inScope(folder(item.folderId)));
     if (q || mode === "favorites") {
       const rows = document.createDocumentFragment();
       for (const item of notes) {
@@ -425,6 +460,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       return;
     }
     for (const parent of index.folders) {
+      if (!inScope(parent)) continue;
       const children = notes.filter(item => item.folderId === parent.id);
       if (mode === "recycled" ? !parent.recycled && !children.length : parent.recycled) continue;
       const group = element("section", undefined, "notes-folder");
@@ -619,6 +655,31 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     }
   }
 
+  /**
+   * 「脱敏发布到广场」的位置与接入点（#545 Phase 2 的社区才会用）。Phase 1 里按钮带
+   * data-platform="community-remote" 和 data-platform-off，看不见；就算被点到，
+   * 开关没开也不会调任何平台接口。
+   */
+  function publishSlot(item: Note) {
+    const publish = button("脱敏发布到广场", () => void previewPublish(item));
+    publish.dataset.platform = "community-remote";
+    publish.toggleAttribute("data-platform-off", true);
+    publish.prepend(notesIcon("share"));
+    return publish;
+  }
+
+  async function previewPublish(item: Note) {
+    const platform = getPlatformServices();
+    if (!platform.capabilities.communityRemoteEnabled) return;
+    try {
+      // 预览窗口由 #558 的社区实现接上；这里只留调用点：先在本机脱敏出预览，用户确认后才发布。
+      await platform.community.previewDesensitizedNote(item.id);
+    } catch (error) {
+      if ((error as { code?: string } | undefined)?.code === PLATFORM_UNAVAILABLE) notify("平台服务暂未开放。", true);
+      else fail(error);
+    }
+  }
+
   function renderRead(item: Note, body: string, find: boolean) {
     const parent = folder(item.folderId);
     if (!parent) return;
@@ -642,11 +703,13 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
         await readNote(item.id);
       })));
     } else if (!parent.recycled) {
-      const favorite = button(item.favorite ? "★" : "☆", () => withTransition(async () => {
+      const favorite = button("", () => withTransition(async () => {
         await change({ kind: "favorite", id: item.id, favorite: !item.favorite });
         await refreshIndex();
         await readNote(item.id, Boolean(q));
       }));
+      favorite.append(starIcon(item.favorite));
+      favorite.classList.add("notes-favorite-button");
       favorite.title = item.favorite ? "取消收藏" : "收藏";
       favorite.setAttribute("aria-label", favorite.title);
       favorite.setAttribute("aria-pressed", String(item.favorite));
@@ -675,7 +738,8 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       more.append(menuLabel, menu);
       const editNote = button("编辑", () => showEditor(parent, item, body), "primary");
       editNote.prepend(notesIcon("edit"));
-      actions.append(favorite, more, editNote);
+      actions.append(favorite, more, publishSlot(item), editNote);
+      applyPlatformVisibility(actions, getPlatformServices().capabilities);
     }
     heading.append(context, actions);
     head.append(heading);
@@ -1407,7 +1471,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     rememberWorkspace();
     renderList();
     const actions = element("div", undefined, "notes-actions");
-    const favorite = button(item?.favorite ? "★" : "☆", () => withTransition(async () => {
+    const favorite = button("", () => withTransition(async () => {
       if (!(await flush(session))) return;
       const current = note(session.id);
       if (!current) return;
@@ -1416,11 +1480,12 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       updateFavorite(!current.favorite);
     }));
     function updateFavorite(active: boolean) {
-      favorite.textContent = active ? "★" : "☆";
+      favorite.replaceChildren(starIcon(active));
       favorite.title = active ? "取消收藏" : "收藏";
       favorite.setAttribute("aria-label", favorite.title);
       favorite.setAttribute("aria-pressed", String(active));
     }
+    favorite.classList.add("notes-favorite-button");
     updateFavorite(Boolean(item?.favorite));
     const more = element("details", undefined, "notes-menu notes-reader-menu");
     const moreLabel = element("summary", "⋯");
@@ -1895,6 +1960,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     transitioning = true;
     try {
       if (!(await finishEdit())) return;
+      companyFilter = null;
       await refreshIndex();
       if (!application) {
         if (selectedNote && note(selectedNote)) await readNote(selectedNote);
@@ -1933,6 +1999,32 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
       const item = children.find(item => item.id === last) ?? children[0];
       if (item) await readNote(item.id);
       else { selectedNote = undefined; renderList(); renderEmpty(); }
+    } catch (error) { fail(error); }
+    finally { transitioning = false; }
+  }
+
+  /** 从投递页点「该公司心得」：只显示这家公司各岗位的文件夹，点 × 看全部。 */
+  async function showCompany(company: string) {
+    if (transitioning) return;
+    transitioning = true;
+    try {
+      if (!(await finishEdit())) return;
+      await refreshIndex();
+      const wanted = normalizeCompany(company);
+      companyFilter = wanted ? { company: wanted } : null;
+      mode = "tree";
+      search.value = "";
+      const scoped = index.folders.filter(parent => !parent.recycled && folderBelongsToCompany(parent, wanted));
+      for (const parent of scoped) expanded.add(parent.id);
+      const keep = note(selectedNote);
+      if (keep && !keep.recycled && scoped.some(parent => parent.id === keep.folderId)) {
+        await readNote(keep.id);
+        return;
+      }
+      selectedNote = undefined;
+      selectedFolder = undefined;
+      renderList();
+      renderEmpty();
     } catch (error) { fail(error); }
     finally { transitioning = false; }
   }
@@ -2027,6 +2119,7 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
     ocrCandidates.clear();
     index = { epoch: "", notes: [], folders: [] };
     selectedFolder = selectedNote = undefined;
+    companyFilter = null;
     expanded.clear();
     renderList();
     if (edit) notify("档案已切换。请先复制编辑器中的内容，再结束编辑。", true);
@@ -2034,5 +2127,5 @@ export function mountNotes(root: HTMLElement, invoke: Invoke, openApplication: (
   }
 
   renderEmpty();
-  return { activate, confirmLeave, runArchiveReplacement, archiveReplaced, nativeDrop, nativeDrag, fail };
+  return { activate, showCompany, confirmLeave, runArchiveReplacement, archiveReplaced, nativeDrop, nativeDrag, fail };
 }
