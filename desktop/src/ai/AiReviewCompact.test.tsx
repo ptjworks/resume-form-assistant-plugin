@@ -41,10 +41,9 @@ const base = (answer: AiSuggestion): Handler => (command) => {
   return null;
 };
 
-test("空闲时底栏只有一个「AI 整理」按钮，没有长篇说明", async () => {
+test("空闲时只有一个「AI 整理」按钮，没有长篇说明", async () => {
   mount(base(suggestion()));
-  const button = await screen.findByRole("button", { name: "AI 整理" });
-  expect(button).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "AI 整理" })).toBeTruthy();
   expect(screen.getAllByRole("button")).toHaveLength(1);
   expect(document.querySelector(".ai-intro")).toBeNull();
 });
@@ -58,68 +57,84 @@ test("点了先弹出将发送的内容，只有一个「发送」；发送之�
   expect(calls.some((call) => call.command === "analyze_evidence_cmd")).toBe(false);
 });
 
-test("整理完直接列出识别到的日程，点「确认加入日历」才写入并把结果交给宿主", async () => {
+async function analyse(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "AI 整理" }));
+  await user.click(await screen.findByRole("button", { name: "发送" }));
+}
+
+test("整理完弹出一个简单的结果窗：列出日程和属于哪条投递，点「加入日历」才写入", async () => {
   const user = userEvent.setup();
   const onConfirmed = vi.fn();
   const calls = mount(base(suggestion()), onConfirmed);
-  await user.click(await screen.findByRole("button", { name: "AI 整理" }));
-  await user.click(await screen.findByRole("button", { name: "发送" }));
-  expect(await screen.findByText(/AI 识别到这些日程，你确认后才会加入日历/)).toBeTruthy();
+  await analyse(user);
+  expect(await screen.findByText("AI 识别结果")).toBeTruthy();
   expect(screen.getByText("后端实习二面")).toBeTruthy();
   expect(screen.getByText("9月22日 10:00")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "修改" })).toBeTruthy();
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("合成科技 · 后端实习")).toBeTruthy();
+  // 没有任何要自己填的东西：阶段、轮次、时区、分类都不出现。
+  expect(document.querySelector("dialog select, dialog input")).toBeNull();
   expect(calls.some((call) => call.command === "confirm_suggestion_cmd")).toBe(false);
-  await user.click(screen.getByRole("button", { name: "确认加入日历" }));
+  await user.click(screen.getByRole("button", { name: "加入日历" }));
   await waitFor(() => expect(calls.find((call) => call.command === "confirm_suggestion_cmd")?.args).toMatchObject({ args: { suggestionId: "sug-1", applicationId: "app-a" } }));
   await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith(expect.stringContaining("1 条待办")));
 });
 
-test("「修改」展开完整审核面板，草稿和原来的审核一样", async () => {
-  const user = userEvent.setup();
-  mount(base(suggestion()));
-  await user.click(await screen.findByRole("button", { name: "AI 整理" }));
-  await user.click(await screen.findByRole("button", { name: "发送" }));
-  await user.click(await screen.findByRole("button", { name: "修改" }));
-  expect(await screen.findByRole("dialog")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "确认" })).toBeTruthy();
-});
-
-test("没识别到日程时如实说识别到的分类，同样可以确认或修改", async () => {
+test("没识别到日程时如实说识别到的分类，按钮是「确认」", async () => {
   const user = userEvent.setup();
   mount(base(suggestion({ todos: [], replyClass: "reject" })));
-  await user.click(await screen.findByRole("button", { name: "AI 整理" }));
-  await user.click(await screen.findByRole("button", { name: "发送" }));
-  expect(await screen.findByText("AI 识别为「未通过」，没有识别到日程。")).toBeTruthy();
+  await analyse(user);
+  expect(await screen.findByText("识别为「未通过」，没有日程。")).toBeTruthy();
   expect(screen.getByRole("button", { name: "确认" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "修改" })).toBeTruthy();
 });
 
-test("对应哪条投递没法确定时，不替用户挑：确认置灰并说明，改在「修改」里选", async () => {
+test("对应哪条投递没法确定时不替用户挑：列出候选，点一条之前「加入日历」是灰的", async () => {
   const user = userEvent.setup();
   const two = suggestion({ candidates: [{ id: "app-a", company: "合成科技", title: "后端实习", stage: "submitted" }, { id: "app-b", company: "别家", title: "前端", stage: "submitted" }] as never });
   const calls = mount(base(two));
-  await user.click(await screen.findByRole("button", { name: "AI 整理" }));
-  await user.click(await screen.findByRole("button", { name: "发送" }));
-  await screen.findByText(/AI 识别到这些日程/);
-  expect((screen.getByRole("button", { name: "确认加入日历" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByText("这封通知对应哪一条申请还没选。")).toBeTruthy();
-  expect(calls.some((call) => call.command === "confirm_suggestion_cmd")).toBe(false);
+  await analyse(user);
+  await screen.findByText("属于哪条投递？");
+  expect((screen.getByRole("button", { name: "加入日历" }) as HTMLButtonElement).disabled).toBe(true);
+  await user.click(screen.getByRole("button", { name: "别家 · 前端" }));
+  expect((screen.getByRole("button", { name: "加入日历" }) as HTMLButtonElement).disabled).toBe(false);
+  await user.click(screen.getByRole("button", { name: "加入日历" }));
+  await waitFor(() => expect(calls.find((call) => call.command === "confirm_suggestion_cmd")?.args).toMatchObject({ args: { applicationId: "app-b" } }));
 });
 
-test("以前留下的待确认建议直接收成一行，不用再花一次钱重新分析", async () => {
+test("「先不处理」什么都不写；再点「AI 整理」直接拿出上次的结果，不重新分析", async () => {
+  const user = userEvent.setup();
+  const calls = mount(base(suggestion()));
+  await analyse(user);
+  await user.click(await screen.findByRole("button", { name: "先不处理" }));
+  await waitFor(() => expect(screen.queryByText("AI 识别结果")).toBeNull());
+  expect(calls.some((call) => call.command === "confirm_suggestion_cmd")).toBe(false);
+  await user.click(screen.getByRole("button", { name: "AI 整理" }));
+  expect(await screen.findByText("AI 识别结果")).toBeTruthy();
+  expect(calls.filter((call) => call.command === "analyze_evidence_cmd")).toHaveLength(1);
+});
+
+test("以前留下的待确认建议：点「AI 整理」直接显示，不用再花一次钱", async () => {
   const user = userEvent.setup();
   const calls = mount((command, args) => command === "list_suggestions_cmd" ? [suggestion()] : base(suggestion())(command, args));
-  expect(await screen.findByText(/AI 识别到这些日程/)).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "AI 整理" })).toBeNull();
-  expect(calls.some((call) => call.command === "analyze_evidence_cmd")).toBe(false);
-  await user.click(screen.getByRole("button", { name: "修改" }));
-  expect(await screen.findByRole("dialog")).toBeTruthy();
+  await waitFor(() => expect((screen.getByRole("button", { name: "AI 整理" }) as HTMLButtonElement).disabled).toBe(false));
+  await user.click(screen.getByRole("button", { name: "AI 整理" }));
+  expect(await screen.findByText("AI 识别结果")).toBeTruthy();
+  expect(calls.some((call) => call.command === "analyze_evidence_cmd" || call.command === "preview_analysis_cmd")).toBe(false);
 });
 
-test("拒绝过的建议不自动展开，只留一个轻量入口，按钮仍是「AI 整理」", async () => {
-  mount((command, args) => command === "list_suggestions_cmd" ? [suggestion({ status: "rejected" })] : base(suggestion())(command, args));
-  expect(await screen.findByRole("button", { name: "AI 整理" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "看看拒绝过的建议" })).toBeTruthy();
-  expect(screen.queryByText(/AI 识别/)).toBeNull();
+test("已经确认过的通知不再摆「AI 整理」", async () => {
+  mount((command, args) => command === "list_suggestions_cmd" ? [suggestion({ status: "confirmed" })] : base(suggestion())(command, args));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "AI 整理" })).toBeNull());
+});
+
+test("出错时在一个小弹窗里说清楚，不挤在标题栏", async () => {
+  const user = userEvent.setup();
+  mount((command, args) => {
+    if (command === "analyze_evidence_cmd") throw { code: "AI_NOT_CONFIGURED", message: "还没有配置 AI Key。" };
+    return base(suggestion())(command, args);
+  });
+  await analyse(user);
+  expect(await screen.findByText("AI 整理没能完成")).toBeTruthy();
+  expect(screen.getByText(/还没有配置 AI Key/)).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "知道了" }));
+  await waitFor(() => expect(screen.queryByText("AI 整理没能完成")).toBeNull());
 });

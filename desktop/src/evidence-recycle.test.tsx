@@ -41,7 +41,7 @@ test("move and restore are direct, lock duplicate clicks, retain body and have a
   const item = await within(el("inbox-list")).findByRole("button", {name:/功能验证通知/}); fireEvent.click(item);
   const restore = await h.preview.findByRole("button", {name:"恢复"});
   expect(h.preview.getByText("原正文始终保留")).toBeTruthy();
-  expect(h.preview.queryByRole("button", {name:"关联到投递…"})).toBeNull();
+  expect(h.preview.queryByRole("button", {name:"关联到投递"})).toBeNull();
   const aiCalls = h.mountAi.mock.calls.length;
   fireEvent.click(restore); fireEvent.click(restore);
   await waitFor(() => expect(h.row.recycled).toBe(false));

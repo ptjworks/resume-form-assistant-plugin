@@ -1095,11 +1095,11 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .mail-head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .mail-head h2 { min-width: 0; margin: 0; color: var(--ui-ink); font-size: 18px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
 .mail-actions { flex: none; display: flex; gap: 8px; }
-.mail-actions button { min-height: 0; padding: 5px 13px; border: 1px solid var(--ui-line); border-radius: 6px; background: var(--ui-surface); color: var(--ui-ink); font-size: 13px; white-space: nowrap; }
-.mail-actions button:hover:not(:disabled) { background: var(--ui-canvas); border-color: #dcdce0; }
-.mail-actions button.primary { border-color: var(--ui-brand); background: var(--ui-brand); color: #fff; }
-.mail-actions button.primary:hover:not(:disabled) { border-color: var(--ui-brand-hover); background: var(--ui-brand-hover); }
-.mail-actions button.evidence-recycle-button:hover:not(:disabled) { border-color: #f1c7c7; background: #fff5f5; color: #dc2626; }
+.mail-actions > button, .mail-actions > .mail-ai-slot > button { min-height: 0; padding: 5px 13px; border: 1px solid var(--ui-line); border-radius: 6px; background: var(--ui-surface); color: var(--ui-ink); font-size: 13px; white-space: nowrap; }
+.mail-actions > button:hover:not(:disabled), .mail-actions > .mail-ai-slot > button:hover:not(:disabled) { background: var(--ui-canvas); border-color: #dcdce0; }
+.mail-actions > button.primary { border-color: var(--ui-brand); background: var(--ui-brand); color: #fff; }
+.mail-actions > button.primary:hover:not(:disabled) { border-color: var(--ui-brand-hover); background: var(--ui-brand-hover); }
+.mail-actions > button.evidence-recycle-button:hover:not(:disabled) { border-color: #f1c7c7; background: #fff5f5; color: #dc2626; }
 .mail-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0 0; color: var(--ui-muted); font-size: 12.5px; }
 .mail-from { color: var(--ui-sub); overflow-wrap: anywhere; }
 .mail-link { margin: 6px 0 0; color: #235d52; font-size: 12.5px; }
@@ -1118,17 +1118,6 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .mail-scroll .evidence-open button { display: inline-flex; align-items: center; gap: 6px; min-height: 0; padding: 5px 13px; border-radius: 6px; font-size: 13px; }
 .mail-scroll .pending-mail-content { max-width: 680px; margin: 0; padding: 18px 28px; }
 .mail-scroll .pending-mail-content:not(:has(*)) { display: none; }
-.mail-ai-bar { flex: none; padding: 10px 28px; border-bottom: 1px solid var(--ui-brand-line); background: var(--ui-brand-pale); }
-.ai-panel.is-compact { gap: 6px; }
-.ai-bar-line { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 32px; }
-.ai-bar-text { min-width: 0; color: #235d52; font-size: 13.5px; font-weight: 500; }
-.ai-bar-note { min-width: 0; color: #7c5a12; font-size: 12px; }
-.ai-bar-actions { flex: none; display: flex; align-items: center; gap: 14px; }
-.ai-panel.is-compact .ai-bar-actions button { height: auto; min-height: 0; padding: 5px 14px; border-radius: 6px; font-size: 13px; }
-.ai-panel.is-compact .ai-bar-actions button.primary { width: auto; border-color: var(--ui-brand); background: var(--ui-brand); color: #fff; font-weight: 500; }
-.ai-panel.is-compact .ai-bar-actions button.primary:hover:not(:disabled) { border-color: var(--ui-brand-hover); background: var(--ui-brand-hover); }
-.ai-panel.is-compact .ai-bar-actions button.linkish { padding: 0; border: 0; background: transparent; color: var(--ui-brand); }
-.ai-panel.is-compact > .note { margin: 0; font-size: 12.5px; }
 #inbox-associate-dialog { width: min(520px, calc(100vw - 48px)); }
 #inbox-associate-search { width: 100%; min-height: 38px; }
 .associate-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; border: 1px solid var(--ui-line); border-radius: 10px; }
@@ -1140,14 +1129,24 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .assoc-name span { font-size: 12.5px; color: var(--ui-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .associate-list small { flex: none; padding: 0 8px; border-radius: 4px; background: var(--ui-line-soft); color: var(--ui-sub); font-size: 11.5px; line-height: 20px; }
 .assoc-empty { padding: 18px 14px; color: var(--ui-muted); font-size: 13px; text-align: center; }
-/* AI 识别结果：直接列出识别到的日程，点「确认加入日历」才写入。 */
-.ai-bar-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.ai-summary-body { min-width: 0; }
-.ai-summary-title { margin: 0; color: #235d52; font-size: 13.5px; font-weight: 500; }
-.ai-summary-todos { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ai-summary-todos li { display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; color: var(--ui-ink); }
+/* 「AI 整理」按钮：和「关联到投递」排在一起，用品牌色描边。 */
+.mail-ai-slot { display: contents; }
+.mail-actions > .mail-ai-slot > button { border-color: var(--ui-brand-line); background: var(--ui-brand-pale); color: #235d52; font-weight: 500; }
+.mail-actions > .mail-ai-slot > button:hover:not(:disabled) { border-color: var(--ui-brand); background: #d5ece6; }
+/* AI 识别结果窗：识别到的日程 + 属于哪条投递，一个「加入日历」。 */
+.ai-result { display: flex; flex-direction: column; gap: 10px; min-width: min(420px, 80vw); }
+.ai-result p { margin: 0; }
+.ai-result-title { font-size: 14px; font-weight: 600; color: var(--ui-ink); }
+.ai-result-app { font-size: 13.5px; color: var(--ui-sub); }
+.ai-result-app strong { color: var(--ui-ink); }
+.ai-pick-list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; border: 1px solid var(--ui-line); border-radius: 10px; }
+.ai-pick-list li + li { border-top: 1px solid var(--ui-line-soft); }
+.ai-pick-list button { display: block; width: 100%; min-height: 0; padding: 10px 14px; border: 0; border-radius: 0; background: transparent; text-align: left; font-size: 13.5px; }
+.ai-pick-list button:hover:not(:disabled) { background: var(--ui-brand-pale); }
+.ai-pick-list button[aria-pressed="true"] { background: var(--ui-brand-pale); color: #235d52; font-weight: 600; box-shadow: inset 3px 0 var(--ui-brand); }
+.ai-summary-todos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ai-summary-todos li { display: flex; gap: 12px; align-items: baseline; padding: 8px 12px; border-radius: 8px; background: var(--ui-brand-pale); font-size: 14px; color: var(--ui-ink); }
 .ai-summary-todos span { color: #235d52; font-variant-numeric: tabular-nums; }
-.ai-bar-summary .ai-bar-note { margin: 6px 0 0; }
 #inbox-associate-dialog select { width: 100%; min-height: 40px; }
 #inbox-associate-dialog .resume-dialog-body { display: flex; flex-direction: column; gap: 8px; }
 #inbox-associate-dialog .resume-dialog-body > label:not(:first-child) { margin-top: 10px; }
@@ -1158,16 +1157,10 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .status-close { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); width: 24px; min-height: 0; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font-size: 17px; line-height: 1; }
 .status-close:hover:not(:disabled) { background: #00000012; }
 /* AI 整理出错：不要一个高高的红框，一两行字加一个小按钮。 */
-.ai-panel.is-compact .ai-failure { gap: 2px; padding-top: 4px; }
-.ai-panel.is-compact .ai-failure .note { margin: 0; padding: 0; border: 0; background: transparent; color: #b42318; font-size: 12.5px; }
-.ai-panel.is-compact .ai-failure .muted { margin: 0; font-size: 12px; }
-.ai-panel.is-compact .ai-failure .ai-actions { gap: 14px; }
-.ai-panel.is-compact .ai-failure .ai-actions button { height: auto; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--ui-brand); font-size: 12.5px; }
 @media (max-width: 960px) {
   .inbox-workbench { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); }
   .mail-head { padding: 14px 20px 10px; }
   .mail-scroll .evidence-original, .mail-scroll .pending-mail-content { padding-inline: 20px; }
-  .mail-ai-bar { padding-inline: 20px; }
 }
 @media (max-width: 760px) {
   #view-inbox { height: auto; min-height: 100%; }

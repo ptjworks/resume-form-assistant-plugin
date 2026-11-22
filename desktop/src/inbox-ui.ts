@@ -451,11 +451,13 @@ export function mountInbox(
   }
 
   function actionButtons(state: "archive" | "done" | "bin") {
+    // 「AI 整理」按钮由 React 挂在这个位置，紧挨着「关联到投递」。
+    const ai = '<span id="inbox-ai" class="mail-ai-slot"></span>';
     if (state === "bin") return '<button type="button" class="primary" data-act="restore">恢复</button><button type="button" class="evidence-recycle-button" data-act="purge">彻底删除</button>';
     const remove = '<button type="button" class="evidence-recycle-button" data-act="recycle" title="移到回收站，之后还能恢复">删除</button>';
     return state === "done"
-      ? `<button type="button" data-act="unassociate">取消关联</button>${remove}`
-      : `<button type="button" class="primary" data-act="associate">关联到投递…</button>${remove}`;
+      ? `${ai}<button type="button" data-act="unassociate">取消关联</button>${remove}`
+      : `${ai}<button type="button" class="primary" data-act="associate">关联到投递</button>${remove}`;
   }
 
   function renderPreview(item: EvidencePreview, row: InboxRow) {
@@ -495,7 +497,6 @@ export function mountInbox(
           ${linkedTo ? `<p class="mail-link">已关联「${escapeHtml(linkedTo)}」</p>` : ""}
           <div class="mail-tags">${tags}</div>
         </header>
-        ${recycled ? "" : '<div id="inbox-ai" class="mail-ai-bar"></div>'}
         <div class="mail-scroll evidence-reader-scroll">
           <section class="evidence-original" aria-label="${item.kind === "eml" ? "邮件正文" : "原文"}">
             ${item.kind === "eml" ? '<div id="inbox-mail-attachments"></div>' : ""}
