@@ -465,15 +465,20 @@ export function mountTodos(
     </article>`;
   }
 
+  /** 「在这天添加日程」：浅绿底带加号，和灰色的次要按钮区分开。 */
+  function addButton(day: string): string {
+    return `<button type="button" class="cal-add" data-add-day="${escapeHtml(day)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>在这天添加日程</button>`;
+  }
+
   function sideEmpty(day: string): string {
     const blocked = applicationsLoaded && !applications.length;
     const noTodosAtAll = loaded && !todos.length;
-    const text = blocked ? NEEDS_APPLICATION : noTodosAtAll ? EMPTY_TODOS : "这一天没有安排，可以在下面添加。";
+    const text = blocked ? NEEDS_APPLICATION : noTodosAtAll ? EMPTY_TODOS : "这一天还没有安排。";
     return `<div class="cal-side-empty">
       <span class="cal-side-empty-icon">${ICON.calendar}</span>
-      <p class="cal-side-empty-title">${escapeHtml(dayHeading(day))} 没有日程</p>
+      <p class="cal-side-empty-title">没有日程</p>
       <p class="muted">${escapeHtml(text)}</p>
-      ${blocked ? '<button type="button" data-empty-act="application">去新增申请</button>' : ""}
+      ${blocked ? '<button type="button" data-empty-act="application">去新增申请</button>' : addButton(day)}
     </div>`;
   }
 
@@ -500,7 +505,7 @@ export function mountTodos(
     const entries = model.byDay.get(selectedDay) ?? [];
     side.innerHTML = `<header class="cal-side-head"><h2>${escapeHtml(dayHeading(selectedDay))}</h2><p>${escapeHtml(daySummary(selectedDay, todayDay(), entries.length))}</p></header>
       <div class="cal-side-body">${entries.length ? entries.map(card).join("") : sideEmpty(selectedDay)}</div>
-      <button type="button" class="cal-add" data-add-day="${escapeHtml(selectedDay)}">+ 在当天添加日程</button>`;
+      ${entries.length ? `<footer class="cal-side-foot">${addButton(selectedDay)}</footer>` : ""}`;
   }
 
   function render() {

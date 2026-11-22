@@ -132,7 +132,7 @@ test("first-time empty: the day panel leads to creating an application; add butt
   document.body.innerHTML = readFileSync("index.html", "utf8").split("<body>")[1].split("</body>")[0];
   const filled = todos(); await filled.show();
   // 有申请时，空的一天只提示可以添加，不拦着。
-  expect(filled.query.getByRole("button", { name: "+ 在当天添加日程" })).toBeTruthy();
+  expect(filled.query.getByRole("button", { name: "在这天添加日程" })).toBeTruthy();
   expect(filled.query.queryByRole("button", { name: "去新增申请" })).toBeNull();
 });
 

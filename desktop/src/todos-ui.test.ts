@@ -420,7 +420,7 @@ test('未设具体日期的待办：折叠条一直带数量，点一条在右�
   await h.el("todo-undated-list").clickButton("u1", "select-undated");
   assert.match(h.el("todo-detail").innerHTML, /未设具体日期/);
   assert.match(h.el("todo-detail").innerHTML, /整理作品集/);
-  assert.doesNotMatch(h.el("todo-detail").innerHTML, /在当天添加日程/);
+  assert.doesNotMatch(h.el("todo-detail").innerHTML, /在这天添加日程/);
 });
 
 test('「查看对应投递 →」把申请 id 交给宿主；没接宿主就不显示', async () => {
@@ -732,4 +732,18 @@ test('状态提示是浮着的小条：成功几秒后自己消失，出问题�
   } finally {
     mock.timers.reset();
   }
+});
+
+test('「在这天添加日程」：有日程时固定在右栏底栏，没日程时在空状态里，只出现一次', async () => {
+  const h = harness((name) => (name === "list_todos_cmd" ? [todo({ duePrecision: "date", dueDate: "2026-09-13" })] : undefined));
+  await h.show();
+  const busy = h.el("todo-detail").innerHTML;
+  assert.match(busy, /<footer class="cal-side-foot">/);
+  assert.equal(busy.match(/data-add-day/g)?.length, 1);
+
+  await h.el("todo-list").clickDay("2026-09-14");
+  const empty = h.el("todo-detail").innerHTML;
+  assert.doesNotMatch(empty, /cal-side-foot/);
+  assert.match(empty, /cal-side-empty[\s\S]*data-add-day="2026-09-14"[\s\S]*在这天添加日程/);
+  assert.equal(empty.match(/data-add-day/g)?.length, 1);
 });

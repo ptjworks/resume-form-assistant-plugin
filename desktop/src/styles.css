@@ -37,6 +37,7 @@
   --ui-topbar-h: 52px;
   /* 日历页（#551）：选中格、逾期、事件类型的浅色底（面试沿用品牌浅青）。 */
   --ui-brand-wash: #f4faf8;
+  --ui-brand-pale-hover: #d4ece5;
   --ui-brand-edge: #9fd0c5;
   --ui-danger: #dc2626;
   --ui-danger-pale: #fef2f2;
@@ -862,8 +863,12 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .cal-side-empty-icon .icon { width: 22px; height: 22px; }
 .cal-side-empty p { margin: 0; font-size: 13px; line-height: 1.7; }
 .cal-side-empty-title { color: var(--ui-ink); font-size: 14px; font-weight: 600; }
-.cal-add { flex: none; margin: 0 14px 14px; min-height: 38px; border: 1px dashed var(--ui-line); border-radius: 8px; background: transparent; color: var(--ui-sub); font-size: 13px; }
-.cal-add:hover:not(:disabled) { background: var(--ui-brand-wash); border-color: var(--ui-brand-edge); color: var(--ui-brand); }
+/* 「在这天添加日程」：浅绿底、绿色描边和字，固定在右栏底部的独立底栏里；当天没日程时放在空状态中央。 */
+.cal-side-foot { flex: none; padding: 10px 14px; border-top: 1px solid var(--ui-line-soft); background: var(--ui-surface); }
+.cal-add { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 38px; border: 1px solid var(--ui-brand-edge); border-radius: 8px; background: var(--ui-brand-pale); color: var(--ui-brand-hover); font-size: 13px; font-weight: 600; }
+.cal-add .icon { width: 15px; height: 15px; stroke-width: 2.2; }
+.cal-add:hover:not(:disabled) { background: var(--ui-brand-pale-hover); border-color: var(--ui-brand); color: var(--ui-brand-hover); }
+.cal-side-empty .cal-add { width: auto; margin-top: 8px; padding: 0 20px; }
 
 .cal-card { display: grid; gap: 8px; padding: 12px 12px 10px; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); }
 .cal-card[aria-current="true"] { border-color: var(--ui-brand-edge); background: var(--ui-brand-wash); }
