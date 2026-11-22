@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "vitest";
 import { fireEvent } from "@testing-library/dom";
-import { closeOpenDropdown, enhanceSelect, justClosedByEscape } from "./dropdown";
+import { closeOpenDropdown, enhanceSelect, consumeEscapeClose } from "./dropdown";
 
 function mount(options = ["不指定时间", "0 点", "1 点", "2 点", "3 点", "4 点", "5 点", "6 点", "7 点"]) {
   document.body.innerHTML = `<label>几点<select id="s">${options.map((text, index) => `<option value="${index === 0 ? "" : index}">${text}</option>`).join("")}</select></label><button id="outside">别处</button>`;
@@ -49,7 +49,8 @@ test("keyboard: arrows open and move, Enter chooses, Esc closes only the dropdow
   expect(list.hidden).toBe(false);
   fireEvent.keyDown(button, { key: "Escape" });
   expect(list.hidden).toBe(true);
-  expect(justClosedByEscape()).toBe(true);
+  expect(consumeEscapeClose()).toBe(true);
+  expect(consumeEscapeClose()).toBe(false); // 只吞一次：下一下 Esc 不再被吞
   expect(select.value).toBe("2");
 });
 

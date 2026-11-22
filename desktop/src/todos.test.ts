@@ -138,6 +138,11 @@ test('五种提醒状态各有各的说法', () => {
   assert.match(describeReminder(todo(), AVAILABLE).text, /没有到期/);
 });
 
+test('没有登记提醒、到期日已过：说「到期已过，不再提醒」', () => {
+  const text = describeReminder(todo({ reminderState: 'none', duePrecision: 'date', dueDate: '2026-09-01' }), AVAILABLE).text;
+  assert.equal(text, '到期已过，不再提醒');
+});
+
 test('机器能弹但这一条没登记上，也要说得出来', () => {
   const message = describeReminder(todo({ reminderState: "unsupported" }), AVAILABLE);
   assert.equal(message.tone, "warn");

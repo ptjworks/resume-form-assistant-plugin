@@ -213,19 +213,20 @@ test("待办只有日期或仅设置提醒时，详情显示自定义提醒时�
   }
 });
 
-test('五种提醒状态在详情卡里各说各的话', async () => {
-  const says: Array<[Partial<TodoView>, RegExp]> = [
-    [{ reminderState: "scheduled", reminderScheduledForUtc: "2026-09-20T01:00:00Z" }, /将在/],
-    [{ reminderState: "fired" }, /已经提醒过/],
-    [{ reminderState: "missed" }, /没能提醒/],
-    [{ reminderState: "unsupported" }, /没能登记提醒/],
-    [{ reminderState: "none" }, /到期已过，不再提醒|提醒/],
+test('五种提醒状态在详情卡里各说各的话（逐条精确比对文案）', async () => {
+  const says: Array<[string, Partial<TodoView>, RegExp]> = [
+    ['已登记', { reminderState: "scheduled", reminderScheduledForUtc: "2026-09-20T01:00:00Z" }, /<strong>将在 [^<]+ 提醒<\/strong>/],
+    ['已提醒过', { reminderState: "fired" }, /<p>已经提醒过<\/p>/],
+    ['错过', { reminderState: "missed" }, /<p>到点时没能提醒，已列进逾期<\/p>/],
+    ['没登记上', { reminderState: "unsupported" }, /<p>这条没能登记提醒<\/p>/],
+    ['没有提醒（到期日已过）', { reminderState: "none", dueDate: "2026-09-01" }, /<p>到期已过，不再提醒<\/p>/],
   ];
-  for (const [overrides, expected] of says) {
-    const h = harness((name) => (name === "list_todos_cmd" ? [todo(overrides)] : undefined));
+  for (const [name, overrides, expected] of says) {
+    const h = harness((command) => (command === "list_todos_cmd" ? [todo(overrides)] : undefined));
     await h.show({ id: "t1" });
-    assert.match(h.el("todo-detail").innerHTML, expected, JSON.stringify(overrides));
-    assert.doesNotMatch(h.el("todo-detail").innerHTML, /已设提醒/, "不能糊成一句「已设提醒」");
+    const html = h.el("todo-detail").innerHTML;
+    assert.match(html, expected, name);
+    assert.doesNotMatch(html, /已设提醒/, "不能糊成一句「已设提醒」");
   }
 });
 
@@ -582,7 +583,7 @@ test('类型按钮：点亮就记住、再点取消，不改标题；保存时�
   assert.equal(bare.kind, null, "新开的弹窗不沿用上一次点亮的，没点就是没选");
 });
 
-test('编辑时点亮这条日程现在的类型，改成别的会随保存发出去，取消点亮发 null', async () => {
+test('编辑时存过的类型原样带回；没存过的不被「按标题推断」的结果固化，亲手点了才存', async () => {
   const h = harness((name) =>
     name === "list_todos_cmd" ? [todo({ title: "一面", kind: "other" }), todo({ id: "t2", title: "技术二面", kind: null, dueDate: "2026-09-20" })] : undefined,
   );
@@ -593,7 +594,15 @@ test('编辑时点亮这条日程现在的类型，改成别的会随保存发�
 
   await h.el("todo-detail").clickButton("t2", "edit");
   await h.el("todo-form").emit("submit");
-  assert.equal((h.called("edit_todo_cmd").at(1)?.args?.args as Record<string, unknown>).kind, "interview", "没存过的点亮日历上显示的那个类型");
+  assert.equal((h.called("edit_todo_cmd").at(1)?.args?.args as Record<string, unknown>).kind, null, "没存过类型的，没亲手点就不存，日历继续按标题推断");
+
+  // 亲手点了才存。
+  await h.el("todo-detail").clickButton("t2", "edit");
+  await h.el("todo-form").emit("click", {
+    target: { closest: (selector: string) => (selector.includes("data-kind-pick") ? { dataset: { kindPick: "interview" } } : null) },
+  });
+  await h.el("todo-form").emit("submit");
+  assert.equal((h.called("edit_todo_cmd").at(2)?.args?.args as Record<string, unknown>).kind, "interview");
 });
 
 test('弹窗小字如实说提醒会不会响', async () => {

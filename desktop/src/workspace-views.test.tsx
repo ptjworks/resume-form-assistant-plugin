@@ -160,10 +160,45 @@ test("type buttons are ordered 测评 笔试 面试 其他, stay lit once picked
   fireEvent(h.dialog, new Event("cancel", { cancelable: true }));
   expect(document.querySelector(".dd-list:not([hidden])")).toBeNull();
   expect(h.dialog.open).toBe(true);
-  // 再按一次 Esc（过了那一瞬间）才关弹窗。
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  // 紧接着再按一次 Esc 就关弹窗，不用等：那一下只吞一次。
   fireEvent(h.dialog, new Event("cancel", { cancelable: true }));
   expect(h.dialog.open).toBe(false);
+});
+
+test("editing a todo whose type was never picked lights the guessed type but does not save it until the user clicks", async () => {
+  const h = todos(); await h.show({ id: "t1" });
+  fireEvent.click(h.query.getByRole("button", { name: "编辑" }));
+  await waitFor(() => expect(h.dialog.open).toBe(true));
+  const group = within(document.getElementById("todo-kinds")!);
+  expect(group.getByRole("button", { name: "面试" }).getAttribute("aria-pressed")).toBe("true"); // 标题「准备面试」
+  fireEvent.submit(document.getElementById("todo-form")!);
+  await waitFor(() => expect(h.dialog.open).toBe(false));
+  expect((h.calls.find((call) => call.name === "edit_todo_cmd")!.args as { args: Record<string, unknown> }).args.kind).toBeNull();
+
+  // 亲手点一下才存；再点一下回到「自动」。
+  fireEvent.click(h.query.getByRole("button", { name: "编辑" }));
+  await waitFor(() => expect(h.dialog.open).toBe(true));
+  fireEvent.click(within(document.getElementById("todo-kinds")!).getByRole("button", { name: "面试" }));
+  fireEvent.submit(document.getElementById("todo-form")!);
+  await waitFor(() => expect(h.dialog.open).toBe(false));
+  const edits = h.calls.filter((call) => call.name === "edit_todo_cmd");
+  expect((edits[1]!.args as { args: Record<string, unknown> }).args.kind).toBe("interview");
+});
+
+test("the month grid is made of rows of seven cells, and keyboard focus stays on the card after completing it", async () => {
+  const h = todos(); await h.show({ id: "t1" });
+  const rows = Array.from(document.querySelectorAll('.cal-grid [role="row"]'));
+  const weekRows = rows.filter((row) => row.classList.contains("cal-row"));
+  expect(rows.length).toBe(weekRows.length + 1); // 星期头也是一行
+  expect(weekRows.length === 5 || weekRows.length === 6).toBe(true);
+  for (const row of weekRows) expect(row.querySelectorAll('[role="gridcell"]')).toHaveLength(7);
+  expect(document.querySelectorAll('.cal-grid > [role="gridcell"], .cal-days > [role="gridcell"]')).toHaveLength(0);
+
+  const done = within(document.getElementById("todo-detail")!).getByRole("button", { name: "标记完成" });
+  done.focus();
+  fireEvent.click(done);
+  await waitFor(() => expect(within(document.getElementById("todo-detail")!).getByRole("button", { name: "重新打开" })).toBeTruthy());
+  expect(document.activeElement).toBe(within(document.getElementById("todo-detail")!).getByRole("button", { name: "重新打开" }));
 });
 
 test("four status filter buttons are gone", async () => {

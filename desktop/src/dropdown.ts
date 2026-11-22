@@ -21,7 +21,8 @@ interface OpenState {
 }
 
 let current: OpenState | null = null;
-let lastEscapeClose = 0;
+/** 刚按的这一下 Esc 已经被下拉用掉了：弹窗随后收到的那次 `cancel` 要吞掉。 */
+let escapeSwallowsCancel = false;
 
 /** 关掉当前展开的下拉。返回有没有真的关掉一个。 */
 export function closeOpenDropdown(): boolean {
@@ -31,11 +32,14 @@ export function closeOpenDropdown(): boolean {
 }
 
 /**
- * 刚刚是不是因为按了 Esc 才关掉了一个下拉。弹窗自己也会响应 Esc，
- * 这时候那一下 Esc 已经属于下拉了，弹窗不该跟着关。
+ * 这一下 Esc 是不是用来收起下拉的。弹窗自己也会响应 Esc，那一下已经属于下拉了，弹窗不该跟着关。
+ * 只吞一次：读一次就清掉；就算弹窗没收到 `cancel`，也会在这一下按键处理完后自动清掉，
+ * 所以紧接着的下一下 Esc 一定能关弹窗。
  */
-export function justClosedByEscape(): boolean {
-  return Date.now() - lastEscapeClose < 200;
+export function consumeEscapeClose(): boolean {
+  const swallowed = escapeSwallowsCancel;
+  escapeSwallowsCancel = false;
+  return swallowed;
 }
 
 export function enhanceSelect(select: HTMLSelectElement): Dropdown {
@@ -199,7 +203,10 @@ export function enhanceSelect(select: HTMLSelectElement): Dropdown {
       if (!list.hidden) {
         event.preventDefault();
         event.stopPropagation();
-        lastEscapeClose = Date.now();
+        escapeSwallowsCancel = true;
+        setTimeout(() => {
+          escapeSwallowsCancel = false;
+        }, 0);
         close();
       }
       return;

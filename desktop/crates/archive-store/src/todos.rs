@@ -380,6 +380,8 @@ pub(crate) fn map_todo_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Todo> {
         reminder_handle: r.get(14)?,
         reminder_state: ReminderState::from_str(&r.get::<_, String>(15)?),
         overdue_ack_at: r.get(16)?,
+        // 有意宽容：库里的 CHECK 只放行四个值，读到认不出的（手工改库、将来新增了类型）就当「没选」，
+        // 由界面按标题推断。报错的话一条坏数据会让整页待办读不出来，比回退到推断更糟。
         kind: r.get::<_, Option<String>>(17)?.and_then(|raw| TodoKind::parse(&raw)),
     })
 }

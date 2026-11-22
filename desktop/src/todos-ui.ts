@@ -6,8 +6,9 @@ import type { NotesApplication } from "./notes/view.ts";
 // 这个视图**完全不依赖系统通知**。未授权、未启用、平台不支持时它照常可用，
 // 只是每条待办的详情里如实写着提醒不会响（产品需求 §5.4）。
 //
-// 待办表没有「类型」字段：面试 / 测评 / 笔试 / 其他由前端按标题与轮次推断（todos.ts），
-// 不新增字段、不改命令。
+// 类型（测评 / 笔试 / 面试 / 其他）：待办表有一个可空的 `kind` 列（数据库 v11），用户在弹窗里
+// 点选过就用他选的；没选过的（旧待办、AI 从邮件建的）为空，由 todos.ts 的 `inferKind` 按标题与
+// 面试轮次推断。编辑时「推断出来的」只用来显示，不会被悄悄存进库。
 
 import type {
   ApplicationSummary,
@@ -22,7 +23,7 @@ import type {
 import { input, maybe, must, select as selectEl, valueOf } from "./dom.ts";
 import { localInputToUtc, utcToLocalInput } from "./zoned.ts";
 import type { CalendarEntry, Message, MonthRef, RemindPreset } from "./todos.ts";
-import { closeOpenDropdown, enhanceSelect, justClosedByEscape } from "./dropdown.ts";
+import { closeOpenDropdown, consumeEscapeClose, enhanceSelect } from "./dropdown.ts";
 import {
   DELIVERY_WINDOW_NOTE,
   describeWhenNote,
@@ -245,9 +246,19 @@ export function mountTodos(
     moreToggle.textContent = open ? "收起更多设置" : "更多设置：时区、面试轮次";
   }
 
+  /**
+   * 编辑时、用户没点过类型的待办：日历上显示的是按标题推断出来的那个类型。弹窗里把它亮着，
+   * 让人看得见现在是什么，但**不存**——只有用户亲手点了才存，否则以后改标题类型就不会跟着变。
+   */
+  function autoKind(): TodoKind | null {
+    if (editing === null) return null;
+    return inferKind({ title: valueOf("todo-title"), interviewRound: Number(valueOf("todo-round")) || null, kind: null });
+  }
+
   function paintKinds() {
+    const lit = pickedKind ?? autoKind();
     form.querySelectorAll<HTMLElement>("[data-kind-pick]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.kindPick === pickedKind));
+      button.setAttribute("aria-pressed", String(button.dataset.kindPick === lit));
     });
   }
 
@@ -367,9 +378,16 @@ export function mountTodos(
     const today = todayDay();
     titleEl.textContent = monthTitle(viewMonth);
     const cells = monthGrid(viewMonth);
+    // 每 7 格一行（role="row"），读屏才认得出「第几行、周几」。
+    const weeks = Array.from({ length: cells.length / 7 }, (_, week) =>
+      `<div class="cal-row" role="row">${cells
+        .slice(week * 7, week * 7 + 7)
+        .map((entry) => cell(entry.day, entry.inMonth, model.byDay.get(entry.day) ?? [], today))
+        .join("")}</div>`,
+    ).join("");
     const grid = `<div class="cal-grid" role="grid" aria-label="${escapeHtml(monthTitle(viewMonth))}" data-rows="${cells.length / 7}">
       <div class="cal-week" role="row">${WEEKDAY_HEADS.map((head) => `<span role="columnheader">${head}</span>`).join("")}</div>
-      <div class="cal-days">${cells.map((entry) => cell(entry.day, entry.inMonth, model.byDay.get(entry.day) ?? [], today)).join("")}</div>
+      <div class="cal-days" role="rowgroup">${weeks}</div>
     </div>`;
     board.innerHTML = `${listError ? readError() : ""}${grid}`;
   }
@@ -727,9 +745,8 @@ remindAtUtc: currentRemind(),
       }
       applicationSelect.value = todo.applicationId;
       input("todo-title").value = todo.title;
-      // 点亮这条日程现在的类型：存过的用存的，没存过的是日历按标题推断出来的那个，所见即所存。
-      pickedKind = inferKind(todo);
-      paintKinds();
+      // 存过类型的用存的；没存过的保持「没选」，亮着的只是按标题推断出来的（见 autoKind）。
+      pickedKind = todo.kind ?? null;
       // 存的是 UTC，控件要的是墙钟：按待办自己的时区换算成日期和时间两格，保存时再按同一个
       // 时区换回去，否则到期时间会平移一个时区偏移。
       const wall = todo.duePrecision === "datetime" && todo.dueAtUtc ? utcToLocalInput(todo.dueAtUtc, todo.timeZone) : "";
@@ -746,6 +763,7 @@ remindAtUtc: currentRemind(),
         writeClock(remindHour, remindMinute, remindWall.slice(11, 16));
       }
       input("todo-round").value = todo.interviewRound ? String(todo.interviewRound) : "";
+      paintKinds();
       must("todo-form-heading").textContent = "编辑日程";
       // 编辑时留一个「更多设置」链接；设过面试轮次的直接展开。时区只有一个名字，
       // 小字里已经写了，收着也照样随表单一起保存，不会被清掉。
@@ -768,6 +786,8 @@ remindAtUtc: currentRemind(),
   async function changeStatus(id: string, next: TodoStatus) {
     if (acting) return;
     acting = true;
+    // 重画会换掉按钮；键盘操作的人（焦点在右栏里）做完后要继续停在这张卡片上。
+    const keepFocus = Boolean((document.activeElement as HTMLElement | null)?.closest?.("#todo-detail"));
     side.setAttribute("aria-busy", "true");
     side.querySelectorAll<HTMLButtonElement>("button[data-act]").forEach((button) => {
       button.disabled = true;
@@ -790,6 +810,14 @@ remindAtUtc: currentRemind(),
     // 取消的那条会从日历上消失，右栏回到这一天的其余日程。
     selectedId = next === "cancelled" ? null : id;
     await refresh();
+    if (keepFocus) focusCard(id);
+  }
+
+  /** 把焦点放回这张卡片的主按钮（完成后是「重新打开」）；卡片没了（取消）就放到右栏里第一个能点的按钮。 */
+  function focusCard(id: string) {
+    const card = Array.from(side.querySelectorAll<HTMLElement>("[data-todo-card]")).find((node) => node.dataset.todoCard === id);
+    const target = card?.querySelector<HTMLElement>("button.primary") ?? side.querySelector<HTMLElement>(".cal-card button.primary, .cal-add");
+    target?.focus({ preventScroll: true });
   }
 
   async function onAction(event: Event) {
@@ -881,7 +909,7 @@ remindAtUtc: currentRemind(),
   function cancel(event: Event) {
     event.preventDefault();
     // 这一下 Esc 是用来收起下拉的，不关弹窗。
-    if (closeOpenDropdown() || justClosedByEscape()) return;
+    if (closeOpenDropdown() || consumeEscapeClose()) return;
     if (saving) return;
     closeDialog();
   }
@@ -961,6 +989,8 @@ remindAtUtc: currentRemind(),
     menu.open = false;
     menu.querySelector("summary")?.focus();
   });
+  input("todo-title").addEventListener("input", paintKinds);
+  input("todo-round").addEventListener("input", paintKinds);
   for (const node of [dateInput, hourSelect, minuteSelect, remindPreset, remindDate, remindHour, remindMinute]) {
     node.addEventListener("input", syncWhenNote);
     node.addEventListener("change", syncWhenNote);
