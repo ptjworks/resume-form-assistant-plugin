@@ -21,9 +21,10 @@ function setup() {
     throw new Error(`Unexpected command: ${name}`);
   });
   const openSettings = vi.fn(), openInbox = vi.fn();
-  const ui = mountMailboxes(invoke as Invoke, async () => {}, openSettings, undefined, openInbox);
+  const inboxBridge = { setMailbox: vi.fn(), setMailboxBusy: vi.fn(), showTab: vi.fn() };
+  const ui = mountMailboxes(invoke as Invoke, async () => {}, openSettings, inboxBridge, openInbox);
   dispose = ui.dispose;
-  return { ui, invoke, view, handlers, openSettings, openInbox };
+  return { ui, invoke, view, handlers, openSettings, openInbox, inboxBridge };
 }
 function fillKnownMailbox(address = "new@qq.com") {
   fireEvent.input(el("mailbox-email"), { target: { value: address } });
@@ -72,7 +73,6 @@ test("successful setup closes before a slow scan; the list and new mailbox actio
   expect(el("mailbox-empty").hidden).toBe(true);
   expect(el("mailbox-accounts").textContent).toContain("new@qq.com");
   expect(el<HTMLButtonElement>("mailbox-add").disabled).toBe(false);
-  expect(el("mailbox-tab-stored").getAttribute("aria-selected")).toBe("true");
   fireEvent.click(el("mailbox-add"));
   expect(el<HTMLDialogElement>("mailbox-dialog").open).toBe(true);
   expect(el<HTMLInputElement>("mailbox-email").value).toBe("");
@@ -171,14 +171,13 @@ test("unsaved cross-domain acceptance is not reused after cancelling and reopeni
   expect(el<HTMLInputElement>("mailbox-secret").disabled).toBe(true);
 });
 
-test("viewing pending mail navigates to the inbox without requesting any import", async () => {
-  const { ui, view, invoke, openInbox } = setup();
+test("viewing new mail navigates to the inbox's 待处理 without requesting any import", async () => {
+  const { ui, view, invoke, openInbox, inboxBridge } = setup();
   view.pendingCount = 1;
   await ui.refresh();
   fireEvent.click(el("mailbox-view-pending"));
   expect(openInbox).toHaveBeenCalledOnce();
-  expect(el("mailbox-tab-pending").getAttribute("aria-selected")).toBe("true");
-  expect(el("mailbox-discovery").hidden).toBe(false);
+  expect(inboxBridge.showTab).toHaveBeenCalledWith("todo");
   expect(invoke.mock.calls.map(([name]) => name)).toEqual(["mailbox_view"]);
 });
 

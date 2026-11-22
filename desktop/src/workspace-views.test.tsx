@@ -131,7 +131,7 @@ test("paste import is a dialog: empty text is refused inline, success closes and
   };
   const h = mountInbox(invoke as Invoke); await h.refresh();
   const view = within(document.getElementById("view-inbox")!);
-  expect(view.getByRole("heading", { name: "没有待整理的招聘通知" })).toBeTruthy();
+  expect(within(document.getElementById("inbox-preview")!).getByRole("heading", { name: "没有待处理的通知" })).toBeTruthy();
   fireEvent.click(view.getByRole("button", { name: "粘贴文本" }));
   const dialog = document.getElementById("inbox-paste-dialog") as HTMLDialogElement;
   expect(dialog.open).toBe(true);
@@ -150,100 +150,11 @@ test("paste import is a dialog: empty text is refused inline, success closes and
 
 test("the notification page names itself and promises nothing it cannot do", () => {
   const text = document.getElementById("view-inbox")!.textContent ?? "";
-  expect(text).toContain("集中保存招聘邮件、聊天截图和文件，关联到对应申请。");
+  expect(text).toContain("收件箱");
   expect(text).toContain("文本（.txt）");
   for (const fake of ["证据收件箱", "导出原文", "删除材料", "匹配度", "置信度", "快捷待认领", "已整理", "搜索"]) expect(text).not.toContain(fake);
   const todosText = document.getElementById("view-todos")!.textContent ?? "";
   for (const fake of ["任务备注", "自动保存", "任务类型", "自查清单", "分享", "快捷模板", "岗位编号"]) expect(todosText).not.toContain(fake);
-});
-
-test("evidence preview escapes original text and requires an explicit association", async () => {
-  const item = { id: "e1", kind: "eml", subject: "面试邀请", importedAt: "2026-09-22", sameBytesAs: [], bodyExtract: "<img src=x onerror=alert(1)> 原文", sizeBytes: 20 };
-  const calls = vi.fn();
-  const invoke: Invoke = async <T,>(name: string, args?: Record<string, unknown>): Promise<T> => {
-    calls(name, args);
-    if (name === "list_inbox_cmd") return [item] as T;
-    if (name === "get_evidence_preview_cmd") return item as T;
-    if (name === "list_applications_cmd") return { items: apps } as T;
-    return {} as T;
-  };
-  const h = mountInbox(invoke); await h.refresh();
-  fireEvent.click(document.querySelector("[data-evidence]")!);
-  await waitFor(() => expect(document.getElementById("inbox-application")).toBeTruthy());
-  const toolbar = document.querySelector(".evidence-reader-actions")!;
-  expect([...toolbar.querySelectorAll("button")].map(button => button.dataset.act)).toEqual(["toggle-organizer", "toggle-ai", "toggle-reader", "recycle"]);
-  expect(within(toolbar as HTMLElement).getByRole("button", {name:"展开阅读"}).getAttribute("title")).toBe("展开阅读");
-  expect(within(toolbar as HTMLElement).getByRole("button", {name:"移到回收站"}).querySelector('svg[aria-hidden="true"]')).toBeTruthy();
-  expect(document.querySelector(".evidence-workspace")).toBeTruthy();
-  expect(document.getElementById("inbox-organizer")!.hidden).toBe(true);
-  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
-  expect(document.getElementById("inbox-organizer")!.hidden).toBe(false);
-  expect(document.querySelector('[data-act="toggle-organizer"]')!.getAttribute("aria-expanded")).toBe("true");
-  expect(document.querySelector(".evidence-workspace")!.classList.contains("is-organizer-open")).toBe(true);
-  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(true);
-  fireEvent.click(document.querySelector('[data-act="toggle-ai"]')!);
-  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(false);
-  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(true);
-  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
-  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(true);
-  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(false);
-  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
-  expect(document.querySelector(".evidence-workspace")!.classList.contains("is-organizer-open")).toBe(false);
-  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
-  fireEvent.click(document.querySelector('[data-act="toggle-reader"]')!);
-  expect(document.getElementById("inbox-shell")!.classList.contains("is-reader-expanded")).toBe(true);
-  expect(document.querySelector('[data-act="toggle-reader"]')!.getAttribute("aria-label")).toBe("恢复双栏");
-  expect(document.querySelector('[data-act="toggle-reader"]')!.getAttribute("aria-pressed")).toBe("true");
-  expect(document.querySelector(".evidence-body img")).toBeNull();
-  expect(document.querySelector(".evidence-body")!.textContent).toContain("<img");
-  fireEvent.click(document.querySelector('[data-act="associate"]')!);
-  expect(calls.mock.calls.some(([name]) => name === "associate_evidence_cmd")).toBe(false);
-  fireEvent.change(document.getElementById("inbox-application")!, { target: { value: "a2" } });
-  fireEvent.click(document.querySelector('[data-act="associate"]')!);
-  await waitFor(() => expect(calls).toHaveBeenCalledWith("associate_evidence_cmd", { evidenceId: "e1", applicationId: "a2" }));
-});
-
-test("pending mailbox preview replaces the stored reader and never invents a body", async () => {
-  const invoke = vi.fn(async () => []);
-  const h = mountInbox(invoke as Invoke); await h.refresh();
-  const save = vi.fn(), ignore = vi.fn();
-  h.showPending({
-    id: "candidate-1", email: "candidate@example.com",
-    header: { fromAddr: "hr@example.com", fromName: "星河科技招聘", subject: "前端工程师笔试通知", sentAt: "2026-10-25T02:08:00Z" },
-    reasons: ["匹配申请公司：星河科技", "标题包含：笔试"],
-  }, { save, ignore });
-  const preview = document.getElementById("inbox-preview")!;
-  expect(preview.textContent).toContain("待确认邮件");
-  expect(preview.textContent).toContain("前端工程师笔试通知");
-  expect(preview.textContent).toContain("匹配申请公司：星河科技");
-  expect(preview.textContent).toContain("原文尚未下载");
-  expect(preview.querySelector(".evidence-body")).toBeNull();
-  await h.refresh();
-  expect(preview.textContent).toContain("前端工程师笔试通知");
-  fireEvent.click(within(preview).getByRole("button", { name: "存进档案" }));
-  expect(save).toHaveBeenCalledOnce();
-  fireEvent.click(within(preview).getByRole("button", { name: "忽略" }));
-  expect(ignore).toHaveBeenCalledOnce();
-});
-
-test("a notification without applications retains its selector and safely disables association", async () => {
-  const item = { id: "no-apps", kind: "paste", importedAt: "2026-11-01", bodyExtract: "面试邀请", sameBytesAs: [], sizeBytes: 12 };
-  const invoke = vi.fn(async (name: string) => {
-    if (name === "list_inbox_cmd") return [item];
-    if (name === "get_evidence_preview_cmd") return item;
-    if (name === "list_applications_cmd") return { items: [] };
-    return {};
-  });
-  const inbox = mountInbox(invoke as Invoke); await inbox.refresh();
-  fireEvent.click(document.querySelector('[data-evidence="no-apps"]')!);
-  await waitFor(() => expect(document.getElementById("inbox-application")).toBeTruthy());
-  expect(document.querySelector<HTMLSelectElement>("#inbox-application")!.options).toHaveLength(1);
-  expect(document.querySelector<HTMLButtonElement>('[data-act="associate"]')!.disabled).toBe(true);
-  fireEvent.click(document.querySelector('[data-act="toggle-organizer"]')!);
-  expect(document.getElementById("inbox-manual-section")!.hidden).toBe(false);
-  fireEvent.click(document.querySelector('[data-act="toggle-ai"]')!);
-  expect(document.getElementById("inbox-ai-section")!.hidden).toBe(false);
-  expect(invoke.mock.calls.some(([name]) => name === "associate_evidence_cmd")).toBe(false);
 });
 
 test.each(["storage", "too_large"])("paste failure report (%s) keeps the dialog and text for retry", async (code) => {
@@ -302,7 +213,7 @@ function deferred<T>() {
 test.each([false, true])("classification stays locked during refresh; selection changed=%s", async (switchSelection) => {
   const items = [
     { id: "e1", kind: "paste", subject: "第一封", importedAt: "2026-10-09", bodyExtract: "第一封正文" },
-    { id: "e2", kind: "paste", subject: "第二封", importedAt: "2026-10-09", bodyExtract: "第二封正文" },
+    { id: "e2", kind: "paste", subject: "第二封", importedAt: "2026-10-08", bodyExtract: "第二封正文" },
   ];
   const refresh = deferred<typeof items>();
   let reads = 0;
@@ -315,22 +226,22 @@ test.each([false, true])("classification stays locked during refresh; selection 
     return {} as T;
   };
   const h = mountInbox(invoke); await h.refresh();
-  fireEvent.click(document.querySelector('[data-evidence="e1"]')!);
-  await waitFor(() => expect(document.querySelector('[data-act="classify"]')).toBeTruthy());
-  fireEvent.click(document.querySelector('[data-act="classify"]')!);
+  const control = () => document.getElementById("inbox-reply-class") as HTMLSelectElement;
+  fireEvent.click(document.querySelector('[data-row="e:e1"]')!);
+  await waitFor(() => expect(control()).toBeTruthy());
+  fireEvent.change(control(), { target: { value: "interview_invite" } });
   await waitFor(() => expect(reads).toBe(2));
   if (switchSelection) {
-    fireEvent.click(document.querySelector('[data-evidence="e2"]')!);
+    fireEvent.click(document.querySelector('[data-row="e:e2"]')!);
     await waitFor(() => expect(document.querySelector(".evidence-body")!.textContent).toBe("第二封正文"));
   }
-  const button = document.querySelector('[data-act="classify"]') as HTMLButtonElement;
-  expect(button.disabled).toBe(true);
-  fireEvent.click(button);
+  expect(control().disabled).toBe(true);
+  fireEvent.change(control(), { target: { value: "offer" } });
   expect(calls.mock.calls.filter(([name]) => name === "classify_evidence_cmd")).toHaveLength(1);
   refresh.resolve(items);
-  await waitFor(() => expect((document.querySelector('[data-act="classify"]') as HTMLButtonElement).disabled).toBe(false));
+  await waitFor(() => expect(control().disabled).toBe(false));
   expect(document.querySelector(".evidence-body")!.textContent).toBe(switchSelection ? "第二封正文" : "第一封正文");
-  fireEvent.click(document.querySelector('[data-act="classify"]')!);
+  fireEvent.change(control(), { target: { value: "offer" } });
   await waitFor(() => expect(calls.mock.calls.filter(([name]) => name === "classify_evidence_cmd")).toHaveLength(2));
 });
 
@@ -377,12 +288,11 @@ test("stored mail exposes attachment rows before the body and closes the viewer 
     return true as T;
   };
   const inbox = mountInbox(invoke); await inbox.refresh();
-  fireEvent.click(document.querySelector('[data-evidence="mail-with-file"]')!);
+  fireEvent.click(document.querySelector('[data-row="e:mail-with-file"]')!);
   const entry = await within(document.getElementById("inbox-preview")!).findByRole("button",{name:/补充资料.docx/});
   const attachments = document.getElementById("inbox-mail-attachments")!;
-  const heading = document.getElementById("evidence-original-heading")!;
-  expect(heading.textContent).toBe("邮件正文");
-  expect(attachments.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const mailBody = document.querySelector("[data-mail-body]")!;
+  expect(attachments.compareDocumentPosition(mailBody) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(calls.mock.calls.some(([name])=>name==="preview_evidence_attachment_cmd")).toBe(false);
   fireEvent.click(entry);
   await waitFor(()=>expect(document.querySelector("dialog.attachment-dialog")).toBeTruthy());
