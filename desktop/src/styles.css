@@ -398,7 +398,7 @@ dialog .row:last-child { justify-content: flex-end; margin-top: 8px; }
 @media (max-width: 960px) {
   .brand-version { display: none; }
   #view-applications { height: 100%; }
-  .view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos):not(#view-settings) { padding: 24px; }
+  .view:not(#view-applications):not(#view-resume):not(#view-inbox):not(#view-todos):not(#view-notes):not(#view-settings) { padding: 24px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }

@@ -143,7 +143,7 @@
 .notes-meta .notes-link { color: var(--muted); }
 .notes-meta .notes-link:hover { color: var(--accent-strong); }
 .notes-empty { display: grid; justify-items: center; align-content: center; flex: 1; padding: 24px; text-align: center; }
-.notes-empty-icon { width: 54px; height: 54px; border-radius: 16px; }
+.notes-empty-icon { display: grid; flex: none; place-items: center; width: 54px; height: 54px; border-radius: 16px; background: var(--ui-brand-pale); color: var(--ui-brand); }
 .notes-empty-icon .icon { width: 26px; height: 26px; }
 .notes-empty h2 { margin: 13px 0 3px; color: var(--notes-ink); font-size: 19px; }
 .notes-empty p { max-width: 34em; margin: 3px 0 16px; color: var(--muted); font-size: 13px; }
