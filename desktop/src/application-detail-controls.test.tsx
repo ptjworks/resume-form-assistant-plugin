@@ -875,3 +875,63 @@ test("the top bar shows the five tabs, the status button and the settings gear",
   expect(version.textContent).toBe("");
   expect(document.querySelector(".topbar")!.textContent).not.toMatch(/已连接|v\d/);
 });
+
+// #554：本机的「该公司心得 N 篇」。数据来自心得页的索引，只在展开一行时读一次，读失败就不显示。
+test("company notes: shows 该公司心得 N 篇 on expand, opens the notes page for that company, keeps the hidden 面经 entry", async () => {
+  const companyNoteCount = vi.fn(async (_company: string) => 3);
+  const openCompanyNotes = vi.fn();
+  await mount({ apps: [app("A", "interview", { company: "星河科技" })] }, { companyNoteCount, openCompanyNotes });
+  // 列表上不读：展开前一次都没调。
+  expect(companyNoteCount).not.toHaveBeenCalled();
+  toggleRow("A");
+  const link = await waitFor(() => {
+    const node = row("A").querySelector<HTMLElement>("[data-go=company-notes]");
+    expect(node).toBeTruthy();
+    return node!;
+  });
+  expect(link.textContent).toContain("该公司心得 3 篇");
+  expect(link.hasAttribute("data-platform")).toBe(false);
+  expect(companyNoteCount).toHaveBeenCalledWith("星河科技");
+  fireEvent.click(link);
+  expect(openCompanyNotes).toHaveBeenCalledWith("星河科技");
+  // 社区的「该公司面经」仍在，仍然隐藏。
+  const community = row("A").querySelector<HTMLElement>("[data-go=community]")!;
+  expect(community.hasAttribute("data-platform-off")).toBe(true);
+});
+
+test("company notes: no entry when the company has no notes, when the read fails, or when the options are absent", async () => {
+  for (const reader of [async () => 0, async () => { throw new Error("读不出来"); }]) {
+    document.body.innerHTML = readFileSync("index.html", "utf8").split("<body>")[1].split("</body>")[0];
+    const companyNoteCount = vi.fn(reader);
+    await mount({ apps: [app("A", "interview", { company: "星河科技" })] }, { companyNoteCount, openCompanyNotes: vi.fn(), openNotes: vi.fn() });
+    toggleRow("A");
+    await waitFor(() => expect(row("A").querySelector(".app-chain")).toBeTruthy());
+    await waitFor(() => expect(companyNoteCount).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(row("A").querySelector("[data-go=company-notes]")).toBeNull();
+    // 「写心得」还在。
+    expect(within(row("A")).getByText("写心得")).toBeTruthy();
+  }
+  document.body.innerHTML = readFileSync("index.html", "utf8").split("<body>")[1].split("</body>")[0];
+  await mount({ apps: [app("A", "interview")] });
+  toggleRow("A");
+  await waitFor(() => expect(row("A").querySelector(".app-chain")).toBeTruthy());
+  expect(row("A").querySelector("[data-go=company-notes]")).toBeNull();
+});
+
+test("company notes: a late answer for a row that was collapsed does not draw the entry", async () => {
+  const releases: Array<(count: number) => void> = [];
+  const companyNoteCount = vi.fn(() => new Promise<number>((resolve) => { releases.push(resolve); }));
+  await mount({ apps: [app("A", "interview"), app("B", "submitted")] }, { companyNoteCount, openCompanyNotes: vi.fn() });
+  toggleRow("A");
+  await waitFor(() => expect(companyNoteCount).toHaveBeenCalledTimes(1));
+  toggleRow("B");
+  await waitFor(() => expect(row("B").querySelector(".app-chain")).toBeTruthy());
+  // 先答的是已经收起的 A：不能画到 B 上。
+  releases[0](5);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(document.querySelector("[data-go=company-notes]")).toBeNull();
+  // B 自己的答案到了才显示。
+  releases[1](2);
+  await waitFor(() => expect(row("B").querySelector("[data-go=company-notes]")!.textContent).toContain("2 篇"));
+});

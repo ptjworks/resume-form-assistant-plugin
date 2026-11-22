@@ -2,6 +2,7 @@ import "./attachments.css";
 import "./mailbox.css";
 import "./notes/notes.css";
 import { mountNotes, type NotesApplication } from "./notes/view.ts";
+import { countCompanyNotes, type CompanyFolder, type CompanyNote } from "./notes/company.ts";
 import { installFrontendErrors } from "./feedback.ts";
 import { mountFeedbackSettings } from "./react/feedback-mount.tsx";
 import { mountUsageSettings } from "./react/usage-mount.tsx";
@@ -535,6 +536,10 @@ if (events?.listen) void events.listen("note-quit-requested", async () => {
 });
 const applications = mountApplications(command, {
   openNotes: application => void openNotes(application),
+  // 展开一行时才读一次心得索引；读失败就抛错，投递页不显示「该公司心得」。
+  companyNoteCount: async company => countCompanyNotes(
+    await command<{ folders: CompanyFolder[]; notes: CompanyNote[] }>("note_index_cmd"), company),
+  openCompanyNotes: company => void navigate("notes").then(moved => { if (moved) void notes.showCompany(company); }),
   // 跨页入口只负责切到目标页。日历页带着待办 id 进去，选中那一天那一条。
   openTodos: (target) => void navigate("todos").then((moved) => { if (moved) void showTodos(target).catch(() => {}); }),
   // 通知页切到「已处理」，只显示这一条投递的邮件。
