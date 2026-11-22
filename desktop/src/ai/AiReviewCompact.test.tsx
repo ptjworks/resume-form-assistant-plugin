@@ -138,3 +138,32 @@ test("出错时在一个小弹窗里说清楚，不挤在标题栏", async () =>
   await user.click(screen.getByRole("button", { name: "知道了" }));
   await waitFor(() => expect(screen.queryByText("AI 整理没能完成")).toBeNull());
 });
+
+test("出错窗里同一句话只说一次，也没有「关掉」和「知道了」两个意思一样的按钮", async () => {
+  const user = userEvent.setup();
+  mount((command, args) => {
+    if (command === "analyze_evidence_cmd") throw { code: "AI_UNSUPPORTED_KIND", message: "这类证据还不能 AI 整理。可以把正文复制出来，用「粘贴文本」再导入一次。" };
+    return base(suggestion())(command, args);
+  });
+  await analyse(user);
+  await screen.findByText("AI 整理没能完成");
+  expect(screen.getAllByText(/粘贴文本/)).toHaveLength(1);
+  expect(screen.queryByText(/手动分类/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "关掉" })).toBeNull();
+  expect(screen.getByRole("button", { name: "知道了" })).toBeTruthy();
+});
+
+test("模型没认出是哪条投递时，邮件里提到的公司排在最前面并标出来", async () => {
+  const user = userEvent.setup();
+  const none = suggestion({ candidates: [] });
+  mount((command, args) => {
+    if (command === "list_applications_cmd") return { total: 3, items: [{ id: "x1", company: "山海游戏", title: "客户端" }, { id: "x2", company: "云杉数据", title: "分析" }, { id: "x3", company: "星河科技", title: "前端" }] };
+    if (command === "get_evidence_preview_cmd") return { subject: "【星河科技】笔试", bodyExtract: "请参加星河科技的在线笔试" };
+    return base(none)(command, args);
+  });
+  await analyse(user);
+  await screen.findByText("属于哪条投递？");
+  await waitFor(() => expect(screen.getByText("邮件里提到")).toBeTruthy());
+  const rows = screen.getAllByRole("button").filter((b) => b.closest(".ai-pick-list")).map((b) => b.textContent);
+  expect(rows[0]).toContain("星河科技 · 前端");
+});

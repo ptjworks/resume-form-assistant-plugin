@@ -205,6 +205,18 @@ export function AiReview({
   const resumable = compact
     ? [...saved].reverse().find((row) => ["pending", "deferred"].includes(row.status)) ?? null
     : null;
+  /** 通知页的结果窗要用正文给「属于哪条投递」排个先后：邮件里提到的公司排前面。 */
+  const loadBodyText = useCallback(async () => {
+    if (!invoke) return;
+    try {
+      const evidence = await invoke<EvidencePreview>("get_evidence_preview_cmd", { evidenceId });
+      if (!mounted.current) return;
+      setBody([evidence?.subject, evidence?.fromAddr, evidence?.bodyExtract].filter((part): part is string => !!part).join("\n"));
+    } catch {
+      /* 排不了序就按原来的顺序，不影响确认。 */
+    }
+  }, [invoke, evidenceId]);
+
   const openReview = useCallback(
     async (next: AiSuggestion) => {
       setSuggestion(next);
@@ -285,6 +297,8 @@ export function AiReview({
         setDraft(initialDraft(next));
         setPhase("summary");
         setNotice(null);
+        void ensureApplications();
+        void loadBodyText();
       } else {
         await openReview(next);
       }
@@ -454,16 +468,18 @@ export function AiReview({
             再试一次
           </button>
         ) : null}
-        <button
-          type="button"
-          onClick={() => {
-            setFailure(null);
-            // 审核阶段只关掉这条错误：草稿改了一半，不能顺手丢掉。
-            if (phase !== "review") setPhase("idle");
-          }}
-        >
-          关掉
-        </button>
+        {!compact ? (
+          <button
+            type="button"
+            onClick={() => {
+              setFailure(null);
+              // 审核阶段只关掉这条错误：草稿改了一半，不能顺手丢掉。
+              if (phase !== "review") setPhase("idle");
+            }}
+          >
+            关掉
+          </button>
+        ) : null}
       </div>
     </div>
   ) : null;
@@ -481,10 +497,13 @@ export function AiReview({
   /** 通知页：一个傻瓜式的结果窗——识别到什么日程、属于哪条投递，点一下加入日历。 */
   const resultDialog = (() => {
     if (!(compact && phase === "summary" && suggestion && draft)) return null;
-    const choices = (suggestion.candidates.some((c) => !c.missing && !c.unreadable)
-      ? suggestion.candidates.filter((c) => !c.missing && !c.unreadable)
-      : applications
-    ).map((c) => ({ id: c.id, label: `${c.company} · ${c.title}` }));
+    const identified = suggestion.candidates.filter((c) => !c.missing && !c.unreadable);
+    // 模型没认出是哪条时给全部投递，但邮件里提到的公司排在最前面。
+    const mentioned = (company: string) => company.trim() !== "" && body.includes(company.trim());
+    const pool = identified.length
+      ? identified
+      : [...applications].sort((a, b) => Number(mentioned(b.company)) - Number(mentioned(a.company)));
+    const choices = pool.map((c) => ({ id: c.id, label: `${c.company} · ${c.title}`, likely: !identified.length && mentioned(c.company) }));
     const only = choices.length === 1 ? choices[0]! : null;
     const hasTodos = suggestion.todos.length > 0;
     return (
@@ -532,6 +551,7 @@ export function AiReview({
                       onClick={() => setDraft({ ...draft, applicationId: choice.id })}
                     >
                       {choice.label}
+                      {choice.likely ? <small>邮件里提到</small> : null}
                     </button>
                   </li>
                 ))}
@@ -553,7 +573,21 @@ export function AiReview({
         onCancel={() => setFailure(null)}
         footer={<button type="button" className="primary" onClick={() => setFailure(null)}>知道了</button>}
       >
-        {failureBlock}
+        {["AI_NEEDS_CANDIDATES", "VALIDATION", "AI_BUSY"].includes(failure.code) ? (
+          failureBlock
+        ) : (
+          <div className="ai-problem">
+            <p className="ai-problem-text">{failure.text}</p>
+            {(() => {
+              // 手动分类已经不是用户要操心的事；下一步建议里和上面重复的话也不再说第二遍。
+              const next = failure.next.replace(/这条证据的手动分类照常可用。?/, "").trim();
+              return next && !failure.text.includes(next) ? <p className="muted">{next}</p> : null;
+            })()}
+            {failure.retryable && failure.retry === "analyze" ? (
+              <button type="button" className="linkish" onClick={() => { setFailure(null); void loadPreview(selectedIds); }} disabled={busy}>再试一次</button>
+            ) : null}
+          </div>
+        )}
       </ResumeDialog>
     ) : null;
 
@@ -570,6 +604,7 @@ export function AiReview({
               setDraft(initialDraft(resumable));
               setPhase("summary");
               void ensureApplications();
+              void loadBodyText();
             } else void loadPreview(selectedIds);
           }}
           disabled={!invoke || busy || loadingSaved || !idle}

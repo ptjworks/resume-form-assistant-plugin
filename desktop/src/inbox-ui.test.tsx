@@ -172,6 +172,16 @@ test("a filed mail offers only 关联到投递 and 删除, shows who sent it, an
   expect(el("inbox-preview").querySelectorAll("select")).toHaveLength(0);
 });
 
+test("the AI button is not offered for a screenshot or a PDF, which AI cannot read yet", async () => {
+  const shot = { ...MAIL, id: "e2", kind: "screenshot", subject: null, originalFilename: "shot.png" };
+  const mountAi = vi.fn(() => ({ unmount() {} }));
+  const h = setup({ list_inbox_cmd: () => [shot], get_evidence_preview_cmd: () => body(shot, { bodyExtract: null, imageDataUrl: "data:image/png;base64,AAAA" }) }, { mountAi });
+  await h.inbox.refresh();
+  fireEvent.click(h.list.getByRole("button", { name: /shot\.png/ }));
+  await waitFor(() => expect(el("inbox-preview").querySelector("img.evidence-image")).toBeTruthy());
+  expect(mountAi).not.toHaveBeenCalled();
+});
+
 test("a screenshot is shown from a data URL, a PDF offers the system viewer instead", async () => {
   const shot = { ...MAIL, id: "e2", kind: "screenshot", subject: null, originalFilename: "shot.png" };
   const pdf = { ...MAIL, id: "e3", kind: "pdf", subject: null, originalFilename: "offer.pdf" };

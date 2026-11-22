@@ -512,7 +512,8 @@ export function mountInbox(
       </article>
     `;
     const slot = maybe("inbox-ai");
-    if (mountAi && slot && !recycled) {
+    // 截图和 PDF 目前读不了正文，AI 整理帮不上忙，就不摆这个按钮。
+    if (mountAi && slot && !recycled && (item.kind === "eml" || item.kind === "paste")) {
       // 确认成功那句话由状态栏说：面板本身马上会随着重画被卸掉。
       aiPanel = mountAi(slot as unknown as Element, item.id, (message) => {
         say({ tone: "success", text: message });

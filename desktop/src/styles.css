@@ -1143,6 +1143,11 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .ai-pick-list li + li { border-top: 1px solid var(--ui-line-soft); }
 .ai-pick-list button { display: block; width: 100%; min-height: 0; padding: 10px 14px; border: 0; border-radius: 0; background: transparent; text-align: left; font-size: 13.5px; }
 .ai-pick-list button:hover:not(:disabled) { background: var(--ui-brand-pale); }
+.ai-pick-list button small { margin-left: 8px; padding: 0 7px; border-radius: 4px; background: var(--ui-brand-pale); color: #235d52; font-size: 11.5px; line-height: 18px; }
+.ai-problem { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: min(380px, 80vw); }
+.ai-problem p { margin: 0; font-size: 14px; line-height: 1.7; }
+.ai-problem .muted { font-size: 13px; }
+.ai-problem button.linkish { padding: 0; border: 0; background: transparent; color: var(--ui-brand); font-size: 13px; }
 .ai-pick-list button[aria-pressed="true"] { background: var(--ui-brand-pale); color: #235d52; font-weight: 600; box-shadow: inset 3px 0 var(--ui-brand); }
 .ai-summary-todos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .ai-summary-todos li { display: flex; gap: 12px; align-items: baseline; padding: 8px 12px; border-radius: 8px; background: var(--ui-brand-pale); font-size: 14px; color: var(--ui-ink); }
