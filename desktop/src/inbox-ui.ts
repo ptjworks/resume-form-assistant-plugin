@@ -84,7 +84,7 @@ export interface InboxHost {
     | ((
         container: Element,
         evidenceId: string,
-        onConfirmed: (message: string) => void,
+        onConfirmed: (message: string, tone?: "success" | "warn") => void,
         options?: { compact?: boolean },
       ) => { unmount(): void })
     | null;
@@ -338,6 +338,8 @@ export function mountInbox(
       renderTabs();
       return;
     }
+    // 投递页带来的筛选只管那一次跳转：离开「已处理」就清掉，回来看到的是全部。
+    if (next !== "done") doneFilter = null;
     tab = next;
     selectedKey = null;
     data[next] = [];
@@ -520,11 +522,11 @@ export function mountInbox(
       </article>
     `;
     const slot = maybe("inbox-ai");
-    // 截图和 PDF 目前读不了正文，AI 整理帮不上忙，就不摆这个按钮。
-    if (mountAi && slot && !recycled && (item.kind === "eml" || item.kind === "paste")) {
+    // 只有截图和 PDF 目前读不了正文（导入的 .txt 记成「未知类型」，但后端读得了），这两类才不摆 AI 整理。
+    if (mountAi && slot && !recycled && item.kind !== "screenshot" && item.kind !== "pdf") {
       // 确认成功那句话由状态栏说：面板本身马上会随着重画被卸掉。
-      aiPanel = mountAi(slot as unknown as Element, item.id, (message) => {
-        say({ tone: "success", text: message });
+      aiPanel = mountAi(slot as unknown as Element, item.id, (message, tone) => {
+        say({ tone: tone ?? "success", text: message });
         // 确认会把这封关联到投递上：跟过去，在「已处理」里继续显示它。
         void reveal("done", item.id);
       }, { compact: true });
@@ -681,16 +683,20 @@ export function mountInbox(
     if (!item || associateBusy) return;
     associateBusy = true;
     renderAssociateList();
+    const cancelButton = maybe<HTMLButtonElement>("inbox-associate-cancel");
+    if (cancelButton) cancelButton.disabled = true;
     const chosen = applications.find((app) => app.id === applicationId);
     try {
       await invoke("associate_evidence_cmd", { evidenceId: item.id, applicationId });
     } catch (error) {
       associateBusy = false;
+      if (cancelButton) cancelButton.disabled = false;
       renderAssociateList();
       sayInAssociate(`没能关联：${invokeError(error)}`);
       return;
     }
     associateBusy = false;
+    if (cancelButton) cancelButton.disabled = false;
     closeAssociate();
     say(describeAssociation({ id: item.id }, chosen ? `${chosen.company} · ${chosen.title}` : undefined));
     await reveal("done", item.id);
@@ -875,10 +881,11 @@ export function mountInbox(
     event.preventDefault();
     void submitPaste();
   });
-  maybe("inbox-associate-cancel")?.addEventListener("click", closeAssociate);
+  // 点了某条投递、请求还在路上时，「取消」和 Esc 不响应：否则界面说取消了，后台其实已经关联。
+  maybe("inbox-associate-cancel")?.addEventListener("click", () => { if (!associateBusy) closeAssociate(); });
   associateDialog?.addEventListener("cancel", (event) => {
     event.preventDefault();
-    closeAssociate();
+    if (!associateBusy) closeAssociate();
   });
   maybe<HTMLFormElement>("inbox-associate-form")?.addEventListener("submit", (event) => event.preventDefault());
   maybe("inbox-associate-search")?.addEventListener("input", renderAssociateList);

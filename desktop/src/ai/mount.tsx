@@ -16,7 +16,7 @@ export function mountAiReview(
   container: Element,
   invoke: Invoke | null,
   evidenceId: string,
-  onConfirmed?: (message: string) => void,
+  onConfirmed?: (message: string, tone?: "success" | "warn") => void,
   options: { compact?: boolean } = {},
 ) {
   return mountReact(

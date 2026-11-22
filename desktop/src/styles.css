@@ -1095,8 +1095,8 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .mail-head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .mail-head h2 { min-width: 0; margin: 0; color: var(--ui-ink); font-size: 18px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
 .mail-actions { flex: none; display: flex; gap: 8px; }
-.mail-actions > button, .mail-actions > .mail-ai-slot > button { min-height: 0; padding: 5px 13px; border: 1px solid var(--ui-line); border-radius: 6px; background: var(--ui-surface); color: var(--ui-ink); font-size: 13px; white-space: nowrap; }
-.mail-actions > button:hover:not(:disabled), .mail-actions > .mail-ai-slot > button:hover:not(:disabled) { background: var(--ui-canvas); border-color: #dcdce0; }
+.mail-actions > button, .mail-ai-slot > .ai-panel > button.ai-start { min-height: 0; padding: 5px 13px; border: 1px solid var(--ui-line); border-radius: 6px; background: var(--ui-surface); color: var(--ui-ink); font-size: 13px; white-space: nowrap; }
+.mail-actions > button:hover:not(:disabled), .mail-ai-slot > .ai-panel > button.ai-start:hover:not(:disabled) { background: var(--ui-canvas); border-color: #dcdce0; }
 .mail-actions > button.primary { border-color: var(--ui-brand); background: var(--ui-brand); color: #fff; }
 .mail-actions > button.primary:hover:not(:disabled) { border-color: var(--ui-brand-hover); background: var(--ui-brand-hover); }
 .mail-actions > button.evidence-recycle-button:hover:not(:disabled) { border-color: #f1c7c7; background: #fff5f5; color: #dc2626; }
@@ -1130,9 +1130,9 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
 .associate-list small { flex: none; padding: 0 8px; border-radius: 4px; background: var(--ui-line-soft); color: var(--ui-sub); font-size: 11.5px; line-height: 20px; }
 .assoc-empty { padding: 18px 14px; color: var(--ui-muted); font-size: 13px; text-align: center; }
 /* 「AI 整理」按钮：和「关联到投递」排在一起，用品牌色描边。 */
-.mail-ai-slot { display: contents; }
-.mail-actions > .mail-ai-slot > button { border-color: var(--ui-brand-line); background: var(--ui-brand-pale); color: #235d52; font-weight: 500; }
-.mail-actions > .mail-ai-slot > button:hover:not(:disabled) { border-color: var(--ui-brand); background: #d5ece6; }
+.mail-ai-slot, .mail-ai-slot > .ai-panel { display: contents; }
+.mail-ai-slot > .ai-panel > button.ai-start { border-color: var(--ui-brand-line); background: var(--ui-brand-pale); color: #235d52; font-weight: 500; }
+.mail-ai-slot > .ai-panel > button.ai-start:hover:not(:disabled) { border-color: var(--ui-brand); background: #d5ece6; }
 /* AI 识别结果窗：识别到的日程 + 属于哪条投递，一个「加入日历」。 */
 .ai-result { display: flex; flex-direction: column; gap: 10px; min-width: min(420px, 80vw); }
 .ai-result p { margin: 0; }
@@ -1173,3 +1173,6 @@ ul.inbox-rows li.active button, ul.inbox-rows li.active button:hover:not(:disabl
   .inbox-source-list { max-height: 320px; border-right: 0; border-bottom: 1px solid var(--ui-line); }
   .inbox-reader { overflow: visible; }
 }
+
+.ai-result-app .linkish, .ai-redo { margin-left: 10px; padding: 0; min-height: 0; border: 0; background: transparent; color: var(--ui-brand); font-size: 12.5px; }
+.ai-redo { margin: 4px 0 0; align-self: flex-start; color: var(--ui-muted); }

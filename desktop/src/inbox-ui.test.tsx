@@ -172,14 +172,33 @@ test("a filed mail offers only 关联到投递 and 删除, shows who sent it, an
   expect(el("inbox-preview").querySelectorAll("select")).toHaveLength(0);
 });
 
-test("the AI button is not offered for a screenshot or a PDF, which AI cannot read yet", async () => {
+test("the AI button is not offered for a screenshot or a PDF, which AI cannot read yet, but is offered for imported .txt (unknown) and paste", async () => {
   const shot = { ...MAIL, id: "e2", kind: "screenshot", subject: null, originalFilename: "shot.png" };
+  const pdf = { ...MAIL, id: "e3", kind: "pdf", subject: null, originalFilename: "offer.pdf" };
+  const txt = { ...MAIL, id: "e4", kind: "unknown", mime: "text/plain", subject: null, originalFilename: "invite.txt" };
   const mountAi = vi.fn(() => ({ unmount() {} }));
-  const h = setup({ list_inbox_cmd: () => [shot], get_evidence_preview_cmd: () => body(shot, { bodyExtract: null, imageDataUrl: "data:image/png;base64,AAAA" }) }, { mountAi });
+  const h = setup({
+    list_inbox_cmd: () => [shot, pdf, txt],
+    get_evidence_preview_cmd: (args) =>
+      args?.evidenceId === "e2"
+        ? body(shot, { bodyExtract: null, imageDataUrl: "data:image/png;base64,AAAA" })
+        : args?.evidenceId === "e3"
+          ? body(pdf, { bodyExtract: null, note: "PDF 不在应用内渲染。" })
+          : body(txt, { bodyExtract: "周三下午三点面试" }),
+  }, { mountAi });
   await h.inbox.refresh();
   fireEvent.click(h.list.getByRole("button", { name: /shot\.png/ }));
   await waitFor(() => expect(el("inbox-preview").querySelector("img.evidence-image")).toBeTruthy());
   expect(mountAi).not.toHaveBeenCalled();
+
+  fireEvent.click(h.list.getByRole("button", { name: /offer\.pdf/ }));
+  await h.reader.findByText("PDF 不在应用内渲染。");
+  expect(mountAi).not.toHaveBeenCalled();
+
+  fireEvent.click(h.list.getByRole("button", { name: /invite\.txt/ }));
+  await h.reader.findByText("周三下午三点面试");
+  expect(mountAi).toHaveBeenCalledTimes(1);
+  expect(mountAi).toHaveBeenCalledWith(expect.anything(), "e4", expect.any(Function), { compact: true });
 });
 
 test("a screenshot is shown from a data URL, a PDF offers the system viewer instead", async () => {
@@ -257,6 +276,36 @@ test("a failed association keeps the dialog open with the reason, and cancel wri
   expect(h.reader.getByRole("button", { name: "关联到投递" }).hasAttribute("disabled")).toBe(false);
 });
 
+test("while association is in flight, cancel button and Escape do not close the dialog", async () => {
+  let finishAssociate!: () => void;
+  const h = setup({
+    list_inbox_cmd: () => [MAIL],
+    get_evidence_preview_cmd: () => body(MAIL),
+    list_applications_cmd: () => APPS,
+    associate_evidence_cmd: () => new Promise((resolve) => { finishAssociate = () => resolve({}); }),
+  });
+  await h.inbox.refresh();
+  fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
+  fireEvent.click(await h.reader.findByRole("button", { name: "关联到投递" }));
+  const dialog = el("inbox-associate-dialog") as HTMLDialogElement;
+  const cancelBtn = el("inbox-associate-cancel") as HTMLButtonElement;
+  await waitFor(() => expect(dialog.open).toBe(true));
+
+  fireEvent.click(within(el("inbox-associate-list")).getByRole("button", { name: /后端开发/ }));
+  expect(cancelBtn.disabled).toBe(true);
+  expect((el("inbox-associate-list").querySelector("button") as HTMLButtonElement).disabled).toBe(true);
+
+  // 请求还在路上时，点取消或按 Esc（触发 dialog cancel 事件）都不能关窗。
+  fireEvent.click(cancelBtn);
+  expect(dialog.open).toBe(true);
+  fireEvent(dialog, new Event("cancel", { cancelable: true }));
+  expect(dialog.open).toBe(true);
+
+  finishAssociate();
+  await waitFor(() => expect(dialog.open).toBe(false));
+  expect(cancelBtn.disabled).toBe(false);
+});
+
 test("without any job the dialog says where to add one", async () => {
   const h = setup({ list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL) });
   await h.inbox.refresh();
@@ -320,6 +369,24 @@ test("jumping in from a job shows only its mail with a removable filter; clearin
   expect(h.called("list_associated_evidence_cmd").at(-1)?.args).toEqual({ applicationId: null });
 });
 
+test("leaving 已处理 clears the job filter so coming back shows all processed mail", async () => {
+  const one = { ...MAIL, id: "d1", applicationId: "app-1", company: "星河科技", title: "后端开发", subject: "一面邀请" };
+  const two = { ...MAIL, id: "d2", applicationId: "app-2", company: "远山", title: "设计", subject: "笔试邀请" };
+  const h = setup({ list_associated_evidence_cmd: (args) => [one, two].filter((item) => !args?.applicationId || item.applicationId === args.applicationId) });
+  await h.inbox.showApplication("app-1", "星河科技 · 后端开发");
+  expect(el("inbox-filter").hidden).toBe(false);
+  expect(el("inbox-list").textContent).not.toContain("笔试邀请");
+
+  fireEvent.click(el("inbox-tab-todo"));
+  await waitFor(() => expect(el("inbox-tab-todo").getAttribute("aria-selected")).toBe("true"));
+  expect(el("inbox-filter").hidden).toBe(true);
+
+  fireEvent.click(el("inbox-tab-done"));
+  await waitFor(() => expect(el("inbox-list").textContent).toContain("笔试邀请"));
+  expect(el("inbox-filter").hidden).toBe(true);
+  expect(h.called("list_associated_evidence_cmd").at(-1)?.args).toEqual({ applicationId: null });
+});
+
 test("a job with no mail says so instead of showing someone else's", async () => {
   const h = setup({ list_associated_evidence_cmd: () => [] });
   await h.inbox.showApplication("app-9", "远山 · 设计");
@@ -328,7 +395,7 @@ test("a job with no mail says so instead of showing someone else's", async () =>
 });
 
 test("the AI button is mounted compactly next to 关联到投递 for each mail that is not in the recycle bin", async () => {
-  const mounted: Array<{ id: string; options?: { compact?: boolean }; report: (message: string) => void }> = [];
+  const mounted: Array<{ id: string; options?: { compact?: boolean }; report: (message: string, tone?: "success" | "warn") => void }> = [];
   const unmount = vi.fn();
   const h = setup({ list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL) }, {
     mountAi: (container, id, report, options) => { mounted.push({ id, options, report }); expect(container.id).toBe("inbox-ai"); return { unmount }; },
@@ -341,8 +408,14 @@ test("the AI button is mounted compactly next to 关联到投递 for each mail t
   expect(el("inbox-ai").parentElement?.classList.contains("mail-actions")).toBe(true);
   expect(el("inbox-ai").nextElementSibling?.textContent).toBe("关联到投递");
   // 面板确认完以后那句话由状态栏说；确认会把它关联走，状态栏还要说去了哪儿。
-  mounted[0]!.report("已确认。分类、时间线和 1 条待办都写好了。");
+  mounted[0]!.report("已确认。分类、时间线和 1 条待办都写好了。", "success");
   expect(el("inbox-status").textContent).toContain("已确认");
+  expect(el("inbox-status").dataset.tone).toBe("success");
+  // 提醒没登记上时传 warn 语气，状态栏带关闭按钮、不会自动消失。
+  mounted[0]!.report("已确认。待办建好了，但提醒没登记上：权限未开启", "warn");
+  expect(el("inbox-status").textContent).toContain("提醒没登记上");
+  expect(el("inbox-status").dataset.tone).toBe("warn");
+  expect(el("inbox-status").querySelector(".status-close")).toBeTruthy();
 });
 
 test("the AI bar never appears for a new mail or a mail in the recycle bin", async () => {
@@ -467,5 +540,68 @@ test("a finished action's notice fades by itself; a problem stays until closed w
     expect(el("inbox-status").textContent).toContain("磁盘暂时不可写");
     fireEvent.click(within(el("inbox-status")).getByRole("button", { name: "关闭提示" }));
     expect(el("inbox-status").textContent).toBe("");
+  } finally { vi.useRealTimers(); }
+});
+
+test("an imported .txt (kind unknown) still gets the AI button; only screenshots and PDFs do not", async () => {
+  const txt = { ...MAIL, id: "t1", kind: "unknown", mime: "text/plain", subject: null, originalFilename: "笔试说明.txt" };
+  const mountAi = vi.fn(() => ({ unmount() {} }));
+  const h = setup({ list_inbox_cmd: () => [txt], get_evidence_preview_cmd: () => body(txt) }, { mountAi });
+  await h.inbox.refresh();
+  fireEvent.click(h.list.getByRole("button", { name: /笔试说明\.txt/ }));
+  await waitFor(() => expect(mountAi).toHaveBeenCalledTimes(1));
+});
+
+test("the job filter from the applications page only lasts for that jump: leaving 已处理 clears it", async () => {
+  const one = { ...MAIL, id: "d1", applicationId: "app-1", company: "星河科技", title: "后端开发", subject: "一面邀请" };
+  const two = { ...MAIL, id: "d2", applicationId: "app-2", company: "远山", title: "设计", subject: "笔试邀请" };
+  const h = setup({ list_associated_evidence_cmd: (args) => [one, two].filter((item) => !args?.applicationId || item.applicationId === args.applicationId) });
+  await h.inbox.showApplication("app-1", "星河科技 · 后端开发");
+  expect(el("inbox-list").textContent).not.toContain("笔试邀请");
+  fireEvent.click(el("inbox-tab-todo"));
+  await waitFor(() => expect(el("inbox-tab-todo").getAttribute("aria-selected")).toBe("true"));
+  fireEvent.click(el("inbox-tab-done"));
+  await waitFor(() => expect(el("inbox-list").textContent).toContain("笔试邀请"));
+  expect(el("inbox-filter").hidden).toBe(true);
+});
+
+test("while a link request is in flight, cancel and Esc do nothing; the mail is linked and followed", async () => {
+  let release!: () => void;
+  let linked = [] as unknown[];
+  const h = setup({
+    list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL), list_applications_cmd: () => APPS,
+    list_associated_evidence_cmd: () => linked,
+    associate_evidence_cmd: () => new Promise((resolve) => { release = () => { linked = [{ ...MAIL, applicationId: "app-1", company: "星河科技", title: "后端开发" }]; resolve({}); }; }),
+  });
+  await h.inbox.refresh();
+  fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
+  fireEvent.click(await h.reader.findByRole("button", { name: "关联到投递" }));
+  const dialog = el("inbox-associate-dialog") as HTMLDialogElement;
+  await waitFor(() => expect(dialog.open).toBe(true));
+  fireEvent.click(within(el("inbox-associate-list")).getByRole("button", { name: /后端开发/ }));
+  await waitFor(() => expect(h.called("associate_evidence_cmd")).toHaveLength(1));
+  expect((el("inbox-associate-cancel") as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(el("inbox-associate-cancel"));
+  dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+  expect(dialog.open).toBe(true);
+  release();
+  await waitFor(() => expect(dialog.open).toBe(false));
+  await waitFor(() => expect(el("inbox-tab-done").getAttribute("aria-selected")).toBe("true"));
+});
+
+test("an AI confirmation with a reminder problem stays in the status bar with ×", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
+  try {
+    const mounted: Array<(message: string, tone?: "success" | "warn") => void> = [];
+    const h = setup({ list_inbox_cmd: () => [MAIL], get_evidence_preview_cmd: () => body(MAIL) }, {
+      mountAi: (_c, _id, report) => { mounted.push(report); return { unmount() {} }; },
+    });
+    await h.inbox.refresh();
+    fireEvent.click(h.list.getByRole("button", { name: /面试邀请/ }));
+    await vi.waitFor(() => expect(mounted).toHaveLength(1));
+    mounted[0]!("已确认。待办建好了，但提醒没登记上：这台机器上的提醒不可用", "warn");
+    vi.advanceTimersByTime(10000);
+    expect(el("inbox-status").textContent).toContain("提醒没登记上");
+    expect(el("inbox-status").querySelector(".status-close")).toBeTruthy();
   } finally { vi.useRealTimers(); }
 });
