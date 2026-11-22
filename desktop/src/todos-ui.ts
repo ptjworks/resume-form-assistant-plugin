@@ -14,6 +14,7 @@ import type {
   Invoke,
   Page,
   ReminderCapability,
+  TodoKind,
   TodoStatus,
   TodoView,
   TodoWriteResult,
@@ -21,12 +22,12 @@ import type {
 import { input, maybe, must, select as selectEl, valueOf } from "./dom.ts";
 import { localInputToUtc, utcToLocalInput } from "./zoned.ts";
 import type { CalendarEntry, Message, MonthRef, RemindPreset } from "./todos.ts";
+import { closeOpenDropdown, enhanceSelect, justClosedByEscape } from "./dropdown.ts";
 import {
   DELIVERY_WINDOW_NOTE,
   describeWhenNote,
   presetFromRemind,
   remindFromPreset,
-  fillKind,
   EMPTY_TODOS,
   KIND_LABEL,
   LIFECYCLE_STATES,
@@ -172,6 +173,11 @@ export function mountTodos(
   const remindMinute = selectEl("todo-remind-minute");
   fillTimeSelects(hourSelect, minuteSelect, "不指定时间");
   fillTimeSelects(remindHour, remindMinute, "选择几点");
+  // 弹窗里的下拉都换成贴着框、最多露 6 行的自绘下拉（select 本身留着当数据来源）。
+  const dropdowns = [applicationSelect, hourSelect, minuteSelect, remindPreset, remindHour, remindMinute].map(enhanceSelect);
+  const syncDropdowns = () => dropdowns.forEach((dropdown) => dropdown.sync());
+  /** 弹窗里被点亮的类型；没选就是 null（存成「没选」，日历按标题推断）。 */
+  let pickedKind: TodoKind | null = null;
   const whenNote = must("todo-when-note");
   const moreToggle = must<HTMLButtonElement>("todo-more-toggle");
   const dialog = must<HTMLDialogElement>("todo-dialog");
@@ -217,6 +223,12 @@ export function mountTodos(
     formOptions.hidden = !open;
     moreToggle.setAttribute("aria-expanded", String(open));
     moreToggle.textContent = open ? "收起更多设置" : "更多设置：时区、面试轮次";
+  }
+
+  function paintKinds() {
+    form.querySelectorAll<HTMLElement>("[data-kind-pick]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.kindPick === pickedKind));
+    });
   }
 
   function formZone(): string | null {
@@ -269,6 +281,7 @@ export function mountTodos(
       remindAtUtc: currentRemind(),
       timeZone: formZone(),
     });
+    syncDropdowns();
   }
 
   function renderCapability() {
@@ -544,6 +557,7 @@ export function mountTodos(
       .join("");
     applicationSelect.innerHTML = `<option value="">请选择一条申请…</option>${options}`;
     if (keep !== undefined) applicationSelect.value = keep;
+    syncDropdowns();
   }
 
   /** 日期空 = 未设具体日期；只有日期 = 仅日历日；日期加时间 = 具体时刻。 */
@@ -565,8 +579,10 @@ export function mountTodos(
       // 编辑时这几项都显式发出去：命令层把「没给」当成「别动」，显式的 null 才是
       // 「清空」。否则用户删掉提醒时刻、时区或轮次会被悄悄保留。
       timeZone: zone,
-      remindAtUtc: currentRemind(),
+remindAtUtc: currentRemind(),
       interviewRound: round === "" ? null : Number(round),
+      // 用户点亮的类型；没点亮就是 null（新增时存成「没选」，编辑时清掉，日历回到按标题推断）。
+      kind: pickedKind,
     };
   }
 
@@ -611,6 +627,8 @@ export function mountTodos(
     editing = null;
     form.reset();
     fillApplications("");
+    pickedKind = null;
+    paintKinds();
     writeClock(hourSelect, minuteSelect, "");
     writeClock(remindHour, remindMinute, "");
     remindDate.value = "";
@@ -639,6 +657,7 @@ export function mountTodos(
   }
 
   function closeDialog() {
+    closeOpenDropdown();
     dialog.close();
     resetForm();
     if (opener?.isConnected) opener.focus();
@@ -680,6 +699,9 @@ export function mountTodos(
       }
       applicationSelect.value = todo.applicationId;
       input("todo-title").value = todo.title;
+      // 点亮这条日程现在的类型：存过的用存的，没存过的是日历按标题推断出来的那个，所见即所存。
+      pickedKind = inferKind(todo);
+      paintKinds();
       // 存的是 UTC，控件要的是墙钟：按待办自己的时区换算成日期和时间两格，保存时再按同一个
       // 时区换回去，否则到期时间会平移一个时区偏移。
       const wall = todo.duePrecision === "datetime" && todo.dueAtUtc ? utcToLocalInput(todo.dueAtUtc, todo.timeZone) : "";
@@ -830,6 +852,8 @@ export function mountTodos(
 
   function cancel(event: Event) {
     event.preventDefault();
+    // 这一下 Esc 是用来收起下拉的，不关弹窗。
+    if (closeOpenDropdown() || justClosedByEscape()) return;
     if (saving) return;
     closeDialog();
   }
@@ -922,11 +946,12 @@ export function mountTodos(
   input("todo-timezone").addEventListener("input", syncWhenNote);
   moreToggle.addEventListener("click", () => setMore(formOptions.hidden));
   form.addEventListener("click", (event) => {
-    const fill = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-kind-fill]");
-    if (!fill) return;
-    const title = input("todo-title");
-    title.value = fillKind(title.value, fill.dataset.kindFill ?? "");
-    title.focus();
+    const pick = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-kind-pick]");
+    if (!pick) return;
+    // 点亮就记住，再点一下取消；不会改标题。
+    const kind = pick.dataset.kindPick as TodoKind;
+    pickedKind = pickedKind === kind ? null : kind;
+    paintKinds();
   });
 
   render();

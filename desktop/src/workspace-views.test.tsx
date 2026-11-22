@@ -59,7 +59,7 @@ test("new schedule is a dialog; cancel and Escape never write, the month being v
   expect(document.getElementById("cal-title")!.textContent).toBe("2026年10月");
   fireEvent.click(opener);
   expect((document.getElementById("todo-date") as HTMLInputElement).value).toBe("2026-10-01");
-  fireEvent.change(h.query.getByLabelText("属于哪条申请"), { target: { value: "a1" } });
+  fireEvent.change(document.getElementById("todo-application")!, { target: { value: "a1" } });
   fireEvent.input(h.query.getByLabelText("做什么"), { target: { value: "新任务" } });
   fireEvent.submit(document.getElementById("todo-form")!);
   await waitFor(() => expect(h.dialog.open).toBe(false));
@@ -71,7 +71,7 @@ test("edit opens the correct application, while failed creation retains input in
   const h = todos({ failSave: true }); await h.show({ id: "t1" });
   fireEvent.click(h.query.getByRole("button", { name: "编辑" }));
   await waitFor(() => expect(h.dialog.open).toBe(true));
-  const application = h.query.getByLabelText("属于哪条申请") as HTMLSelectElement;
+  const application = document.getElementById("todo-application") as HTMLSelectElement;
   expect(application.value).toBe("a2"); expect(application.disabled).toBe(true);
   expect(within(h.dialog).getByText(/撤掉原来登记的提醒/)).toBeTruthy();
   fireEvent.click(within(h.dialog).getByRole("button", { name: "取消" }));
@@ -134,6 +134,36 @@ test("first-time empty: the day panel leads to creating an application; add butt
   // 有申请时，空的一天只提示可以添加，不拦着。
   expect(filled.query.getByRole("button", { name: "+ 在当天添加日程" })).toBeTruthy();
   expect(filled.query.queryByRole("button", { name: "去新增申请" })).toBeNull();
+});
+
+test("type buttons are ordered 测评 笔试 面试 其他, stay lit once picked, never touch the title; Esc closes a dropdown before the dialog", async () => {
+  const h = todos(); await h.show();
+  fireEvent.click(h.query.getByRole("button", { name: "新增日程" }));
+  const group = within(document.getElementById("todo-kinds")!);
+  const labels = group.getAllByRole("button").map((button) => button.textContent);
+  expect(labels).toEqual(["测评", "笔试", "面试", "其他"]);
+  fireEvent.input(h.query.getByLabelText("做什么"), { target: { value: "我自己写的" } });
+  fireEvent.click(group.getByRole("button", { name: "笔试" }));
+  expect(group.getByRole("button", { name: "笔试" }).getAttribute("aria-pressed")).toBe("true");
+  expect(group.getByRole("button", { name: "测评" }).getAttribute("aria-pressed")).toBe("false");
+  expect((h.query.getByLabelText("做什么") as HTMLInputElement).value).toBe("我自己写的");
+  fireEvent.click(group.getByRole("button", { name: "其他" }));
+  expect(group.getByRole("button", { name: "笔试" }).getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(group.getByRole("button", { name: "其他" }));
+  expect(group.getByRole("button", { name: "其他" }).getAttribute("aria-pressed")).toBe("false");
+
+  // 下拉在弹窗里：Esc 只收起下拉。
+  const hour = document.querySelector<HTMLButtonElement>('.dd-btn[aria-label="几点"]')!;
+  fireEvent.click(hour);
+  expect(document.querySelector(".dd-list:not([hidden])")).toBeTruthy();
+  fireEvent.keyDown(hour, { key: "Escape" });
+  fireEvent(h.dialog, new Event("cancel", { cancelable: true }));
+  expect(document.querySelector(".dd-list:not([hidden])")).toBeNull();
+  expect(h.dialog.open).toBe(true);
+  // 再按一次 Esc（过了那一瞬间）才关弹窗。
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  fireEvent(h.dialog, new Event("cancel", { cancelable: true }));
+  expect(h.dialog.open).toBe(false);
 });
 
 test("four status filter buttons are gone", async () => {

@@ -13,7 +13,6 @@ import {
   describeReminder,
   describeSave,
   describeWhenNote,
-  fillKind,
   presetFromRemind,
   remindFromPreset,
   describeStatusChange,
@@ -25,6 +24,7 @@ import {
   daySummary,
   entryState,
   inferKind,
+  KIND_ORDER,
   monthGrid,
   monthOf,
   pillText,
@@ -382,9 +382,13 @@ test('提醒预设：编辑时从已有提醒时刻还原，对不上就是自�
   assert.equal(presetFromRemind('2026-11-22T05:47:00Z', '2026-11-22', '14:30', 'Asia/Shanghai'), 'custom');
 });
 
-test('类型按钮填标题：空的直接填，写过的加在前面', () => {
-  assert.equal(fillKind('', '面试'), '面试');
-  assert.equal(fillKind('测评', '笔试'), '笔试');
-  assert.equal(fillKind('二面', '面试'), '面试 二面');
-  assert.equal(fillKind('面试 二面', '面试'), '面试 二面');
+test('用户选过的类型优先于标题推断；没选过才推断', () => {
+  assert.equal(inferKind(todo({ title: '技术二面', kind: 'written' })), 'written', '标题写着面试也按他选的');
+  assert.equal(inferKind(todo({ title: '随便', kind: 'other' })), 'other');
+  assert.equal(inferKind(todo({ title: '技术二面', kind: null })), 'interview', '没选过按标题推断');
+  assert.equal(inferKind(todo({ title: '在线测评', interviewRound: 2, kind: 'assessment' })), 'assessment');
+});
+
+test('类型按钮按发生顺序：测评 → 笔试 → 面试 → 其他', () => {
+  assert.deepEqual(KIND_ORDER, ['assessment', 'written', 'interview', 'other']);
 });

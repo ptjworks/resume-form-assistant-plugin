@@ -259,10 +259,11 @@
                   <label>做什么
                     <input id="todo-title" name="title" autocomplete="off" maxlength="200" required placeholder="例如：技术二面" />
                   </label>
-                  <div class="todo-kinds" role="group" aria-label="常用类型">
-                    <button type="button" data-kind-fill="面试">面试</button>
-                    <button type="button" data-kind-fill="测评">测评</button>
-                    <button type="button" data-kind-fill="笔试">笔试</button>
+                  <div class="todo-kinds" id="todo-kinds" role="group" aria-label="类型">
+                    <button type="button" data-kind-pick="assessment" aria-pressed="false">测评</button>
+                    <button type="button" data-kind-pick="written" aria-pressed="false">笔试</button>
+                    <button type="button" data-kind-pick="interview" aria-pressed="false">面试</button>
+                    <button type="button" data-kind-pick="other" aria-pressed="false">其他</button>
                   </div>
                 </div>
                 <div class="field">
@@ -272,7 +273,7 @@
                   <p id="todo-application-hint" class="field-hint" hidden>待办建好后不能换到另一条申请。</p>
                 </div>
                 <div class="field">
-                  <div class="field-row" id="todo-schedule">
+                  <div class="when-row" id="todo-schedule">
                     <div class="field-cell">
                       <label>日期
                         <input id="todo-date" name="dueDate" type="date" />
@@ -292,7 +293,7 @@
                   <label>提醒
                     <select id="todo-remind-preset" name="remindPreset"></select>
                   </label>
-                  <div id="todo-remind-custom" class="field-row todo-remind-custom" hidden>
+                  <div id="todo-remind-custom" class="when-row todo-remind-custom" hidden>
                     <label>提醒日期
                       <input id="todo-remind-date" type="date" />
                     </label>

@@ -908,12 +908,36 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .field-cell { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field-label { font-weight: 500; }
 .cell-clear { position: absolute; top: 0; right: 0; min-height: 0; padding: 0 2px; font-size: 12px; }
-.time-pick { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; }
+/* 日期 | 几点 | 几分：三个框等宽等高。时间那一格占后两列，里面再平分，宽度正好和日期一样。 */
+.when-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.when-row > .field-cell:last-child { grid-column: span 2; }
+.time-pick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.when-row input { min-height: 40px; }
+
+/* 自绘下拉：按钮和输入框同高同边框，列表贴在按钮正下方。 */
+.dd { position: relative; display: block; min-width: 0; }
+.dd > select.dd-native { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+.dd-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font-weight: 400; text-align: left; }
+.dd-btn[data-empty="true"] .dd-value { color: var(--muted); }
+.dd-btn .dd-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-caret { flex: none; width: 14px; height: 14px; color: var(--muted); stroke-width: 2; }
+.dd-btn[aria-expanded="true"] { border-color: var(--ui-brand-edge); box-shadow: 0 0 0 3px var(--ui-brand-pale); }
+.dd-list { position: fixed; z-index: 1000; margin: 0; padding: 4px; list-style: none; overflow-y: auto; border: 1px solid var(--ui-line); border-radius: 8px; background: var(--ui-surface); box-shadow: 0 8px 24px #18181b1f; }
+.dd-list > li { display: flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dd-list > li.is-active { background: var(--ui-line-soft); }
+.dd-list > li[aria-selected="true"] { color: var(--ui-brand); font-weight: 600; }
+.dd-list > li[aria-disabled="true"] { color: var(--ui-faint); cursor: default; }
 .todo-remind-custom { margin-top: 8px; }
 .todo-more-toggle { align-self: flex-start; justify-self: start; font-size: 13px; }
 .todo-kinds { display: flex; gap: 6px; }
-.todo-kinds button { min-height: 26px; padding: 0 12px; border-color: var(--ui-line); border-radius: 13px; background: var(--ui-surface); color: var(--ui-sub); font-size: 12.5px; }
-.todo-kinds button:hover:not(:disabled) { background: var(--ui-brand-wash); border-color: var(--ui-brand-edge); color: var(--ui-brand); }
+.todo-kinds button { min-height: 28px; padding: 0 14px; border-color: var(--ui-line); border-radius: 14px; background: var(--ui-surface); color: var(--ui-sub); font-size: 12.5px; }
+.todo-kinds button:hover:not(:disabled) { background: var(--ui-canvas); border-color: var(--ui-faint); color: var(--ui-ink); }
+/* 选中的类型常亮：用它在月历上的颜色。 */
+.todo-kinds button[aria-pressed="true"] { font-weight: 600; }
+.todo-kinds button[data-kind-pick="assessment"][aria-pressed="true"] { background: var(--ui-kind-assessment-bg); border-color: var(--ui-kind-assessment-ink); color: var(--ui-kind-assessment-ink); }
+.todo-kinds button[data-kind-pick="written"][aria-pressed="true"] { background: var(--ui-kind-written-bg); border-color: var(--ui-kind-written-ink); color: var(--ui-kind-written-ink); }
+.todo-kinds button[data-kind-pick="interview"][aria-pressed="true"] { background: var(--ui-kind-interview-bg); border-color: var(--ui-kind-interview-ink); color: var(--ui-kind-interview-ink); }
+.todo-kinds button[data-kind-pick="other"][aria-pressed="true"] { background: var(--ui-kind-other-bg); border-color: var(--ui-kind-other-ink); color: var(--ui-kind-other-ink); }
 
 /* 首次空状态：整张卡片给它。 */
 .workspace-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 560px; margin: 0 auto; padding: 56px 24px; text-align: center; }

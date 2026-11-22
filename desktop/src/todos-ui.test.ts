@@ -557,20 +557,43 @@ test('日期清空就是「未设具体日期」，只有日期时不带时刻',
   assert.equal(args.dueAtUtc, null, "没填时间就不会编出一个 00:00");
 });
 
-test('「面试 / 测评 / 笔试」按钮往标题里填词，不覆盖用户写的字', async () => {
+test('类型按钮：点亮就记住、再点取消，不改标题；保存时带上所选类型', async () => {
   const h = harness();
   await h.show();
-  const click = (word: string) => h.el("todo-form").emit("click", {
-    target: { closest: (selector: string) => (selector.includes("data-kind-fill") ? { dataset: { kindFill: word } } : null) },
+  await h.el("todo-new").emit("click");
+  const pick = (kind: string) => h.el("todo-form").emit("click", {
+    target: { closest: (selector: string) => (selector.includes("data-kind-pick") ? { dataset: { kindPick: kind } } : null) },
   });
-  h.el("todo-title").value = "";
-  await click("面试");
-  assert.equal(h.el("todo-title").value, "面试");
-  await click("笔试");
-  assert.equal(h.el("todo-title").value, "笔试", "只是上一次点的词，直接换");
   h.el("todo-title").value = "星河 二面";
-  await click("面试");
-  assert.equal(h.el("todo-title").value, "面试 星河 二面");
+  h.el("todo-application").value = "a1";
+  await pick("written");
+  assert.equal(h.el("todo-title").value, "星河 二面", "点按钮不往标题里写字");
+  await pick("written");
+  await pick("assessment");
+  await h.el("todo-form").emit("submit");
+  const args = h.called("create_todo_cmd").at(0)?.args?.args as Record<string, unknown>;
+  assert.equal(args.kind, "assessment", "再点取消后重新点了测评，存的就是测评");
+
+  await h.el("todo-new").emit("click");
+  h.el("todo-title").value = "跟进";
+  h.el("todo-application").value = "a1";
+  await h.el("todo-form").emit("submit");
+  const bare = h.called("create_todo_cmd").at(1)?.args?.args as Record<string, unknown>;
+  assert.equal(bare.kind, null, "新开的弹窗不沿用上一次点亮的，没点就是没选");
+});
+
+test('编辑时点亮这条日程现在的类型，改成别的会随保存发出去，取消点亮发 null', async () => {
+  const h = harness((name) =>
+    name === "list_todos_cmd" ? [todo({ title: "一面", kind: "other" }), todo({ id: "t2", title: "技术二面", kind: null, dueDate: "2026-09-20" })] : undefined,
+  );
+  await h.show({ id: "t1" });
+  await h.el("todo-detail").clickButton("t1", "edit");
+  await h.el("todo-form").emit("submit");
+  assert.equal((h.called("edit_todo_cmd").at(0)?.args?.args as Record<string, unknown>).kind, "other", "存过的用存的，不被标题推断盖掉");
+
+  await h.el("todo-detail").clickButton("t2", "edit");
+  await h.el("todo-form").emit("submit");
+  assert.equal((h.called("edit_todo_cmd").at(1)?.args?.args as Record<string, unknown>).kind, "interview", "没存过的点亮日历上显示的那个类型");
 });
 
 test('弹窗小字如实说提醒会不会响', async () => {

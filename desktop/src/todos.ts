@@ -7,7 +7,9 @@
 // 2. **提醒会不会响，界面必须说得出。** 产品需求 §5.4 列了五种状态，五种都要
 //    有一句自己的话，不能用一句「已设置提醒」糊过去。
 
-import type { ReminderCapability, TodoStatus, TodoView } from "./api.ts";
+import type { ReminderCapability, TodoKind, TodoStatus, TodoView } from "./api.ts";
+
+export type { TodoKind };
 import { formatInZone, localInputToUtc, utcToLocalInput } from "./zoned.ts";
 
 export interface Message {
@@ -269,21 +271,23 @@ export const QUIT_WARNING =
 // 也不为这个页面新增字段、不改命令和备份格式。
 // ---------------------------------------------------------------------------------
 
-/** 待办的类型。只用来配颜色和角标，推断不准就落到「其他」，不影响任何数据。 */
-export type TodoKind = "interview" | "assessment" | "written" | "other";
-
 export const KIND_LABEL: Record<TodoKind, string> = {
-  interview: "面试",
   assessment: "测评",
   written: "笔试",
+  interview: "面试",
   other: "其他",
 };
 
+/** 类型按钮的顺序：按求职里通常发生的先后——先测评，再笔试，再面试，「其他」放最后。 */
+export const KIND_ORDER: TodoKind[] = ["assessment", "written", "interview", "other"];
+
 /**
- * 按轮次与标题关键词推断类型：有面试轮次或标题含「面」→ 面试；含「测评」→ 测评；
- * 含「笔试」→ 笔试；其余 →「其他」。判断顺序就是这个顺序。
+ * 这条待办算哪一类。用户选过类型就用他选的；没选过的（旧待办、AI 从邮件里建的）按轮次与
+ * 标题关键词推断：有面试轮次或标题含「面」→ 面试；含「测评」→ 测评；含「笔试」→ 笔试；
+ * 其余 →「其他」。判断顺序就是这个顺序。
  */
-export function inferKind(todo: Pick<TodoView, "title" | "interviewRound">): TodoKind {
+export function inferKind(todo: Pick<TodoView, "title" | "interviewRound" | "kind">): TodoKind {
+  if (todo.kind) return todo.kind;
   const title = todo.title ?? "";
   if (todo.interviewRound || title.includes("面")) return "interview";
   if (title.includes("测评")) return "assessment";
@@ -587,11 +591,4 @@ export function describeWhenNote(input: WhenNoteInput): string {
     return `${zone}${shown ? `将在 ${shown} 提醒。` : "提醒时间读不出来。"}`;
   }
   return `${zone}${hasTime ? "到点时按系统通知提醒。" : "当天早上 9 点按系统通知提醒。"}`;
-}
-
-/** 点「面试 / 测评 / 笔试」：标题是空的或已是这几个词之一就直接换成它，否则加在前面，不覆盖用户写的字。 */
-export function fillKind(title: string, word: string): string {
-  const current = title.trim();
-  if (!current || ["面试", "测评", "笔试"].includes(current)) return word;
-  return current.startsWith(word) ? current : `${word} ${current}`;
 }
