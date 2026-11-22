@@ -14,6 +14,8 @@ import {
   describeSave,
   describeWhenNote,
   fillKind,
+  presetFromRemind,
+  remindFromPreset,
   describeStatusChange,
   localDay,
   buildCalendar,
@@ -354,9 +356,30 @@ test('公司简称：去掉有限公司和括号，过长截断', () => {
 });
 
 test('弹窗小字：提醒能不能响如实写，没有日期就说不提醒', () => {
-  assert.equal(describeWhenNote(true, '本机时区（Asia/Shanghai）', AVAILABLE), '按本机时区（Asia/Shanghai）。到期时按系统通知提醒。');
-  assert.equal(describeWhenNote(true, '', BLOCKED), '系统通知未授权，到期时不会弹提醒。');
-  assert.match(describeWhenNote(false, 'Asia/Shanghai', AVAILABLE), /不会提醒/);
+  const base = { hasDate: true, hasTime: true, zoneLabel: '本机时区（Asia/Shanghai）', capability: AVAILABLE, remindAtUtc: null, timeZone: 'Asia/Shanghai' };
+  assert.equal(describeWhenNote(base), '按本机时区（Asia/Shanghai）。到点时按系统通知提醒。');
+  assert.match(describeWhenNote({ ...base, hasTime: false }), /当天早上 9 点/);
+  assert.match(describeWhenNote({ ...base, remindAtUtc: '2026-11-21T06:00:00Z' }), /将在 2026\/11\/21 14:00 提醒/);
+  assert.equal(describeWhenNote({ ...base, zoneLabel: '', capability: BLOCKED }), '系统通知未授权，到点时不会弹提醒。');
+  assert.match(describeWhenNote({ ...base, hasDate: false, hasTime: false }), /不会提醒/);
+});
+
+test('提醒预设：提前多久从到期时刻算，只有日期就从当天早上 9 点算', () => {
+  // 上海 11-22 14:30 = UTC 06:30
+  assert.equal(remindFromPreset('default', '2026-11-22', '14:30', 'Asia/Shanghai'), null, '默认交给后台');
+  assert.equal(remindFromPreset('15', '2026-11-22', '14:30', 'Asia/Shanghai'), '2026-11-22T06:15:00.000Z');
+  assert.equal(remindFromPreset('60', '2026-11-22', '14:30', 'Asia/Shanghai'), '2026-11-22T05:30:00.000Z');
+  assert.equal(remindFromPreset('1440', '2026-11-22', '14:30', 'Asia/Shanghai'), '2026-11-21T06:30:00.000Z');
+  // 只有日期：基准是当天 09:00（上海 = UTC 01:00），不是 00:00
+  assert.equal(remindFromPreset('1440', '2026-11-22', '', 'Asia/Shanghai'), '2026-11-21T01:00:00.000Z');
+  assert.equal(remindFromPreset('15', '', '', 'Asia/Shanghai'), null, '没有日期没法「提前」');
+});
+
+test('提醒预设：编辑时从已有提醒时刻还原，对不上就是自己选', () => {
+  assert.equal(presetFromRemind(null, '2026-11-22', '14:30', 'Asia/Shanghai'), 'default');
+  assert.equal(presetFromRemind('2026-11-22T05:30:00.000Z', '2026-11-22', '14:30', 'Asia/Shanghai'), '60');
+  assert.equal(presetFromRemind('2026-11-21T01:00:00Z', '2026-11-22', '', 'Asia/Shanghai'), '1440');
+  assert.equal(presetFromRemind('2026-11-22T05:47:00Z', '2026-11-22', '14:30', 'Asia/Shanghai'), 'custom');
 });
 
 test('类型按钮填标题：空的直接填，写过的加在前面', () => {

@@ -8,7 +8,7 @@
 //    有一句自己的话，不能用一句「已设置提醒」糊过去。
 
 import type { ReminderCapability, TodoStatus, TodoView } from "./api.ts";
-import { formatInZone, utcToLocalInput } from "./zoned.ts";
+import { formatInZone, localInputToUtc, utcToLocalInput } from "./zoned.ts";
 
 export interface Message {
   tone: "info" | "success" | "warn" | "pending";
@@ -516,21 +516,77 @@ export function prefillForDay(day: string): { duePrecision: "date"; dueDate: str
   return { duePrecision: "date", dueDate: day };
 }
 
+/** 提醒下拉的几个预设。`minutes` 是比到期时刻提前多少分钟；`default` 交给系统按默认规则提醒。 */
+export type RemindPreset = "default" | "15" | "60" | "1440" | "custom";
+
+export const REMIND_PRESET_MINUTES: Record<"15" | "60" | "1440", number> = { "15": 15, "60": 60, "1440": 1440 };
+
+/** 只有日期的待办默认在当天这个钟点提醒（和后台 `DEFAULT_REMIND_LOCAL_TIME` 一致）。 */
+export const DATE_ONLY_REMIND_TIME = "09:00";
+
+/** 「提前多久」从哪个时刻算起：有具体时间就是它，只有日期就是当天早上 9 点。没有日期时算不了。 */
+function remindBaseUtc(date: string, time: string, timeZone: string | null): string | null {
+  if (!date) return null;
+  return localInputToUtc(`${date}T${time || DATE_ONLY_REMIND_TIME}`, timeZone);
+}
+
 /**
- * 表单里日期时间下面那一行小字：时区按谁（`zoneLabel` 是现成的短语，如「本机时区（Asia/Taipei）」）、提醒会不会响。
- * 提醒能不能响如实说：这台机器弹不出来就写原因，没有日期就写不提醒。
+ * 提醒预设 → 要存的提醒时刻（UTC）。`default` 返回 null：不单独设，后台按默认规则提醒。
+ * 没有日期时「提前多久」没有起点，同样返回 null。
  */
-export function describeWhenNote(
-  hasDate: boolean,
-  zoneLabel: string,
-  capability: ReminderCapability,
-): string {
-  if (!hasDate) return "没有日期的待办会放进「未设具体日期」，不会提醒。";
+export function remindFromPreset(
+  preset: Exclude<RemindPreset, "custom">,
+  date: string,
+  time: string,
+  timeZone: string | null,
+): string | null {
+  if (preset === "default") return null;
+  const base = remindBaseUtc(date, time, timeZone);
+  if (!base) return null;
+  return new Date(Date.parse(base) - REMIND_PRESET_MINUTES[preset] * 60_000).toISOString();
+}
+
+/** 编辑时把已有的提醒时刻还原成下拉里的哪一项；对不上任何预设就是「自己选时间」。 */
+export function presetFromRemind(
+  remindAtUtc: string | null | undefined,
+  date: string,
+  time: string,
+  timeZone: string | null,
+): RemindPreset {
+  if (!remindAtUtc) return "default";
+  for (const key of ["15", "60", "1440"] as const) {
+    if (remindFromPreset(key, date, time, timeZone) === new Date(remindAtUtc).toISOString()) return key;
+  }
+  return "custom";
+}
+
+export interface WhenNoteInput {
+  hasDate: boolean;
+  hasTime: boolean;
+  /** 现成的短语，如「本机时区（Asia/Taipei）」。 */
+  zoneLabel: string;
+  capability: ReminderCapability;
+  /** 这次要单独设的提醒时刻；不设就是 null。 */
+  remindAtUtc: string | null;
+  timeZone: string | null;
+}
+
+/**
+ * 表单里提醒下面那一行小字：按哪个时区、提醒会在什么时候响（或为什么不会响）。
+ * 提醒能不能响如实说：这台机器弹不出来就写原因，没有日期也没单独设提醒就说不提醒。
+ */
+export function describeWhenNote(input: WhenNoteInput): string {
+  const { hasDate, hasTime, zoneLabel, capability, remindAtUtc, timeZone } = input;
+  if (!hasDate && !remindAtUtc) return "没有日期的待办会放进「未设具体日期」，不会提醒。";
   const zone = zoneLabel ? `按${zoneLabel}。` : "";
-  const remind = capability.available
-    ? "到期时按系统通知提醒。"
-    : `${capability.reason ?? "这台机器上弹不出定时提醒"}，到期时不会弹提醒。`;
-  return `${zone}${remind}`.replace(/。，/g, "，");
+  if (!capability.available) {
+    return `${zone}${capability.reason ?? "这台机器上弹不出定时提醒"}，到点时不会弹提醒。`.replace(/。，/g, "，");
+  }
+  if (remindAtUtc) {
+    const shown = formatInZone(remindAtUtc, timeZone);
+    return `${zone}${shown ? `将在 ${shown} 提醒。` : "提醒时间读不出来。"}`;
+  }
+  return `${zone}${hasTime ? "到点时按系统通知提醒。" : "当天早上 9 点按系统通知提醒。"}`;
 }
 
 /** 点「面试 / 测评 / 笔试」：标题是空的或已是这几个词之一就直接换成它，否则加在前面，不覆盖用户写的字。 */

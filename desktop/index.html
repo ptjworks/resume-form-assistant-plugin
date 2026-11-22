@@ -273,23 +273,42 @@
                 </div>
                 <div class="field">
                   <div class="field-row" id="todo-schedule">
-                    <label>日期
-                      <input id="todo-date" name="dueDate" type="date" />
+                    <div class="field-cell">
+                      <label>日期
+                        <input id="todo-date" name="dueDate" type="date" />
+                      </label>
+                      <button type="button" id="todo-date-clear" class="link-button cell-clear" hidden>清除</button>
+                    </div>
+                    <div class="field-cell" role="group" aria-labelledby="todo-time-label">
+                      <span id="todo-time-label" class="field-label">时间</span>
+                      <div class="time-pick">
+                        <select id="todo-hour" aria-label="几点"></select>
+                        <select id="todo-minute" aria-label="几分"></select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>提醒
+                    <select id="todo-remind-preset" name="remindPreset"></select>
+                  </label>
+                  <div id="todo-remind-custom" class="field-row todo-remind-custom" hidden>
+                    <label>提醒日期
+                      <input id="todo-remind-date" type="date" />
                     </label>
-                    <label>时间（可不填）
-                      <input id="todo-time" name="dueTime" type="time" />
-                    </label>
+                    <div class="field-cell" role="group" aria-labelledby="todo-remind-time-label">
+                      <span id="todo-remind-time-label" class="field-label">提醒时间</span>
+                      <div class="time-pick">
+                        <select id="todo-remind-hour" aria-label="提醒几点"></select>
+                        <select id="todo-remind-minute" aria-label="提醒几分"></select>
+                      </div>
+                    </div>
                   </div>
                   <p id="todo-when-note" class="field-hint"></p>
+                  <p id="todo-edit-note" class="field-hint" hidden>改期或修改提醒会撤掉原来登记的提醒，再按新的时间重新登记。</p>
                 </div>
-                <button type="button" id="todo-more-toggle" class="link-button todo-more-toggle" aria-expanded="false" aria-controls="todo-form-options" hidden>更多设置：提醒时刻、时区、面试轮次</button>
+                <button type="button" id="todo-more-toggle" class="link-button todo-more-toggle" aria-expanded="false" aria-controls="todo-form-options" hidden>更多设置：时区、面试轮次</button>
                 <div id="todo-form-options" class="todo-form-extra" hidden>
-                  <div class="field">
-                    <label>提醒时刻
-                      <input id="todo-remind" name="remindAtUtc" type="datetime-local" aria-describedby="todo-remind-hint" />
-                    </label>
-                    <p id="todo-remind-hint" class="field-hint">留空则按到期时间提醒。日期和时刻按待办的时区理解。</p>
-                  </div>
                   <div class="field-row">
                     <label>时区
                       <input id="todo-timezone" name="timeZone" autocomplete="off" spellcheck="false" placeholder="留空按本机时区" />
@@ -298,7 +317,6 @@
                       <input id="todo-round" name="interviewRound" type="number" min="1" max="99" step="1" placeholder="不需要就留空" />
                     </label>
                   </div>
-                  <p id="todo-edit-note" class="field-hint" hidden>改期或修改提醒时刻会撤掉原来登记的提醒，再按新的时间重新登记。</p>
                 </div>
                 <p id="todo-form-status" class="note" role="alert"></p>
               </div>

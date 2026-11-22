@@ -20,10 +20,12 @@ import type {
 } from "./api.ts";
 import { input, maybe, must, select as selectEl, valueOf } from "./dom.ts";
 import { localInputToUtc, utcToLocalInput } from "./zoned.ts";
-import type { CalendarEntry, Message, MonthRef } from "./todos.ts";
+import type { CalendarEntry, Message, MonthRef, RemindPreset } from "./todos.ts";
 import {
   DELIVERY_WINDOW_NOTE,
   describeWhenNote,
+  presetFromRemind,
+  remindFromPreset,
   fillKind,
   EMPTY_TODOS,
   KIND_LABEL,
@@ -111,6 +113,34 @@ export interface TodoTarget {
   day?: string | null;
 }
 
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** 几点 / 几分两个下拉：几点的第一项是「不指定」，几分每 5 分钟一档。 */
+function fillTimeSelects(hour: HTMLSelectElement, minute: HTMLSelectElement, blank: string) {
+  hour.innerHTML = `<option value="">${blank}</option>${Array.from({ length: 24 }, (_, h) => `<option value="${pad2(h)}">${h} 点</option>`).join("")}`;
+  minute.innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${pad2(i * 5)}">${pad2(i * 5)} 分</option>`).join("");
+}
+
+/** 两个下拉合成 `HH:MM`；没选几点就是空（不指定时间）。 */
+function readClock(hour: HTMLSelectElement, minute: HTMLSelectElement): string {
+  return hour.value ? `${hour.value}:${minute.value || "00"}` : "";
+}
+
+/** `HH:MM` 回填进两个下拉。分钟不在 5 分钟档上（比如 14:32）时补一个选项，不能悄悄改掉。 */
+function writeClock(hour: HTMLSelectElement, minute: HTMLSelectElement, clock: string) {
+  if (!clock) {
+    hour.value = "";
+    minute.value = "00";
+    return;
+  }
+  const [h = "", m = "00"] = clock.split(":");
+  hour.value = h;
+  if (!minute.innerHTML.includes(`value="${m}"`)) {
+    minute.insertAdjacentHTML("beforeend", `<option value="${m}">${m} 分</option>`);
+  }
+  minute.value = m;
+}
+
 /** 月历格里最多直接画几条胶囊，多出来的收进「+N」。 */
 const PILLS_PER_CELL = 2;
 
@@ -132,7 +162,16 @@ export function mountTodos(
   const form = must<HTMLFormElement>("todo-form");
   const applicationSelect = selectEl("todo-application");
   const dateInput = input("todo-date");
-  const timeInput = input("todo-time");
+  const hourSelect = selectEl("todo-hour");
+  const minuteSelect = selectEl("todo-minute");
+  const dateClear = must<HTMLButtonElement>("todo-date-clear");
+  const remindPreset = selectEl("todo-remind-preset");
+  const remindCustom = must("todo-remind-custom");
+  const remindDate = input("todo-remind-date");
+  const remindHour = selectEl("todo-remind-hour");
+  const remindMinute = selectEl("todo-remind-minute");
+  fillTimeSelects(hourSelect, minuteSelect, "不指定时间");
+  fillTimeSelects(remindHour, remindMinute, "选择几点");
   const whenNote = must("todo-when-note");
   const moreToggle = must<HTMLButtonElement>("todo-more-toggle");
   const dialog = must<HTMLDialogElement>("todo-dialog");
@@ -177,15 +216,59 @@ export function mountTodos(
   function setMore(open: boolean) {
     formOptions.hidden = !open;
     moreToggle.setAttribute("aria-expanded", String(open));
-    moreToggle.textContent = open ? "收起更多设置" : "更多设置：提醒时刻、时区、面试轮次";
+    moreToggle.textContent = open ? "收起更多设置" : "更多设置：时区、面试轮次";
   }
 
-  /** 日期时间下面那行小字：按哪个时区、提醒会不会响。 */
+  function formZone(): string | null {
+    return valueOf("todo-timezone").trim() || null;
+  }
+
+  /** 这次要单独设的提醒时刻：预设按「提前多久」算，「自己选」按那三个下拉；默认交给后台。 */
+  function currentRemind(): string | null {
+    const zone = formZone();
+    const preset = remindPreset.value as RemindPreset;
+    if (preset === "custom") {
+      return localInputToUtc(`${remindDate.value}T${readClock(remindHour, remindMinute)}`, zone);
+    }
+    return remindFromPreset(preset, dateInput.value, readClock(hourSelect, minuteSelect), zone);
+  }
+
+  /**
+   * 日期、时间、提醒三者互相牵动：没日期就没法「提前多久」；没选几点分钟就不能选；
+   * 提醒下拉里「默认」写成此刻实际会发生的事；下面一行小字写出最后会在什么时候响。
+   */
   function syncWhenNote() {
+    const hasDate = Boolean(dateInput.value);
+    const clock = readClock(hourSelect, minuteSelect);
+    minuteSelect.disabled = !hourSelect.value;
+    dateClear.hidden = !hasDate;
+    let preset = remindPreset.value || "default";
+    if (!hasDate && preset !== "custom") preset = "default";
+    const labels: Array<[string, string]> = [
+      ["default", hasDate ? (clock ? "到点时（默认）" : "当天早上 9 点（默认）") : "不提醒（没有日期）"],
+      ["15", "提前 15 分钟"],
+      ["60", "提前 1 小时"],
+      ["1440", "提前 1 天"],
+      ["custom", "自己选时间…"],
+    ];
+    remindPreset.innerHTML = labels
+      .map(([value, label]) => `<option value="${value}"${!hasDate && ["15", "60", "1440"].includes(value) ? " disabled" : ""}>${label}</option>`)
+      .join("");
+    remindPreset.value = preset;
+    remindCustom.hidden = preset !== "custom";
+    // 刚切到「自己选时间」：日期先填成到期那天，只剩钟点要选。
+    if (preset === "custom" && !remindDate.value && hasDate) remindDate.value = dateInput.value;
     const custom = valueOf("todo-timezone").trim();
     const local = localTimeZone();
     const label = custom ? ` ${custom} 时区` : local ? `本机时区（${local}）` : "本机时区";
-    whenNote.textContent = describeWhenNote(Boolean(dateInput.value), label, capability);
+    whenNote.textContent = describeWhenNote({
+      hasDate,
+      hasTime: Boolean(clock),
+      zoneLabel: label,
+      capability,
+      remindAtUtc: currentRemind(),
+      timeZone: formZone(),
+    });
   }
 
   function renderCapability() {
@@ -466,7 +549,7 @@ export function mountTodos(
   /** 日期空 = 未设具体日期；只有日期 = 仅日历日；日期加时间 = 具体时刻。 */
   function argsFromForm() {
     const date = dateInput.value;
-    const time = timeInput.value;
+    const time = readClock(hourSelect, minuteSelect);
     const precision = !date ? "none" : time ? "datetime" : "date";
     const zone = valueOf("todo-timezone").trim() || null;
     const round = valueOf("todo-round").trim();
@@ -482,7 +565,7 @@ export function mountTodos(
       // 编辑时这几项都显式发出去：命令层把「没给」当成「别动」，显式的 null 才是
       // 「清空」。否则用户删掉提醒时刻、时区或轮次会被悄悄保留。
       timeZone: zone,
-      remindAtUtc: localInputToUtc(valueOf("todo-remind"), zone),
+      remindAtUtc: currentRemind(),
       interviewRound: round === "" ? null : Number(round),
     };
   }
@@ -493,17 +576,17 @@ export function mountTodos(
       return { text: "请选择这条待办属于哪条申请。", field: "todo-application" };
     }
     if (!args.title) return { text: "待办要有一个标题。", field: "todo-title" };
-    if (!dateInput.value && timeInput.value) {
+    if (!dateInput.value && hourSelect.value) {
       return { text: "填了时间，请也选一个日期。", field: "todo-date" };
     }
     if (args.duePrecision === "datetime" && !args.dueAtUtc) {
-      return { text: "日期和时间读不出来，请重新选一下。", field: "todo-time" };
+      return { text: "日期和时间读不出来，请重新选一下。", field: "todo-hour" };
     }
     if (args.timeZone && !knownTimeZone(args.timeZone)) {
       return { text: "认不出这个时区。请写成 IANA 名称，例如 Asia/Shanghai；留空按本机时区。", field: "todo-timezone" };
     }
-    if (valueOf("todo-remind") && !args.remindAtUtc) {
-      return { text: "提醒时刻不完整，请补全或清空。", field: "todo-remind" };
+    if (remindPreset.value === "custom" && !args.remindAtUtc) {
+      return { text: "提醒时间不完整，请选好日期和几点，或改回「默认」。", field: "todo-remind-date" };
     }
     if (args.interviewRound !== null && !(Number.isInteger(args.interviewRound) && args.interviewRound >= 1 && args.interviewRound <= 99)) {
       return { text: "面试轮次是 1 到 99 的整数，不需要就留空。", field: "todo-round" };
@@ -528,6 +611,10 @@ export function mountTodos(
     editing = null;
     form.reset();
     fillApplications("");
+    writeClock(hourSelect, minuteSelect, "");
+    writeClock(remindHour, remindMinute, "");
+    remindDate.value = "";
+    remindPreset.value = "default";
     // 只有一条申请时不用再选。
     if (applications.length === 1 && applications[0]) applicationSelect.value = applications[0].id;
     sayInForm(null);
@@ -541,8 +628,8 @@ export function mountTodos(
     input("todo-timezone").placeholder = localTimeZone()
       ? `留空按本机时区（${localTimeZone()}）`
       : "留空按本机时区，例如 Asia/Shanghai";
-    syncWhenNote();
     setFormBusy(false);
+    syncWhenNote();
   }
 
   function openDialog() {
@@ -597,23 +684,28 @@ export function mountTodos(
       // 时区换回去，否则到期时间会平移一个时区偏移。
       const wall = todo.duePrecision === "datetime" && todo.dueAtUtc ? utcToLocalInput(todo.dueAtUtc, todo.timeZone) : "";
       dateInput.value = wall ? wall.slice(0, 10) : (todo.duePrecision === "date" ? (todo.dueDate ?? "") : "");
-      timeInput.value = wall ? wall.slice(11, 16) : "";
+      writeClock(hourSelect, minuteSelect, wall ? wall.slice(11, 16) : "");
       input("todo-timezone").value = todo.timeZone ?? "";
-      // 提醒时刻也要回填，否则用户看不到现在设的是几点，一保存还会被当成「清空」。
-      input("todo-remind").value = todo.remindAtUtc
-        ? utcToLocalInput(todo.remindAtUtc, todo.timeZone)
-        : "";
+      // 提醒也要回填，否则用户看不到现在是怎么设的，一保存还会被当成「清空」：
+      // 对得上「提前多久」的显示成那一项，对不上的显示成「自己选时间」并填好日期和钟点。
+      const preset = presetFromRemind(todo.remindAtUtc, dateInput.value, readClock(hourSelect, minuteSelect), todo.timeZone ?? null);
+      remindPreset.value = preset;
+      if (preset === "custom" && todo.remindAtUtc) {
+        const remindWall = utcToLocalInput(todo.remindAtUtc, todo.timeZone);
+        remindDate.value = remindWall.slice(0, 10);
+        writeClock(remindHour, remindMinute, remindWall.slice(11, 16));
+      }
       input("todo-round").value = todo.interviewRound ? String(todo.interviewRound) : "";
       must("todo-form-heading").textContent = "编辑日程";
-      // 编辑时留一个「更多设置」链接；单独设过提醒时刻或轮次的直接展开。时区只有一个名字，
+      // 编辑时留一个「更多设置」链接；设过面试轮次的直接展开。时区只有一个名字，
       // 小字里已经写了，收着也照样随表单一起保存，不会被清掉。
       moreToggle.hidden = false;
-      setMore(Boolean(todo.remindAtUtc || todo.interviewRound));
-      syncWhenNote();
+      setMore(Boolean(todo.interviewRound));
       must("todo-no-apps").hidden = true;
       must("todo-application-hint").hidden = false;
       must("todo-edit-note").hidden = false;
       setFormBusy(false);
+      syncWhenNote();
       openDialog();
       input("todo-title").focus();
     } catch (error) {
@@ -729,7 +821,10 @@ export function mountTodos(
       sayInForm({ tone: "warn", text: `保存失败：${invokeError(error)}` });
     } finally {
       saving = false;
-      if (dialog.open) setFormBusy(false);
+      if (dialog.open) {
+        setFormBusy(false);
+        syncWhenNote();
+      }
     }
   });
 
@@ -814,8 +909,16 @@ export function mountTodos(
     menu.open = false;
     menu.querySelector("summary")?.focus();
   });
-  dateInput.addEventListener("input", syncWhenNote);
-  dateInput.addEventListener("change", syncWhenNote);
+  for (const node of [dateInput, hourSelect, minuteSelect, remindPreset, remindDate, remindHour, remindMinute]) {
+    node.addEventListener("input", syncWhenNote);
+    node.addEventListener("change", syncWhenNote);
+  }
+  dateClear.addEventListener("click", () => {
+    dateInput.value = "";
+    writeClock(hourSelect, minuteSelect, "");
+    syncWhenNote();
+    dateInput.focus();
+  });
   input("todo-timezone").addEventListener("input", syncWhenNote);
   moreToggle.addEventListener("click", () => setMore(formOptions.hidden));
   form.addEventListener("click", (event) => {

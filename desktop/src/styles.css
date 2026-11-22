@@ -905,6 +905,11 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 }
 
 .todo-form-extra { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--ui-line-soft); }
+.field-cell { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field-label { font-weight: 500; }
+.cell-clear { position: absolute; top: 0; right: 0; min-height: 0; padding: 0 2px; font-size: 12px; }
+.time-pick { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; }
+.todo-remind-custom { margin-top: 8px; }
 .todo-more-toggle { align-self: flex-start; justify-self: start; font-size: 13px; }
 .todo-kinds { display: flex; gap: 6px; }
 .todo-kinds button { min-height: 26px; padding: 0 12px; border-color: var(--ui-line); border-radius: 13px; background: var(--ui-surface); color: var(--ui-sub); font-size: 12.5px; }
