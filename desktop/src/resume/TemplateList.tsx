@@ -33,7 +33,8 @@ function describe(error: unknown): Notice {
 type Dialog =
   | { kind: "reimport"; template: TemplateSummary }
   | { kind: "rename"; template: TemplateSummary; draft: string; error: string | null }
-  | { kind: "delete"; template: TemplateSummary; error: string | null };
+  | { kind: "delete"; template: TemplateSummary; error: string | null }
+  | { kind: "switch"; to: string };
 
 type Preview = { id: string; view: ResumeTemplateView } | { id: string; error: string };
 
@@ -59,6 +60,9 @@ export function TemplateList({
   editorProbe?: MutableRefObject<TemplateEditorProbe | null>;
 }) {
   const invoke = useInvoke();
+  // 字段里有没有填到一半的内容：切换模板前要问；没传进来就自己备一个。
+  const ownProbe = useRef<TemplateEditorProbe | null>(null);
+  const fieldsProbe = editorProbe ?? ownProbe;
   const [overview, setOverview] = useState<ResumeOverview | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
@@ -121,6 +125,16 @@ export function TemplateList({
     templates[0] ??
     null;
   const selectedId = selectedTemplate?.id ?? null;
+
+  // 换一份模板看：字段里有填到一半的内容（或正在保存）时先问，不悄悄丢掉。
+  const chooseTemplate = (id: string) => {
+    if (id !== selectedId && fieldsProbe.current?.dirty()) {
+      setDialog({ kind: "switch", to: id });
+      return;
+    }
+    setSelected(id);
+    setShowDetail(true);
+  };
 
   // 预览按需读。重新导入会原地覆盖同一个模板 id，所以 updatedAt / fieldCount 变了要再读一次，
   // 不能留着旧内容。
@@ -283,10 +297,7 @@ export function TemplateList({
               type="button"
               className="template-row-main"
               aria-pressed={isSelected}
-              onClick={() => {
-                setSelected(template.id);
-                setShowDetail(true);
-              }}
+              onClick={() => chooseTemplate(template.id)}
             >
               <strong>{template.name}</strong>
               <span className="template-row-meta">
@@ -347,7 +358,7 @@ export function TemplateList({
               onBack={() => setShowDetail(false)}
               onReimport={() => setDialog({ kind: "reimport", template: selectedTemplate })}
               onExport={() => void exportTemplate(selectedTemplate)}
-              editorProbe={editorProbe}
+              editorProbe={fieldsProbe}
               onFieldsSaved={(view) => {
                 setPreview({ id: view.id, view });
                 void reload();
@@ -383,7 +394,7 @@ export function TemplateList({
               type="button"
               className="primary"
               onClick={() => {
-                const target = dialog?.template;
+                const target = dialog?.kind === "reimport" ? dialog.template : null;
                 setDialog(null);
                 if (target) void importFile(target.id);
               }}
@@ -442,6 +453,33 @@ export function TemplateList({
             {dialog.error ? <p className="note error" role="alert">{dialog.error}</p> : null}
           </form>
         ) : null}
+      </ResumeDialog>
+      <ResumeDialog
+        open={dialog?.kind === "switch"}
+        tone="warn"
+        title="放弃填到一半的内容？"
+        onCancel={() => setDialog(null)}
+        footer={
+          <>
+            <button type="button" data-autofocus onClick={() => setDialog(null)}>继续填写</button>
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                const target = dialog?.kind === "switch" ? dialog.to : null;
+                setDialog(null);
+                if (target) {
+                  setSelected(target);
+                  setShowDetail(true);
+                }
+              }}
+            >
+              放弃并切换
+            </button>
+          </>
+        }
+      >
+        <p>这份模板里有还没写进去的内容（填到一半的字段、新建分类，或正在保存）。切换到别的模板会丢掉它们。</p>
       </ResumeDialog>
       <ResumeDialog
         open={dialog?.kind === "delete"}

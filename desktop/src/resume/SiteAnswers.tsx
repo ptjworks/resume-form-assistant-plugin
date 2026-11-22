@@ -88,7 +88,7 @@ export function SiteAnswers({ listen }: { listen?: Listen }) {
     setQuery("");
   };
 
-  if (!invoke) return null;
+  if (!invoke) return <p className="site-answers-entry muted">没有连上桌面程序，按公司记住的回答要在桌面程序里查看。</p>;
   const allSites = bySite(answers ?? []);
   const needle = query.trim().toLowerCase();
   // 搜公司名、题目或回答；公司名对上就整家都留着。
@@ -121,7 +121,6 @@ export function SiteAnswers({ listen }: { listen?: Listen }) {
       </button>
       <ResumeDialog
         open={open}
-        wide={confirmSite !== null}
         className={confirmSite === null ? "site-answers-dialog" : undefined}
         tone={confirmSite !== null ? "danger" : "default"}
         title={confirmSite !== null ? "删除这家公司的回答？" : "按公司记住的回答"}
@@ -161,6 +160,7 @@ export function SiteAnswers({ listen }: { listen?: Listen }) {
               return (
                 <section key={site} className="site-answers-site" aria-label={site}>
                   <div className="site-answers-site-head">
+                    <h3 className="site-answers-heading">
                     <button
                       type="button"
                       className="site-answers-toggle"
@@ -172,9 +172,10 @@ export function SiteAnswers({ listen }: { listen?: Listen }) {
                           <path d="M9 6l6 6-6 6" />
                         </svg>
                       </span>
-                      <h3>{site}</h3>
-                      <span className="muted">{total} 条</span>
+                      <span className="site-answers-name">{site}</span>
+                      <span className="muted">{needle ? `命中 ${items.length} 条（共 ${total} 条）` : `${total} 条`}</span>
                     </button>
+                    </h3>
                     <button type="button" disabled={busy} onClick={() => setConfirmSite(site)}>删除这家公司</button>
                   </div>
                   {expanded ? (

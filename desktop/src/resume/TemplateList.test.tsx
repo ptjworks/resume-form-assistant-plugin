@@ -575,3 +575,17 @@ test("导入 Excel 与 AI 解析两个入口仍在「我的模板」标题下、
   const hint = within(card).getByText(/AI 解析发送前会先请你确认/);
   expect(hint.textContent!.length).toBeLessThan(40);
 });
+
+test("「…」菜单：用 Tab 把焦点移出菜单时也收起", async () => {
+  const user = userEvent.setup();
+  mount(() => overview, pickers(null, null));
+  await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历", level: 2 })).toBeTruthy());
+  await openMenu(user);
+  expect(within(detail()).getByRole("menu")).toBeTruthy();
+  await user.tab();
+  await user.tab();
+  await user.tab();
+  await user.tab();
+  await user.tab();
+  expect(within(detail()).queryByRole("menu")).toBeNull();
+});

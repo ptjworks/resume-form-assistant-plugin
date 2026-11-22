@@ -57,7 +57,16 @@ export function MoreMenu({ label, items, disabled = false, align = "left" }: { l
   };
 
   return (
-    <div className="more-menu" ref={root} onKeyDown={onKeyDown}>
+    <div
+      className="more-menu"
+      ref={root}
+      onKeyDown={onKeyDown}
+      // 用 Tab 把焦点移出菜单时也收起；点空白处由上面的 pointerdown 管。
+      onBlur={(event) => {
+        const next = event.relatedTarget;
+        if (open && next instanceof Node && !event.currentTarget.contains(next)) setOpen(false);
+      }}
+    >
       <button
         ref={trigger}
         type="button"

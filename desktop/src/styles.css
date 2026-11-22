@@ -629,10 +629,11 @@ button.danger:hover:not(:disabled) { background: #fcf1f1; border-color: #e3aaaa;
 .site-answers > p { margin: 0; font-size: 13px; }
 .site-answers-site { padding: 10px 16px; border: 1px solid var(--card-line); border-radius: 12px; }
 .site-answers-site-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.site-answers-site-head h3 { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.site-answers-heading { flex: 1; min-width: 0; margin: 0; font-size: 14px; font-weight: 600; }
+.site-answers-name { min-width: 0; overflow-wrap: anywhere; }
 .site-answers-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 0; padding: 2px 0; border: 0; border-radius: 4px; background: transparent; text-align: left; }
 .site-answers-toggle:hover:not(:disabled) { background: transparent; border-color: transparent; }
-.site-answers-toggle .muted { flex: none; font-size: 12px; }
+.site-answers-toggle .muted { flex: none; font-size: 12px; font-weight: 400; }
 .site-answers-search { position: sticky; top: -10px; z-index: 1; margin: 0 -2px; padding: 4px 2px 6px; background: var(--ui-surface); }
 .site-answers-search input { width: 100%; min-height: 34px; border-radius: 8px; border-color: var(--ui-line); font-size: 13px; }
 dialog.resume-dialog.site-answers-dialog { max-width: 720px; height: min(720px, calc(100dvh - 48px)); }

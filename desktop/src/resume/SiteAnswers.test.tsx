@@ -164,3 +164,29 @@ test("搜索按公司、题目或回答找，命中的公司自动展开，其�
   await userEvent.clear(search);
   expect(within(dialog).getAllByRole("region")).toHaveLength(5);
 });
+
+test("搜索时公司名后显示「命中几条（共几条）」", async () => {
+  mount(() => [
+    answer("campus.example.com", "是否有亲属在本公司工作", "否"),
+    answer("campus.example.com", "是否曾在本行实习", "是"),
+  ]);
+  const dialog = await open();
+  expect(within(dialog).getByText("2 条")).toBeTruthy();
+  await userEvent.type(within(dialog).getByRole("searchbox", { name: "搜索公司或题目" }), "实习");
+  expect(within(dialog).getByText("命中 1 条（共 2 条）")).toBeTruthy();
+});
+
+test("公司名标题不嵌在按钮里；确认删除的小窗用默认宽度", async () => {
+  mount(() => [answer("campus.example.com", "是否有亲属在本公司工作", "否")]);
+  const dialog = await open();
+  expect(dialog.querySelector("button h3")).toBeNull();
+  expect(within(dialog).getByRole("heading", { name: /campus\.example\.com/ })).toBeTruthy();
+  await userEvent.click(within(dialog).getByRole("button", { name: "删除这家公司" }));
+  const confirm = await screen.findByRole("dialog", { name: "删除这家公司的回答？" });
+  expect(confirm.className).not.toContain("is-wide");
+});
+
+test("没连上桌面程序时，入口说明原因，不是凭空消失", () => {
+  render(<SiteAnswers />);
+  expect(screen.getByText(/没有连上桌面程序，按公司记住的回答要在桌面程序里查看/)).toBeTruthy();
+});

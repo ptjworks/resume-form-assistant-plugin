@@ -13,13 +13,14 @@ export interface TemplateEditorProbe {
 }
 
 type Part = "key" | "value";
-type Editing = { id: string; part: Part; text: string; error: string | null };
+type Editing = { id: string; part: Part; text: string; error: string | null; busy?: boolean };
 // 在已有分类里待添加的一行（还没写进模板）。同一个分类里可以同时摆好几行。
-type PendingRow = { id: number; key: string; value: string; error: string | null };
+type PendingRow = { id: number; key: string; value: string; error: string | null; busy?: boolean };
 type Adding = Record<string, PendingRow[]>;
-type NewCategory = { name: string; rows: Array<{ key: string; value: string }>; error: string | null };
+type NewCategory = { name: string; rows: Array<{ key: string; value: string }>; error: string | null; busy?: boolean };
 type Status = { tone: "ok" | "warn" | "error"; text: string };
-type Undo = { before: TemplateDraft; text: string };
+// 只记被删的那一个字段和它原来的位置；撤销时把它加回「当前」的内容，不整份回写旧快照。
+type Undo = { category: string; key: string; value: string; index: number; text: string };
 
 const UNDO_MS = 8000;
 
@@ -67,7 +68,8 @@ export function TemplateFields({
   const [draft, setDraftState] = useState<TemplateDraft>(() => templateFields.createDraft(template));
   const draftRef = useRef(draft);
   const baseRef = useRef<string>(template.contentSha256 ?? "");
-  const knownAt = useRef(template.updatedAt);
+  // 自己读到、保存过的版本（内容哈希）。外面读到的版本只要在这里面，就是自己的，不当成别处的修改。
+  const knownShas = useRef<Set<string>>(new Set(template.contentSha256 ? [template.contentSha256] : []));
   const templateRef = useRef(template);
   templateRef.current = template;
   const [saving, setSaving] = useState(false);
@@ -104,7 +106,12 @@ export function TemplateFields({
   };
 
   useEffect(() => {
-    if (!template.contentSha256) void baseOf(template).then((sha) => { if (!baseRef.current) baseRef.current = sha; });
+    if (!template.contentSha256) {
+      void baseOf(template).then((sha) => {
+        if (!baseRef.current) baseRef.current = sha;
+        if (!knownShas.current.size) knownShas.current.add(sha);
+      });
+    }
   }, [template]);
 
   // 「我的信息」只用来提示：删掉的字段在那里还有同名内容时，填写仍可能用到它。
@@ -142,20 +149,25 @@ export function TemplateFields({
   }, [probe]);
 
   // 外面读到更新的版本（插件刚保存过、重新导入了）：没在改东西就直接换成最新内容；
-  // 正在改时先提示，保存时会先核对版本，不会覆盖。比较更新时间是为了不被「自己保存之前发出的旧读取」顶回去。
+  // 正在改时先提示，保存时会先核对版本，不会覆盖。是自己读到或保存过的版本就不理会，
+  // 这样「自己保存之前发出的旧读取」晚到，也不会把界面顶回旧内容。
   useEffect(() => {
-    if (template.updatedAt < knownAt.current) return;
     let cancelled = false;
     void baseOf(template).then((sha) => {
-      if (cancelled || sha === baseRef.current) return;
-      const busy = savingRef.current || editingRef.current || Object.values(addingRef.current).some((rows) => rows.some((row) => row.key.trim() || row.value.trim())) || newCatRef.current;
+      if (cancelled || sha === baseRef.current || knownShas.current.has(sha)) return;
+      const busy =
+        savingRef.current ||
+        editingRef.current ||
+        newCatRef.current ||
+        Object.values(addingRef.current).some((rows) => rows.some((row) => row.key.trim() || row.value.trim()));
       if (busy) {
         setStatus({ tone: "warn", text: "这份模板刚在别处（例如插件侧边栏）更新过。你正在改的内容保存前会先核对，不会覆盖别处的修改。" });
         return;
       }
-      knownAt.current = template.updatedAt;
+      knownShas.current.add(sha);
       baseRef.current = sha;
       setDraft(templateFields.createDraft(template));
+      setUndo(null);
       setStatus({ tone: "warn", text: "这份模板刚在别处更新过，已显示最新内容。" });
     });
     return () => {
@@ -198,7 +210,7 @@ export function TemplateFields({
    */
   const apply = (
     op: (current: TemplateDraft) => TemplateDraft,
-    options: { onInvalid?: (message: string) => void; onApplied?: (before: TemplateDraft) => void; done?: string } = {},
+    options: { onInvalid?: (message: string) => void; onApplied?: (before: TemplateDraft) => void; onFailed?: () => void; done?: string } = {},
   ): Promise<boolean> => {
     const task = async (): Promise<boolean> => {
       if (!invoke) return false;
@@ -211,6 +223,7 @@ export function TemplateFields({
         const message = firstField ?? check.problems[0] ?? "这处改动存不进模板。";
         if (options.onInvalid) options.onInvalid(message);
         else setStatus({ tone: "error", text: message });
+        options.onFailed?.();
         return false;
       }
       savingRef.current = true;
@@ -223,7 +236,7 @@ export function TemplateFields({
           baseSha256: base,
         });
         baseRef.current = await baseOf(saved);
-        knownAt.current = saved.updatedAt;
+        knownShas.current.add(baseRef.current);
         setDraft(next);
         setStatus({ tone: "ok", text: options.done ?? "已保存" });
         options.onApplied?.(before);
@@ -235,11 +248,11 @@ export function TemplateFields({
           const latest = await fetchLatest();
           if ("view" in latest) {
             baseRef.current = await baseOf(latest.view);
-            knownAt.current = latest.view.updatedAt;
+            knownShas.current.add(baseRef.current);
             setDraft(templateFields.createDraft(latest.view));
+            // 只清掉正在改的那一处（字段编号换了）；还没写完的空白行和新建分类表单原样留着。
             setEditing(null);
-            setAdding({});
-            setNewCat(null);
+            setUndo(null);
             setStatus({ tone: "error", text: "这份模板刚在别处（例如插件侧边栏，或重新导入）改过，已换成最新内容。你刚才的修改没有保存，请再改一次。" });
             onReplaced(latest.view);
           } else if ("gone" in latest) {
@@ -254,6 +267,7 @@ export function TemplateFields({
         } else {
           setStatus({ tone: "error", text: `${errorText(error)} 这处修改没有保存。` });
         }
+        options.onFailed?.();
         return false;
       } finally {
         savingRef.current = false;
@@ -276,7 +290,7 @@ export function TemplateFields({
 
   const commitEdit = () => {
     const current = editingRef.current;
-    if (!current) return;
+    if (!current || current.busy) return;
     const { id, part, text } = current;
     const field = draftRef.current.fields.find((item) => item.id === id);
     if (!field) {
@@ -288,8 +302,11 @@ export function TemplateFields({
       setEditing(null);
       return;
     }
+    // 保存期间标「忙」：回车后紧接着点别处，不会把同一处再保存一遍。
+    setEditing({ ...current, busy: true });
     void apply((d) => templateFields.updateField(d, id, { [part]: text }), {
       onInvalid: (message) => setEditing((c) => (c && c.id === id && c.part === part ? { ...c, error: message } : c)),
+      onFailed: () => setEditing((c) => (c && c.id === id && c.part === part ? { ...c, busy: false } : c)),
     }).then((ok) => {
       if (ok) setEditing((c) => (c && c.id === id && c.part === part ? null : c));
     });
@@ -300,6 +317,8 @@ export function TemplateFields({
       event.preventDefault();
       event.stopPropagation();
       cancelBlur.current = true;
+      // 这个标志只管 Esc 引起的那一次失焦；马上清掉，不留给后面别的输入框。
+      window.setTimeout(() => { cancelBlur.current = false; }, 0);
       setEditing(null);
       return;
     }
@@ -322,20 +341,31 @@ export function TemplateFields({
     const field = draftRef.current.fields.find((item) => item.id === id);
     if (!field) return;
     const label = field.key.trim() || "未命名字段";
-    const key = field.key;
+    const { category, key, value } = field;
     void apply((d) => templateFields.removeField(d, id), {
       done: "已删除",
       onApplied: (before) => {
         const fallback = inProfile(key) ? "「我的信息」里还有同名内容，一键填写时仍可能用到。" : "";
-        setUndo({ before, text: `已删除「${label}」。${fallback}` });
+        setUndo({ category, key, value, index: before.fields.findIndex((item) => item.id === id), text: `已删除「${label}」。${fallback}` });
       },
     });
   };
 
+  // 撤销：只把被删的这一个字段加回当前的内容（尽量放回原来的位置）。
+  // 这 8 秒里别处改过模板的话，撤销条会先消失，不会拿旧内容盖掉别处的修改。
   const undoRemove = () => {
     if (!undo) return;
-    const { before } = undo;
-    void apply(() => before, { done: "已撤销删除" });
+    const { category, key, value, index } = undo;
+    void apply(
+      (d) => {
+        const added = templateFields.addField(d, { category, key, value });
+        const fields = added.draft.fields.slice(0, -1);
+        const restored = added.draft.fields[added.draft.fields.length - 1];
+        fields.splice(Math.max(0, Math.min(index, fields.length)), 0, restored);
+        return { ...added.draft, fields };
+      },
+      { done: "已撤销删除" },
+    );
   };
 
   const moveField = (id: string, category: string) => {
@@ -368,14 +398,19 @@ export function TemplateFields({
   // chain：回车提交、保存成功后，如果已经没有空白行了，就再补一行，方便接着填。
   const commitRow = (category: string, id: number, chain = false) => {
     const row = (addingRef.current[category] ?? []).find((item) => item.id === id);
-    if (!row) return;
+    if (!row || row.busy) return;
     if (!row.key.trim()) {
       if (row.value.trim()) patchRow(category, id, { error: "请填字段名称。" });
       return;
     }
+    // 保存期间标「忙」：回车后紧接着点别处，同一行不会被存两次。
+    patchRow(category, id, { busy: true });
     void apply(
       (d) => templateFields.addField(d, { category, key: row.key, value: row.value }).draft,
-      { onInvalid: (message) => patchRow(category, id, { error: message }) },
+      {
+        onInvalid: (message) => patchRow(category, id, { error: message }),
+        onFailed: () => patchRow(category, id, { busy: false }),
+      },
     ).then((ok) => {
       if (!ok) return;
       const stillBlank = (addingRef.current[category] ?? []).some((item) => item.id !== id && !item.key.trim() && !item.value.trim());
@@ -389,6 +424,7 @@ export function TemplateFields({
       event.preventDefault();
       event.stopPropagation();
       cancelBlur.current = true;
+      window.setTimeout(() => { cancelBlur.current = false; }, 0);
       dropRow(category, id);
       return;
     }
@@ -422,7 +458,7 @@ export function TemplateFields({
 
   const createCategory = () => {
     const current = newCatRef.current;
-    if (!current) return;
+    if (!current || current.busy) return;
     const rows = current.rows.filter((row) => row.key.trim() || row.value.trim());
     if (!current.name.trim()) {
       setNewCat({ ...current, error: "请填分类名称。" });
@@ -442,9 +478,14 @@ export function TemplateFields({
       return;
     }
     const category = created.category;
+    setNewCat({ ...current, busy: true });
     void apply(
       (d) => rows.reduce((acc, row) => templateFields.addField(acc, { category, key: row.key, value: row.value }).draft, templateFields.addCategory(d, current.name).draft),
-      { onInvalid: (message) => setNewCat((cur) => (cur ? { ...cur, error: message } : cur)), done: `已新建分类「${category}」` },
+      {
+        onInvalid: (message) => setNewCat((cur) => (cur ? { ...cur, error: message } : cur)),
+        onFailed: () => setNewCat((cur) => (cur ? { ...cur, busy: false } : cur)),
+        done: `已新建分类「${category}」`,
+      },
     ).then((ok) => {
       if (ok) {
         reveal(category);
@@ -477,6 +518,8 @@ export function TemplateFields({
 
   const warnings = useMemo(() => templateFields.validateDraft(draft).warnings, [draft]);
   const categories = draft.categories;
+  // 已保存字段删光的分类会从草稿里消失；但它里面还有没写完的空白行时，仍要显示，不能让那几行看不见。
+  const shownCategories = [...categories, ...Object.keys(adding).filter((name) => !categories.includes(name))];
 
   const addRows = (category: string) =>
     (adding[category] ?? []).map((row) => (
@@ -533,7 +576,7 @@ export function TemplateFields({
       ) : null}
       {warnings.length ? <p className="resume-hint warn">{warnings.join(" ")}</p> : null}
       <div className="template-preview template-edit-groups" ref={listRef}>
-        {categories.map((category) => {
+        {shownCategories.map((category) => {
           const rows = draft.fields.filter((field) => field.category === category);
           const open = !collapsed.includes(category);
           return (
@@ -687,7 +730,7 @@ export function TemplateFields({
             {newCat.error ? <p className="note error tpl-field-error" role="alert">{newCat.error}</p> : null}
             <div className="tpl-newcat-actions">
               <button type="button" onClick={() => setNewCat(null)}>取消</button>
-              <button type="button" className="primary" disabled={saving} onClick={createCategory}>创建分类</button>
+              <button type="button" className="primary" disabled={saving || newCat.busy} onClick={createCategory}>创建分类</button>
             </div>
           </div>
         ) : (
