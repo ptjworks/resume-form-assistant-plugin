@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { TodoView } from './api.ts';
 import { mountTodos } from './todos-ui.ts';
@@ -355,7 +355,7 @@ test('逾期：月历上方一行写数量，点「跳到最早一天」切到�
   await loud.show();
   assert.equal(loud.el("todo-digest").hidden, false);
   assert.match(loud.el("todo-digest").innerHTML, /2 条已逾期/);
-  assert.match(loud.el("todo-digest").innerHTML, /跳到最早一天/);
+  assert.equal(loud.el("todo-digest").attributes["aria-label"], "2 条已逾期，点击跳到最早一天", "是标题行里的小标签，点一下跳转");
   assert.doesNotMatch(loud.el("todo-digest").innerHTML, /提醒过/, "说的是到期没做，不是提醒过了");
   assert.equal(loud.called("overdue_digest_cmd").length, 0, "逾期数量在本地算，不去消费那条「只报一次」的汇总");
 
@@ -694,4 +694,42 @@ test('编辑时分钟不在 5 分钟档上（14:32），补一个选项，不悄
   await h.el("todo-form").emit("submit");
   const args = h.called("edit_todo_cmd").at(0)?.args?.args as Record<string, unknown>;
   assert.equal(args.dueAtUtc, "2026-09-20T06:32:00.000Z");
+});
+
+test('状态提示是浮着的小条：成功几秒后自己消失，出问题的带 × 不自动消失', async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const h = harness((name) =>
+      name === "create_todo_cmd"
+        ? { todo: todo({ reminderState: "unsupported" }), reminderProblem: "不认识的时区：Mars/Olympus_Mons" }
+        : undefined,
+    );
+    await h.show();
+
+    // 先来一个成功：保存没问题。
+    const ok = harness();
+    await ok.show();
+    ok.el("todo-title").value = "二面";
+    ok.el("todo-application").value = "a1";
+    await ok.el("todo-form").emit("submit");
+    assert.match(ok.el("todo-status").textContent, /已添加/);
+    assert.equal(ok.el("todo-toast").hidden, false);
+    assert.equal(ok.el("todo-toast-close").hidden, true, "成功的不用关，会自己消失");
+    mock.timers.tick(3000);
+    assert.equal(ok.el("todo-toast").hidden, true);
+    assert.equal(ok.el("todo-status").textContent, "");
+
+    // 保存成功但提醒没登记上：留着，等用户关。
+    h.el("todo-title").value = "三面";
+    h.el("todo-application").value = "a1";
+    await h.el("todo-form").emit("submit");
+    assert.match(h.el("todo-status").textContent, /Mars/);
+    assert.equal(h.el("todo-toast-close").hidden, false);
+    mock.timers.tick(60_000);
+    assert.equal(h.el("todo-toast").hidden, false, "出问题的不自动消失");
+    await h.el("todo-toast-close").emit("click");
+    assert.equal(h.el("todo-toast").hidden, true);
+  } finally {
+    mock.timers.reset();
+  }
 });

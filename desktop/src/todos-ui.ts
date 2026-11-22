@@ -142,6 +142,9 @@ function writeClock(hour: HTMLSelectElement, minute: HTMLSelectElement, clock: s
   minute.value = m;
 }
 
+/** 成功、普通提示显示多久（毫秒）。 */
+const TOAST_MS = 3000;
+
 /** 月历格里最多直接画几条胶囊，多出来的收进「+N」。 */
 const PILLS_PER_CELL = 2;
 
@@ -153,7 +156,9 @@ export function mountTodos(
   const board = must("todo-list");
   const side = must("todo-detail");
   const status = must("todo-status");
-  const digest = must("todo-digest");
+  const toast = must("todo-toast");
+  const toastClose = must("todo-toast-close");
+  const digest = must<HTMLButtonElement>("todo-digest");
   const titleEl = must("cal-title");
   const undatedSummary = must("todo-undated-summary");
   const undatedList = must("todo-undated-list");
@@ -208,9 +213,24 @@ export function mountTodos(
   let acting = false;
   let opener: HTMLElement | null = null;
 
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * 状态提示是浮在月历下方的小条，不占版面。成功和普通提示几秒后自己消失；
+   * 出了问题的（保存失败、提醒没登记上）不自动消失，带 × 由用户关。
+   */
   function say(message: Message | null) {
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
     status.textContent = message?.text ?? "";
     status.className = message ? `note ${message.tone}` : "note";
+    toast.hidden = !message;
+    const sticky = message?.tone === "warn" || message?.tone === "pending";
+    toastClose.hidden = !sticky;
+    if (message && !sticky) {
+      toastTimer = setTimeout(() => say(null), TOAST_MS);
+      (toastTimer as { unref?: () => void }).unref?.();
+    }
   }
 
   function sayInForm(message: Message | null) {
@@ -358,13 +378,16 @@ export function mountTodos(
     return `<div class="pane-error" role="alert"><p class="note warn">${escapeHtml(listError)}</p><button type="button" data-todo-retry>重新读取</button></div>`;
   }
 
-  /** 月历上方：「N 条已逾期 · 跳到最早一天」。说的是到期没做，不是提醒过了。 */
+  /** 标题行里的红色小标签：「4 条已逾期」，点一下跳到最早那天。说的是到期没做，不是提醒过了。 */
   function renderDigest() {
     const summary = summarizeOverdue(todos, now());
     const message = describeDigest(summary.count, 0);
     digest.hidden = !message || !loaded;
     if (!message) return;
-    digest.innerHTML = `<span>${escapeHtml(message.text)}</span>${summary.earliest ? ' · <button type="button" class="link-button" data-jump-overdue>跳到最早一天</button>' : ""}`;
+    digest.innerHTML = `<span class="cal-overdue-dot" aria-hidden="true"></span>${escapeHtml(message.text)}`;
+    digest.disabled = !summary.earliest;
+    digest.title = summary.earliest ? "跳到最早一条逾期的日程" : "";
+    digest.setAttribute("aria-label", `${message.text}${summary.earliest ? "，点击跳到最早一天" : ""}`);
   }
 
   /** 底部折叠条：数量一直显示，折叠着也看得见。 */
@@ -886,8 +909,8 @@ remindAtUtc: currentRemind(),
     selectDay(todayDay());
     renderKeepingFocus();
   });
-  digest.addEventListener("click", (event) => {
-    if (!(event.target as HTMLElement | null)?.closest("[data-jump-overdue]")) return;
+  toastClose.addEventListener("click", () => say(null));
+  digest.addEventListener("click", () => {
     const earliest = summarizeOverdue(todos, now()).earliest;
     if (!earliest) return;
     selectDay(earliest.day, earliest.id);

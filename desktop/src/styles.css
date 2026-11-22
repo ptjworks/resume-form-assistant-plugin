@@ -775,7 +775,7 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 /* 日历页（#551）：左侧完整月历 + 右侧常驻选中日详情。只用 --ui-* 变量。
    窄于 760px 时右栏落到月历下面，整页纵向滚动。 */
 #view-todos { height: 100%; min-height: 0; padding: 0; background: var(--ui-canvas); font-family: var(--ui-font); color: var(--ui-ink); overflow: hidden; }
-.cal-shell { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
+.cal-shell { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 36%, 460px); }
 .cal-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 16px 20px 16px 24px; overflow: auto; }
 .cal-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .cal-head-title { display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -787,9 +787,16 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .cal-today { padding: 0 12px; }
 .cal-head > button.primary { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 14px; border-radius: 8px; background: var(--ui-brand); border-color: var(--ui-brand); font-size: 13px; }
 .cal-head > button.primary:hover:not(:disabled) { background: var(--ui-brand-hover); border-color: var(--ui-brand-hover); }
-.cal-overdue { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; margin: 0; padding: 6px 12px; border: 1px solid var(--ui-danger-line); border-radius: 8px; background: var(--ui-danger-pale); color: var(--ui-danger); font-size: 12.5px; }
-.cal-overdue .link-button { color: var(--ui-danger); text-decoration: underline; text-underline-offset: 2px; }
-#todo-status { flex: none; margin: 0; font-size: 12.5px; }
+/* 逾期提示：标题行里的小标签，不占整行。 */
+.cal-overdue-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 11px 0 9px; border: 1px solid var(--ui-danger-line); border-radius: 13px; background: var(--ui-danger-pale); color: var(--ui-danger); font-size: 12.5px; white-space: nowrap; }
+.cal-overdue-chip:hover:not(:disabled) { background: #fee2e2; border-color: var(--ui-danger-line); }
+.cal-overdue-chip:disabled { opacity: 1; cursor: default; }
+.cal-overdue-dot { width: var(--ui-dot-size); height: var(--ui-dot-size); border-radius: 50%; background: var(--ui-danger); }
+/* 状态提示：浮在左侧栏底部，出现和消失都不会把月历顶动。 */
+.cal-toast { position: fixed; z-index: 20; left: 24px; bottom: 18px; display: flex; align-items: center; gap: 8px; max-width: min(520px, calc(100% - clamp(360px, 36%, 460px) - 48px)); padding: 8px 12px; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); box-shadow: 0 6px 20px #18181b1a; }
+.cal-toast .note { margin: 0; font-size: 13px; }
+.cal-toast-close { flex: none; display: grid; place-items: center; width: 22px; min-height: 22px; padding: 0; border: 0; border-radius: 11px; background: transparent; color: var(--ui-muted); font-size: 16px; line-height: 1; }
+.cal-toast-close:hover:not(:disabled) { background: var(--ui-line-soft); color: var(--ui-ink); }
 #todo-status:empty, #todo-form-status:empty, #inbox-paste-status:empty { display: none; }
 .cal-board { flex: 1 0 auto; display: flex; flex-direction: column; }
 .cal-board .pane-error { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -900,6 +907,7 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
   #view-todos { overflow: auto; }
   .cal-shell { height: auto; min-height: 100%; grid-template-columns: minmax(0, 1fr); }
   .cal-main { overflow: visible; padding: 14px 16px; }
+  .cal-toast { left: 16px; max-width: calc(100% - 32px); }
   .cal-side { border-left: 0; border-top: 1px solid var(--ui-line); }
   .cal-side-body { overflow: visible; }
 }

@@ -223,11 +223,14 @@
                     <button type="button" id="cal-next" class="cal-nav-btn" aria-label="下个月"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
                     <button type="button" id="cal-today" class="cal-today">今天</button>
                   </div>
+                  <button type="button" id="todo-digest" class="cal-overdue-chip" data-jump-overdue hidden></button>
                 </div>
                 <button type="button" id="todo-new" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>新增日程</button>
               </header>
-              <p id="todo-digest" class="cal-overdue" role="status" hidden></p>
-              <p id="todo-status" class="note" role="status"></p>
+              <div id="todo-toast" class="cal-toast" hidden>
+                <p id="todo-status" class="note" role="status"></p>
+                <button type="button" id="todo-toast-close" class="cal-toast-close" aria-label="关闭提示" hidden>×</button>
+              </div>
               <div id="todo-list" class="cal-board" aria-label="月历"></div>
               <div class="cal-folds">
                 <details id="todo-undated" class="cal-fold">
