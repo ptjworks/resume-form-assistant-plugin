@@ -50,6 +50,7 @@ fn seeded(paths: &RestorePaths) -> (ArchiveStore, String) {
             remind_at_utc: None,
             interview_round: Some(1),
             source_event_id: None,
+            kind: None,
         })
         .unwrap();
     store
@@ -314,6 +315,7 @@ fn a_restore_clears_the_reminder_bookkeeping_but_keeps_the_overdue_acknowledgeme
             remind_at_utc: None,
             interview_round: None,
             source_event_id: None,
+            kind: None,
         })
         .unwrap();
     store.ack_overdue(&[acked.id.clone()], NOW).unwrap();

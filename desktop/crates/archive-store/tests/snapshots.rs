@@ -342,6 +342,7 @@ fn a_version_one_archive_is_upgraded_with_a_backup() {
             remind_at_utc: None,
             interview_round: None,
             source_event_id: None,
+            kind: None,
         })
         .unwrap();
     assert_eq!(todo.reminder_state, ReminderState::None);

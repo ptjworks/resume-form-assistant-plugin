@@ -10,7 +10,7 @@ use crate::tx::{new_uuid, StoreTx};
 
 const TODO_COLUMNS: &str = "id, application_id, title, due_precision, due_at_utc, due_date, \
      time_zone, remind_at_utc, status, interview_round, source_event_id, created_at, updated_at, \
-     reminder_scheduled_for_utc, reminder_handle, reminder_state, overdue_ack_at";
+     reminder_scheduled_for_utc, reminder_handle, reminder_state, overdue_ack_at, kind";
 
 #[derive(Debug, Clone, Default)]
 pub struct TodoPatch {
@@ -19,6 +19,8 @@ pub struct TodoPatch {
     pub time_zone: Option<Option<String>>,
     pub remind_at_utc: Option<Option<String>>,
     pub interview_round: Option<Option<i64>>,
+    /// 不给表示不动；显式给 `None` 表示清掉类型（回到按标题推断）。
+    pub kind: Option<Option<TodoKind>>,
 }
 
 fn normalize_reminder(value: Option<&str>) -> Result<Option<String>, StoreError> {
@@ -56,8 +58,8 @@ impl StoreTx<'_> {
         let id = new_uuid();
         self.conn().execute(
             "INSERT INTO todos (id, application_id, title, due_precision, due_at_utc, due_date, \
-             time_zone, remind_at_utc, status, interview_round, source_event_id, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open', ?9, ?10, ?11, ?11)",
+             time_zone, remind_at_utc, status, interview_round, source_event_id, created_at, updated_at, kind) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open', ?9, ?10, ?11, ?11, ?12)",
             params![
                 id,
                 input.application_id,
@@ -70,6 +72,7 @@ impl StoreTx<'_> {
                 input.interview_round,
                 input.source_event_id,
                 now,
+                input.kind.map(|kind| kind.as_str()),
             ],
         )?;
         let draft = EventDraft {
@@ -119,13 +122,15 @@ impl StoreTx<'_> {
         let tz = patch.time_zone.unwrap_or(current.time_zone.clone());
         let remind = patch.remind_at_utc.unwrap_or(current.remind_at_utc.clone());
         let round = patch.interview_round.unwrap_or(current.interview_round);
+        let kind = patch.kind.unwrap_or(current.kind);
         let remind = normalize_reminder(remind.as_deref())?;
         validate_round(round)?;
         let now = now_utc();
         self.conn().execute(
             "UPDATE todos SET title = ?1, due_precision = ?2, due_at_utc = ?3, due_date = ?4, \
-             time_zone = ?5, remind_at_utc = ?6, interview_round = ?7, updated_at = ?8 WHERE id = ?9",
-            params![title, precision, due_at, due_date, tz, remind, round, now, id],
+             time_zone = ?5, remind_at_utc = ?6, interview_round = ?7, updated_at = ?8, kind = ?10 \
+             WHERE id = ?9",
+            params![title, precision, due_at, due_date, tz, remind, round, now, id, kind.map(|k| k.as_str())],
         )?;
         self.get_todo(id)?
             .ok_or_else(|| StoreError::Internal("todo vanished in same transaction".into()))
@@ -375,5 +380,6 @@ pub(crate) fn map_todo_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Todo> {
         reminder_handle: r.get(14)?,
         reminder_state: ReminderState::from_str(&r.get::<_, String>(15)?),
         overdue_ack_at: r.get(16)?,
+        kind: r.get::<_, Option<String>>(17)?.and_then(|raw| TodoKind::parse(&raw)),
     })
 }

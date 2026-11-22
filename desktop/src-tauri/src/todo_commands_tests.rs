@@ -102,6 +102,7 @@ fn new_args(app: &str, precision: &str, at: Option<&str>, date: Option<&str>) ->
         remind_at_utc: None,
         interview_round: None,
         source_event_id: None,
+        kind: None,
     }
 }
 
@@ -215,6 +216,7 @@ fn rescheduling_cancels_the_previous_plan_before_registering_the_new_one() {
             time_zone: None,
             remind_at_utc: None,
             interview_round: None,
+            kind: None,
         },
         now(),
     )
@@ -458,4 +460,56 @@ fn the_json_keys_the_todo_view_exposes_are_pinned() {
     let dumped = json.to_string();
     assert!(!dumped.contains("reminderHandle"), "{dumped}");
     assert!(!dumped.contains("archive"), "{dumped}");
+}
+
+#[test]
+fn the_kind_the_user_picked_is_saved_shown_kept_on_edit_and_cleared_only_by_an_explicit_null() {
+    let (_dir, store, app) = archive();
+    let scheduler = FakeScheduler::default();
+    let mut args = new_args(&app, "none", None, None);
+    args.kind = Some("assessment".into());
+    let created = create_todo(&store, &scheduler, args, now()).unwrap();
+    assert_eq!(created.todo.kind.as_deref(), Some("assessment"));
+
+    // 编辑时不带 kind：不动。
+    let edit: EditTodoArgs = serde_json::from_value(json!({ "id": created.todo.id, "title": "改名" })).unwrap();
+    let kept = edit_todo(&store, &scheduler, edit, now()).unwrap();
+    assert_eq!(kept.todo.kind.as_deref(), Some("assessment"));
+
+    // 换成另一类。
+    let edit: EditTodoArgs = serde_json::from_value(json!({ "id": created.todo.id, "kind": "other" })).unwrap();
+    assert_eq!(edit_todo(&store, &scheduler, edit, now()).unwrap().todo.kind.as_deref(), Some("other"));
+
+    // 显式 null 才是清掉，回到按标题推断。
+    let edit: EditTodoArgs = serde_json::from_value(json!({ "id": created.todo.id, "kind": null })).unwrap();
+    assert_eq!(edit_todo(&store, &scheduler, edit, now()).unwrap().todo.kind, None);
+}
+
+#[test]
+fn an_unknown_kind_is_refused_instead_of_stored_as_something_else() {
+    let (_dir, store, app) = archive();
+    let scheduler = FakeScheduler::default();
+    let mut args = new_args(&app, "none", None, None);
+    args.kind = Some("coffee".into());
+    let error = create_todo(&store, &scheduler, args, now()).unwrap_err();
+    assert_eq!(error.code, "VALIDATION");
+    assert!(store.list_todos(None, None, None, 10, 0).unwrap().is_empty(), "拒绝了就不写入");
+
+    // 空串当没选。
+    let mut blank = new_args(&app, "none", None, None);
+    blank.kind = Some("  ".into());
+    assert_eq!(create_todo(&store, &scheduler, blank, now()).unwrap().todo.kind, None);
+}
+
+#[test]
+fn the_todo_view_json_carries_kind_as_a_camel_case_key() {
+    let (_dir, store, app) = archive();
+    let scheduler = FakeScheduler::default();
+    let mut args = new_args(&app, "none", None, None);
+    args.kind = Some("interview".into());
+    let created = create_todo(&store, &scheduler, args, now()).unwrap();
+    let json = serde_json::to_value(&created.todo).unwrap();
+    assert_eq!(json["kind"], "interview");
+    let bare = create_todo(&store, &scheduler, new_args(&app, "none", None, None), now()).unwrap();
+    assert!(serde_json::to_value(&bare.todo).unwrap().get("kind").is_some_and(|value| value.is_null()), "没选过是 null，不是缺字段");
 }
