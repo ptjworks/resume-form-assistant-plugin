@@ -213,31 +213,42 @@
         </section>
 
         <section id="view-todos" class="view hidden">
-          <header class="todo-page-header workspace-title-row">
-            <div class="todo-page-title">
-              <span class="todo-page-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg></span>
-              <div class="todo-page-heading">
-                <h1>待办</h1>
-                <span id="todo-digest" role="status" hidden></span>
-              </div>
-            </div>
-            <button type="button" id="todo-new" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>新增待办</button>
-          </header>
-          <div id="todo-shell" class="workspace-shell">
-            <div class="workspace-list-card todo-list-card">
-              <div class="todo-list-head">
-                <div id="todo-filter" class="segmented" role="group" aria-label="任务状态"></div>
-              </div>
+          <div id="todo-shell" class="cal-shell">
+            <section class="cal-main" aria-label="月历">
+              <header class="cal-head">
+                <div class="cal-head-title">
+                  <h1 id="cal-title" aria-live="polite">日历</h1>
+                  <div class="cal-nav" role="group" aria-label="切换月份">
+                    <button type="button" id="cal-prev" class="cal-nav-btn" aria-label="上个月"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button>
+                    <button type="button" id="cal-next" class="cal-nav-btn" aria-label="下个月"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+                    <button type="button" id="cal-today" class="cal-today">今天</button>
+                  </div>
+                </div>
+                <button type="button" id="todo-new" class="primary"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>新增日程</button>
+              </header>
+              <p id="todo-digest" class="cal-overdue" role="status" hidden></p>
               <p id="todo-status" class="note" role="status"></p>
-              <div id="todo-list" class="workspace-list-scroll" aria-label="待办列表"></div>
-            </div>
-            <div id="todo-detail" class="workspace-detail-card" role="region" aria-label="待办详情"></div>
+              <div id="todo-list" class="cal-board" aria-label="月历"></div>
+              <div class="cal-folds">
+                <details id="todo-undated" class="cal-fold">
+                  <summary id="todo-undated-summary">未设具体日期的待办 (0)</summary>
+                  <div id="todo-undated-list" class="cal-undated"></div>
+                </details>
+                <details class="cal-fold todo-reminder-help">
+                  <summary>提醒什么时候会响</summary>
+                  <div class="cal-fold-body">
+                    <p id="todo-reminder-note" class="note"></p>
+                    <ul id="todo-lifecycle" class="cal-lifecycle"></ul>
+                  </div>
+                </details>
+              </div>
+            </section>
+            <aside id="todo-detail" class="cal-side" aria-label="选中日期的日程"></aside>
           </div>
-          <details class="todo-reminder-help"><summary>系统提醒说明</summary><p id="todo-reminder-note" class="note"></p></details>
           <dialog id="todo-dialog" class="resume-dialog" aria-labelledby="todo-form-heading">
             <form id="todo-form" class="dialog-form" novalidate>
               <div class="resume-dialog-head">
-                <h2 id="todo-form-heading">新增待办</h2>
+                <h2 id="todo-form-heading">新增日程</h2>
               </div>
               <div class="resume-dialog-body">
                 <div id="todo-no-apps" class="dialog-callout" hidden>
@@ -292,7 +303,7 @@
               </div>
               <div class="resume-dialog-actions">
                 <button id="todo-cancel" type="button">取消</button>
-                <button id="todo-submit" type="submit" class="primary">添加待办</button>
+                <button id="todo-submit" type="submit" class="primary">添加日程</button>
               </div>
             </form>
           </dialog>
