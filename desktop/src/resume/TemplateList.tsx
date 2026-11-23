@@ -34,8 +34,8 @@ type Dialog =
   | { kind: "reimport"; template: TemplateSummary }
   | { kind: "rename"; template: TemplateSummary; draft: string; error: string | null }
   | { kind: "delete"; template: TemplateSummary; error: string | null }
-  // to 为 null 是「导入 Excel」：导入完会自动切到新模板。
-  | { kind: "switch"; to: string | null };
+  // 填到一半的内容会因为下面这件事丢掉：先问一句，确认了再做 then。
+  | { kind: "discard"; then: () => void; verb: string; why: string };
 
 type Preview = { id: string; view: ResumeTemplateView } | { id: string; error: string };
 
@@ -131,14 +131,19 @@ export function TemplateList({
     null;
   const selectedId = selectedTemplate?.id ?? null;
 
-  // 换一份模板看：字段里有填到一半的内容（或正在保存）时先问，不悄悄丢掉。
+  // 字段里有填到一半的内容（或正在保存）时，做会丢掉它们的事之前先问一句，不悄悄丢掉。
+  const guardDiscard = (verb: string, why: string, then: () => void) => {
+    if (fieldsProbe.current?.dirty()) setDialog({ kind: "discard", then, verb, why });
+    else then();
+  };
+
+  // 换一份模板看。
   const chooseTemplate = (id: string) => {
-    if (id !== selectedId && fieldsProbe.current?.dirty()) {
-      setDialog({ kind: "switch", to: id });
-      return;
-    }
-    setSelected(id);
-    setShowDetail(true);
+    if (id === selectedId) return;
+    guardDiscard("放弃并切换", "切换到别的模板会丢掉它们。", () => {
+      setSelected(id);
+      setShowDetail(true);
+    });
   };
 
   // 预览按需读。重新导入会原地覆盖同一个模板 id，所以 updatedAt / fieldCount 变了要再读一次，
@@ -341,10 +346,7 @@ export function TemplateList({
             </div>
             <div className="template-create">
               {parse?.trigger}
-              <button type="button" disabled={busy || !pickers || !overview} onClick={() => {
-                  if (fieldsProbe.current?.dirty()) setDialog({ kind: "switch", to: null });
-                  else void importFile(null);
-                }}>
+              <button type="button" title="支持 .xlsx 和 UTF-8 编码的 .csv，三列：一级分类、字段名、值" disabled={busy || !pickers || !overview} onClick={() => guardDiscard("放弃并导入", "导入完会自动切到新模板，这些内容会丢掉。", () => void importFile(null))}>
                 导入 Excel
               </button>
             </div>
@@ -364,7 +366,7 @@ export function TemplateList({
               canUseFiles={Boolean(pickers)}
               preview={preview?.id === selectedTemplate.id ? preview : null}
               onBack={() => setShowDetail(false)}
-              onReimport={() => setDialog({ kind: "reimport", template: selectedTemplate })}
+              onReimport={() => guardDiscard("放弃并重新导入", "重新导入会用文件里的内容替换这份模板，这些内容会丢掉。", () => setDialog({ kind: "reimport", template: selectedTemplate }))}
               onExport={() => void exportTemplate(selectedTemplate)}
               editorProbe={fieldsProbe}
               onFieldsSaved={(view) => {
@@ -376,7 +378,7 @@ export function TemplateList({
                 void reload();
               }}
               onRename={() => setDialog({ kind: "rename", template: selectedTemplate, draft: selectedTemplate.name, error: null })}
-              onDelete={() => setDialog({ kind: "delete", template: selectedTemplate, error: null })}
+              onDelete={() => guardDiscard("放弃并删除", "删除这份模板后，这些内容也就没有了。", () => setDialog({ kind: "delete", template: selectedTemplate, error: null }))}
               onRetryPreview={() => {
                 setPreview(null);
                 setPreviewAttempt((n) => n + 1);
@@ -463,7 +465,7 @@ export function TemplateList({
         ) : null}
       </ResumeDialog>
       <ResumeDialog
-        open={dialog?.kind === "switch"}
+        open={dialog?.kind === "discard"}
         tone="warn"
         title="放弃填到一半的内容？"
         onCancel={() => setDialog(null)}
@@ -474,21 +476,17 @@ export function TemplateList({
               type="button"
               className="danger"
               onClick={() => {
-                const target = dialog?.kind === "switch" ? dialog.to : undefined;
+                const next = dialog?.kind === "discard" ? dialog.then : null;
                 setDialog(null);
-                if (target === null) void importFile(null);
-                else if (target) {
-                  setSelected(target);
-                  setShowDetail(true);
-                }
+                next?.();
               }}
             >
-              {dialog?.kind === "switch" && dialog.to === null ? "放弃并导入" : "放弃并切换"}
+              {dialog?.kind === "discard" ? dialog.verb : "放弃"}
             </button>
           </>
         }
       >
-        <p>这份模板里有还没写进去的内容（填到一半的字段、新建分类，或正在保存）。{dialog?.kind === "switch" && dialog.to === null ? "导入完会自动切到新模板，这些内容会丢掉。" : "切换到别的模板会丢掉它们。"}</p>
+        <p>这份模板里有还没写进去的内容（填到一半的字段、新建分类，或正在保存）。{dialog?.kind === "discard" ? dialog.why : ""}</p>
       </ResumeDialog>
       <ResumeDialog
         open={dialog?.kind === "delete"}
@@ -567,7 +565,7 @@ function TemplateDetail(props: {
               disabled={busy}
               items={[
                 { label: "重新导入", disabled: !canUseFiles, onSelect: props.onReimport },
-                { label: "导出 Excel", disabled: !canUseFiles, title: "导出的是此刻的内容；之后再改字段，需要重新导出", onSelect: props.onExport },
+                { label: "导出 Excel", disabled: !canUseFiles, title: "导出的是已保存的内容；之后再改字段，需要重新导出", onSelect: props.onExport },
                 { label: "重命名", onSelect: props.onRename },
                 { label: "删除", danger: true, onSelect: props.onDelete },
               ]}

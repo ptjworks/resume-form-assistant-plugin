@@ -726,6 +726,10 @@ test("保存还没返回时，输入框先只读，保存的就是看到的内�
   await waitFor(() => expect((within(form).getByLabelText("内容") as HTMLTextAreaElement).readOnly).toBe(true));
   expect((within(form).getByLabelText("字段名称") as HTMLInputElement).readOnly).toBe(true);
   await waitFor(() => expect(saves(calls)).toHaveLength(1));
+  // 等这一处完整保存完（行变成正式字段，并补好下一行空白），再测下一段。
+  await waitFor(() => expect(within(basic).getByRole("group", { name: "邮箱" })).toBeTruthy());
+  await user.keyboard("{Escape}");
+  saveDelay = 150;
 
   // 改已有字段同理：回车后输入框只读，直到保存完。
   await user.click(within(row("姓名")).getByRole("button", { name: "修改「姓名」的内容" }));
@@ -898,4 +902,46 @@ test("AI 解析出了新模板、要自动选中它时，如果正有填到一�
   await user.click(within(detail()).getByRole("button", { name: "取消" }));
   signal(2, "t2");
   await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历", level: 2 })).toBeTruthy());
+});
+
+test("回车保存还没返回时你已经去改别的字段：不会把光标抢回新开的空白行", async () => {
+  const user = userEvent.setup();
+  mount();
+  await ready();
+  saveDelay = 120;
+  const basic = within(detail()).getByRole("region", { name: "分类：基本信息" });
+  await user.click(within(basic).getByRole("button", { name: "在「基本信息」添加字段" }));
+  const form = within(basic).getByRole("group", { name: "在「基本信息」添加字段" });
+  await user.type(within(form).getByLabelText("字段名称"), "邮箱");
+  await user.type(within(form).getByLabelText("内容"), "a@example.test{Enter}");
+  // 保存还没返回，去点另一个字段开始改。
+  await user.click(within(row("姓名")).getByRole("button", { name: "修改「姓名」的内容" }));
+  const box = within(row("姓名")).getByLabelText("内容") as HTMLTextAreaElement;
+  await waitFor(() => expect(within(basic).getByRole("group", { name: "邮箱" })).toBeTruthy());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  // 光标仍在正在改的那个字段上，没有多出抢焦点的空白行。
+  expect(document.activeElement).toBe(box);
+  expect(within(basic).queryByRole("group", { name: "在「基本信息」添加字段" })).toBeNull();
+});
+
+test("填到一半时点「重新导入」「删除」，也先确认是否放弃", async () => {
+  const user = userEvent.setup();
+  mount();
+  await ready();
+  await user.click(within(detail()).getByRole("button", { name: "新建分类" }));
+  await user.type(within(detail()).getByLabelText("分类名称"), "求职意向");
+  for (const [item, verb, next] of [["重新导入", "放弃并重新导入", "覆盖这份模板？"], ["删除", "放弃并删除", "删除「校招简历」？"]] as const) {
+    await user.click(within(detail()).getByRole("button", { name: "更多操作" }));
+    await user.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: item }));
+    const ask = await screen.findByRole("dialog", { name: "放弃填到一半的内容？" });
+    // 先选「继续填写」：什么都不发生，表单还在。
+    await user.click(within(ask).getByRole("button", { name: "继续填写" }));
+    expect((within(detail()).getByLabelText("分类名称") as HTMLInputElement).value).toBe("求职意向");
+    await user.click(within(detail()).getByRole("button", { name: "更多操作" }));
+    await user.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: item }));
+    await user.click(within(await screen.findByRole("dialog", { name: "放弃填到一半的内容？" })).getByRole("button", { name: verb }));
+    // 确认放弃后，才进入原来的确认。
+    const original = await screen.findByRole("dialog", { name: next });
+    await user.click(within(original).getByRole("button", { name: "取消" }));
+  }
 });

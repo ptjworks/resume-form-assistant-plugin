@@ -450,8 +450,10 @@ export function TemplateFields({
     ).then((ok) => {
       if (!ok) return;
       const stillBlank = (addingRef.current[category] ?? []).some((item) => item.id !== id && !item.key.trim() && !item.value.trim());
+      // 光标还在这一行里才接着开新的一行；保存期间你已经去点了别处，就不要把光标抢回来。
+      const focusStillHere = Boolean(listRef.current?.querySelector(`[data-add-id="${id}"]`)?.contains(document.activeElement));
       dropRow(category, id);
-      if (chain && !stillBlank) startAdd(category);
+      if (chain && !stillBlank && focusStillHere) startAdd(category);
     });
   };
 
@@ -568,6 +570,7 @@ export function TemplateFields({
         role="group"
         aria-label={`在「${category}」添加字段`}
         data-add-scope
+        data-add-id={row.id}
         onBlur={(event) => onAddBlur(event, category, row.id)}
       >
         <input
