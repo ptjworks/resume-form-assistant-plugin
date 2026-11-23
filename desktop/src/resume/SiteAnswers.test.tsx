@@ -190,3 +190,19 @@ test("没连上桌面程序时，入口说明原因，不是凭空消失", () =>
   render(<SiteAnswers />);
   expect(screen.getByText(/没有连上桌面程序，按公司记住的回答要在桌面程序里查看/)).toBeTruthy();
 });
+
+test("搜索时点公司的箭头不做事，也不会把它记成手动收起；清空搜索后保持原样", async () => {
+  mount(() => many());
+  const dialog = await open();
+  const search = within(dialog).getByRole("searchbox", { name: "搜索公司或题目" });
+  await userEvent.type(search, "甲");
+  const site = within(dialog).getByRole("region", { name: "jobs.甲.example.com" });
+  const toggle = within(site).getByRole("button", { name: /jobs\.甲\.example\.com/ });
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  await userEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  await userEvent.clear(search);
+  // 5 家公司默认收起；刚才那一下没有被记成「手动收起」或「手动展开」。
+  const again = within(dialog).getByRole("region", { name: "jobs.甲.example.com" });
+  expect(within(again).getByRole("button", { name: /jobs\.甲\.example\.com/ }).getAttribute("aria-expanded")).toBe("false");
+});

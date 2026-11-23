@@ -165,7 +165,8 @@ export function SiteAnswers({ listen }: { listen?: Listen }) {
                       type="button"
                       className="site-answers-toggle"
                       aria-expanded={expanded}
-                      onClick={() => setToggled((current) => ({ ...current, [site]: !expanded }))}
+                      // 搜索时命中的公司一律展开，点箭头不做事，也不记成「手动收起」。
+                      onClick={() => { if (!needle) setToggled((current) => ({ ...current, [site]: !expanded })); }}
                     >
                       <span className={`template-group-chevron${expanded ? " is-open" : ""}`} aria-hidden="true">
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round">

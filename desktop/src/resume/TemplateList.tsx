@@ -34,7 +34,8 @@ type Dialog =
   | { kind: "reimport"; template: TemplateSummary }
   | { kind: "rename"; template: TemplateSummary; draft: string; error: string | null }
   | { kind: "delete"; template: TemplateSummary; error: string | null }
-  | { kind: "switch"; to: string };
+  // to 为 null 是「导入 Excel」：导入完会自动切到新模板。
+  | { kind: "switch"; to: string | null };
 
 type Preview = { id: string; view: ResumeTemplateView } | { id: string; error: string };
 
@@ -111,7 +112,11 @@ export function TemplateList({
   useEffect(() => {
     if (!reloadSignal || reloadSignal.token === lastToken.current) return;
     lastToken.current = reloadSignal.token;
-    if (reloadSignal.select) setSelected(reloadSignal.select);
+    if (reloadSignal.select) {
+      // 这时正有填到一半的内容：不替人切过去，只告诉有新模板了。
+      if (fieldsProbe.current?.dirty()) setNotice({ tone: "ok", text: "已生成新模板，在左边列表里点它查看。这份模板里填到一半的内容还在。" });
+      else setSelected(reloadSignal.select);
+    }
     // 不是为了选中新模板的刷新（重新进入简历页、恢复备份、导入旧数据）：上一次操作的结果提示已经过时。
     else setNotice(null);
     void reload();
@@ -336,7 +341,10 @@ export function TemplateList({
             </div>
             <div className="template-create">
               {parse?.trigger}
-              <button type="button" disabled={busy || !pickers || !overview} onClick={() => void importFile(null)}>
+              <button type="button" disabled={busy || !pickers || !overview} onClick={() => {
+                  if (fieldsProbe.current?.dirty()) setDialog({ kind: "switch", to: null });
+                  else void importFile(null);
+                }}>
                 导入 Excel
               </button>
             </div>
@@ -466,20 +474,21 @@ export function TemplateList({
               type="button"
               className="danger"
               onClick={() => {
-                const target = dialog?.kind === "switch" ? dialog.to : null;
+                const target = dialog?.kind === "switch" ? dialog.to : undefined;
                 setDialog(null);
-                if (target) {
+                if (target === null) void importFile(null);
+                else if (target) {
                   setSelected(target);
                   setShowDetail(true);
                 }
               }}
             >
-              放弃并切换
+              {dialog?.kind === "switch" && dialog.to === null ? "放弃并导入" : "放弃并切换"}
             </button>
           </>
         }
       >
-        <p>这份模板里有还没写进去的内容（填到一半的字段、新建分类，或正在保存）。切换到别的模板会丢掉它们。</p>
+        <p>这份模板里有还没写进去的内容（填到一半的字段、新建分类，或正在保存）。{dialog?.kind === "switch" && dialog.to === null ? "导入完会自动切到新模板，这些内容会丢掉。" : "切换到别的模板会丢掉它们。"}</p>
       </ResumeDialog>
       <ResumeDialog
         open={dialog?.kind === "delete"}

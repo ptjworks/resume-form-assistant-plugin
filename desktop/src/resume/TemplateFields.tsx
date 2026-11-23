@@ -70,6 +70,8 @@ export function TemplateFields({
   const baseRef = useRef<string>(template.contentSha256 ?? "");
   // 自己读到、保存过的版本（内容哈希）。外面读到的版本只要在这里面，就是自己的，不当成别处的修改。
   const knownShas = useRef<Set<string>>(new Set(template.contentSha256 ? [template.contentSha256] : []));
+  // 已知的最新更新时间：见过的版本只有「更新时间不比它新」才是自己的旧读取；更新的，即使内容和以前某版一样，也是别处改的。
+  const lastAt = useRef(template.updatedAt);
   // 初始版本先算好（旧宿主没带 contentSha256 时要异步算），再开始检查别处的更新，免得把自己的初始版本当成别人改的。
   const init = useRef<Promise<void> | null>(null);
   if (!init.current) {
@@ -99,6 +101,8 @@ export function TemplateFields({
   const chain = useRef<Promise<unknown>>(Promise.resolve());
   const listRef = useRef<HTMLDivElement>(null);
   const cancelBlur = useRef(false);
+  // 撤销正在保存时不接受第二次点击，免得同一个字段加回两遍。
+  const undoing = useRef(false);
 
   const setDraft = (next: TemplateDraft) => {
     draftRef.current = next;
@@ -164,12 +168,14 @@ export function TemplateFields({
   useEffect(() => {
     let cancelled = false;
     void init.current!.then(() => baseOf(template)).then((sha) => {
-      if (cancelled || sha === baseRef.current || knownShas.current.has(sha)) return;
+      if (cancelled || sha === baseRef.current) return;
+      if (knownShas.current.has(sha) && template.updatedAt <= lastAt.current) return;
       if (savingRef.current || hasUnsaved()) {
         setStatus({ tone: "warn", text: "这份模板刚在别处（例如插件侧边栏）更新过。你正在改的内容保存前会先核对，不会覆盖别处的修改。" });
         return;
       }
       knownShas.current.add(sha);
+      if (template.updatedAt > lastAt.current) lastAt.current = template.updatedAt;
       baseRef.current = sha;
       setDraft(templateFields.createDraft(template));
       setEditing(null);
@@ -247,6 +253,7 @@ export function TemplateFields({
         });
         baseRef.current = await baseOf(saved);
         knownShas.current.add(baseRef.current);
+        if (saved.updatedAt > lastAt.current) lastAt.current = saved.updatedAt;
         setDraft(next);
         setStatus({ tone: "ok", text: options.done ?? "已保存" });
         options.onApplied?.(before);
@@ -259,6 +266,7 @@ export function TemplateFields({
           if ("view" in latest) {
             baseRef.current = await baseOf(latest.view);
             knownShas.current.add(baseRef.current);
+            if (latest.view.updatedAt > lastAt.current) lastAt.current = latest.view.updatedAt;
             setDraft(templateFields.createDraft(latest.view));
             // 只清掉正在改的那一处（字段编号换了）；还没写完的空白行和新建分类表单原样留着。
             setEditing(null);
@@ -347,16 +355,24 @@ export function TemplateFields({
 
   // —— 删除（可撤销）和换分类 ——
   const removeField = (id: string) => {
-    const field = draftRef.current.fields.find((item) => item.id === id);
-    if (!field) return;
-    const label = field.key.trim() || "未命名字段";
-    const { category, key, value } = field;
+    if (!draftRef.current.fields.some((item) => item.id === id)) return;
     void apply((d) => templateFields.removeField(d, id), {
       done: "已删除",
       keepUndo: true,
+      // 撤销要记的是「真正被删时」的内容：保存排队期间可能又改过它，不能用点击时看到的。
       onApplied: (before) => {
-        const fallback = inProfile(key) ? "「我的信息」里还有同名内容，一键填写时仍可能用到。" : "";
-        const entry = { category, categoryIndex: before.categories.indexOf(category), key, value, index: before.fields.findIndex((item) => item.id === id), text: `已删除「${label}」。${fallback}` };
+        const field = before.fields.find((item) => item.id === id);
+        if (!field) return;
+        const label = field.key.trim() || "未命名字段";
+        const fallback = inProfile(field.key) ? "「我的信息」里还有同名内容，一键填写时仍可能用到。" : "";
+        const entry = {
+          category: field.category,
+          categoryIndex: before.categories.indexOf(field.category),
+          key: field.key,
+          value: field.value,
+          index: before.fields.findIndex((item) => item.id === id),
+          text: `已删除「${label}」。${fallback}`,
+        };
         setUndo((cur) => [...cur, entry]);
       },
     });
@@ -366,7 +382,8 @@ export function TemplateFields({
   // 这几秒里别处改过模板的话，撤销条会先消失，不会拿旧内容盖掉别处的修改。
   const undoRemove = () => {
     const entry = undo[undo.length - 1];
-    if (!entry) return;
+    if (!entry || undoing.current) return;
+    undoing.current = true;
     const { category, categoryIndex, key, value, index } = entry;
     void apply(
       (current) => {
@@ -382,7 +399,9 @@ export function TemplateFields({
         return { ...added.draft, fields };
       },
       { done: "已撤销删除", keepUndo: true, onApplied: () => setUndo((cur) => cur.slice(0, -1)) },
-    );
+    ).finally(() => {
+      undoing.current = false;
+    });
   };
 
   const moveField = (id: string, category: string) => {
@@ -440,6 +459,8 @@ export function TemplateFields({
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      // 已经提交、正在保存的行不能再「取消」：界面上去掉了，实际却会存进去。
+      if ((addingRef.current[category] ?? []).find((row) => row.id === id)?.busy) return;
       cancelBlur.current = true;
       window.setTimeout(() => { cancelBlur.current = false; }, 0);
       dropRow(category, id);
@@ -515,6 +536,7 @@ export function TemplateFields({
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      if (newCatRef.current?.busy) return;
       setNewCat(null);
       return;
     }
@@ -568,7 +590,7 @@ export function TemplateFields({
           onChange={(event) => patchRow(category, row.id, { value: event.target.value, error: null })}
           onKeyDown={(event) => onAddKey(event, category, row.id, undefined, true)}
         />
-        <button type="button" className="tpl-remove tpl-add-drop" aria-label="去掉这一行" onClick={() => dropRow(category, row.id)}>
+        <button type="button" className="tpl-remove tpl-add-drop" aria-label="去掉这一行" disabled={row.busy} onClick={() => dropRow(category, row.id)}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18" />
           </svg>
@@ -583,10 +605,10 @@ export function TemplateFields({
         // 浮在列表上方，不占版面：出现和消失时下面的字段不会跟着跳。
         <div className="tpl-toast">
           <p className={status ? `tpl-status is-${status.tone}` : "tpl-status"} role="status">
-            {saving ? "正在保存…" : undo.length ? "" : status?.text ?? ""}
+            {saving ? "正在保存…" : status && (status.tone !== "ok" || !undo.length) ? status.text : ""}
             {undo.length > 0 && !saving ? (
               <>
-                <span className="tpl-undo-text">{undo[undo.length - 1].text}{undo.length > 1 ? `（还可撤销 ${undo.length - 1} 项）` : ""}</span>{" "}
+                {status && status.tone !== "ok" ? " " : null}<span className="tpl-undo-text">{undo[undo.length - 1].text}{undo.length > 1 ? `（还可撤销 ${undo.length - 1} 项）` : ""}</span>{" "}
                 <button type="button" className="linkish" onClick={undoRemove}>撤销</button>
               </>
             ) : null}
@@ -736,6 +758,7 @@ export function TemplateFields({
                   <button
                     type="button"
                     className="tpl-remove"
+                    disabled={newCat.busy}
                     aria-label={`去掉新字段 ${index + 1}`}
                     onClick={() => setNewCat({ ...newCat, rows: newCat.rows.filter((_, i) => i !== index) })}
                   >
@@ -753,7 +776,7 @@ export function TemplateFields({
             </button>
             {newCat.error ? <p className="note error tpl-field-error" role="alert">{newCat.error}</p> : null}
             <div className="tpl-newcat-actions">
-              <button type="button" onClick={() => setNewCat(null)}>取消</button>
+              <button type="button" disabled={newCat.busy} onClick={() => setNewCat(null)}>取消</button>
               <button type="button" className="primary" disabled={saving || newCat.busy} onClick={createCategory}>创建分类</button>
             </div>
           </div>

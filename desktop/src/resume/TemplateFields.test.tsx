@@ -62,18 +62,25 @@ function mount(handler: Handler = () => undefined) {
     }
     return undefined;
   }) as Invoke;
-  render(
+  const view = (signal?: { token: number; select?: string | null }) => (
     <InvokeProvider invoke={invoke}>
       <TemplateList
         pickers={{ open: async () => null, save: async () => "/tmp/导出.xlsx" }}
+        reloadSignal={signal}
         listen={(name, handler) => {
           listeners.set(name, handler);
           return () => listeners.delete(name);
         }}
       />
-    </InvokeProvider>,
+    </InvokeProvider>
   );
-  return { calls, listeners, setTemplate: (next: ResumeTemplateView) => { template = next; } };
+  const rendered = render(view());
+  return {
+    calls,
+    listeners,
+    setTemplate: (next: ResumeTemplateView) => { template = next; },
+    signal: (token: number, select?: string | null) => rendered.rerender(view({ token, select })),
+  };
 }
 
 const detail = () => screen.getByRole("region", { name: "模板详情" });
@@ -629,9 +636,9 @@ test("自己保存之前发出的旧读取晚到，不会把界面顶回旧内�
   await ready();
   await setValue(user, "姓名", "新名字");
   await waitFor(() => expect(within(row("姓名")).getByRole("button", { name: "修改「姓名」的内容" }).textContent).toBe("新名字"));
-  // 一个旧版本（初始版本）的读取晚到：更新时间还写得比现在新也不理会。
-  setTemplate({ ...original(), updatedAt: "2026-10-12T09:00:00.000Z" });
-  overview.templates[0] = { ...overview.templates[0], updatedAt: "2026-10-12T09:00:00.000Z" };
+  // 一个旧版本（初始版本）的读取晚到：更新时间不比已知的新，不理会。
+  setTemplate({ ...original(), updatedAt: "2026-10-01T00:00:00.000Z" });
+  overview.templates[0] = { ...overview.templates[0], updatedAt: "2026-10-12T00:00:05.000Z" };
   listeners.get("resume-template-changed")?.({ payload: { templateId: "t1", op: "saveTemplate", source: "plugin" } });
   await new Promise((resolve) => setTimeout(resolve, 100));
   expect(within(row("姓名")).getByRole("button", { name: "修改「姓名」的内容" }).textContent).toBe("新名字");
@@ -745,4 +752,150 @@ test("「创建分类」两次点击来得比页面刷新还快，也只建一�
   await waitFor(() => expect(within(detail()).getByRole("region", { name: "分类：求职意向" })).toBeTruthy());
   await new Promise((resolve) => setTimeout(resolve, 200));
   expect(saves(calls)).toHaveLength(1);
+});
+
+// —— 第三轮审核（#583）后补的 ——
+
+test("别处把模板改回自己见过的旧内容（更新时间更新）：照样刷新，不当成旧读取", async () => {
+  const user = userEvent.setup();
+  const { listeners, setTemplate } = mount();
+  await waitFor(() => expect(listeners.has("resume-template-changed")).toBe(true));
+  await ready();
+  await setValue(user, "姓名", "新名字");
+  await waitFor(() => expect(within(row("姓名")).getByRole("button", { name: "修改「姓名」的内容" }).textContent).toBe("新名字"));
+  // 插件把模板改回最初那一版（内容和版本号都和一开始一样），更新时间是现在。
+  setTemplate({ ...original(), updatedAt: "2026-10-12T09:00:00.000Z" });
+  overview.templates[0] = { ...overview.templates[0], updatedAt: "2026-10-12T09:00:00.000Z" };
+  listeners.get("resume-template-changed")?.({ payload: { templateId: "t1", op: "saveTemplate", source: "plugin" } });
+  await waitFor(() => expect(within(row("姓名")).getByRole("button", { name: "修改「姓名」的内容" }).textContent).toBe("测试用户"));
+});
+
+test("改了内容保存还没返回就点删除：撤销恢复的是删除前最后保存的内容", async () => {
+  const user = userEvent.setup();
+  const { calls } = mount();
+  await ready();
+  saveDelay = 100;
+  await user.click(within(row("电话")).getByRole("button", { name: "修改「电话」的内容" }));
+  const box = within(row("电话")).getByLabelText("内容");
+  await user.clear(box);
+  await user.type(box, "13700000000{Enter}");
+  await user.click(within(row("电话")).getByRole("button", { name: "删除「电话」" }));
+  await waitFor(() => expect(within(detail()).queryByRole("group", { name: "电话" })).toBeNull());
+  await user.click(within(status()).getByRole("button", { name: "撤销" }));
+  await waitFor(() => expect(within(row("电话")).getByRole("button", { name: "修改「电话」的内容" }).textContent).toBe("13700000000"));
+  const last = saves(calls)[saves(calls).length - 1].args?.groups as Array<{ fields: Array<{ key: string; value: string }> }>;
+  expect(last[0].fields.find((f) => f.key === "电话")?.value).toBe("13700000000");
+});
+
+test("撤销两次点击来得比保存还快，同一个字段只加回一个", async () => {
+  const user = userEvent.setup();
+  const { calls } = mount();
+  await ready();
+  await user.click(within(row("电话")).getByRole("button", { name: "删除「电话」" }));
+  const undo = await within(status()).findByRole("button", { name: "撤销" });
+  saveDelay = 80;
+  fireEvent.click(undo);
+  fireEvent.click(undo);
+  await waitFor(() => expect(within(detail()).getByRole("group", { name: "电话" })).toBeTruthy());
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(saves(calls)).toHaveLength(2);
+  expect(within(detail()).getAllByRole("group", { name: "电话" })).toHaveLength(1);
+});
+
+test("新建分类正在保存时，「取消」、去掉行、Esc 都不能再取消它", async () => {
+  const user = userEvent.setup();
+  const { calls } = mount();
+  await ready();
+  await user.click(within(detail()).getByRole("button", { name: "新建分类" }));
+  const form = within(detail()).getByRole("group", { name: "新建分类" });
+  await user.type(within(form).getByLabelText("分类名称"), "求职意向");
+  await user.type(within(form).getByLabelText("字段名称"), "期望城市");
+  await user.click(within(form).getByRole("button", { name: "再添加一个字段" }));
+  saveDelay = 120;
+  await user.click(within(form).getByRole("button", { name: "创建分类" }));
+  await waitFor(() => expect((within(form).getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(true));
+  expect((within(form).getByRole("button", { name: "去掉新字段 2" }) as HTMLButtonElement).disabled).toBe(true);
+  await user.keyboard("{Escape}");
+  expect(within(detail()).getByRole("group", { name: "新建分类" })).toBeTruthy();
+  await waitFor(() => expect(within(detail()).getByRole("region", { name: "分类：求职意向" })).toBeTruthy());
+  expect(saves(calls)).toHaveLength(1);
+});
+
+test("添加字段的行正在保存时，不能再去掉它", async () => {
+  const user = userEvent.setup();
+  mount();
+  await ready();
+  saveDelay = 120;
+  const basic = within(detail()).getByRole("region", { name: "分类：基本信息" });
+  await user.click(within(basic).getByRole("button", { name: "在「基本信息」添加字段" }));
+  const form = within(basic).getByRole("group", { name: "在「基本信息」添加字段" });
+  await user.type(within(form).getByLabelText("字段名称"), "邮箱");
+  await user.type(within(form).getByLabelText("内容"), "a@example.test{Enter}");
+  await waitFor(() => expect((within(form).getByRole("button", { name: "去掉这一行" }) as HTMLButtonElement).disabled).toBe(true));
+  await user.keyboard("{Escape}");
+  expect(within(basic).getAllByRole("group", { name: "在「基本信息」添加字段" }).length).toBeGreaterThan(0);
+  await waitFor(() => expect(within(basic).getByRole("group", { name: "邮箱" })).toBeTruthy());
+});
+
+test("有撤销条时，被拦下的操作也能看到原因，撤销仍在", async () => {
+  const user = userEvent.setup();
+  mount((command, args) =>
+    command === "get_resume_template_cmd" && args?.id === "t1"
+      ? { ...original(), groups: [{ name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }, { key: "电话", value: "13800000000" }] }] }
+      : undefined,
+  );
+  await waitFor(() => expect(within(detail()).getByText("测试用户")).toBeTruthy());
+  await user.click(within(row("电话")).getByRole("button", { name: "删除「电话」" }));
+  await waitFor(() => expect(within(status()).getByRole("button", { name: "撤销" })).toBeTruthy());
+  await user.click(within(row("姓名")).getByRole("button", { name: "删除「姓名」" }));
+  expect(await within(status()).findByText(/模板至少要保留一个字段/)).toBeTruthy();
+  expect(within(status()).getByRole("button", { name: "撤销" })).toBeTruthy();
+});
+
+test("在已被清空的分类里，没写完的空白行填好后照样保存，分类一起建出来", async () => {
+  const user = userEvent.setup();
+  const { calls } = mount();
+  await ready();
+  const edu = within(detail()).getByRole("region", { name: "分类：教育经历" });
+  await user.click(within(edu).getByRole("button", { name: "在「教育经历」添加字段" }));
+  await user.click(within(row("学校")).getByRole("button", { name: "删除「学校」" }));
+  await waitFor(() => expect(within(detail()).queryByRole("group", { name: "学校" })).toBeNull());
+  const pending = within(detail()).getByRole("group", { name: "在「教育经历」添加字段" });
+  await user.type(within(pending).getByLabelText("字段名称"), "专业");
+  await user.type(within(pending).getByLabelText("内容"), "示例专业{Enter}");
+  await waitFor(() => expect(saves(calls)).toHaveLength(2));
+  expect(saves(calls)[1].args?.groups).toEqual([
+    { name: "基本信息", fields: [{ key: "姓名", value: "测试用户" }, { key: "电话", value: "13800000000" }] },
+    { name: "教育经历", fields: [{ key: "专业", value: "示例专业" }] },
+  ]);
+});
+
+test("填到一半时点「导入 Excel」，先问是否放弃；没填东西时直接导入", async () => {
+  const user = userEvent.setup();
+  mount();
+  await ready();
+  await user.click(within(detail()).getByRole("button", { name: "新建分类" }));
+  await user.type(within(detail()).getByLabelText("分类名称"), "求职意向");
+  await user.click(screen.getByRole("button", { name: "导入 Excel" }));
+  const dialog = await screen.findByRole("dialog", { name: "放弃填到一半的内容？" });
+  expect(within(dialog).getByText(/导入完会自动切到新模板/)).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "放弃并导入" })).toBeTruthy();
+  await user.click(within(dialog).getByRole("button", { name: "继续填写" }));
+  expect((within(detail()).getByLabelText("分类名称") as HTMLInputElement).value).toBe("求职意向");
+});
+
+test("AI 解析出了新模板、要自动选中它时，如果正有填到一半的内容，不替人切过去，只提示", async () => {
+  const user = userEvent.setup();
+  const { signal } = mount();
+  await ready();
+  await user.click(within(detail()).getByRole("button", { name: "新建分类" }));
+  await user.type(within(detail()).getByLabelText("分类名称"), "求职意向");
+  signal(1, "t2");
+  expect(await screen.findByText(/已生成新模板，在左边列表里点它查看/)).toBeTruthy();
+  expect(within(detail()).getByRole("heading", { name: "校招简历", level: 2 })).toBeTruthy();
+  expect((within(detail()).getByLabelText("分类名称") as HTMLInputElement).value).toBe("求职意向");
+  // 没有填到一半的内容时，照常选中新模板。
+  await user.click(within(detail()).getByRole("button", { name: "取消" }));
+  signal(2, "t2");
+  await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历", level: 2 })).toBeTruthy());
 });
