@@ -7,6 +7,8 @@ export interface MoreMenuItem {
   disabled?: boolean;
   /** 删除这类要小心的项，用红色字。 */
   danger?: boolean;
+  /** 鼠标悬停时的提示。 */
+  title?: string;
 }
 
 /**
@@ -93,6 +95,7 @@ export function MoreMenu({ label, items, disabled = false, align = "left" }: { l
               role="menuitem"
               className={item.danger ? "is-danger" : undefined}
               disabled={item.disabled}
+              title={item.title}
               onClick={() => {
                 setOpen(false);
                 item.onSelect();

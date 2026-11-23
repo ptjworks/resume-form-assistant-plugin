@@ -589,3 +589,11 @@ test("「…」菜单：用 Tab 把焦点移出菜单时也收起", async () => 
   await user.tab();
   expect(within(detail()).queryByRole("menu")).toBeNull();
 });
+
+test("「导出 Excel」带悬停提示：导出的是此刻的内容，之后再改要重新导出", async () => {
+  const user = userEvent.setup();
+  mount(() => overview, pickers(null, null));
+  await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历", level: 2 })).toBeTruthy());
+  const menu = await openMenu(user);
+  expect(within(menu).getByRole("menuitem", { name: "导出 Excel" }).getAttribute("title")).toMatch(/之后再改字段，需要重新导出/);
+});

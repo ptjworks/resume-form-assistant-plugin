@@ -567,7 +567,7 @@ function TemplateDetail(props: {
               disabled={busy}
               items={[
                 { label: "重新导入", disabled: !canUseFiles, onSelect: props.onReimport },
-                { label: "导出 Excel", disabled: !canUseFiles, onSelect: props.onExport },
+                { label: "导出 Excel", disabled: !canUseFiles, title: "导出的是此刻的内容；之后再改字段，需要重新导出", onSelect: props.onExport },
                 { label: "重命名", onSelect: props.onRename },
                 { label: "删除", danger: true, onSelect: props.onDelete },
               ]}

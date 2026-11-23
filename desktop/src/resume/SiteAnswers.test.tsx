@@ -206,3 +206,18 @@ test("搜索时点公司的箭头不做事，也不会把它记成手动收起�
   const again = within(dialog).getByRole("region", { name: "jobs.甲.example.com" });
   expect(within(again).getByRole("button", { name: /jobs\.甲\.example\.com/ }).getAttribute("aria-expanded")).toBe("false");
 });
+
+test("删除整家公司失败时，回到列表并显示原因，公司还在", async () => {
+  mount((command) => {
+    if (command === "list_site_answers_cmd") return [answer("campus.example.com", "是否有亲属在本公司工作", "否")];
+    if (command === "delete_site_answers_cmd") throw { code: "IO", message: "档案暂时写不进去。" };
+    return null;
+  });
+  const dialog = await open();
+  await userEvent.click(within(dialog).getByRole("button", { name: "删除这家公司" }));
+  const confirm = await screen.findByRole("dialog", { name: "删除这家公司的回答？" });
+  await userEvent.click(within(confirm).getByRole("button", { name: "删除" }));
+  const list = await screen.findByRole("dialog", { name: "按公司记住的回答" });
+  expect(within(list).getByText("档案暂时写不进去。")).toBeTruthy();
+  expect(within(list).getByRole("region", { name: "campus.example.com" })).toBeTruthy();
+});
