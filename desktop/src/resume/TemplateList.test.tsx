@@ -53,10 +53,20 @@ const pickers = (open: string | null, save: string | null): FilePickers => ({
 
 const detail = () => screen.getByRole("region", { name: "模板详情" });
 
+/** 不常用的操作收在详情里的「…」菜单：先点开，再点其中一项。 */
+async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(within(detail()).getByRole("button", { name: "更多操作" }));
+  return within(detail()).getByRole("menu", { name: "更多操作" });
+}
+async function clickMenu(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const menu = await openMenu(user);
+  await user.click(within(menu).getByRole("menuitem", { name }));
+}
+
 /** 在左边列表里选中一份模板，等右边的详情换成它。 */
 async function choose(user: ReturnType<typeof userEvent.setup>, name: string) {
   const row = await screen.findByRole("listitem", { name });
-  await user.click(within(row).getByRole("button"));
+  await user.click(within(row).getAllByRole("button")[0]);
   await waitFor(() => expect(within(detail()).getByRole("heading", { name })).toBeTruthy());
   return row;
 }
@@ -64,10 +74,10 @@ async function choose(user: ReturnType<typeof userEvent.setup>, name: string) {
 test("列出模板，标出当前模板和字段数", async () => {
   mount(() => overview, pickers(null, null));
   const current = await screen.findByRole("listitem", { name: /实习简历/ });
-  expect(within(current).getByText("当前模板")).toBeTruthy();
+  expect(within(current).getByText("当前使用")).toBeTruthy();
   expect(within(current).getByText("8 个字段")).toBeTruthy();
   const other = screen.getByRole("listitem", { name: /校招简历/ });
-  expect(within(other).queryByText("当前模板")).toBeNull();
+  expect(within(other).queryByText("当前使用")).toBeNull();
 });
 
 test("默认预览当前模板；选中另一份只换预览，不改当前模板", async () => {
@@ -77,12 +87,12 @@ test("默认预览当前模板；选中另一份只换预览，不改当前模�
   expect(within(detail()).getByText("填写时优先使用")).toBeTruthy();
 
   const row = await choose(user, "校招简历");
-  expect(within(row).getByRole("button").getAttribute("aria-pressed")).toBe("true");
-  expect(within(detail()).getByText("模板预览")).toBeTruthy();
-  expect(within(detail()).getByRole("button", { name: "设为当前" })).toBeTruthy();
+  expect(within(row).getAllByRole("button")[0].getAttribute("aria-pressed")).toBe("true");
+  expect(within(detail()).queryByText("填写时优先使用")).toBeNull();
+  expect(within(row).getByRole("button", { name: "把「校招简历」设为当前" })).toBeTruthy();
   expect(calls.some((c) => c.command === "set_active_resume_template_cmd")).toBe(false);
   // 当前徽标仍在原来那份上。
-  expect(within(screen.getByRole("listitem", { name: "实习简历" })).getByText("当前模板")).toBeTruthy();
+  expect(within(screen.getByRole("listitem", { name: "实习简历" })).getByText("当前使用")).toBeTruthy();
 });
 
 test("没有模板时引导导入", async () => {
@@ -136,10 +146,11 @@ test("没有原生文件窗口时禁用导入、重新导入和导出，并说�
   mount(() => overview, null);
   await choose(user, "校招简历");
   expect(screen.getByRole("button", { name: "导入 Excel" })).toHaveProperty("disabled", true);
-  expect(within(detail()).getByRole("button", { name: "重新导入" })).toHaveProperty("disabled", true);
-  expect(within(detail()).getByRole("button", { name: "导出 Excel" })).toHaveProperty("disabled", true);
-  expect(within(detail()).getByRole("button", { name: "重命名" })).toHaveProperty("disabled", false);
-  expect(within(detail()).getByRole("button", { name: "设为当前" })).toHaveProperty("disabled", false);
+  const menu = await openMenu(user);
+  expect(within(menu).getByRole("menuitem", { name: "重新导入" })).toHaveProperty("disabled", true);
+  expect(within(menu).getByRole("menuitem", { name: "导出 Excel" })).toHaveProperty("disabled", true);
+  expect(within(menu).getByRole("menuitem", { name: "重命名" })).toHaveProperty("disabled", false);
+  expect(screen.getByRole("button", { name: "把「校招简历」设为当前" })).toHaveProperty("disabled", false);
   expect(screen.getByText(/请在桌面程序里操作/)).toBeTruthy();
 });
 
@@ -153,7 +164,7 @@ test("重新导入先确认覆盖，再带上被覆盖的模板 id", async () =>
     return overview;
   }, { open: async () => { opened += 1; return "/tmp/改.xlsx"; }, save: async () => null });
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "重新导入" }));
+  await clickMenu(user, "重新导入");
   const dialog = screen.getByRole("dialog", { name: "覆盖这份模板？" });
   expect(within(dialog).getByText(/旧字段数：12/)).toBeTruthy();
   expect(opened).toBe(0);
@@ -168,7 +179,7 @@ test("覆盖确认里取消，不打开文件窗口", async () => {
   let opened = 0;
   mount(() => overview, { open: async () => { opened += 1; return "/tmp/改.xlsx"; }, save: async () => null });
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "重新导入" }));
+  await clickMenu(user, "重新导入");
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "取消" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(opened).toBe(0);
@@ -185,7 +196,7 @@ test("导出用模板名作默认文件名，取消保存不调命令", async ()
     },
   });
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "导出 Excel" }));
+  await clickMenu(user, "导出 Excel");
   expect(suggested).toBe("校招简历.xlsx");
   expect(calls.some((c) => c.command === "export_resume_template_cmd")).toBe(false);
 });
@@ -194,7 +205,7 @@ test("导出成功说出字段数", async () => {
   const user = userEvent.setup();
   const calls = mount(() => overview, pickers(null, "/tmp/校招简历.xlsx"));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "导出 Excel" }));
+  await clickMenu(user, "导出 Excel");
   expect(await screen.findByText("已导出 12 个字段。")).toBeTruthy();
   expect(calls.find((c) => c.command === "export_resume_template_cmd")?.args).toEqual({ id: "t1", path: "/tmp/校招简历.xlsx" });
 });
@@ -205,7 +216,7 @@ test("删除要先确认，说明当前模板会怎么变", async () => {
     command === "delete_resume_template_cmd" ? { templates: [overview.templates[1]], activeTemplateId: "t1" } : overview,
   pickers(null, null));
   await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历" })).toBeTruthy());
-  await user.click(within(detail()).getByRole("button", { name: "删除" }));
+  await clickMenu(user, "删除");
   const dialog = screen.getByRole("dialog", { name: "删除「实习简历」？" });
   expect(within(dialog).getByText(/删除后「校招简历」会成为当前模板/)).toBeTruthy();
   // 危险操作不是默认焦点。
@@ -216,14 +227,14 @@ test("删除要先确认，说明当前模板会怎么变", async () => {
   expect(screen.queryByRole("dialog")).toBeNull();
   // 删掉选中的那份后，预览换成剩下的当前模板。
   await waitFor(() => expect(within(detail()).getByRole("heading", { name: "校招简历" })).toBeTruthy());
-  expect(within(screen.getByRole("listitem", { name: "校招简历" })).getByText("当前模板")).toBeTruthy();
+  expect(within(screen.getByRole("listitem", { name: "校招简历" })).getByText("当前使用")).toBeTruthy();
 });
 
 test("删除最后一份当前模板时说明之后没有当前模板", async () => {
   const user = userEvent.setup();
   mount(() => ({ templates: [overview.templates[0]], activeTemplateId: "t2" }), pickers(null, null));
   await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历" })).toBeTruthy());
-  await user.click(within(detail()).getByRole("button", { name: "删除" }));
+  await clickMenu(user, "删除");
   expect(within(screen.getByRole("dialog")).getByText(/删除后没有当前模板/)).toBeTruthy();
 });
 
@@ -234,7 +245,7 @@ test("删除失败时弹窗留着说明原因，列表不变", async () => {
     return overview;
   }, pickers(null, null));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "删除" }));
+  await clickMenu(user, "删除");
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "确认删除" }));
   expect(await within(screen.getByRole("dialog")).findByText("写不进去。")).toBeTruthy();
   expect(screen.getByRole("listitem", { name: "校招简历" })).toBeTruthy();
@@ -244,7 +255,7 @@ test("Escape 关掉弹窗，不执行操作", async () => {
   const user = userEvent.setup();
   const calls = mount(() => overview, pickers(null, null));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "删除" }));
+  await clickMenu(user, "删除");
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(calls.some((c) => c.command === "delete_resume_template_cmd")).toBe(false);
@@ -256,8 +267,8 @@ test("设为当前", async () => {
     command === "set_active_resume_template_cmd" ? { ...overview, activeTemplateId: "t1" } : overview,
   pickers(null, null));
   const row = await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "设为当前" }));
-  await waitFor(() => expect(within(row).getByText("当前模板")).toBeTruthy());
+  await user.click(screen.getByRole("button", { name: "把「校招简历」设为当前" }));
+  await waitFor(() => expect(within(row).getByText("当前使用")).toBeTruthy());
   expect(within(detail()).getByText("填写时优先使用")).toBeTruthy();
   expect(calls.find((c) => c.command === "set_active_resume_template_cmd")?.args).toEqual({ id: "t1" });
 });
@@ -336,7 +347,7 @@ test("重新导入失败时补一句「本次导入未生效，原模板保持�
     return overview;
   }, pickers("/tmp/改.xlsx", null));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "重新导入" }));
+  await clickMenu(user, "重新导入");
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "继续选文件" }));
   expect(await screen.findByText("第 3 行缺少「字段名」（第二列）。本次导入未生效，原模板保持不变。")).toBeTruthy();
 });
@@ -364,7 +375,7 @@ test.each([false, true])("预览打开时重新导入，预览跟着刷新而不
   await new Promise((resolve) => setTimeout(resolve, 20));
   const before = calls.filter((c) => c.command === "get_resume_template_cmd" && c.args?.id === "t1").length;
 
-  await user.click(within(detail()).getByRole("button", { name: "重新导入" }));
+  await clickMenu(user, "重新导入");
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "继续选文件" }));
   await waitFor(() => expect(within(detail()).getByText("新内容")).toBeTruthy());
   expect(within(detail()).queryByText("旧内容")).toBeNull();
@@ -380,7 +391,7 @@ test("改名被拒绝时弹窗和输入都留着、显示原因", async () => {
     return overview;
   }, pickers(null, null));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "重命名" }));
+  await clickMenu(user, "重命名");
   const dialog = screen.getByRole("dialog", { name: "重命名模板" });
   const input = within(dialog).getByLabelText("模板名称");
   expect(input).toHaveProperty("value", "校招简历");
@@ -396,7 +407,7 @@ test("改名成功后弹窗关闭，按回车也能提交", async () => {
   const user = userEvent.setup();
   const calls = mount((command) => (command === "rename_resume_template_cmd" ? { ok: true } : overview), pickers(null, null));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "重命名" }));
+  await clickMenu(user, "重命名");
   const input = within(screen.getByRole("dialog")).getByLabelText("模板名称");
   await user.clear(input);
   await user.type(input, "新名字{Enter}");
@@ -409,7 +420,7 @@ test("重命名的名称为空或超过 100 字时不能提交", async () => {
   const user = userEvent.setup();
   mount(() => overview, pickers(null, null));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "重命名" }));
+  await clickMenu(user, "重命名");
   const dialog = screen.getByRole("dialog");
   const input = within(dialog).getByLabelText("模板名称");
   await user.clear(input);
@@ -432,7 +443,7 @@ test("操作命令报 NOT_FOUND 时自动重新拉取列表", async () => {
     return overview;
   }, pickers(null, null));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "设为当前" }));
+  await user.click(screen.getByRole("button", { name: "把「校招简历」设为当前" }));
   await waitFor(() => expect(screen.getByText("模板已被删除。")).toBeTruthy());
   await waitFor(() => expect(overviewCalls).toBeGreaterThanOrEqual(2));
 });
@@ -443,7 +454,7 @@ test("提示带 role=status", async () => {
     command === "set_active_resume_template_cmd" ? { ...overview, activeTemplateId: "t1" } : overview,
   pickers(null, null));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "设为当前" }));
+  await user.click(screen.getByRole("button", { name: "把「校招简历」设为当前" }));
   expect(await screen.findByRole("status")).toBeTruthy();
 });
 
@@ -482,11 +493,107 @@ test("重新进入页面的刷新清掉上一次的操作提示；为选中新�
   );
   const { rerender } = render(view(0));
   await choose(user, "校招简历");
-  await user.click(within(detail()).getByRole("button", { name: "设为当前" }));
+  await user.click(screen.getByRole("button", { name: "把「校招简历」设为当前" }));
   expect(await screen.findByText(/已把「校招简历」设为当前模板/)).toBeTruthy();
   rerender(view(1, "t2"));
   await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历" })).toBeTruthy());
   expect(screen.getByText(/已把「校招简历」设为当前模板/)).toBeTruthy();
   rerender(view(2));
   await waitFor(() => expect(screen.queryByText(/已把「校招简历」设为当前模板/)).toBeNull());
+});
+
+test("每行有名称、字段数、更新时间；当前那份写「当前使用」，其他行直接有「设为当前」", async () => {
+  mount(() => overview, pickers(null, null));
+  const current = await screen.findByRole("listitem", { name: "实习简历" });
+  expect(within(current).getByText("当前使用")).toBeTruthy();
+  expect(within(current).queryByRole("button", { name: /设为当前/ })).toBeNull();
+  expect(within(current).getByText("8 个字段")).toBeTruthy();
+  expect(within(current).getByText(/更新$/)).toBeTruthy();
+  const other = screen.getByRole("listitem", { name: "校招简历" });
+  expect(within(other).getByRole("button", { name: "把「校招简历」设为当前" })).toBeTruthy();
+});
+
+test("在行上点「设为当前」直接生效，不用先点进去，也不改变右边在看的模板", async () => {
+  const user = userEvent.setup();
+  const calls = mount((command) =>
+    command === "set_active_resume_template_cmd" ? { ...overview, activeTemplateId: "t1" } : overview,
+  pickers(null, null));
+  await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历" })).toBeTruthy());
+  await user.click(screen.getByRole("button", { name: "把「校招简历」设为当前" }));
+  await waitFor(() => expect(within(screen.getByRole("listitem", { name: "校招简历" })).getByText("当前使用")).toBeTruthy());
+  expect(calls.find((c) => c.command === "set_active_resume_template_cmd")?.args).toEqual({ id: "t1" });
+  expect(within(detail()).getByRole("heading", { name: "实习简历" })).toBeTruthy();
+  // 原来那份换成可以再设回来。
+  expect(within(screen.getByRole("listitem", { name: "实习简历" })).getByRole("button", { name: "把「实习简历」设为当前" })).toBeTruthy();
+});
+
+test("详情头部只有一个「…」，重新导入、导出、重命名、删除都收在菜单里；没有「编辑字段」", async () => {
+  const user = userEvent.setup();
+  mount(() => overview, pickers(null, null));
+  await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历", level: 2 })).toBeTruthy());
+  expect(within(detail()).queryByRole("button", { name: "编辑字段" })).toBeNull();
+  const head = detail().querySelector(".template-detail-head") as HTMLElement;
+  // 「← 返回列表」只在窄窗口显示，这里不算。
+  const buttons = within(head).getAllByRole("button").filter((b) => !b.classList.contains("resume-back")).map((b) => b.getAttribute("aria-label") ?? b.textContent);
+  expect(buttons).toEqual(["更多操作"]);
+  expect(within(detail()).queryByRole("menu")).toBeNull();
+  const menu = await openMenu(user);
+  expect(within(menu).getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["重新导入", "导出 Excel", "重命名", "删除"]);
+});
+
+test("「…」菜单：Esc 收起并把焦点还给按钮；点别处也收起；选一项后收起", async () => {
+  const user = userEvent.setup();
+  mount(() => overview, pickers(null, null));
+  await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历" })).toBeTruthy());
+  const trigger = within(detail()).getByRole("button", { name: "更多操作" });
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  await openMenu(user);
+  expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  // 打开后焦点落在第一项，方向键在项目间移动。
+  expect(document.activeElement).toBe(within(detail()).getByRole("menuitem", { name: "重新导入" }));
+  await user.keyboard("{ArrowDown}");
+  expect(document.activeElement).toBe(within(detail()).getByRole("menuitem", { name: "导出 Excel" }));
+  await user.keyboard("{Escape}");
+  expect(within(detail()).queryByRole("menu")).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+
+  await openMenu(user);
+  await user.click(document.body);
+  expect(within(detail()).queryByRole("menu")).toBeNull();
+
+  await clickMenu(user, "重命名");
+  expect(within(detail()).queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("dialog", { name: "重命名模板" })).toBeTruthy();
+});
+
+test("导入 Excel 与 AI 解析两个入口仍在「我的模板」标题下、列表上方，说明缩成一行", async () => {
+  mount(() => overview, pickers(null, null));
+  const card = await screen.findByRole("region", { name: "我的模板" });
+  const list = within(card).getByRole("list", { name: "模板列表" });
+  const importButton = within(card).getByRole("button", { name: "导入 Excel" });
+  expect(importButton.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const hint = within(card).getByText(/AI 解析发送前会先请你确认/);
+  expect(hint.textContent!.length).toBeLessThan(40);
+});
+
+test("「…」菜单：用 Tab 把焦点移出菜单时也收起", async () => {
+  const user = userEvent.setup();
+  mount(() => overview, pickers(null, null));
+  await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历", level: 2 })).toBeTruthy());
+  await openMenu(user);
+  expect(within(detail()).getByRole("menu")).toBeTruthy();
+  await user.tab();
+  await user.tab();
+  await user.tab();
+  await user.tab();
+  await user.tab();
+  expect(within(detail()).queryByRole("menu")).toBeNull();
+});
+
+test("「导出 Excel」带悬停提示：导出的是已保存的内容，之后再改要重新导出", async () => {
+  const user = userEvent.setup();
+  mount(() => overview, pickers(null, null));
+  await waitFor(() => expect(within(detail()).getByRole("heading", { name: "实习简历", level: 2 })).toBeTruthy());
+  const menu = await openMenu(user);
+  expect(within(menu).getByRole("menuitem", { name: "导出 Excel" }).getAttribute("title")).toMatch(/之后再改字段，需要重新导出/);
 });

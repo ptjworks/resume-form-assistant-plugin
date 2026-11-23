@@ -9,10 +9,10 @@ import { ResumeFiles } from "./ResumeFiles.tsx";
 import { useResumeParse } from "./ResumeParse.tsx";
 import { SiteAnswers } from "./SiteAnswers.tsx";
 import { TemplateList } from "./TemplateList.tsx";
-import type { TemplateEditorProbe } from "./TemplateFieldEditor.tsx";
+import type { TemplateEditorProbe } from "./TemplateFields.tsx";
 import type { FilePickers, ReloadSignal } from "./TemplateList.tsx";
 
-export type ResumeSubview = "templates" | "profile" | "sites" | "files";
+export type ResumeSubview = "templates" | "profile" | "files";
 
 /** 页面外（顶栏、插件要求打开别的页）问简历页能不能离开。由 mount.tsx 持有。 */
 export interface ResumeLeaveGate {
@@ -22,7 +22,6 @@ export interface ResumeLeaveGate {
 const TABS: Array<{ id: ResumeSubview; label: string }> = [
   { id: "templates", label: "简历模板" },
   { id: "profile", label: "我的信息" },
-  { id: "sites", label: "网站回答" },
   { id: "files", label: "附件" },
 ];
 
@@ -30,8 +29,9 @@ const TABS: Array<{ id: ResumeSubview; label: string }> = [
  * 简历模板与「我的信息」都归桌面管（#130）。插件侧边栏填写时从这里读：
  * 模板优先，模板里没有的字段再用「我的信息」补。
  *
- * #257：两个子视图共用页眉和切换控件。两个视图始终挂着、只切换显示，
+ * #257：几个子视图共用页眉和切换控件。它们始终挂着、只切换显示，
  * 所以切过去再切回来不会清空「我的信息」草稿，也不会打断进行中的 AI 解析。
+ * #553：切换只剩「简历模板 / 我的信息 / 附件」三个；「按公司记住的回答」降成「我的信息」下面的一行小入口。
  */
 export function ResumeView(props: {
   pickers: FilePickers | null;
@@ -69,7 +69,7 @@ function ResumeWorkspace({
   const templateProbe = useRef<TemplateEditorProbe | null>(null);
   // 哪一处有未保存的修改，离开前的确认据此说清楚会丢什么。
   const [leavingWhat, setLeavingWhat] = useState<{ profile: boolean; template: boolean }>({ profile: false, template: false });
-  const tabRefs = useRef<Record<ResumeSubview, HTMLButtonElement | null>>({ templates: null, profile: null, sites: null, files: null });
+  const tabRefs = useRef<Record<ResumeSubview, HTMLButtonElement | null>>({ templates: null, profile: null, files: null });
 
   const parse = useResumeParse({
     onCreated: (templateId) => setListSignal((signal) => ({ token: signal.token + 1, select: templateId })),
@@ -127,41 +127,36 @@ function ResumeWorkspace({
 
   return (
     <div className="resume-view">
-      <header className="resume-header">
-        <div>
-          <h1>简历资料</h1>
-          <p>插件填写网页时优先用「当前模板」，模板里没有的字段再用「我的信息」补上。</p>
-        </div>
-        <div className="resume-switch" role="tablist" aria-label="简历内容">
-          {TABS.map((tab) => {
-            const selected = tab.id === view;
-            const busy = tab.id === "templates" && parse.active && !selected;
-            return (
-              <button
-                key={tab.id}
-                ref={(node) => {
-                  tabRefs.current[tab.id] = node;
-                }}
-                type="button"
-                role="tab"
-                id={`resume-tab-${tab.id}`}
-                aria-controls={`resume-panel-${tab.id}`}
-                aria-selected={selected}
-                tabIndex={selected ? 0 : -1}
-                onClick={() => setView(tab.id)}
-                onKeyDown={onTabKey}
-              >
-                {tab.label}
-                {busy ? (
-                  <span className="resume-switch-busy" title="AI 解析进行中">
-                    <span className="sr-only">（AI 解析进行中）</span>
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      </header>
+      <h1 className="sr-only">简历</h1>
+      <div className="resume-switch" role="tablist" aria-label="简历内容">
+        {TABS.map((tab) => {
+          const selected = tab.id === view;
+          const busy = tab.id === "templates" && parse.active && !selected;
+          return (
+            <button
+              key={tab.id}
+              ref={(node) => {
+                tabRefs.current[tab.id] = node;
+              }}
+              type="button"
+              role="tab"
+              id={`resume-tab-${tab.id}`}
+              aria-controls={`resume-panel-${tab.id}`}
+              aria-selected={selected}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setView(tab.id)}
+              onKeyDown={onTabKey}
+            >
+              {tab.label}
+              {busy ? (
+                <span className="resume-switch-busy" title="AI 解析进行中">
+                  <span className="sr-only">（AI 解析进行中）</span>
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
       <LegacyImport
         key={generation}
         listen={listen}
@@ -187,15 +182,7 @@ function ResumeWorkspace({
         hidden={view !== "profile"}
       >
         <ProfileForm key={generation} listen={listen} probe={profileProbe} />
-      </div>
-      <div
-        role="tabpanel"
-        id="resume-panel-sites"
-        aria-labelledby="resume-tab-sites"
-        className="resume-panel"
-        hidden={view !== "sites"}
-      >
-        <SiteAnswers key={generation} listen={listen} active={view === "sites"} />
+        <SiteAnswers key={`sites-${generation}`} listen={listen} />
       </div>
       <div
         role="tabpanel"

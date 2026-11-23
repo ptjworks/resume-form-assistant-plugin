@@ -834,3 +834,24 @@ test("干净的表单收到 sync 直接换成新档案", async () => {
   await waitFor(() => expect(screen.getByLabelText("姓名")).toHaveProperty("value", "导入后"));
   expect(screen.getByText("填写后点击保存")).toBeTruthy();
 });
+
+test("固定字段的分组（如基本信息）里也能「添加字段」：新字段放进补充字段，焦点落到新的一行", async () => {
+  const user = userEvent.setup();
+  const calls = mount(() => record);
+  await screen.findByLabelText("姓名");
+  const add = screen.getByRole("button", { name: "添加字段" });
+  expect(add.parentElement).toBe(screen.getByRole("button", { name: "保存我的信息" }).parentElement);
+  await user.click(add);
+  // 切到了「补充字段」，新增的是最后一行，焦点在它的字段名上。
+  expect(screen.getByRole("heading", { name: "补充字段", level: 2 })).toBeTruthy();
+  const row = screen.getByRole("group", { name: "补充字段 2" });
+  expect(document.activeElement).toBe(within(row).getByLabelText("字段名"));
+  await user.type(within(row).getByLabelText("字段名"), "毕业论文题目");
+  await user.type(within(row).getByLabelText("内容"), "示例题目");
+  await user.click(screen.getByRole("button", { name: "保存我的信息" }));
+  await waitFor(() => expect(calls.some((c) => c.command === "save_profile_cmd")).toBe(true));
+  const saved = calls.find((c) => c.command === "save_profile_cmd")!.args!.profile as { custom: Array<{ key: string; value: string }> };
+  expect(saved.custom.find((c) => c.key === "毕业论文题目")?.value).toBe("示例题目");
+  // 补充字段和家庭成员各有自己的添加按钮，不重复出现「添加字段」。
+  expect(screen.queryByRole("button", { name: "添加字段" })).toBeNull();
+});

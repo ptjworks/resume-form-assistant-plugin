@@ -3,9 +3,10 @@ import type { MutableRefObject } from "react";
 import type { ImportResultView, ResumeFileKind, ResumeOverview, ResumeTemplateView, TemplateSummary } from "../api.ts";
 import { useInvoke } from "../react/invoke.tsx";
 import type { Listen } from "./LegacyImport.tsx";
+import { MoreMenu } from "./MoreMenu.tsx";
 import { ResumeDialog } from "./ResumeDialog.tsx";
-import { TemplateFieldEditor } from "./TemplateFieldEditor.tsx";
-import type { TemplateEditorProbe } from "./TemplateFieldEditor.tsx";
+import { TemplateFields } from "./TemplateFields.tsx";
+import type { TemplateEditorProbe } from "./TemplateFields.tsx";
 import type { ResumeParseControls } from "./ResumeParse.tsx";
 import { MAX_TEMPLATE_NAME, exportFileName, importMessage, templateDates, templateNameProblem } from "./resume-text.ts";
 import type { Notice } from "./resume-text.ts";
@@ -32,7 +33,9 @@ function describe(error: unknown): Notice {
 type Dialog =
   | { kind: "reimport"; template: TemplateSummary }
   | { kind: "rename"; template: TemplateSummary; draft: string; error: string | null }
-  | { kind: "delete"; template: TemplateSummary; error: string | null };
+  | { kind: "delete"; template: TemplateSummary; error: string | null }
+  // 填到一半的内容会因为下面这件事丢掉：先问一句，确认了再做 then。
+  | { kind: "discard"; then: () => void; verb: string; why: string };
 
 type Preview = { id: string; view: ResumeTemplateView } | { id: string; error: string };
 
@@ -58,6 +61,9 @@ export function TemplateList({
   editorProbe?: MutableRefObject<TemplateEditorProbe | null>;
 }) {
   const invoke = useInvoke();
+  // 字段里有没有填到一半的内容：切换模板前要问；没传进来就自己备一个。
+  const ownProbe = useRef<TemplateEditorProbe | null>(null);
+  const fieldsProbe = editorProbe ?? ownProbe;
   const [overview, setOverview] = useState<ResumeOverview | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,9 +72,6 @@ export function TemplateList({
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewAttempt, setPreviewAttempt] = useState(0);
-  // #273：正在编辑哪份模板的字段（连同开始编辑时读到的内容），以及刚保存过的是哪份。
-  const [editing, setEditing] = useState<{ id: string; view: ResumeTemplateView } | null>(null);
-  const [savedId, setSavedId] = useState<string | null>(null);
   const busyRef = useRef(false);
   const renameFormId = useId();
 
@@ -109,7 +112,11 @@ export function TemplateList({
   useEffect(() => {
     if (!reloadSignal || reloadSignal.token === lastToken.current) return;
     lastToken.current = reloadSignal.token;
-    if (reloadSignal.select) setSelected(reloadSignal.select);
+    if (reloadSignal.select) {
+      // 这时正有填到一半的内容：不替人切过去，只告诉有新模板了。
+      if (fieldsProbe.current?.dirty()) setNotice({ tone: "ok", text: "已生成新模板，在左边列表里点它查看。这份模板里填到一半的内容还在。" });
+      else setSelected(reloadSignal.select);
+    }
     // 不是为了选中新模板的刷新（重新进入简历页、恢复备份、导入旧数据）：上一次操作的结果提示已经过时。
     else setNotice(null);
     void reload();
@@ -123,6 +130,21 @@ export function TemplateList({
     templates[0] ??
     null;
   const selectedId = selectedTemplate?.id ?? null;
+
+  // 字段里有填到一半的内容（或正在保存）时，做会丢掉它们的事之前先问一句，不悄悄丢掉。
+  const guardDiscard = (verb: string, why: string, then: () => void) => {
+    if (fieldsProbe.current?.dirty()) setDialog({ kind: "discard", then, verb, why });
+    else then();
+  };
+
+  // 换一份模板看。
+  const chooseTemplate = (id: string) => {
+    if (id === selectedId) return;
+    guardDiscard("放弃并切换", "切换到别的模板会丢掉它们。", () => {
+      setSelected(id);
+      setShowDetail(true);
+    });
+  };
 
   // 预览按需读。重新导入会原地覆盖同一个模板 id，所以 updatedAt / fieldCount 变了要再读一次，
   // 不能留着旧内容。
@@ -201,6 +223,8 @@ export function TemplateList({
   const activate = (template: TemplateSummary) =>
     run(async () => {
       if (!invoke) return;
+      // 在行上直接点「设为当前」不该让右边的预览跳走：没点选过任何一份时右边跟着「当前」走，这里先把正在看的那份固定下来。
+      setSelected((current) => current ?? selectedId);
       setOverview(await invoke<ResumeOverview>("set_active_resume_template_cmd", { id: template.id }));
       setNotice({ tone: "ok", text: `已把「${template.name}」设为当前模板，插件填写时优先使用它。` });
     });
@@ -278,33 +302,32 @@ export function TemplateList({
         const isActive = template.id === activeId;
         const dates = templateDates(template.updatedAt);
         return (
-          <li key={template.id} aria-label={template.name}>
+          <li key={template.id} aria-label={template.name} className={`template-row${isSelected ? " is-selected" : ""}${isActive ? " is-active" : ""}`}>
             <button
               type="button"
-              className={`template-card${isSelected ? " is-selected" : ""}${isActive ? " is-active" : ""}`}
+              className="template-row-main"
               aria-pressed={isSelected}
-              // 编辑字段期间不换模板：先保存或取消，草稿不会因为点错一行就丢。
-              disabled={Boolean(editing) && !isSelected}
-              title={editing && !isSelected ? "正在编辑字段，先保存或取消" : undefined}
-              onClick={() => {
-                if (editing) return;
-                if (template.id !== selectedId) setSavedId(null);
-                setSelected(template.id);
-                setShowDetail(true);
-              }}
+              onClick={() => chooseTemplate(template.id)}
             >
-              <span className="template-card-head">
-                <strong>{template.name}</strong>
-                {isActive ? <span className="template-badge">当前模板</span> : null}
-              </span>
-              <span className="template-card-meta">
+              <strong>{template.name}</strong>
+              <span className="template-row-meta">
                 <span>{template.fieldCount} 个字段</span>
                 {dates ? <span>{dates.short}更新</span> : null}
               </span>
-              <span className="template-card-hint" aria-hidden="true">
-                {isActive ? "预览字段 →" : "预览 · 可设为当前 →"}
-              </span>
             </button>
+            {isActive ? (
+              <span className="template-badge">当前使用</span>
+            ) : (
+              <button
+                type="button"
+                className="template-row-set"
+                aria-label={`把「${template.name}」设为当前`}
+                disabled={busy}
+                onClick={() => void activate(template)}
+              >
+                设为当前
+              </button>
+            )}
           </li>
         );
       })}
@@ -323,36 +346,19 @@ export function TemplateList({
             </div>
             <div className="template-create">
               {parse?.trigger}
-              <button type="button" disabled={busy || !pickers || !overview || Boolean(editing)} onClick={() => void importFile(null)}>
+              <button type="button" title="支持 .xlsx 和 UTF-8 编码的 .csv，三列：一级分类、字段名、值" disabled={busy || !pickers || !overview} onClick={() => guardDiscard("放弃并导入", "导入完会自动切到新模板，这些内容会丢掉。", () => void importFile(null))}>
                 导入 Excel
               </button>
             </div>
-            <p className="resume-hint">
-              AI 解析支持 PDF、DOCX、TXT（扫描版 PDF 抽不出文字），发送全文前会先请你确认。Excel 支持 .xlsx 和 UTF-8 编码的 .csv，三列：一级分类、字段名、值。
+            <p className="resume-hint" title="AI 解析支持 PDF、DOCX、TXT（扫描版 PDF 抽不出文字），发送全文前会先请你确认。Excel 支持 .xlsx 和 UTF-8 编码的 .csv，三列：一级分类、字段名、值。">
+              支持 PDF、Word、TXT 和 Excel；AI 解析发送前会先请你确认。
             </p>
             {!pickers ? <p className="resume-hint warn">{NO_PICKERS}</p> : null}
           </div>
           <div className="template-list-scroll">{listBody}</div>
-          <p className="resume-card-foot">选择模板查看字段；设为「当前」后，插件填写时优先使用它。</p>
         </section>
         <section className="resume-card template-detail-card" aria-label="模板详情">
-          {selectedTemplate && editing?.id === selectedTemplate.id ? (
-            <TemplateFieldEditor
-              key={editing.id}
-              template={editing.view}
-              latest={preview?.id === editing.id && "view" in preview ? preview.view : null}
-              active={selectedTemplate.id === activeId}
-              probe={editorProbe}
-              onClose={() => setEditing(null)}
-              onSaved={(view) => {
-                setEditing(null);
-                setPreview({ id: view.id, view });
-                setSavedId(view.id);
-                setNotice({ tone: "ok", text: `已保存「${view.name}」的字段修改。插件填写、搜索和复制会使用新内容。` });
-                void reload();
-              }}
-            />
-          ) : selectedTemplate ? (
+          {selectedTemplate ? (
             <TemplateDetail
               template={selectedTemplate}
               active={selectedTemplate.id === activeId}
@@ -360,19 +366,19 @@ export function TemplateList({
               canUseFiles={Boolean(pickers)}
               preview={preview?.id === selectedTemplate.id ? preview : null}
               onBack={() => setShowDetail(false)}
-              onActivate={() => void activate(selectedTemplate)}
-              onReimport={() => setDialog({ kind: "reimport", template: selectedTemplate })}
+              onReimport={() => guardDiscard("放弃并重新导入", "重新导入会用文件里的内容替换这份模板，这些内容会丢掉。", () => setDialog({ kind: "reimport", template: selectedTemplate }))}
               onExport={() => void exportTemplate(selectedTemplate)}
-              saved={savedId === selectedTemplate.id}
-              onEdit={() => {
-                if (preview?.id === selectedTemplate.id && "view" in preview) {
-                  setSavedId(null);
-                  setNotice(null);
-                  setEditing({ id: selectedTemplate.id, view: preview.view });
-                }
+              editorProbe={fieldsProbe}
+              onFieldsSaved={(view) => {
+                setPreview({ id: view.id, view });
+                void reload();
+              }}
+              onFieldsReplaced={(view) => {
+                if (view) setPreview({ id: view.id, view });
+                void reload();
               }}
               onRename={() => setDialog({ kind: "rename", template: selectedTemplate, draft: selectedTemplate.name, error: null })}
-              onDelete={() => setDialog({ kind: "delete", template: selectedTemplate, error: null })}
+              onDelete={() => guardDiscard("放弃并删除", "删除这份模板后，这些内容也就没有了。", () => setDialog({ kind: "delete", template: selectedTemplate, error: null }))}
               onRetryPreview={() => {
                 setPreview(null);
                 setPreviewAttempt((n) => n + 1);
@@ -398,7 +404,7 @@ export function TemplateList({
               type="button"
               className="primary"
               onClick={() => {
-                const target = dialog?.template;
+                const target = dialog?.kind === "reimport" ? dialog.template : null;
                 setDialog(null);
                 if (target) void importFile(target.id);
               }}
@@ -459,6 +465,30 @@ export function TemplateList({
         ) : null}
       </ResumeDialog>
       <ResumeDialog
+        open={dialog?.kind === "discard"}
+        tone="warn"
+        title="放弃填到一半的内容？"
+        onCancel={() => setDialog(null)}
+        footer={
+          <>
+            <button type="button" data-autofocus onClick={() => setDialog(null)}>继续填写</button>
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                const next = dialog?.kind === "discard" ? dialog.then : null;
+                setDialog(null);
+                next?.();
+              }}
+            >
+              {dialog?.kind === "discard" ? dialog.verb : "放弃"}
+            </button>
+          </>
+        }
+      >
+        <p>这份模板里有还没写进去的内容（填到一半的字段、新建分类，或正在保存）。{dialog?.kind === "discard" ? dialog.why : ""}</p>
+      </ResumeDialog>
+      <ResumeDialog
         open={dialog?.kind === "delete"}
         tone="danger"
         title={dialog?.kind === "delete" ? `删除「${dialog.template.name}」？` : "删除模板？"}
@@ -493,11 +523,6 @@ function deleteEffect(template: TemplateSummary, templates: TemplateSummary[], a
     : "它是当前模板，也是最后一份；删除后没有当前模板，插件只能用「我的信息」填写。";
 }
 
-// 长内容（简历里的经历描述）占满一整行，短字段两列排。
-function isWideValue(value: string): boolean {
-  return value.includes("\n") || [...value].length > 36;
-}
-
 function TemplateDetail(props: {
   template: TemplateSummary;
   active: boolean;
@@ -505,19 +530,19 @@ function TemplateDetail(props: {
   canUseFiles: boolean;
   preview: Preview | null;
   onBack(): void;
-  onActivate(): void;
   onReimport(): void;
   onExport(): void;
   onRename(): void;
   onDelete(): void;
   onRetryPreview(): void;
-  /** #273：进入字段编辑。字段读出来之前不可用。 */
-  onEdit(): void;
-  /** 刚保存过字段：提示 Excel 是快照，并给出导出入口。 */
-  saved: boolean;
+  /** 字段里有没有还没写进模板的输入，给离开简历页前的确认用。 */
+  editorProbe?: MutableRefObject<TemplateEditorProbe | null>;
+  /** 字段就地改动写进模板之后（#553）。 */
+  onFieldsSaved(view: ResumeTemplateView): void;
+  /** 发现别处改过，已换成最新内容（view 为 null 是模板已被删）。 */
+  onFieldsReplaced(view: ResumeTemplateView | null): void;
 }) {
-  const { template, active, busy, canUseFiles, preview, saved } = props;
-  const loaded = Boolean(preview && "view" in preview);
+  const { template, active, busy, canUseFiles, preview } = props;
   const dates = templateDates(template.updatedAt);
   return (
     <>
@@ -527,42 +552,28 @@ function TemplateDetail(props: {
         </button>
         <div className="template-detail-title">
           <div>
-            <p className="resume-kicker">{active ? "当前模板 · 字段预览" : "模板预览"}</p>
             <h2>{template.name}</h2>
             <span className="muted">
               {template.fieldCount} 个字段{dates ? ` · 最近更新 ${dates.full}` : ""}
             </span>
           </div>
-          {active ? (
-            <span className="template-use-badge">填写时优先使用</span>
-          ) : (
-            <button type="button" className="primary" disabled={busy} onClick={props.onActivate}>
-              设为当前
-            </button>
-          )}
-        </div>
-        <div className="template-actions">
-          <button type="button" disabled={busy || !loaded} onClick={props.onEdit}>编辑字段</button>
-          <button type="button" disabled={busy || !canUseFiles} onClick={props.onReimport}>重新导入</button>
-          <button type="button" disabled={busy || !canUseFiles} onClick={props.onExport}>导出 Excel</button>
-          <button type="button" disabled={busy} onClick={props.onRename}>重命名</button>
-          <button type="button" className="danger" disabled={busy} onClick={props.onDelete}>删除</button>
+          <div className="template-head-actions">
+            {active ? <span className="template-use-badge">填写时优先使用</span> : null}
+            <MoreMenu
+              label="更多操作"
+              align="right"
+              disabled={busy}
+              items={[
+                { label: "重新导入", disabled: !canUseFiles, onSelect: props.onReimport },
+                { label: "导出 Excel", disabled: !canUseFiles, title: "导出的是已保存的内容；之后再改字段，需要重新导出", onSelect: props.onExport },
+                { label: "重命名", onSelect: props.onRename },
+                { label: "删除", danger: true, onSelect: props.onDelete },
+              ]}
+            />
+          </div>
         </div>
       </div>
       <div className="template-detail-body">
-        {saved ? (
-          <div className="note ok template-saved-note" role="status">
-            <span>
-              Excel 是导出那一刻的文件快照：之前下载或导入过的 Excel 不会自动更新。需要最新的表格时请重新导出；导出只包含这份模板的字段，不含「我的信息」。
-            </span>
-            <button type="button" disabled={busy || !canUseFiles} onClick={props.onExport}>导出最新 Excel</button>
-          </div>
-        ) : null}
-        <p className="resume-panel-note">
-          {active
-            ? "插件填写时优先用这份模板里的字段，模板里没有的再用「我的信息」补上。"
-            : "这份模板不是当前模板，插件填写时不会用它；需要时点「设为当前」。"}
-        </p>
         {!preview ? (
           <p className="muted">正在读取字段…</p>
         ) : "error" in preview ? (
@@ -570,27 +581,14 @@ function TemplateDetail(props: {
             <p className="note error">{preview.error}</p>
             <button type="button" onClick={props.onRetryPreview}>重试</button>
           </div>
-        ) : preview.view.groups.length === 0 ? (
-          <p className="muted">这份模板还没有字段。</p>
         ) : (
-          <div className="template-preview">
-            {preview.view.groups.map((group, groupIndex) => (
-              <section key={`${group.name}-${groupIndex}`}>
-                <div className="template-group-head">
-                  <h3>{group.name}</h3>
-                  <span className="muted">{group.fields.length} 个字段</span>
-                </div>
-                <dl>
-                  {group.fields.map((field, index) => (
-                    <div key={`${field.key}-${index}`} className={isWideValue(field.value) ? "is-wide" : undefined}>
-                      <dt>{field.key}</dt>
-                      <dd>{field.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
-            ))}
-          </div>
+          <TemplateFields
+            key={preview.view.id}
+            template={preview.view}
+            probe={props.editorProbe}
+            onSaved={props.onFieldsSaved}
+            onReplaced={props.onFieldsReplaced}
+          />
         )}
       </div>
     </>

@@ -85,11 +85,15 @@ function renderView(invoke: Invoke, gate?: { current: ResumeLeaveGate }, extract
   );
 }
 
-test("两个视图共用页眉；切换只换工作区，不清空「我的信息」草稿", async () => {
+test("三个视图共用页眉；切换只换工作区，不清空「我的信息」草稿", async () => {
   const user = userEvent.setup();
   const { invoke, calls } = baseInvoke();
   renderView(invoke);
-  expect(screen.getByRole("heading", { name: "简历资料", level: 1 })).toBeTruthy();
+  // 顶栏已经写着「简历」，页面里不再放可见的大标题（只给读屏留一个）。
+  expect(screen.getByRole("heading", { name: "简历", level: 1 }).className).toBe("sr-only");
+  // 只有三个切换；「网站回答」不再是独立的一页。
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["简历模板", "我的信息", "附件"]);
+  expect(screen.queryByRole("tab", { name: "网站回答" })).toBeNull();
   const templatesTab = screen.getByRole("tab", { name: "简历模板" });
   expect(templatesTab.getAttribute("aria-selected")).toBe("true");
   expect(await screen.findByRole("listitem", { name: "校招简历" })).toBeTruthy();
@@ -107,7 +111,7 @@ test("两个视图共用页眉；切换只换工作区，不清空「我的信�
   expect(calls.filter((c) => c === "get_profile_cmd").length).toBe(profileReads);
 });
 
-test("切换控件支持方向键", async () => {
+test("切换控件支持方向键，三个之间循环", async () => {
   const user = userEvent.setup();
   const { invoke } = baseInvoke();
   renderView(invoke);
@@ -117,6 +121,73 @@ test("切换控件支持方向键", async () => {
   const profileTab = screen.getByRole("tab", { name: "我的信息" });
   expect(profileTab.getAttribute("aria-selected")).toBe("true");
   expect(document.activeElement).toBe(profileTab);
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab", { name: "附件" }).getAttribute("aria-selected")).toBe("true");
+  await user.keyboard("{ArrowRight}");
+  expect(templatesTab.getAttribute("aria-selected")).toBe("true");
+  await user.keyboard("{ArrowLeft}");
+  expect(screen.getByRole("tab", { name: "附件" }).getAttribute("aria-selected")).toBe("true");
+});
+
+const siteAnswer = (site: string, question: string, answer: string) => ({ site, question, answer, updatedAt: "2026-11-02T08:00:00Z" });
+
+test("「我的信息」下面有「按公司记住的回答」入口，点开能看、能删；草稿不受影响", async () => {
+  const user = userEvent.setup();
+  let answers = [
+    siteAnswer("campus.example.com", "是否有亲属在本公司工作", "否"),
+    siteAnswer("jobs.example.org", "是否曾在本公司实习", "是"),
+  ];
+  const { invoke, calls } = baseInvoke((command, args) => {
+    if (command === "list_site_answers_cmd") return answers;
+    if (command === "delete_site_answers_cmd") {
+      answers = answers.filter((item) => !(item.site === args?.site && item.question === args?.question));
+      return answers;
+    }
+    return undefined;
+  });
+  renderView(invoke);
+  // 没切到「我的信息」时入口也已读好数量，但在隐藏的面板里。
+  await user.click(screen.getByRole("tab", { name: "我的信息" }));
+  const entry = await screen.findByRole("region", { name: "按公司记住的回答" });
+  expect(await within(entry).findByText(/2 家/)).toBeTruthy();
+  const name = await screen.findByRole("textbox", { name: "姓名" });
+  await user.type(name, "五");
+
+  await user.click(within(entry).getByRole("button", { name: "查看" }));
+  const dialog = await screen.findByRole("dialog", { name: "按公司记住的回答" });
+  expect(within(dialog).getByText(/只在同一家公司的网申里自动填写/)).toBeTruthy();
+  const site = within(dialog).getByRole("region", { name: "jobs.example.org" });
+  await user.click(within(site).getByRole("button", { name: "删除「是否曾在本公司实习」" }));
+  expect(await within(dialog).findByText("已删除「是否曾在本公司实习」。")).toBeTruthy();
+  expect(calls.filter((c) => c === "delete_site_answers_cmd")).toHaveLength(1);
+  await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(await within(entry).findByText(/1 家/)).toBeTruthy();
+  // 看一眼记住的回答，不打断「我的信息」里填到一半的内容。
+  expect(screen.getByRole("textbox", { name: "姓名" })).toHaveProperty("value", "张三五");
+  // 入口和「我的信息」是并排的两块，各自只有一份（key 重复时 React 会多渲染一份）。
+  expect(screen.getAllByRole("navigation", { name: "信息分组" })).toHaveLength(1);
+  expect(screen.getAllByRole("region", { name: "按公司记住的回答" })).toHaveLength(1);
+});
+
+test("没有记住的回答时入口说明还没有", async () => {
+  const user = userEvent.setup();
+  const { invoke } = baseInvoke((command) => (command === "list_site_answers_cmd" ? [] : undefined));
+  renderView(invoke);
+  await user.click(screen.getByRole("tab", { name: "我的信息" }));
+  const entry = await screen.findByRole("region", { name: "按公司记住的回答" });
+  expect(await within(entry).findByText(/还没有/)).toBeTruthy();
+});
+
+test("读不到记住的回答时入口不报错也不显示数量，打开才说明原因", async () => {
+  const user = userEvent.setup();
+  const { invoke } = baseInvoke(); // 没有 list_site_answers_cmd，会抛 UNEXPECTED
+  renderView(invoke);
+  await user.click(screen.getByRole("tab", { name: "我的信息" }));
+  const entry = await screen.findByRole("region", { name: "按公司记住的回答" });
+  expect(entry.textContent).not.toMatch(/家|还没有/);
+  await user.click(within(entry).getByRole("button", { name: "查看" }));
+  expect(await within(await screen.findByRole("dialog")).findByText("list_site_answers_cmd")).toBeTruthy();
 });
 
 test("「我的信息」没有修改时直接允许离开", async () => {
@@ -187,7 +258,8 @@ test("同一时间只显示一个弹窗：后打开的排在后面", async () =>
   await user.type(await screen.findByRole("textbox", { name: "姓名" }), "五");
   await user.click(screen.getByRole("tab", { name: "简历模板" }));
   await screen.findByRole("heading", { name: "校招简历", level: 2 });
-  await user.click(screen.getByRole("button", { name: "删除" }));
+  await user.click(screen.getByRole("button", { name: "更多操作" }));
+  await user.click(screen.getByRole("menuitem", { name: "删除" }));
   expect(screen.getByRole("dialog", { name: "删除「校招简历」？" })).toBeTruthy();
   let leave!: Promise<boolean>;
   act(() => {
