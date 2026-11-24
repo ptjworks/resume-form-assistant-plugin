@@ -196,6 +196,7 @@
     localRuleMatches,
     isFamilySection,
     familyRecordFields,
+    hasNamedPersonScope,
     personReferenceFits,
     bossEducationOptionMatches,
     educationChoice,
@@ -864,7 +865,7 @@
     const occupied = new Set([...taken, ...saved.map((match) => match.fieldId)]);
     const english = englishResultMatches(forms, resume, pageFields, occupied);
     english.forEach((match) => occupied.add(match.fieldId));
-    const usedValues = new Set([...rules, ...saved, ...english].map((match) => String(match?.value ?? "").trim()).filter(Boolean));
+    const usedValues = new Set([...rules, ...profileRules, ...saved, ...english].map((match) => String(match?.value ?? "").trim()).filter(Boolean));
     return [...rules, ...profileRules, ...saved, ...english, ...repeatedAwardMatches(forms, resume, pageFields, occupied, usedValues)];
   }
 
@@ -953,33 +954,42 @@
   function familyRecordFields(fields) {
     const entries = [];
     const roles = new Set();
+    const groupNumbers = new Set();
     let hasNumberedGroups = false, hasUnnumberedGroups = false;
     for (const field of fields) {
       const group = FAMILY_SECTION.exec(normalizeText(field.group));
       if (!group || !String(field.value ?? "").trim()) continue;
       const key = normalizeText(field.key);
       const role = /^(父亲|母亲|配偶|兄弟姐妹|子女|其他亲属)(\d*)(.+)$/.exec(key);
-      if (group[1]) hasNumberedGroups = true;
-      else if (role) hasUnnumberedGroups = true;
+      if (group[1]) {
+        hasNumberedGroups = true;
+        groupNumbers.add(Number(group[1]));
+      } else if (role) hasUnnumberedGroups = true;
       else return new Map();
       if (role) roles.add(role[1] + role[2]);
       entries.push({ field, index: Number(group[1]), role, label: role?.[3] || key });
     }
     if (hasNumberedGroups && hasUnnumberedGroups) return new Map();
+    const numbered = new Map([...groupNumbers].sort((a, b) => a - b).map((num, index) => [num, index + 1]));
     const indexes = new Map([...roles].map((role, index) => [role, index + 1]));
     return new Map(entries.flatMap(({ field, index, role, label }) => {
-      const row = index || indexes.get(role[1] + role[2]);
+      const row = index ? numbered.get(index) : indexes.get(role[1] + role[2]);
       return row ? [[field, { index: row, label }]] : [];
     }));
   }
 
+  function hasNamedPersonScope(field) {
+    return personScope(fieldContextText(field)).some(tag => tag !== "relative");
+  }
+
   function personReferenceFits(field, source) {
+    const target = personScope(fieldContextText(field));
+    const origin = personScope(fieldContextText({ group: source?.group, label: source?.key }));
+    // 本人字段（题目与分组都未指明他人）绝不采用他人资料，无论是否身份类字段。
+    if (!target.length) return !origin.length;
     const semantic = inferFieldSemantic(field);
     const identity = ["name", "phone", "email", "birth_date", "id_number", "gender"].includes(semantic);
     if (!identity && !isFamilySection(field.group)) return true;
-    const target = personScope(fieldContextText(field));
-    const origin = personScope(fieldContextText({ group: source?.group, label: source?.key }));
-    if (!target.length) return !origin.length;
     const named = target.filter(tag => tag !== "relative");
     return named.length ? named.some(tag => origin.includes(tag))
       : origin.some(tag => ["relative", "father", "mother", "spouse"].includes(tag));

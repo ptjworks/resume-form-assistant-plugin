@@ -68,11 +68,11 @@
     if (!text) return "unknown";
     return FIELD_KINDS.find(([, words]) => words.some(word => text.includes(word)))?.[0] || "unknown";
   }
-  const EXPERIENCE_NAMES = "教育经历|教育背景|学习经历|工作经历|工作经验|任职经历|实习经历|实习经验|项目经历|校园经历|科研经历";
+  const EXPERIENCE_NAMES = "教育经历|教育背景|学习经历|工作经历|工作经验|任职经历|任职经验|实习经历|实习经验|项目经历|校园经历|科研经历";
   const EXPERIENCE_GROUP = new RegExp(`^(?<section>${EXPERIENCE_NAMES})\\s*(?<index>\\d*)$`);
   const EXPERIENCE_KEY = new RegExp(`^(?<anchor>.*?)(?<section>${EXPERIENCE_NAMES})\\s*(?<index>\\d*)\\s*[-_:]\\s*(?<label>.+?)(?:\\s+\\((?<ordinal>\\d+)\\))?$`);
   const experienceName = name => ({ 教育背景: "教育经历", 学习经历: "教育经历",
-    工作经验: "工作经历", 任职经历: "工作经历", 实习经验: "实习经历" })[name] || name;
+    工作经验: "工作经历", 任职经历: "工作经历", 任职经验: "工作经历", 实习经验: "实习经历" })[name] || name;
 
   function experienceOrdinal(group) {
     const matched = EXPERIENCE_GROUP.exec(String(group ?? "").normalize("NFKC").trim())?.groups;

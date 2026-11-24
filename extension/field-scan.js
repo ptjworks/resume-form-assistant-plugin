@@ -1138,6 +1138,7 @@
   const WORK_TITLE_POSITION = /^(?:(?:实习|工作|担任)?(?:职位|岗位|职务|角色)(?:名称)?|jobtitle|position|role)$/;
   const RECORD_SECTION = /^(?:家庭(?:主要)?成员(?:信息|情况)?|家属(?:信息|情况)?|familymembers?|(?:教育|工作|任职|实习|项目)(?:经历|经验|背景)|(?:work|project|education)experience|internships?)$/;
   const RECORD_CLASS = /(?:^|[-_\s])(?:row|record|entry|card|item)(?:$|[-_\s])/i;
+  const FORM_ITEM_CLASS = /(?:^|[-_\s])(?:form|field)[-_]?item(?:$|[-_\s])/i;
 
   // 同一真实条目里的字段共用条目号。每道题各自数第几次出现，会让缺「职位」或「联系电话」的那一行把后面的字段错位。
   function markRecordRows(controls) {
@@ -1147,7 +1148,7 @@
       if (!control.sectionRoot || !RECORD_SECTION.test(section)) continue;
       for (let row = control.root.parentElement; row && row !== control.sectionRoot; row = row.parentElement) {
         const cls = attr(row, "class");
-        if (row.tagName !== "TR" && !RECORD_CLASS.test(cls)) continue;
+        if (row.tagName !== "TR" && (!RECORD_CLASS.test(cls) || FORM_ITEM_CLASS.test(cls))) continue;
         const parent = row.parentElement;
         if (!containers.has(parent)) containers.set(parent, new Map());
         const shapes = containers.get(parent);
@@ -1161,16 +1162,14 @@
     const assigned = new Map();
     for (const [parent, shapes] of containers) {
       for (const rows of shapes.values()) {
-        if (rows.size < 2 || ![...rows.values()].some(fields => fields.length > 1)) continue;
-        const titles = new Set();
-        const sharedTitle = [...rows.values()].some(fields => {
-          const labels = new Set(fields.map(field => normalizeKey(field.label)).filter(Boolean));
-          const shared = [...labels].some(label => titles.has(label));
-          labels.forEach(label => titles.add(label));
-          return shared;
-        });
-        if (!sharedTitle) continue;
+        if (rows.size < 2) continue;
         const ordered = Array.from(parent.children).filter(row => rows.has(row));
+        if (ordered.length < 2) continue;
+        const rowLabels = ordered.map(row => new Set(rows.get(row).map(field => normalizeKey(field.label)).filter(Boolean)));
+        if (!rowLabels.some(labels => labels.size > 1)) continue;
+        const adjacentShared = rowLabels.every((labels, index) => index === 0
+          || [...labels].some(label => rowLabels[index - 1].has(label)));
+        if (!adjacentShared) continue;
         ordered.forEach((row, index) => rows.get(row).forEach(control => {
           // 同时认出了内外两层时，选离字段更近的条目。
           const other = assigned.get(control);

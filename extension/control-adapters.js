@@ -301,7 +301,10 @@
       const deferChange = ctx.options.prepare && plainInput && verdict.reason === 'value_reverted'
         && !left && !previous && !ctx.options.sawOverlay?.();
       if (!verdict.ok && !shown && rejected(verdict.reason) && (sequential || deferChange)) {
-        if (!await deps.runTextLifecycle(ctx.el, typed, sequential, guard, didWrite, { deferChange })) {
+        if (!await deps.runTextLifecycle(ctx.el, typed, sequential, guard, didWrite, {
+          beforeBlur: ctx.options.beforeDismiss,
+          deferChange
+        })) {
           return result(false, stop(ctx) || 'value_changed', ctx);
         }
         const committed = shows(ctx.el, expected);

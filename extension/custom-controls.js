@@ -2387,12 +2387,18 @@
           if (!node.isConnected || hintLayer(node, el) || foreignDialog(node)) continue;
           const box = genericPopupFrom(node, info, h, 1);
           if (!box || hintLayer(box, el) || staleLayer(box, info) || foreignDialog(box) || looksCalendar(node, box, h)) continue;
-          // 写后回滚也可能是校验或网页提示。只在有列表/选项结构，或新浮层里有重复的候选项时点选。
+          // 写后回滚也可能是校验或网页提示。只在有列表/选项结构、浮层内有重复候选项，或明确弹层容器里出现唯一精确匹配项时点选。
           if (afterRollback && !box.matches(listSelector) && !box.querySelector('[role="option"]')) {
-            if (!['absolute', 'fixed'].includes(View.getComputedStyle(node).position)) continue;
+            const positioned = el => ['absolute', 'fixed'].includes(View.getComputedStyle(el).position);
+            if (!positioned(node) && !positioned(box)) continue;
             const list = genericOptions(box, h).filter(option => !layerWord(option, box));
-            if (!list.some((item, index) => index > 0 && item.node.parentElement === list[index - 1].node.parentElement
-              && item.node.tagName === list[index - 1].node.tagName)) continue;
+            const repeated = list.some((item, index) => index > 0 && item.node.parentElement === list[index - 1].node.parentElement
+              && item.node.tagName === list[index - 1].node.tagName);
+            const popupWord = el => /(?:popup|popper|popover|dropdown|suggest|autocomplete|menu|listbox|option|select)/i
+              .test(String(el?.getAttribute?.('class') || ''));
+            const singleExact = list.length === 1 && Boolean(sameOption(list, wanted, h.helpers).option)
+              && (popupWord(box) || popupWord(node) || popupWord(list[0].node));
+            if (!repeated && !singleExact) continue;
           }
           if (!layers.has(box) || node.contains(layers.get(box))) layers.set(box, node);
         }

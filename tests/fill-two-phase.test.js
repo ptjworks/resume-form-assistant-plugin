@@ -1166,6 +1166,121 @@ test("#581 split experience sections send the physical row number when the first
   assert.equal(lineOf(report, "ai_missed_with_data"), "4");
 });
 
+test("#581 family rows without recordIndex still block cross-member and cross-person non-identity refs", async (t) => {
+  const body = `<section><h2>家庭成员</h2>
+      <div class="plain-block">${input("m1-name", "姓名")}${input("m1-org", "工作单位")}</div>
+      <div class="plain-block">${input("m2-name", "姓名")}${input("m2-org", "工作单位")}</div>
+    </section>
+    <section><h2>工作经历</h2>${input("self-co", "公司")}${input("self-org", "主营业务")}</section>`;
+  const resume = [
+    ["家庭成员 1", "父亲姓名", "虚构成员甲"],
+    ["家庭成员 1", "父亲工作单位", "虚构父亲单位"],
+    ["家庭成员 2", "母亲姓名", "虚构成员乙"],
+    ["工作经历", "工作经历1-主营业务", "虚构软件业务"]
+  ];
+  const p = page(t, body, { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  const call = p.worker.calls[0];
+  const m1Name = call.fields.find(field => field.label === "姓名" && field.group === "家庭成员 1");
+  const m2Name = call.fields.find(field => field.label === "姓名" && field.group === "家庭成员 2");
+  const m2Org = call.fields.find(field => field.label === "工作单位" && field.group === "家庭成员 2");
+  const selfOrg = call.fields.find(field => field.label === "主营业务" && field.group === "工作经历");
+  assert.equal(m2Name.recordIndex, undefined);
+  assert.equal(m2Name.repeatIndex, 2);
+  const catalog = catalogOf(call.prompt);
+  const fatherName = catalog.find(item => item.key === "父亲姓名");
+  const fatherOrg = catalog.find(item => item.key === "父亲工作单位");
+  call.replyFields([
+    { fieldId: m1Name.fieldId, ref: fatherName.ref },
+    { fieldId: m2Name.fieldId, ref: fatherName.ref },
+    { fieldId: m2Org.fieldId, ref: fatherOrg.ref },
+    { fieldId: selfOrg.fieldId, ref: fatherOrg.ref }
+  ]);
+  const result = await running;
+  assert.equal(result.filledCount, 1);
+  assert.deepEqual(["m1-name", "m2-name", "m2-org", "self-org"].map(p.value), ["虚构成员甲", "", "", ""]);
+});
+
+test("#581 sparse family group numbers compress to physical rows and named role labels bypass row mismatch", async (t) => {
+  const body = `<section><h2>家庭成员</h2>
+      <div class="member-row">${input("r1-mother-org", "母亲工作单位")}${input("r1-org", "工作单位")}</div>
+      <div class="member-row">${input("r2-name", "姓名")}${input("r2-org", "工作单位")}</div>
+    </section>`;
+  const resume = [
+    ["家庭成员 2", "父亲姓名", "虚构成员甲"],
+    ["家庭成员 2", "父亲工作单位", "虚构甲单位"],
+    ["家庭成员 3", "母亲姓名", "虚构成员乙"],
+    ["家庭成员 3", "母亲工作单位", "虚构乙单位"]
+  ];
+  const p = page(t, body, { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  const call = p.worker.calls[0];
+  const catalog = catalogOf(call.prompt);
+  const fatherName = catalog.find(item => item.key === "父亲姓名");
+  const fatherOrg = catalog.find(item => item.key === "父亲工作单位");
+  const motherName = catalog.find(item => item.key === "母亲姓名");
+  const motherOrg = catalog.find(item => item.key === "母亲工作单位");
+  assert.equal(fatherName.recordIndex, 1);
+  assert.equal(motherName.recordIndex, 2);
+  const r1MotherOrg = call.fields.find(field => field.label === "母亲工作单位");
+  const r1Org = call.fields.find(field => field.label === "工作单位" && field.recordIndex === 1);
+  const r2Name = call.fields.find(field => field.label === "姓名" && field.recordIndex === 2);
+  const r2Org = call.fields.find(field => field.label === "工作单位" && field.recordIndex === 2);
+  call.replyFields([
+    { fieldId: r1MotherOrg.fieldId, ref: motherOrg.ref },
+    { fieldId: r1Org.fieldId, ref: fatherOrg.ref },
+    { fieldId: r2Name.fieldId, ref: motherName.ref },
+    { fieldId: r2Org.fieldId, ref: motherOrg.ref }
+  ]);
+  const result = await running;
+  assert.equal(result.filledCount, 4);
+  assert.deepEqual(["r1-mother-org", "r1-org", "r2-name", "r2-org"].map(p.value), ["虚构乙单位", "虚构甲单位", "虚构成员乙", "虚构乙单位"]);
+});
+
+test("#581 flat el-form-item siblings and interleaved el-row layout rows do not get misnumbered as records", async (t) => {
+  const elItem = (id, label) => `<div class="el-form-item"><label class="el-form-item__label">${label}</label>
+    <div class="el-form-item__content"><input class="el-input__inner" id="${id}"></div></div>`;
+  const body = `<section><h2>教育经历</h2>
+      <div class="el-form">
+        ${elItem("sch-1", "学校")}
+        <div class="el-form-item"><label class="el-form-item__label">起止时间</label>
+          <div class="el-form-item__content"><input id="edu-start"><input id="edu-end"></div></div>
+        ${elItem("major-1", "专业")}
+        ${elItem("sch-2", "学校")}
+      </div>
+    </section>
+    <section><h2>任职经验</h2>
+      <div class="el-row">${elItem("co-1", "公司")}${elItem("pos-1", "职位")}</div>
+      <div class="el-row">${elItem("dept-1", "部门")}${elItem("city-1", "城市")}</div>
+      <div class="el-row">${elItem("co-2", "公司")}${elItem("pos-2", "职位")}</div>
+      <div class="el-row">${elItem("dept-2", "部门")}${elItem("city-2", "城市")}</div>
+    </section>`;
+  const resume = [
+    ["教育经历", "教育经历1-学校", "示例大学"],
+    ["任职经验", "任职经验1-公司", "虚构甲单位"],
+    ["任职经验", "任职经验2-公司", "虚构乙单位"],
+    ["任职经验", "任职经验2-职位", "编辑"]
+  ];
+  const p = page(t, body, { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  const call = p.worker.calls[0];
+  assert.equal(call.fields.some(field => field.recordIndex), false);
+  const sch2 = call.fields.find(field => field.label === "学校" && field.repeatIndex === 2);
+  const major1 = call.fields.find(field => field.label === "专业");
+  const pos2 = call.fields.find(field => field.label === "职位" && field.repeatIndex === 2);
+  assert.equal(sch2.group, "教育经历 2");
+  assert.equal(major1.group, "教育经历");
+  assert.equal(pos2.group, "任职经验 2");
+  call.replyFields([]);
+  await running;
+  const report = (await p.report()).diagnosticsReport;
+  // 教育经历 1 有学校、任职经验 1 有公司、任职经验 2 有公司与职位，共 4 项简历有数据。
+  assert.equal(lineOf(report, "ai_missed_with_data"), "4");
+});
+
 // #301 中铁「生源地」：省、市、县并排三个原生下拉，题目只写一次。选了省以后网站重新生成市的选项，
 // 提示项从「市级」换成「请选择」。这不是用户改了市，填写不能因此停下，市要接着选上。
 test("#301 a city select whose options the page rebuilds after the province is picked is still filled, and the fill goes on", async (t) => {

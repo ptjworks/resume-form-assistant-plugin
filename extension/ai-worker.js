@@ -975,9 +975,10 @@ function refMatches(payload, fields, catalog, allowed, withValues = false, rejec
       noteReject(field.fieldId, "wrong_person");
       return [];
     }
-    if (field.recordIndex && helpers.isFamilySection(field.group) && sources.some(source => {
+    const familyIndex = field.recordIndex || field.repeatIndex || Number((/\s*(\d+)$/.exec(String(field.group ?? "")) || [])[1]) || 0;
+    if (familyIndex && helpers.isFamilySection(field.group) && !helpers.hasNamedPersonScope(field) && sources.some(source => {
       const record = catalog.familyRecords.get(source);
-      return record && record.index !== field.recordIndex;
+      return record && record.index !== familyIndex;
     })) {
       noteReject(field.fieldId, "wrong_record");
       return [];

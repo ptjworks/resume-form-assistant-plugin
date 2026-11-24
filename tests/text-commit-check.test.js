@@ -729,6 +729,29 @@ test("#577 rollback retries a plain text autocomplete and commits the exact new 
   assert.equal(clicked, 1);
 });
 
+test("#577 rollback also commits a single exact suggestion in a filtered autocomplete popup", async (t) => {
+  const p = page(t, item("school", "学校"), [["学校", "示例大学"]]);
+  const input = p.input("school");
+  let selected = false;
+  let clicked = 0;
+  input.addEventListener("input", () => {
+    if (!input.value || p.doc.querySelector(".lookup-popup")) return;
+    const layer = p.doc.createElement("div");
+    layer.className = "lookup-popup";
+    layer.style.position = "absolute";
+    layer.innerHTML = "<div>示例大学</div>";
+    layer.firstElementChild.onclick = () => { clicked++; selected = true; layer.remove(); };
+    p.doc.body.append(layer);
+  });
+  input.addEventListener("blur", () => {
+    p.doc.querySelector(".lookup-popup")?.remove();
+    if (!selected) p.w.setTimeout(() => { input.value = ""; }, 0);
+  });
+  assert.equal((await p.run()).filledCount, 1);
+  assert.equal(input.value, "示例大学");
+  assert.equal(clicked, 1);
+});
+
 test("#577 a rollback never clicks matching text in a page dialog or an ambiguous list", async (t) => {
   for (const dialog of [true, false]) {
     await t.test(dialog ? "dialog" : "ambiguous options", async (t) => {
