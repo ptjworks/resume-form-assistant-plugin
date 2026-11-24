@@ -387,8 +387,14 @@ async function receiveFeedback(request, env, origin, cache, now) {
     // 算不出去重键也照样收下，Muse 会按没有键处理。
   }
   const privateText = privateDiagnosticsOf(body.private_diagnostics);
-  const skipped = skipsIssue(item) || (item.error_type !== 'manual' && parseVersion(item.app_version) !== null
-    && await isUnreleased(item, origin, env, cache));
+  let skipped = skipsIssue(item);
+  if (!skipped && item.error_type !== 'manual' && parseVersion(item.app_version) !== null) {
+    try {
+      skipped = await isUnreleased(item, origin, env, cache);
+    } catch {
+      console.warn(`release check failed for ${item.id}`);
+    }
+  }
   if (skipped) item.status = 'skipped';
   // 先写待处理标记再写报告：报告写失败时只剩一个读不到报告的标记，一小时后 /pending 会删掉。
   // 反过来的话，标记写失败的报告会留在 KV 里，Muse 却永远看不到。

@@ -29,8 +29,8 @@ const UPSTREAM_TIMEOUT_MS = 6000;
 const FEEDBACK_LOOKUP_MS = 2500;
 export const PLUGIN_APP = 'resume-form-assistant-plugin';
 const TAG_PATTERNS = new Map([
-  [PLUGIN_APP, /^v(\d{1,9}\.\d{1,9}\.\d{1,9}(?:-[0-9A-Za-z.-]+)?)$/],
-  ['resume-form-assistant-desktop', /^desktop-v(\d{1,9}\.\d{1,9}\.\d{1,9}(?:-[0-9A-Za-z.-]+)?)$/],
+  [PLUGIN_APP, /^v(\d{1,9}\.\d{1,9}\.\d{1,9}(?:-[0-9A-Za-z.-]+)?)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/],
+  ['resume-form-assistant-desktop', /^desktop-v(\d{1,9}\.\d{1,9}\.\d{1,9}(?:-[0-9A-Za-z.-]+)?)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/],
 ]);
 const PAGE_NUMBER = /^[1-9]\d?$/;
 
@@ -66,7 +66,7 @@ export function publicRelease(item) {
   };
 }
 
-// kind 是 fresh（新鲜结果）、stale（上次成功）或 failed（失败标记）。缓存键用请求自己的域名。
+// 缓存键用请求自己的域名。recheck 是反馈复查首页的冷却标记。
 export function releasesCacheKey(origin, kind, page) {
   return `${origin}/releases-cache/v1/${kind}/${page}`;
 }
@@ -154,10 +154,12 @@ export async function releases(url, env, cache) {
   return lookupPage(url.origin, page, env, cache);
 }
 
-async function lookupPage(origin, page, env, cache, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+async function lookupPage(origin, page, env, cache, timeoutMs = UPSTREAM_TIMEOUT_MS, { bypassFresh = false } = {}) {
   const key = kind => releasesCacheKey(origin, kind, page);
-  const fresh = await readCache(cache, key('fresh'));
-  if (Array.isArray(fresh)) return listResponse(fresh, 'hit');
+  if (!bypassFresh) {
+    const fresh = await readCache(cache, key('fresh'));
+    if (Array.isArray(fresh)) return listResponse(fresh, 'hit');
+  }
 
   // 刚失败过：一分钟内不再问 GitHub。
   const failed = await readCache(cache, key('failed'));
@@ -192,7 +194,7 @@ export function releaseVersionOf(release, app) {
 }
 
 export function normalizedVersion(value) {
-  return value.trim().replace(/^v/, '').replace(/\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$/, '').toLowerCase();
+  return String(value ?? '').trim().toLowerCase().replace(/^v/, '').replace(/\+[0-9a-z-]+(?:\.[0-9a-z-]+)*$/, '');
 }
 
 // 只有完整、新鲜的列表能证明版本未发布。所有翻页和 401 重试共用反馈请求的时间预算。
@@ -201,14 +203,30 @@ export async function isUnreleased(item, origin, env, cache) {
   const version = normalizedVersion(item.app_version);
   const deadline = Date.now() + FEEDBACK_LOOKUP_MS;
   let sawStale = false;
+  let page1Hit = false;
+  const matchesVersion = release => releaseVersionOf(release, item.app) === version;
   for (let page = 1; page <= RELEASES_MAX_PAGE; page++) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) return false;
     const result = await lookupPage(origin, page, env, cache, remaining);
-    if (result.status !== 200) return false;
-    if (result.data.some(release => releaseVersionOf(release, item.app) === version)) return false;
+    if (result.status !== 200 || !Array.isArray(result.data)) return false;
+    if (result.data.some(matchesVersion)) return false;
+    if (page === 1) page1Hit = result.headers['X-Relay-Cache'] === 'hit';
     if (result.headers['X-Relay-Cache'] === 'stale') sawStale = true;
-    if (result.data.length < RELEASES_PER_PAGE) return !sawStale;
+    if (result.data.length >= RELEASES_PER_PAGE) continue;
+    if (sawStale) return false;
+    if (!page1Hit || !cache) return true;
+
+    const recheckKey = releasesCacheKey(origin, 'recheck', 1);
+    const recheck = await readCache(cache, recheckKey);
+    if (recheck !== null) return recheck.ok === true;
+    const recheckBudget = deadline - Date.now();
+    if (recheckBudget <= 0) return false;
+    const refreshed = await lookupPage(origin, 1, env, cache, recheckBudget, { bypassFresh: true });
+    const ok = refreshed.status === 200 && Array.isArray(refreshed.data) && refreshed.headers['X-Relay-Cache'] !== 'stale';
+    await writeCache(cache, recheckKey, { ok }, RELEASES_FAILURE_SECONDS);
+    if (!ok) return false;
+    return !refreshed.data.some(matchesVersion);
   }
   return false;
 }

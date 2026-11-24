@@ -54,6 +54,7 @@ beforeEach(async t => {
     await Promise.all(page.keys.map(key => kv.delete(key.name)));
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
+  await edgeCache.delete(cacheKey('recheck'));
   for (const kind of ['fresh', 'stale', 'failed']) {
     for (let page = 1; page <= 10; page++) await edgeCache.delete(releasesCacheKey('https://relay.test', kind, page));
   }
@@ -876,11 +877,16 @@ async function checkReport(overrides, status, call = send) {
 }
 
 test('tag matching preserves app and prerelease identity', () => {
+  assert.equal(normalizedVersion('V0.5.1'), '0.5.1');
+  assert.equal(normalizedVersion(42), '42');
+  assert.equal(normalizedVersion(null), '');
+  assert.equal(releaseVersionOf({ tag_name: 'v0.5.1+meta.1' }, PLUGIN), '0.5.1');
+  assert.equal(releaseVersionOf({ tag_name: 'desktop-v0.5.1-beta.1+meta' }, DESKTOP), '0.5.1-beta.1');
   assert.equal(normalizedVersion('  v0.5.1-BETA.1+build.7  '), '0.5.1-beta.1');
   assert.equal(releaseVersionOf({ tag_name: 'desktop-v0.5.1-BETA.1', prerelease: true }, DESKTOP), '0.5.1-beta.1');
   for (const release of [
     { tag_name: 'desktop-v0.5.1' }, { tag_name: 'v0.7.2', draft: true },
-    { tag_name: 'v0.5.1+abc' }, { tag_name: 'v0.5.1 trailing' }, { tag_name: null },
+    { tag_name: 'v0.5.1+meta.' }, { tag_name: 'v0.5.1 trailing' }, { tag_name: null },
   ]) assert.equal(releaseVersionOf(release, PLUGIN), null);
   assert.equal(releaseVersionOf({ tag_name: 'v0.5.1' }, 'relay-domain-test'), null);
 });
@@ -931,7 +937,50 @@ test('feedback and /releases share cached published versions, scoped to the app'
     ['0.5.1', 'pending'], ['0.5.1-beta.1', 'pending'], ['0.5.2', 'skipped'], ['0.7.2', 'skipped'],
   ]) await checkReport({ app: DESKTOP, app_version: version, user_description: '' }, status);
   assert.equal((await send(RELEASES)).headers.get('x-relay-cache'), 'hit');
-  assert.deepEqual(calls.map(call => call.page), [1]);
+  assert.deepEqual(calls.map(call => call.page), [1, 1]);
+});
+
+test('feedback refreshes a cached first page when a release has just been published', async () => {
+  const tags = [{ tag_name: 'v0.5.1' }];
+  const calls = fakeGitHub(tags);
+  assert.deepEqual((await send(RELEASES)).data.map(r => r.tag_name), ['v0.5.1']);
+  tags.unshift({ tag_name: 'v0.5.2' });
+  await checkReport({ app_version: '0.5.2' }, 'pending');
+  const updated = await send(RELEASES);
+  assert.equal(updated.headers.get('x-relay-cache'), 'hit');
+  assert.deepEqual(updated.data.map(r => r.tag_name), ['v0.5.2', 'v0.5.1']);
+  assert.deepEqual(calls.map(c => c.page), [1, 1]);
+});
+
+test('unseen versions share a one-minute first-page recheck cooldown', async () => {
+  const calls = fakeGitHub([{ tag_name: 'v0.5.1' }]);
+  await send(RELEASES);
+  for (const version of ['0.7.2', '0.7.3']) {
+    await checkReport({ app_version: version }, 'skipped');
+    assert.deepEqual(calls.map(c => c.page), [1, 1]);
+  }
+  assert.equal((await edgeCache.match(cacheKey('recheck'))).headers.get('cache-control'),
+    `max-age=${RELEASES_FAILURE_SECONDS}`);
+});
+
+test('a failed live recheck with a stale fallback keeps feedback pending', async () => {
+  fakeGitHub([{ tag_name: 'v0.5.1' }]);
+  await send(RELEASES);
+  let calls = 0;
+  outbound = () => { calls++; return new Response(null, { status: 500 }); };
+  await checkReport({ app_version: '0.7.2' }, 'pending');
+  // 失败的复查进入 60 秒冷却后，后续未知版本也继续放行且不再重复回源。
+  await checkReport({ app_version: '0.7.3' }, 'pending');
+  assert.equal(calls, 1);
+});
+
+test('an unexpected release check exception only logs the report ID and keeps it pending', async t => {
+  t.mock.method(AbortSignal, 'timeout', () => { throw new Error('unexpected runtime error'); });
+  const warn = t.mock.method(console, 'warn', () => {});
+  const call = local();
+  const item = await checkReport({ app_version: '0.7.2' }, 'pending', call);
+  assert.deepEqual(warn.mock.calls.map(c => c.arguments), [[`release check failed for ${item.id}`]]);
+  assert.deepEqual((await call('/pending', { secret: POLL })).data.items, [item]);
 });
 
 test('feedback fails open on upstream errors but still checks the plugin build', async () => {
@@ -996,7 +1045,7 @@ test('feedback follows full pages and needs a complete fresh list to skip', asyn
   const calls = fakeGitHub([...full, { tag_name: 'v0.5.0' }]);
   await checkReport({ app_version: '0.5.0' }, 'pending');
   await checkReport({ app_version: '0.7.2' }, 'skipped');
-  assert.deepEqual(calls.map(call => call.page), [1, 2]);
+  assert.deepEqual(calls.map(call => call.page), [1, 2, 1]);
   for (const kind of ['fresh', 'stale']) await edgeCache.delete(cacheKey(kind, 2));
   let failedPage;
   outbound = request => {
