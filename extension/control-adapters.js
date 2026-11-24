@@ -251,7 +251,9 @@
       // #301 #417 只读的框：聚焦之前记下看得见的对话框、浮层，写不上时收起聚焦后网页打开的那一块（见末尾）。
       const readonly = !shown && ctx.el.readOnly === true;
       const layersBefore = readonly ? scope.ResumeProCustomControls?.openLayers?.(ctx.el.ownerDocument, visible) || null : null;
-      if (!shown && !await deps.runTextLifecycle(ctx.el, typed, false, guard, didWrite)) return result(false, stop(ctx) || 'value_changed', ctx);
+      if (!shown && !await deps.runTextLifecycle(ctx.el, typed, false, guard, didWrite, {
+        beforeBlur: ctx.options.beforeDismiss
+      })) return result(false, stop(ctx) || 'value_changed', ctx);
       ctx.acceptedOnce = shows(ctx.el, expected);
       await deps.waitTextCommit();
       let stopped = stop(ctx);
@@ -268,18 +270,22 @@
       }
       // #301 写不进的普通文本框（大易 hotjob 的学校、专业，51job）：可能是只认从建议里选的联想框，框上没有任何下拉标记。
       // 保持焦点、带按键再打一次字，等贴着它新冒出来的建议，只点和要填的字相同的一项；点了或者没有建议框，都失焦再核对。
-      // 只在框里换回了写之前的字时再试：这类框没选就还原。改成别的字的（页面改了格式）不再等建议，免得每个框白等。
-      if (!verdict.ok && !shown && verdict.reason === 'value_not_committed' && ctx.kind === 'text' && !deps.prefersSequential(ctx.el)
-        && String(ctx.el.value ?? '') === previous && scope.ResumeProCustomControls?.suggest) {
-        const picked = await scope.ResumeProCustomControls.suggest(ctx, typed, host);
+      // #577 有的框先显示了输入的字，再把它清空。写入时冒出过弹层才重试；选项仍须来自这次打字的新列表。
+      const current = String(ctx.el.value ?? '');
+      const afterRollback = verdict.reason === 'value_reverted' && ctx.options.sawOverlay?.()
+        && (current === previous || !current.trim());
+      const refusedText = verdict.reason === 'value_not_committed' && current === previous && !deps.prefersSequential(ctx.el);
+      const plainInput = ctx.kind === 'text' && isInput(ctx.el) && ['text', 'search'].includes(ctx.el.type) && !readonly;
+      if (!shown && plainInput && (afterRollback || refusedText) && scope.ResumeProCustomControls?.suggest) {
+        const picked = await scope.ResumeProCustomControls.suggest(ctx, typed, host, { afterRollback });
         stopped = stop(ctx);
         if (stopped) return result(false, stopped, ctx);
         if (picked.accepted || picked.typed) {
           // 建议里的字和要填的只差大小写、空格、括号时，框里显示的是建议的写法。
           const current = String(ctx.el.value ?? '');
           if (helpers?.normalizeText?.(current) === helpers?.normalizeText?.(expected)) expected = current;
-          // 只打了字、没点建议的，失焦后被换掉仍算没写上，不算被退回。
-          const committed = Boolean(picked.accepted) && shows(ctx.el, expected);
+          // 本来就没写上的，第二次只打了字、没点成建议时保留原来的诊断口径。
+          const committed = Boolean(picked.accepted || afterRollback) && shows(ctx.el, expected);
           blur(ctx.el);
           await deps.waitTextCommit();
           stopped = stop(ctx);
@@ -290,8 +296,14 @@
       }
       let after = rejected(verdict.reason) ? leftover(ctx.el, previous) : '';
       let left = String(ctx.el.value ?? '');
-      if (!verdict.ok && !shown && deps.prefersSequential(ctx.el) && ['value_not_committed', 'value_reverted'].includes(verdict.reason)) {
-        if (!await deps.runTextLifecycle(ctx.el, typed, true, guard, didWrite)) return result(false, stop(ctx) || 'value_changed', ctx);
+      const sequential = deps.prefersSequential(ctx.el);
+      // #528 单行纯文本写后被清空，且没有弹层时，给页面一次在 change 前接收 input 的机会。
+      const deferChange = ctx.options.prepare && plainInput && verdict.reason === 'value_reverted'
+        && !left && !previous && !ctx.options.sawOverlay?.();
+      if (!verdict.ok && !shown && rejected(verdict.reason) && (sequential || deferChange)) {
+        if (!await deps.runTextLifecycle(ctx.el, typed, sequential, guard, didWrite, { deferChange })) {
+          return result(false, stop(ctx) || 'value_changed', ctx);
+        }
         const committed = shows(ctx.el, expected);
         await deps.waitTextCommit();
         stopped = stop(ctx);

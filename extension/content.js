@@ -3913,7 +3913,16 @@
         return false;
       };
       const approvedValues = new Map();
+      const familyRecords = self.ResumeProAIHelpers?.familyRecordFields?.(resumeFields) || new Map();
+      const familyRows = new Map();
+      for (const { index, label } of familyRecords.values()) {
+        if (!familyRows.has(index)) familyRows.set(index, new Set());
+        const kind = fieldKindOf(label);
+        familyRows.get(index).add(kind === "unknown" ? self.ResumeProAIHelpers.normalizeText(label) : kind);
+      }
+      const experienceRows = self.ResumeProFeedback?.resumeExperienceRows?.(resumeFields) || new Map();
       const resolveFieldKind = (meta, fallbackLabel = '') => {
+        if (self.ResumeProAIHelpers?.isFamilySection?.(meta?.group)) return '家庭成员';
         for (const text of [fallbackLabel, meta?.label, meta?.placeholder, meta?.name]) {
           const kind = fieldKindOf(text);
           if (kind !== 'unknown') return kind;
@@ -3997,7 +4006,15 @@
       const isMissInResume = (meta, kind) => {
         if (kind === 'unknown' || !resumeKindSet.has(kind)) return false;
         const groupNum = Number((/\s(\d+)$/.exec(String(meta?.group || '')) || [])[1]) || 0;
-        const rowIndex = Number.isInteger(meta?.repeatIndex) && meta.repeatIndex > 0 ? meta.repeatIndex : groupNum;
+        const rowIndex = meta?.recordIndex || meta?.repeatIndex || groupNum;
+        if (kind === '家庭成员' && rowIndex && familyRows.size && self.ResumeProAIHelpers?.isFamilySection?.(meta?.group)) {
+          const ownKind = fieldKindOf(meta.label);
+          const label = ownKind === "unknown" ? self.ResumeProAIHelpers.normalizeText(meta.label) : ownKind;
+          return familyRows.get(rowIndex)?.has(label) === true;
+        }
+        const experience = self.ResumeProFeedback?.experienceOrdinal?.(meta?.group);
+        const rows = experience && experienceRows.get(experience.section);
+        if (rowIndex && rows) return rows.get(rowIndex)?.has(kind) === true;
         const totalEntries = resumeKindCounts.get(kind) || 0;
         if (rowIndex > 1) return rowIndex <= totalEntries;
         const alreadyMatched = matchedByKind.get(kind) || 0;
@@ -4441,11 +4458,21 @@
           if (entry && !match.blocked && !pageFilled.has(entry) && hasExistingValue(entry) && !parsedBySite(entry)) occupied.add(entry);
           later.push(match);
         }
-        if (occupied.size && !window.confirm(
-          `本次将重新填写 ${occupied.size} 个已有内容的字段，可能覆盖你手动修改的内容。\n\n确定继续填写吗？${earlyRan
-            ? "取消会保留这些字段的现有内容，剩下的字段也不再填写，已经先填的不受影响。"
-            : "取消将保留网页现有内容，本次不会写入任何字段。"}AI 匹配已完成，取消不会撤销已发生的 AI 请求。`
-        )) {
+        let overwriteApproved = true;
+        if (occupied.size) {
+          const confirmStarted = performance.now();
+          try {
+            overwriteApproved = window.confirm(
+              `本次将重新填写 ${occupied.size} 个已有内容的字段，可能覆盖你手动修改的内容。\n\n确定继续填写吗？${earlyRan
+                ? "取消会保留这些字段的现有内容，剩下的字段也不再填写，已经先填的不受影响。"
+                : "取消将保留网页现有内容，本次不会写入任何字段。"}AI 匹配已完成，取消不会撤销已发生的 AI 请求。`
+            );
+          } finally {
+            // #577 覆盖确认由用户决定何时回答，只计入端到端耗时。
+            phaseStart += performance.now() - confirmStarted;
+          }
+        }
+        if (!overwriteApproved) {
           overwriteDeclined = true;
           cancelRequested = true;
           if (earlyRan) {
@@ -5515,6 +5542,7 @@
         placeholder: control.placeholder,
         ariaLabel: element.getAttribute("aria-label") || "",
         group: control.group,
+        ...(control.recordIndex ? { recordIndex: control.recordIndex } : {}),
         ...(control.repeatIndex > 0 ? { repeatIndex: control.repeatIndex, repeatCount: control.repeatCount } : {}),
         ...(workPart && workPart !== "range" ? { bossWork: { role: workPart, row: `${prefix}${work.id}:${workIndex}`,
           index: workIndex, companies: work.companies, companyReady: work.inputs.every(Boolean), kind: work.kind } } : {}),
@@ -6127,7 +6155,7 @@
 
   // 先让 focus 引起的页面更新结束，再写值并通知输入事件。
   // 如果先写值，受控表单可能在 focus 后按旧状态重绘，把值清空。
-  async function runTextLifecycle(element, value, sequential, beforeWrite, didWrite) {
+  async function runTextLifecycle(element, value, sequential, beforeWrite, didWrite, { beforeBlur, deferChange = false } = {}) {
     focusControl(element);
     await nextTask();
     if (beforeWrite && !beforeWrite()) return false;
@@ -6146,9 +6174,15 @@
         dispatchTextInput(element, char);
       }
     }
+    // 有的组件先异步接收 input，change 早到了会把旧的状态当成这次提交的值。
+    if (deferChange) {
+      await nextTask();
+      if (beforeWrite && !beforeWrite()) return false;
+    }
     element.dispatchEvent(new Event("change", { bubbles: true }));
     await nextTask();
     if (beforeWrite && !beforeWrite()) return false;
+    beforeBlur?.();
     blurControl(element);
     return true;
   }
@@ -6168,7 +6202,7 @@
   const SYNC_INPUT_TYPES = new Set(["text", "tel", "email"]);
   const CAPTCHA_HINT = /captcha|验证码|校验码|图形码|短信码|verif(?:y|ication)[-_ ]?code|one-time-code|(?:^|[^a-z0-9])otp(?:[^a-z0-9]|$)/i;
   const PASSWORD_HINT = /password|passwd|(?:^|[^a-z0-9])pwd(?:[^a-z0-9]|$)|密码/i;
-  const SUBMIT_TEXT_PATTERN = /预览|下一步|下一页|提交|保存并(?:继续|下一步)|^(?:submit|next|continue|preview|save\s*(?:and|&)\s*(?:continue|next)|(?:review|preview)\s*(?:and|&)\s*submit)\b/i;
+  const SUBMIT_TEXT_PATTERN = /预览|下一步|下一页|提交|保存\s*并\s*(?:继续|进入\s*下一项)|^(?:submit|next|continue|preview|save\s*(?:and|&)\s*(?:continue|next)|(?:review|preview)\s*(?:and|&)\s*submit)\b/i;
   const NON_SUBMIT_TEXT_PATTERN = /关闭|删除|取消|返回|上一步|上一页|清空|重置|移除|添加|新增|上传|^(?:close|delete|remove|cancel|back|previous|prev|reset|clear|add|upload)\b/i;
 
   function controlHintText(element) {
@@ -7212,7 +7246,7 @@
     let result;
     try {
       result = await operateControl(target, value, { hints: target?.hints, beforeWrite, isCurrent, onWrite, prepare: fill,
-        beforeDismiss: () => watch?.peek(), range });
+        beforeDismiss: () => watch?.peek(), sawOverlay: () => Boolean(watch?.kind() && watch.kind() !== "none"), range });
     } finally {
       watch?.arm();
     }

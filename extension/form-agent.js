@@ -579,10 +579,10 @@
   // 只认真正当栏目标题的那一个（PR #543 审查）：左边的步骤导航、标签页也写着「实习经历」，可表单里可能只有一栏工作经历，
   // 误认成两栏会让实习资料一条都填不进去。所以：导航、侧栏、标签页、菜单、链接里的不算；从标题往上找，
   // 先碰到装着输入框或「添加」的那一块才算，先碰到别的栏目标题（导航里的下一项）就不算。
-  const SECTION_HEADINGS = [[/^(?:实习经历|实习经验)$/, "internship"], [/^(?:工作经历|工作经验)$/, "employment"]];
+  const SECTION_HEADINGS = [[/^实习(?:经历|经验)$/, "internship"], [/^(?:工作|任职)(?:经历|经验)$/, "employment"]];
   // header、footer 不在名单里：很多卡片的标题就写在 <header class="card-header"> 里，后面跟着输入框（PR #543 审查）。
   const SECTION_SKIP = "nav, aside, menu, a[href], [role='navigation'], [role='tablist'], [role='tab'], [role='menu'], [role='menubar'], [role='menuitem']";
-  const MODULE_TITLE = /^(?:基本信息|个人信息|求职意向|教育(?:经历|背景)|实习(?:经历|经验)|工作(?:经历|经验)|项目(?:经历|经验)|校园(?:经历|经验)|社会实践|获奖(?:经历|情况)?|荣誉|证书|技能|语言能力|自我评价|家庭(?:成员|情况)|附件)$/;
+  const MODULE_TITLE = /^(?:基本信息|个人信息|求职意向|教育(?:经历|背景)|实习(?:经历|经验)|(?:工作|任职)(?:经历|经验)|项目(?:经历|经验)|校园(?:经历|经验)|社会实践|获奖(?:经历|情况)?|荣誉|证书|技能|语言能力|自我评价|家庭(?:成员|情况)|附件)$/;
   const SECTION_FIELDS = "input:not([type='hidden']), select, textarea, [contenteditable]:not([contenteditable='false']), [role='combobox'], [role='textbox']";
   const ADD_TEXT = /^[+＋]?(?:添加|新增|增加|继续添加)/;
   const MAX_SECTION_CLIMB = 6;

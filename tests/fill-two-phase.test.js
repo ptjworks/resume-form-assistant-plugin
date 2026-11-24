@@ -453,6 +453,25 @@ test("the match time is the AI's round trip even when the early fill takes longe
   assert.match(p.ui.diag.value, /AI 返回前先填：2 项/);
 });
 
+test("#577 overwrite confirmation time counts toward total time only", async (t) => {
+  let time = 0;
+  const p = page(t, OCCUPIED, { confirm: () => {
+    time += 4_470_000;
+    return true;
+  } });
+  const now = p.w.performance.now.bind(p.w.performance);
+  p.w.performance.now = () => now() + time;
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  p.worker.calls[0].reply();
+  assert.equal((await running).filledCount, 5);
+  assert.equal(p.confirms.length, 1);
+  const timings = lineOf((await p.report()).diagnosticsReport, "timings_ms");
+  const [, fill, total] = /fill=(\d+),total=(\d+)/.exec(timings);
+  assert.ok(Number(fill) > 0 && Number(fill) < 4_470_000, timings);
+  assert.ok(Number(total) - Number(fill) >= 4_470_000, timings);
+});
+
 test("when the AI request itself fails after the early fill, the early text fields still get their final sync", async (t) => {
   const p = page(t, BASIC);
   // AI 请求通道断开：sendMessage 被拒绝，不是桌面回了失败。
@@ -1083,6 +1102,68 @@ test("#528 bare repeated 获奖 rows are matched in order locally, and repeated 
   p.worker.calls[0].reply({});
   const result = await running;
   assert.equal(result.filledCount, 4);
+});
+
+test("#581 Element items keep applicant details and sparse family rows separate", async (t) => {
+  const elementItem = (id, label) => `<div class="el-form-item"><label class="el-form-item__label">${label}</label>
+    <div class="el-form-item__content"><input class="el-input__inner" id="${id}"></div></div>`;
+  const familyRow = (index, phone) => `<div class="member-row">${elementItem(`member-${index}`, "姓名")}
+    ${phone ? elementItem(`phone-${index}`, "联系电话") : ""}</div>`;
+  const body = `<section><h2>家庭成员</h2>${familyRow(1, false)}${familyRow(2, true)}${familyRow(3, true)}</section>
+    <section><h2>基本信息</h2>${elementItem("self", "姓名")}${elementItem("mobile", "手机")}
+    ${elementItem("computer", "计算机能力")}</section>`;
+  const resume = [["基本信息", "姓名", "虚构本人"], ["联系方式", "手机号码", "13800138000"],
+    ["语言与技能", "计算机水平", "虚构技能等级"], ["家庭成员 1", "父亲姓名", "虚构成员甲"],
+    ["家庭成员 2", "母亲姓名", "虚构成员乙"], ["家庭成员 2", "母亲联系电话", "13900139000"]];
+  const p = page(t, body, { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1 && p.value("computer")));
+  assert.deepEqual(["self", "mobile", "computer"].map(p.value), ["虚构本人", "13800138000", "虚构技能等级"]);
+  const call = p.worker.calls[0];
+  assert.deepEqual(call.fields.map(field => [field.label, field.group, field.recordIndex]), [
+    ["姓名", "家庭成员 1", 1], ["姓名", "家庭成员 2", 2], ["联系电话", "家庭成员 2", 2],
+    ["姓名", "家庭成员 3", 3], ["联系电话", "家庭成员 3", 3]
+  ]);
+  const catalog = catalogOf(call.prompt);
+  const father = catalog.find(item => item.key === "父亲姓名");
+  const applicantPhone = catalog.find(item => item.key === "手机号码");
+  assert.equal(father.recordIndex, 1);
+  assert.equal(catalog.find(item => item.key === "母亲联系电话").recordIndex, 2);
+  call.replyFields([
+    { fieldId: call.fields[0].fieldId, ref: father.ref },
+    { fieldId: call.fields[1].fieldId, ref: father.ref },
+    { fieldId: call.fields[4].fieldId, ref: applicantPhone.ref }
+  ]);
+  const result = await running;
+  assert.equal(result.filledCount, 4);
+  assert.deepEqual(["member-1", "member-2", "phone-2", "member-3", "phone-3"].map(p.value), ["虚构成员甲", "", "", "", ""]);
+  const report = (await p.report()).diagnosticsReport;
+  assert.equal(lineOf(report, "ai_missed"), "家庭成员=4");
+  assert.equal(lineOf(report, "ai_missed_with_data"), "2");
+});
+
+test("#581 split experience sections send the physical row number when the first card has no title", async (t) => {
+  const resume = [["实习经历", "实习经历1-公司", "虚构实习单位"], ["实习经历", "实习经历1-职位", "实习助理"],
+    ["工作经历", "工作经历1-公司", "虚构甲单位"], ["工作经历", "工作经历2-公司", "虚构乙单位"],
+    ["工作经历", "工作经历2-职位", "编辑"]];
+  const body = `<section><h2>实习经验</h2>${input("intern-job", "职位")}</section>
+    <section><h2>任职经历</h2>
+      <div class="experience-card">${input("a", "公司")}</div>
+      <div class="experience-card">${input("b", "公司")}${input("job", "职位")}</div>
+    </section>`;
+  const p = page(t, body, { resume });
+  const running = p.run();
+  assert.ok(await p.until(() => p.worker.calls.length === 1));
+  const call = p.worker.calls[0];
+  assert.match(call.prompt, /实习经历、工作经历是分开的两栏/);
+  const job = call.fields.find(field => field.label === "职位" && field.recordIndex === 2);
+  assert.equal(job.group, "任职经历 2");
+  const catalog = catalogOf(call.prompt);
+  call.replyFields([{ fieldId: job.fieldId, ref: catalog.find(item => item.key === "实习经历1-职位").ref }]);
+  await running;
+  assert.equal(p.value("job"), "");
+  const report = (await p.report()).diagnosticsReport;
+  assert.equal(lineOf(report, "ai_missed_with_data"), "4");
 });
 
 // #301 中铁「生源地」：省、市、县并排三个原生下拉，题目只写一次。选了省以后网站重新生成市的选项，

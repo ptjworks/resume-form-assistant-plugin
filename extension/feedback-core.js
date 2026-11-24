@@ -68,10 +68,38 @@
     if (!text) return "unknown";
     return FIELD_KINDS.find(([, words]) => words.some(word => text.includes(word)))?.[0] || "unknown";
   }
-  const EXPERIENCE_NAMES = "教育经历|教育背景|学习经历|工作经历|实习经历|项目经历|校园经历|科研经历";
+  const EXPERIENCE_NAMES = "教育经历|教育背景|学习经历|工作经历|工作经验|任职经历|实习经历|实习经验|项目经历|校园经历|科研经历";
   const EXPERIENCE_GROUP = new RegExp(`^(?<section>${EXPERIENCE_NAMES})\\s*(?<index>\\d*)$`);
   const EXPERIENCE_KEY = new RegExp(`^(?<anchor>.*?)(?<section>${EXPERIENCE_NAMES})\\s*(?<index>\\d*)\\s*[-_:]\\s*(?<label>.+?)(?:\\s+\\((?<ordinal>\\d+)\\))?$`);
-  const experienceName = name => /^(?:教育背景|学习经历)$/.test(name) ? "教育经历" : name;
+  const experienceName = name => ({ 教育背景: "教育经历", 学习经历: "教育经历",
+    工作经验: "工作经历", 任职经历: "工作经历", 实习经验: "实习经历" })[name] || name;
+
+  function experienceOrdinal(group) {
+    const matched = EXPERIENCE_GROUP.exec(String(group ?? "").normalize("NFKC").trim())?.groups;
+    return matched ? { section: experienceName(matched.section), index: Number(matched.index) } : null;
+  }
+
+  // 已经明确编号的简历条目按实际行查类别。第 1 段没有职位、第 2 段有职位时，不能拿「1 条职位」判断第 2 段没有。
+  function resumeExperienceRows(fields) {
+    const sections = new Map();
+    const unnumbered = new Set();
+    for (const field of fields) {
+      if (!String(field.value ?? "").trim()) continue;
+      const group = experienceOrdinal(field.group);
+      if (!group) continue;
+      const key = String(field.key ?? "").normalize("NFKC").trim();
+      const record = EXPERIENCE_KEY.exec(key)?.groups;
+      const own = record && experienceName(record.section) === group.section ? record : null;
+      const index = Number(own?.index) || group.index;
+      if (!index) { unnumbered.add(group.section); continue; }
+      if (!sections.has(group.section)) sections.set(group.section, new Map());
+      const rows = sections.get(group.section);
+      if (!rows.has(index)) rows.set(index, new Set());
+      rows.get(index).add(fieldKind(own?.label ?? key));
+    }
+    for (const section of unnumbered) sections.delete(section);
+    return sections;
+  }
 
   function resumeKinds(fields) {
     return new Set(resumeKindCounts(fields).keys());
@@ -90,7 +118,9 @@
       const keyMatch = groupMatch && EXPERIENCE_KEY.exec(key)?.groups;
       const record = keyMatch && experienceName(keyMatch.section) === experienceName(groupMatch.section) ? keyMatch : null;
       const seen = new Set();
-      for (const text of [record?.label ?? key, group]) {
+      // 家庭表里的「姓名」「手机」不能让本人的同名字段算作简历里有资料。
+      const words = fieldKind(group) === "家庭成员" ? [group] : [record?.label ?? key, group];
+      for (const text of words) {
         const kind = fieldKind(text);
         if (kind !== "unknown") seen.add(kind);
       }
@@ -669,7 +699,8 @@
     }
     return out;
   }
-  const MISS_REASONS = ["raw_value", "not_in_fits", "bad_ref", "bad_date_part", "off_topic", "join_failed", "invalid_value", "catalog_trimmed", "wrong_section"];
+  const MISS_REASONS = ["raw_value", "not_in_fits", "bad_ref", "bad_date_part", "off_topic", "join_failed", "invalid_value", "catalog_trimmed",
+    "wrong_section", "wrong_person", "wrong_record"];
   function privateField(title, item) {
     const lines = [`[${title}]`, `label: ${oneLine(item?.label, 80) || "-"}`, `section: ${oneLine(item?.section, 40) || "-"}`,
       `kind: ${KIND_NAMES.includes(item?.kind) ? item.kind : "unknown"}`];
@@ -762,7 +793,8 @@
     });
   }
   const api = { redact, hostname, os, frames, exception, pathTemplate, fillCategory, requestFailed, shownCode, fillDrops, labelSources, aiCalled,
-    fillReport, diagnostics, fillFailure, jobReport, install, fieldKind, resumeKinds, resumeKindCounts, privateReport, privateLayer, utf8Cut, utf8Length, codeMessage,
+    fillReport, diagnostics, fillFailure, jobReport, install, fieldKind, resumeKinds, resumeKindCounts, resumeExperienceRows, experienceOrdinal,
+    privateReport, privateLayer, utf8Cut, utf8Length, codeMessage,
     AI_MISSED_MIN, PRIVATE_HEADER, PRIVATE_BYTES,
     // Names only, for the privacy-policy check; the allowlists themselves stay private.
     SECTION_NAMES: Object.freeze([...SECTIONS]), VALUE_KEYS: Object.freeze(Object.keys(VALUES)), KIND_NAMES: Object.freeze([...KIND_NAMES]) };

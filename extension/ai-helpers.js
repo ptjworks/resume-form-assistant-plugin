@@ -194,6 +194,9 @@
     isSecretFormField,
     isSafeResumeField,
     localRuleMatches,
+    isFamilySection,
+    familyRecordFields,
+    personReferenceFits,
     bossEducationOptionMatches,
     educationChoice,
     educationSearchTerms,
@@ -854,13 +857,46 @@
       ...educationRangeMatches(safe, resume), ...bossEducationMatches(safe, resume), ...bossWorkMatches(safe, resume),
       ...cet]);
     const taken = new Set(rules.map((match) => match.fieldId));
+    const profileRules = filterValidMatches(forms, exactProfileMatches(forms, resume, profile, taken, pageFields));
+    profileRules.forEach(match => taken.add(match.fieldId));
     const saved = typeof profile.savedAnswerMatches === "function"
       ? dateChecked(filterValidMatches(forms, profile.savedAnswerMatches(forms, resume, taken, pageFields))) : [];
     const occupied = new Set([...taken, ...saved.map((match) => match.fieldId)]);
     const english = englishResultMatches(forms, resume, pageFields, occupied);
     english.forEach((match) => occupied.add(match.fieldId));
     const usedValues = new Set([...rules, ...saved, ...english].map((match) => String(match?.value ?? "").trim()).filter(Boolean));
-    return [...rules, ...saved, ...english, ...repeatedAwardMatches(forms, resume, pageFields, occupied, usedValues)];
+    return [...rules, ...profileRules, ...saved, ...english, ...repeatedAwardMatches(forms, resume, pageFields, occupied, usedValues)];
+  }
+
+  // #581 这些基础题的「我的信息」字段已有明确含义：按完整题目比，资料有两个不同答案或题目属于重复条目时交给 AI。
+  const EXACT_PROFILE_IDS = new Set(["namePinyin", "usedName", "ethnicity", "political", "marital", "health", "computerLevel"]);
+  const PROFILE_PAGE_SECTION = /^(?:本人|个人|求职者|申请人|应聘者)?(?:基本)?信息$|^(?:语言与技能|语言能力|技能(?:特长)?|计算机(?:能力|水平)?)$/;
+  function exactProfileMatches(forms, resume, profile, taken, pageFields) {
+    const names = new Map();
+    for (const group of profile.PROFILE_SCHEMA || []) {
+      for (const field of group.fields) {
+        if (!EXACT_PROFILE_IDS.has(field.id)) continue;
+        const values = new Set(resume.filter(source => (source.group === group.name || source.group === "基本信息")
+          && normalizeText(source.key) === normalizeText(field.key)).map(source => String(source.value ?? "").trim()).filter(Boolean));
+        if (values.size !== 1) continue;
+        for (const label of [field.key, field.label, ...(field.aliases || [])].filter(Boolean)) {
+          names.set(normalizeText(label), [...values][0]);
+        }
+      }
+    }
+    const counts = new Map();
+    for (const field of pageFields) {
+      const label = normalizeText(field.label);
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    return forms.flatMap(field => {
+      const label = normalizeText(field.label);
+      const group = normalizeText(field.group);
+      const value = names.get(label);
+      if (!value || taken.has(field.fieldId) || counts.get(label) !== 1 || field.repeatIndex || field.recordIndex
+        || !PROFILE_PAGE_SECTION.test(group) || personScope(fieldContextText(field)).length) return [];
+      return [{ fieldId: field.fieldId, value: choiceValue(field, value) }];
+    });
   }
 
   function filterValidMatches(formFields, matches) {
@@ -902,8 +938,51 @@
     if (/母亲|妈妈|mother/.test(source)) tags.push("mother");
     if (/配偶|妻子|丈夫|爱人|spouse|wife|husband/.test(source)) tags.push("spouse");
     if (/家庭(?:主要)?成员|家属|家人|亲属|父母|兄弟|姐妹|子女|familymember|relative|sibling/.test(source)) tags.push("relative");
+    if (/证明人|推荐人|介绍人|推荐者|referee|referencecontact/.test(source)) tags.push("referee");
 
     return tags;
+  }
+
+  const FAMILY_SECTION = /^(?:家庭(?:主要)?成员(?:信息|情况)?|家属(?:信息|情况)?|familymembers?)(\d*)$/;
+  function isFamilySection(group) {
+    return FAMILY_SECTION.test(normalizeText(group));
+  }
+
+  // 「我的信息」把同一人的字段存成「父亲姓名」「兄弟姐妹2联系电话」；模板也可能按「家庭成员 2」分组。
+  // 只有能认出条目时才报行号。不把一个没标关系的旧字段算成另一位家庭成员。
+  function familyRecordFields(fields) {
+    const entries = [];
+    const roles = new Set();
+    let hasNumberedGroups = false, hasUnnumberedGroups = false;
+    for (const field of fields) {
+      const group = FAMILY_SECTION.exec(normalizeText(field.group));
+      if (!group || !String(field.value ?? "").trim()) continue;
+      const key = normalizeText(field.key);
+      const role = /^(父亲|母亲|配偶|兄弟姐妹|子女|其他亲属)(\d*)(.+)$/.exec(key);
+      if (group[1]) hasNumberedGroups = true;
+      else if (role) hasUnnumberedGroups = true;
+      else return new Map();
+      if (role) roles.add(role[1] + role[2]);
+      entries.push({ field, index: Number(group[1]), role, label: role?.[3] || key });
+    }
+    if (hasNumberedGroups && hasUnnumberedGroups) return new Map();
+    const indexes = new Map([...roles].map((role, index) => [role, index + 1]));
+    return new Map(entries.flatMap(({ field, index, role, label }) => {
+      const row = index || indexes.get(role[1] + role[2]);
+      return row ? [[field, { index: row, label }]] : [];
+    }));
+  }
+
+  function personReferenceFits(field, source) {
+    const semantic = inferFieldSemantic(field);
+    const identity = ["name", "phone", "email", "birth_date", "id_number", "gender"].includes(semantic);
+    if (!identity && !isFamilySection(field.group)) return true;
+    const target = personScope(fieldContextText(field));
+    const origin = personScope(fieldContextText({ group: source?.group, label: source?.key }));
+    if (!target.length) return !origin.length;
+    const named = target.filter(tag => tag !== "relative");
+    return named.length ? named.some(tag => origin.includes(tag))
+      : origin.some(tag => ["relative", "father", "mother", "spouse"].includes(tag));
   }
 
   function isSamePersonScope(resumeField, formScope) {
