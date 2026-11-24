@@ -1,4 +1,4 @@
-import test, { before, beforeEach, after } from 'node:test';
+import test, { before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -11,7 +11,7 @@ import {
 } from '../src/relay.mjs';
 import {
   RELEASES_UPSTREAM, RELEASES_FRESH_SECONDS, RELEASES_STALE_SECONDS, RELEASES_FAILURE_SECONDS,
-  releasesCacheKey, parseReleasesQuery,
+  releasesCacheKey, parseReleasesQuery, releaseVersionOf, normalizedVersion,
 } from '../src/releases.mjs';
 
 // 全部是测试用的假口令。
@@ -39,8 +39,15 @@ before(async () => {
   kv = await mf.getKVNamespace('FEEDBACK_KV');
   edgeCache = (await mf.getCaches()).default;
 });
-beforeEach(async () => {
-  outbound = () => { throw new Error('unexpected outbound request'); };
+let unexpectedRequests;
+beforeEach(async t => {
+  unexpectedRequests = [];
+  outbound = request => {
+    unexpectedRequests.push(request.url);
+    throw new Error('unexpected outbound request');
+  };
+  // local() 没有边缘缓存，也必须和 Workerd 一样只走本测试的假上游。
+  t.mock.method(globalThis, 'fetch', (url, init) => outbound(new Request(url, init)));
   let cursor;
   do {
     const page = await kv.list({ cursor });
@@ -51,6 +58,7 @@ beforeEach(async () => {
     for (let page = 1; page <= 10; page++) await edgeCache.delete(releasesCacheKey('https://relay.test', kind, page));
   }
 });
+afterEach(() => assert.deepEqual(unexpectedRequests, []));
 after(async () => { await mf?.dispose(); });
 
 const nextIp = () => `2001:db8::${(++ipCounter).toString(16)}`;
@@ -61,7 +69,7 @@ function report(overrides = {}) {
   const { item } = LEGACY[0];
   return {
     app: item.app, app_version: '0.5.0', os: 'Windows 10', error_type: item.error_type,
-    error_stack: item.error_stack, user_description: item.user_description.replace('app_version: 0.4.4', 'app_version: 0.5.0'),
+    error_stack: item.error_stack, user_description: item.user_description.replace('app_version: 0.4.4', 'app_version: 0.5.0\nbuild: d622c9d4'),
     anonymous_id: item.anonymous_id, timestamp: item.client_ts, ...overrides,
   };
 }
@@ -82,9 +90,9 @@ async function send(path, { method = 'GET', body, raw, secret, privateSecret, ip
 }
 
 // 在 Node 里直接调 Worker（可以控制时间），KV 仍是 Miniflare 的。
-function local(env = {}, start = Date.parse('2026-11-09T00:00:00.000Z')) {
+function local(env = {}, start = Date.parse('2026-11-09T00:00:00.000Z'), cache = null) {
   let tick = 0;
-  const worker = createWorker({ now: () => new Date(start + (tick++) * 1000) });
+  const worker = createWorker({ cache, now: () => new Date(start + (tick++) * 1000) });
   const fullEnv = { FEEDBACK_KV: kv, POLL_SECRET: POLL, PRIVATE_READ_SECRET: PRIVATE, ...env };
   return async (path, { method = 'GET', body, secret, privateSecret, ip = nextIp() } = {}) => {
     const headers = new Headers({ 'cf-connecting-ip': ip });
@@ -117,6 +125,13 @@ function v3Key(parts) {
   return 'v3:' + createHash('sha256').update(JSON.stringify(['v3', ...parts])).digest('hex').slice(0, 16);
 }
 
+function withPublishedReleases(name, run) {
+  test(name, async () => {
+    fakeGitHub(['v0.5.0', 'v0.5.0-beta.1', 'v0.5.1', 'v0.5.2'].map(tag_name => ({ tag_name })));
+    await run();
+  });
+}
+
 test('health check answers on the root and on GET /feedback, OPTIONS keeps CORS', async () => {
   for (const path of ['/', '/feedback', '/anything']) {
     const response = await send(path);
@@ -142,7 +157,7 @@ test('empty, non-object and broken reports are rejected before anything is store
   assert.ok((await keys('')).every(name => name.startsWith('throttle:')));
 });
 
-test('one IP may send 30 reports per ten minutes', async () => {
+withPublishedReleases('one IP may send 30 reports per ten minutes', async () => {
   const ip = '192.0.2.77';
   for (let i = 0; i < 30; i++) assert.equal((await send('/feedback', { method: 'POST', body: report(), ip })).status, 200);
   const blocked = await send('/feedback', { method: 'POST', body: report(), ip });
@@ -151,7 +166,7 @@ test('one IP may send 30 reports per ten minutes', async () => {
   assert.equal((await send('/feedback', { method: 'POST', body: report() })).status, 200);
 });
 
-test('a report is stored in the old format and shows up in /pending', async () => {
+withPublishedReleases('a report is stored in the old format and shows up in /pending', async () => {
   const ip = '192.0.2.10';
   const posted = await send('/feedback', { method: 'POST', body: report(), ip });
   assert.equal(posted.status, 200);
@@ -172,7 +187,7 @@ test('a report is stored in the old format and shows up in /pending', async () =
   assert.equal(await kv.get(LEGACY_PENDING_INDEX), null);
 });
 
-test('reports arriving at the same time are all kept in /pending', async () => {
+withPublishedReleases('reports arriving at the same time are all kept in /pending', async () => {
   const results = await Promise.all(Array.from({ length: 50 }, (_, i) => send('/feedback', {
     method: 'POST', body: report({ anonymous_id: `anon-${i}` }),
   })));
@@ -182,7 +197,7 @@ test('reports arriving at the same time are all kept in /pending', async () => {
   assert.deepEqual(new Set(pending.data.items.map(item => item.id)), new Set(results.map(result => result.data.id)));
 });
 
-test('/ack marks reports processed and removes their markers', async () => {
+withPublishedReleases('/ack marks reports processed and removes their markers', async () => {
   const ids = [];
   for (let i = 0; i < 3; i++) ids.push((await send('/feedback', { method: 'POST', body: report() })).data.id);
   const acked = await send('/ack', { method: 'POST', secret: POLL, body: { ids: [ids[0], ids[1], uuid(999)] } });
@@ -208,7 +223,7 @@ test('/pending returns at most 200, oldest first', async () => {
   assert.equal(pending.data.items[199].id, uuid(199));
 });
 
-test('reports still listed in the old fb:index:pending are carried over, and the old index is retired an hour later', async () => {
+withPublishedReleases('reports still listed in the old fb:index:pending are carried over, and the old index is retired an hour later', async () => {
   const a = await seedItem(uuid(1), '2026-11-08T01:00:00.000Z');
   await seedItem(uuid(2), '2026-11-08T02:00:00.000Z', 'processed');
   const c = await seedItem(uuid(3), '2026-11-08T03:00:00.000Z');
@@ -278,7 +293,7 @@ test('markers of processed or long-gone reports are cleaned up; a marker whose r
   assert.deepEqual(await keys('pending:'), []);
 });
 
-test('dedupe keys of 0.5.0 and older reports match the code that ran before the repo', async () => {
+withPublishedReleases('dedupe keys of 0.5.0 and older reports match the code that ran before the repo', async () => {
   for (const { name, item, expected } of LEGACY) {
     assert.equal(await dedupeKey(item), expected, name);
   }
@@ -315,7 +330,7 @@ test('versions above 0.5.0 get a v3 key that adds the full version', async () =>
   assert.equal(parseVersion('x1.2.3'), null);
 });
 
-test('automatic reports below 0.5.0 are stored as skipped and never reach /pending', async () => {
+withPublishedReleases('automatic reports below 0.5.0 are stored as skipped and never reach /pending', async () => {
   const old = [
     report({ app_version: '0.4.4', anonymous_id: 'old-fill' }),
     report({ app_version: '0.4.10', error_type: 'fill_partial', anonymous_id: 'old-partial' }),
@@ -368,7 +383,7 @@ test('skipsIssue: only automatic reports with a readable version below 0.5.0', (
   ]) assert.equal(skipsIssue({ app_version: version, error_type: type }), skipped, `${version} ${type}`);
 });
 
-test('private diagnostics are kept apart and never appear in /pending, /export or the report', async () => {
+withPublishedReleases('private diagnostics are kept apart and never appear in /pending, /export or the report', async () => {
   const marker = '--- 私有诊断 v1 ---\n[字段]\nlabel: 政治面貌 PRIVATE-MARKER';
   const posted = await send('/feedback', { method: 'POST', body: report({ private_diagnostics: marker }) });
   const { id } = posted.data;
@@ -393,7 +408,7 @@ test('private diagnostics are kept apart and never appear in /pending, /export o
   assert.equal((await keys(`privdk:${stored.dedupe_key}:`)).length, 1);
 });
 
-test('private diagnostics over 16384 UTF-8 bytes are cut on a character boundary', async () => {
+withPublishedReleases('private diagnostics over 16384 UTF-8 bytes are cut on a character boundary', async () => {
   const byteLength = text => new TextEncoder().encode(text).length;
   assert.equal(PRIVATE_MAX_BYTES, 16384);
   const ascii = 'a'.repeat(20000);
@@ -417,7 +432,7 @@ test('private diagnostics over 16384 UTF-8 bytes are cut on a character boundary
   assert.equal(await kv.get('priv:' + none), null);
 });
 
-test('/private only opens with its own secret', async () => {
+withPublishedReleases('/private only opens with its own secret', async () => {
   const id = (await send('/feedback', { method: 'POST', body: report({ private_diagnostics: 'x' }) })).data.id;
   const path = `/private?id=${id}`;
   for (const options of [{}, { privateSecret: POLL }, { secret: POLL }, { secret: PRIVATE }, { privateSecret: PRIVATE + 'x' }]) {
@@ -439,7 +454,7 @@ test('/private only opens with its own secret', async () => {
   assert.equal((await tooShort(path, { privateSecret: 'short-secret' })).status, 401);
 });
 
-test('/private by dedupe key returns the newest first, 5 by default and at most 20', async () => {
+withPublishedReleases('/private by dedupe key returns the newest first, 5 by default and at most 20', async () => {
   const call = local();
   const body = report({ app_version: '0.5.1' });
   const ids = [];
@@ -470,7 +485,7 @@ test('/private by dedupe key returns the newest first, 5 by default and at most 
   }
 });
 
-test('/export lists every report oldest first, without the old index or the private layer', async () => {
+withPublishedReleases('/export lists every report oldest first, without the old index or the private layer', async () => {
   const call = local();
   const first = (await call('/feedback', { method: 'POST', body: report({ private_diagnostics: 'secret detail' }) })).data.id;
   const second = (await call('/feedback', { method: 'POST', body: report({ error_type: 'manual' }) })).data.id;
@@ -534,7 +549,7 @@ function failingKv(prefix) {
   };
 }
 
-test('a failed private-layer write still lets the report through to /pending', async () => {
+withPublishedReleases('a failed private-layer write still lets the report through to /pending', async () => {
   const call = local({ FEEDBACK_KV: failingKv('priv') });
   const warn = console.warn;
   const warnings = [];
@@ -550,7 +565,7 @@ test('a failed private-layer write still lets the report through to /pending', a
   assert.equal(await kv.get('priv:' + posted.data.id), null);
 });
 
-test('a failed report write leaves no report Muse cannot see, and its marker is cleaned up later', async () => {
+withPublishedReleases('a failed report write leaves no report Muse cannot see, and its marker is cleaned up later', async () => {
   const call = local({ FEEDBACK_KV: failingKv('fb:') });
   await assert.rejects(call('/feedback', { method: 'POST', body: report() }), /KV write failed/);
   assert.deepEqual(await keys('fb:'), []);
@@ -560,7 +575,7 @@ test('a failed report write leaves no report Muse cannot see, and its marker is 
   assert.deepEqual(await keys('pending:'), []);
 });
 
-test('a broken throttle counter starts over instead of failing the report', async () => {
+withPublishedReleases('a broken throttle counter starts over instead of failing the report', async () => {
   const ip = '192.0.2.99';
   for (const value of ['not json', 'null', '{"count":"x"}']) {
     await kv.put('throttle:' + ip, value, { expirationTtl: 600 });
@@ -582,7 +597,7 @@ test('an old-index report without server_ts is still carried over and can be ack
   assert.deepEqual(await keys('pending:'), []);
 });
 
-test('the private record is written after its dedupe-key index entry', async () => {
+withPublishedReleases('the private record is written after its dedupe-key index entry', async () => {
   const call = local({ FEEDBACK_KV: failingKv('priv:') });
   const warn = console.warn;
   console.warn = () => {};
@@ -597,7 +612,7 @@ test('the private record is written after its dedupe-key index entry', async () 
   assert.deepEqual((await send(`/private?dedupe_key=${key}`, { privateSecret: PRIVATE })).data, { ok: true, items: [] });
 });
 
-test('/ack keeps the original 90-day expiry of a report instead of renewing it', async () => {
+withPublishedReleases('/ack keeps the original 90-day expiry of a report instead of renewing it', async () => {
   const received = Date.now();
   const id = (await local({}, received)('/feedback', { method: 'POST', body: report() })).data.id;
   await local({}, received + 10 * 24 * 3600 * 1000)('/ack', { method: 'POST', secret: POLL, body: { ids: [id] } });
@@ -641,6 +656,11 @@ function fakeGitHub(all) {
     const url = new URL(request.url);
     const perPage = Number(url.searchParams.get('per_page'));
     const page = Number(url.searchParams.get('page'));
+    if (request.method !== 'GET' || page < 1 || page > 10 || !Number.isInteger(page)
+        || request.url !== `${RELEASES_UPSTREAM}?per_page=100&page=${page}`) {
+      unexpectedRequests.push(request.url);
+      throw new Error('unexpected releases request');
+    }
     calls.push({
       url: request.url, page, auth: request.headers.get('authorization'),
       agent: request.headers.get('user-agent'), accept: request.headers.get('accept'),
@@ -839,4 +859,154 @@ test('/releases prefers its own token, retries without it when GitHub rejects it
     { url: `${RELEASES_UPSTREAM}?per_page=100&page=1`, auth: null },
     { url: `${RELEASES_UPSTREAM}?per_page=100&page=1`, auth: 'Bearer releases-token-for-tests-only' },
   ]);
+});
+
+const PLUGIN = 'resume-form-assistant-plugin';
+const DESKTOP = 'resume-form-assistant-desktop';
+
+async function checkReport(overrides, status, call = send) {
+  const response = await call('/feedback', { method: 'POST', body: report(overrides) });
+  assert.equal(response.status, 200);
+  const { id } = response.data;
+  assert.deepEqual(response.data, { ok: true, id });
+  const item = JSON.parse(await kv.get('fb:' + id));
+  assert.equal(item.status, status, JSON.stringify(overrides));
+  assert.equal(await kv.get(`pending:${item.server_ts}:${id}`), status === 'skipped' ? null : '');
+  return item;
+}
+
+test('tag matching preserves app and prerelease identity', () => {
+  assert.equal(normalizedVersion('  v0.5.1-BETA.1+build.7  '), '0.5.1-beta.1');
+  assert.equal(releaseVersionOf({ tag_name: 'desktop-v0.5.1-BETA.1', prerelease: true }, DESKTOP), '0.5.1-beta.1');
+  for (const release of [
+    { tag_name: 'desktop-v0.5.1' }, { tag_name: 'v0.7.2', draft: true },
+    { tag_name: 'v0.5.1+abc' }, { tag_name: 'v0.5.1 trailing' }, { tag_name: null },
+  ]) assert.equal(releaseVersionOf(release, PLUGIN), null);
+  assert.equal(releaseVersionOf({ tag_name: 'v0.5.1' }, 'relay-domain-test'), null);
+});
+
+test('manual, legacy, unparseable, other apps and invalid plugin builds need no lookup', async () => {
+  for (const [fields, status] of [
+    [{ app_version: '0.7.2', error_type: 'manual' }, 'pending'],
+    [{ app_version: '0.4.4' }, 'skipped'],
+    [{ app_version: 'dev' }, 'pending'],
+    [{ app_version: '' }, 'pending'],
+    [{ app_version: '0.7.2', app: 'relay-domain-test' }, 'pending'],
+    [{ app_version: '0.4.4', app: 'relay-domain-test' }, 'skipped'],
+    [{ app_version: '0.7.2' }, 'skipped'],
+    [{ app_version: '0.5.1' }, 'skipped'],
+    [{ app_version: '0.5.1', user_description: 'build: D622C9D4' }, 'skipped'],
+  ]) {
+    const overrides = { user_description: '', ...fields };
+    assert.equal(skipsIssue(report(overrides)), status === 'skipped');
+    await checkReport(overrides, status);
+  }
+  assert.equal(skipsIssue(report({ app_version: '0.5.1' })), false);
+});
+
+test('unreleased plugin reports keep diagnostics and dedupe keys only in the appropriate stores', async () => {
+  const calls = fakeGitHub([{ tag_name: 'v0.7.2', draft: true }]);
+  const item = await checkReport({ app_version: '0.7.2', private_diagnostics: 'private detail' }, 'skipped');
+  assert.match(item.dedupe_key, /^v3:[0-9a-f]{16}$/);
+  assert.deepEqual((await send('/pending', { secret: POLL })).data.items, []);
+  assert.deepEqual((await send('/export', { secret: POLL })).data.items, [item]);
+  const diagnostic = await send('/private?id=' + item.id, { privateSecret: PRIVATE });
+  assert.equal(diagnostic.data.items[0].private_diagnostics, 'private detail');
+  assert.equal(calls.length, 1);
+});
+
+test('feedback and /releases share cached published versions, scoped to the app', async () => {
+  const calls = fakeGitHub([
+    { tag_name: 'v0.5.0' }, { tag_name: 'v0.5.1' }, { tag_name: 'v0.5.2' },
+    { tag_name: 'desktop-v0.5.1' }, { tag_name: 'desktop-v0.5.1-beta.1', prerelease: true },
+  ]);
+  await checkReport({ app_version: '0.5.0', user_description: '' }, 'pending');
+  for (const version of ['0.5.1', 'v0.5.1', '0.5.1+build.7']) {
+    await checkReport({ app_version: version, user_description: 'build: dev' }, 'pending');
+  }
+  for (const version of ['0.7.2', '0.5.1-beta.1', '0.5.1-fake', '0.5.1 foo']) {
+    await checkReport({ app_version: version }, 'skipped');
+  }
+  for (const [version, status] of [
+    ['0.5.1', 'pending'], ['0.5.1-beta.1', 'pending'], ['0.5.2', 'skipped'], ['0.7.2', 'skipped'],
+  ]) await checkReport({ app: DESKTOP, app_version: version, user_description: '' }, status);
+  assert.equal((await send(RELEASES)).headers.get('x-relay-cache'), 'hit');
+  assert.deepEqual(calls.map(call => call.page), [1]);
+});
+
+test('feedback fails open on upstream errors but still checks the plugin build', async () => {
+  const call = local();
+  for (const failure of [
+    ...[500, 503, 429].map(status => () => new Response(null, { status })),
+    () => new Response('bad json'), () => { throw new TypeError('network down'); },
+  ]) {
+    let calls = 0;
+    outbound = () => { calls++; return failure(); };
+    for (const app of [PLUGIN, DESKTOP]) {
+      await checkReport({ app, app_version: '0.7.2' }, 'pending', call);
+    }
+    assert.equal(calls, 2);
+    await checkReport({ app_version: '0.7.2', user_description: '' }, 'skipped', call);
+    assert.equal(calls, 2);
+  }
+});
+
+test('a stalled second page uses only the remaining feedback lookup budget', async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const budgets = [];
+  t.mock.method(AbortSignal, 'timeout', ms => {
+    budgets.push(ms);
+    return budgets.length === 2 ? AbortSignal.abort() : new AbortController().signal;
+  });
+  const pages = [];
+  outbound = request => {
+    const page = Number(new URL(request.url).searchParams.get('page'));
+    pages.push(page);
+    request.signal.throwIfAborted();
+    now += 1000;
+    return Response.json(Array.from({ length: 100 }, () => ({ tag_name: 'unrelated' })));
+  };
+  await checkReport({ app_version: '0.7.2' }, 'pending', local({}, Date.parse('2026-11-09T00:00:00.000Z'), edgeCache));
+  assert.deepEqual(pages, [1, 2]);
+  assert.deepEqual(budgets, [2500, 1500]);
+  // 反馈预算缩短导致的中止不能污染共享给 /releases 的 60 秒失败标记。
+  assert.equal(await edgeCache.match(cacheKey('failed', 2)), undefined);
+});
+
+test('a stale page allows both known and potentially newer versions', async () => {
+  fakeGitHub(Array.from({ length: 100 }, () => ({ tag_name: 'v0.5.1' })));
+  await send(RELEASES);
+  await edgeCache.delete(cacheKey('fresh'));
+  const pages = [];
+  outbound = request => {
+    const page = Number(new URL(request.url).searchParams.get('page'));
+    pages.push(page);
+    return page === 1 ? new Response(null, { status: 503 }) : Response.json([]);
+  };
+  await checkReport({ app_version: '0.5.1' }, 'pending');
+  assert.deepEqual(pages, [1]);
+  assert.equal((await send(RELEASES)).headers.get('x-relay-cache'), 'stale');
+  await checkReport({ app_version: '0.5.2' }, 'pending');
+  assert.deepEqual(pages, [1, 2]);
+});
+
+test('feedback follows full pages and needs a complete fresh list to skip', async () => {
+  const full = Array.from({ length: 100 }, () => ({ tag_name: 'unrelated' }));
+  const calls = fakeGitHub([...full, { tag_name: 'v0.5.0' }]);
+  await checkReport({ app_version: '0.5.0' }, 'pending');
+  await checkReport({ app_version: '0.7.2' }, 'skipped');
+  assert.deepEqual(calls.map(call => call.page), [1, 2]);
+  for (const kind of ['fresh', 'stale']) await edgeCache.delete(cacheKey(kind, 2));
+  let failedPage;
+  outbound = request => {
+    failedPage = new URL(request.url).searchParams.get('page');
+    return new Response(null, { status: 500 });
+  };
+  await checkReport({ app_version: '0.7.2' }, 'pending');
+  assert.equal(failedPage, '2');
+  await edgeCache.delete(cacheKey('failed', 2));
+  const truncated = fakeGitHub(Array(10).fill(full).flat());
+  await checkReport({ app_version: '0.7.2' }, 'pending');
+  assert.deepEqual(truncated.map(call => call.page), [2, 3, 4, 5, 6, 7, 8, 9, 10]);
 });
