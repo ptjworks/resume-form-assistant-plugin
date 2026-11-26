@@ -196,6 +196,7 @@
   const UPDATE_READY_KEY = "extensionUpdateReady";
   const STORE_REMINDER_DISMISSED_KEY = "unpackedExtensionReminderDismissed";
   let storeReminderDismissed = false;
+  let storeReminderStateLoaded = false;
   let aiUnconfigured = false;
   let aiUnconfiguredChanged = false;
   let aiHintDismissed = false;
@@ -522,8 +523,8 @@
     }
     function place() {
       const { left, width, bottom } = trigger.getBoundingClientRect();
-      const room = window.innerHeight - bottom - 8;
-      if (!width || room < 32) return false;
+      const room = window.innerHeight - bottom - 6;
+      if (!width || room < 20) return false;
       list.style.left = `${left}px`;
       list.style.top = `${bottom + 3}px`;
       list.style.width = `${width}px`;
@@ -541,7 +542,9 @@
     }
     function prepareOptions() {
       if (trigger.disabled) return false;
-      if (window.innerHeight - trigger.getBoundingClientRect().bottom < 110) trigger.scrollIntoView({ block: "center" });
+      if (window.innerHeight - trigger.getBoundingClientRect().bottom < 110) {
+        trigger.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
+      }
       if (!place()) return false;
       const options = Array.from(select.options, (option, index) => {
         const item = document.createElement("li");
@@ -3122,18 +3125,23 @@
   elements.pluginVersion.hidden = !version;
   // 桌面版本只认这次连上时报的。关闭解压安装提醒后仍可显示其他更新提醒。
   function renderUpdateReminder() {
+    const dismissWasFocused = document.activeElement === elements.updateReminderDismiss;
     const notice = self.ResumeProUpdateReminder?.reminder({
       extensionVersion: version,
       installType,
       desktopVersion: desktopMode === "ready" ? desktopVersion : "",
       readyVersion,
-      storeReminderDismissed
+      storeReminderDismissed: storeReminderDismissed || !storeReminderStateLoaded
     }) || null;
     elements.updateReminder.hidden = !notice;
     elements.updateReminderText.textContent = notice?.message || "";
     elements.updateReminderAction.textContent = notice?.action || "";
     elements.updateReminderAction.dataset.kind = notice?.kind || "";
     elements.updateReminderDismiss.hidden = notice?.kind !== "store";
+    if (dismissWasFocused && elements.updateReminderDismiss.hidden) {
+      const next = notice ? elements.updateReminderAction : tabButtons.find((button) => button.dataset.tab === selectedView);
+      next?.focus({ preventScroll: true });
+    }
   }
   Promise.resolve(chrome.management?.getSelf?.())
     .then((info) => { installType = String(info?.installType || ""); renderUpdateReminder(); })
@@ -3142,9 +3150,9 @@
     .then((stored) => {
       if (!readyVersionChanged) readyVersion = String(stored?.[UPDATE_READY_KEY]?.version || "");
       if (stored?.[STORE_REMINDER_DISMISSED_KEY] === true) storeReminderDismissed = true;
-      renderUpdateReminder();
     })
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => { storeReminderStateLoaded = true; renderUpdateReminder(); });
   Promise.resolve(chrome.storage.session?.get?.(AI_UNCONFIGURED_KEY))
     .then((stored) => {
       if (aiUnconfiguredChanged) return;

@@ -249,6 +249,20 @@ test('侧栏：关闭解压安装提示后，同一浏览器会话内重开侧�
   assert.equal(reopened.dismiss.hidden, true);
 });
 
+test('侧栏：重开时等会话关闭记录读完，解压安装提示不会先闪现', async () => {
+  let answer;
+  const late = new Promise(resolve => { answer = resolve; });
+  const p = await panel({
+    read: { status: 'ok', data, desktopVersion: '0.5.0' },
+    installType: 'development',
+    sessionRead: () => late
+  });
+  assert.equal(p.strip.hidden, true);
+  answer({ unpackedExtensionReminderDismissed: true });
+  await p.tick();
+  assert.equal(p.strip.hidden, true);
+});
+
 test('侧栏：关闭解压安装提示后仍可显示桌面更新提醒', async () => {
   const p = await panel({ read: { status: 'ok', data, desktopVersion: '0.4.4' }, installType: 'development' });
   p.dismiss.listeners.click();
