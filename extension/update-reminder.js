@@ -1,5 +1,5 @@
 // 侧栏顶部的更新提醒：插件新版本已经下载好、插件是解压安装的、桌面程序太旧。
-// 一次只提示一件，先说最快能解决的。这条提示不能关：旧版本一直在用，反馈里就一直是早修好的问题。
+// 一次只提示一件，先说最快能解决的。解压安装提醒可在本次浏览器会话中隐藏。
 (function attachUpdateReminder(root) {
   const STORE_URL = 'https://chromewebstore.google.com/detail/diagjmploldedipjdenmecmjokckelkl';
 
@@ -25,11 +25,11 @@
     return desktop[0] < extension[0] || (desktop[0] === extension[0] && desktop[1] < extension[1]);
   }
 
-  function reminder({ extensionVersion, installType, desktopVersion, readyVersion } = {}) {
+  function reminder({ extensionVersion, installType, desktopVersion, readyVersion, storeReminderDismissed } = {}) {
     if (readyVersion && compare(readyVersion, extensionVersion) > 0) {
       return { kind: 'reload', message: `插件新版本 ${readyVersion} 已下载，重新加载后生效。`, action: '重新加载' };
     }
-    if (installType === 'development') {
+    if (installType === 'development' && !storeReminderDismissed) {
       return { kind: 'store', message: '这份插件是解压安装的，不会自动更新。请先处理完「待同步」里的记录，再移除它，从 Chrome 应用商店安装。', action: '去商店' };
     }
     if (desktopBehind(desktopVersion, extensionVersion)) {

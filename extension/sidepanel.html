@@ -37,6 +37,9 @@
           <span id="update-reminder-text"></span>
           <button id="update-reminder-action" type="button"></button>
         </div>
+        <button id="update-reminder-dismiss" class="status-strip__dismiss" type="button" aria-label="关闭解压安装提示" title="关闭提示" hidden>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
       </div>
       <div id="job-assist" class="status-strip is-info" role="status" hidden>
         <svg class="icon status-strip__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -59,8 +62,14 @@
             <section class="fill-top" aria-label="当前简历模板与网站">
               <div class="fill-top__row">
                 <div class="template-picker">
-                  <label for="template-select" class="sr-only">当前简历模板</label>
-                  <select id="template-select" class="dock-select"><option value="">正在加载…</option></select>
+                  <label id="template-picker-label" for="template-select" class="sr-only">当前简历模板</label>
+                  <select id="template-select" class="dock-select" disabled><option value="">正在加载…</option></select>
+                  <button id="template-picker-trigger" class="dock-select" type="button" role="combobox"
+                    aria-labelledby="template-picker-label template-picker-value" aria-haspopup="listbox"
+                    aria-expanded="false" aria-controls="template-picker-list" popovertarget="template-picker-list" disabled hidden>
+                    <span id="template-picker-value">正在加载…</span>
+                  </button>
+                  <ul id="template-picker-list" popover role="listbox" aria-labelledby="template-picker-label" hidden></ul>
                 </div>
               </div>
               <p id="template-meta" class="template-meta" hidden></p>
