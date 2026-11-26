@@ -14,6 +14,7 @@ export interface ProfileFieldDef {
 }
 
 export interface ProfileGroupDef {
+  id: string;
   name: string;
   fields: ProfileFieldDef[];
 }
@@ -26,6 +27,7 @@ export interface FamilyMember {
 export interface CustomField {
   key: string;
   value: string;
+  group?: string;
 }
 
 export interface Profile {
@@ -52,7 +54,28 @@ interface ProfileApi {
   countProfileValues(profile: Profile): number;
 }
 
-export const profileApi = (globalThis as unknown as { ResumeProProfile: ProfileApi }).ResumeProProfile;
+const sharedProfile = (globalThis as unknown as { ResumeProProfile: ProfileApi }).ResumeProProfile;
+const customGroups = new Set(sharedProfile.PROFILE_SCHEMA.map(({ id }) => id));
+export const profileApi: ProfileApi = {
+  ...sharedProfile,
+  normalizeProfile(raw) {
+    const normalized = sharedProfile.normalizeProfile(raw);
+    const custom = (raw as Partial<Profile> | null)?.custom;
+    if (!Array.isArray(custom)) return normalized;
+    // 分组只用于桌面整理。「我的信息」的匹配和同名去重仍用插件共用的规则。
+    const groups = new Map<string, string | undefined>();
+    for (const item of custom) {
+      if (typeof item?.key !== "string") continue;
+      const key = sharedProfile.normalizeKey(item.key);
+      if (!groups.has(key)) groups.set(key, item.group && customGroups.has(item.group) ? item.group : undefined);
+    }
+    for (const item of normalized.custom) {
+      const group = groups.get(sharedProfile.normalizeKey(item.key));
+      if (group) item.group = group;
+    }
+    return normalized;
+  },
+};
 
 /** 18 位证件号的校验结果（ai-helpers.js，#429），不是 18 位的返回 null。拿不到 ai-helpers 时也返回 null，只是不提示。 */
 export const idNumberInfo = (value: string): { valid: boolean; kind: string } | null =>

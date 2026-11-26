@@ -298,17 +298,35 @@ pub fn validate_profile(profile: &Value) -> Result<(), StoreError> {
     for item in custom {
         let key = item.get("key").and_then(Value::as_str);
         let value = item.get("value").and_then(Value::as_str);
-        if key.is_none() || value.is_none() {
+        let invalid_group = item.get("group").is_some_and(|group| profile_custom_group(group).is_none());
+        if key.is_none() || value.is_none() || invalid_group {
             return Err(bad());
         }
     }
-    if serde_json::to_vec(profile)?.len() > MAX_PROFILE_BYTES {
+    if serde_json::to_vec(profile)?.len() > MAX_PROFILE_BYTES
+        && serde_json::to_vec(&without_profile_custom_groups(profile.clone()))?.len() > MAX_PROFILE_BYTES
+    {
         return Err(invalid(format!(
             "「我的信息」太大（超过 {} KB）。",
             MAX_PROFILE_BYTES / 1024
         )));
     }
     Ok(())
+}
+
+pub fn profile_custom_group(value: &Value) -> Option<&str> {
+    let group = value.as_str()?;
+    matches!(group, "basic" | "region" | "contact" | "education" | "skills" | "job").then_some(group)
+}
+
+/// 分组是桌面整理信息，不属于插件的填写数据，也不占用原来的资料容量。
+pub fn without_profile_custom_groups(mut profile: Value) -> Value {
+    if let Some(fields) = profile.get_mut("custom").and_then(Value::as_array_mut) {
+        for item in fields.iter_mut().filter_map(Value::as_object_mut) {
+            item.remove("group");
+        }
+    }
+    profile
 }
 
 /// 找「我的信息」里第一处像密码的内容，给出提示。`values` / `family` 的 key 是内部字段 id

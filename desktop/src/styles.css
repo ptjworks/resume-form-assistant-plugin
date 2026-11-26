@@ -102,15 +102,15 @@ label.button-like.disabled { cursor: default; opacity: .45; }
 .nav { position: relative; display: flex; align-items: stretch; height: 100%; gap: 2px; }
 .nav button { position: relative; min-height: 0; padding: 0 14px; border: 0; border-radius: 0; background: transparent; color: var(--ui-sub); font-size: 14px; white-space: nowrap; }
 .nav button:hover:not(:disabled) { background: transparent; border-color: transparent; color: var(--ui-ink); }
-.nav button.active, .nav button.active:hover:not(:disabled) { background: transparent; color: var(--ui-ink); font-weight: 600; }
+.nav button[aria-current="page"], .nav button[aria-current="page"]:hover:not(:disabled) { background: var(--ui-brand-pale); color: var(--ui-brand-hover); font-weight: 650; }
 /* 选中指示条：一根带柔和投影的细线，点哪个 Tab 就滑到哪个字下面（位置由 main.ts 的 placeNavIndicator 写入）。 */
 .nav-indicator { position: absolute; left: 0; bottom: -1px; width: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--ui-brand); box-shadow: 0 1px 8px 1px #2f7a6c59; opacity: 0; transform: translateX(var(--nav-x, 0)); pointer-events: none; }
 .nav-indicator.is-visible { opacity: 1; }
 .nav-indicator.is-animated { transition: transform 280ms cubic-bezier(.4, 0, .2, 1), width 280ms cubic-bezier(.4, 0, .2, 1), opacity 160ms; }
 .nav button:focus-visible { outline-offset: -4px; border-radius: 6px; }
 .nav-sep { align-self: center; flex: none; width: 1px; height: 14px; margin: 0 6px; background: #e4e4e7; }
-/* 「通知」未读小圆点：只留位置，数据由 #552 接入；有未读时去掉 hidden 即可。 */
-.nav-dot { display: inline-block; width: 5px; height: 5px; margin-left: 4px; border-radius: 50%; background: var(--ui-brand); vertical-align: 6px; }
+/* 未读点与当前页面的选中样式区分开；固定在文字右侧，避免显隐时移动选中指示条。 */
+.nav-dot { position: absolute; top: calc(50% - 9px); right: 7px; width: 5px; height: 5px; border-radius: 50%; background: #e2a64e; }
 .topbar-status { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
 /* 浏览器状态：一个小圆点加一句话，圆点颜色随 data-tone；整块是按钮，点开「设置 → 浏览器连接」。 */
 .topbar .status-pill { display: inline-flex; align-items: center; gap: 7px; min-width: 0; min-height: 28px; margin: 0; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ui-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -235,12 +235,12 @@ main > #banner { margin: 0; padding: 6px 20px; border-width: 0 0 1px; border-rad
 .app-group-toggle .app-chevron { width: 14px; height: 14px; color: var(--ui-faint); stroke-width: 1.75; transition: transform 140ms; }
 .app-group-toggle[aria-expanded="true"] .app-chevron { transform: rotate(90deg); }
 .app-group-dot { width: var(--ui-dot-size); height: var(--ui-dot-size); border-radius: 50%; background: var(--ui-dot-idle); flex: none; }
-.app-group[data-group="interview"] .app-group-dot { background: var(--ui-brand); }
-.app-group[data-group="assessment"] .app-group-dot { background: var(--ui-dot-pending); }
-.app-group[data-group="submitted"] .app-group-dot { background: var(--ui-dot-idle); }
-.app-group[data-group="pending"] .app-group-dot { background: #d4d4d8; box-shadow: inset 0 0 0 1px #a1a1aa; }
-.app-group[data-group="offer"] .app-group-dot { background: #16a34a; }
-.app-group[data-group="ended"] .app-group-dot { background: #d4d4d8; }
+.app-group[data-group="interview"] .app-group-dot { background: #44a498; }
+.app-group[data-group="assessment"] .app-group-dot { background: #e2a64e; }
+.app-group[data-group="submitted"] .app-group-dot { background: #719fce; }
+.app-group[data-group="pending"] .app-group-dot { background: #ab93cf; }
+.app-group[data-group="offer"] .app-group-dot { background: #79ad6b; }
+.app-group[data-group="ended"] .app-group-dot { background: #ca94a1; }
 .app-group-name { font-size: 13.5px; font-weight: 650; }
 .app-group-count { color: var(--ui-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .app-group-body { border-top: 1px solid var(--ui-line-soft); }
@@ -600,14 +600,17 @@ button.danger:hover:not(:disabled) { background: #fcf1f1; border-color: #e3aaaa;
 .profile-sync { flex: none; display: flex; flex-direction: column; gap: 10px; margin: 14px 24px 0; padding: 12px 14px; border: 1px solid #ecd9ae; border-radius: 10px; background: #fdf7ea; color: #7c5a12; font-size: 13px; }
 .profile-sync p { margin: 0; }
 .profile-form-body { flex: 1; min-height: 0; overflow: auto; padding: 20px 24px; }
+.profile-form { --profile-control-height: 40px; }
 .profile-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .profile-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
 .profile-fields > label { min-width: 0; color: #4a5361; font-size: 12px; font-weight: 500; }
 .profile-fields > label.is-wide { grid-column: 1 / -1; }
 .profile-fields > label > .field-hint { display: block; margin-top: 4px; font-weight: 400; }
-.profile-fields input, .profile-fields select { width: 100%; min-height: 40px; border-radius: 8px; color: var(--ink); font-size: 13px; font-weight: 400; }
+.profile-fields input, .profile-form select { display: block; width: 100%; height: var(--profile-control-height); min-height: var(--profile-control-height); margin: 0; padding: 0 10px; border-radius: 8px; color: var(--ink); font-size: 13px; font-weight: 400; line-height: normal; }
+.profile-form select { -webkit-appearance: none; appearance: none; padding-right: 30px; background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23687080' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 10px center / 16px 16px; }
 .profile-fields textarea { width: 100%; min-height: 76px; border-radius: 8px; color: var(--ink); font-size: 13px; font-weight: 400; }
 .profile-family, .profile-custom { display: flex; flex-direction: column; gap: 12px; }
+.profile-form .profile-custom--grouped { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--ui-line-soft); }
 .profile-family > p, .profile-custom > p { margin: 0; font-size: 13px; }
 .profile-custom > .resume-panel-note { margin: 0 0 4px; }
 .profile-member, .custom-field-row { scroll-margin-block: 16px; }
@@ -727,7 +730,6 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
   .profile-nav { display: none; }
   .profile-form-head { flex-wrap: wrap; }
   .profile-group-select { display: flex; flex: 1 1 200px; }
-  .profile-group-select select { min-height: 36px; }
   .profile-fields, .profile-conflict-values { grid-template-columns: minmax(0, 1fr); }
   .profile-form-foot { flex-wrap: wrap; }
 }
@@ -791,8 +793,9 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .custom-field-head, .custom-field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 10.5em; gap: 12px; align-items: center; }
 .custom-field-head { color: var(--muted); font-size: 13px; }
 .custom-field-row > label { gap: 0; }
-.custom-field-row textarea { box-sizing: border-box; width: 100%; min-height: 38px; padding: 8px 12px; line-height: 1.6; resize: none; overflow: hidden; overflow-wrap: anywhere; }
+.custom-field-row textarea { box-sizing: border-box; width: 100%; min-height: var(--profile-control-height); padding: 8px 10px; border-radius: 8px; font-size: 13px; line-height: 1.6; resize: none; overflow: hidden; overflow-wrap: anywhere; }
 .custom-field-actions { display: grid; grid-template-columns: 5em auto; align-items: center; gap: 8px; }
+.custom-field-actions > select { grid-column: 1 / -1; }
 .custom-field-status { display: flex; align-items: center; }
 .custom-field-actions .pill { margin: 0; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
 .custom-field-actions > button { min-height: 34px; }
@@ -926,7 +929,7 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 
 .cal-card { display: grid; gap: 8px; padding: 12px 12px 10px; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-surface); }
 .cal-card[aria-current="true"] { border-color: var(--ui-brand-edge); background: var(--ui-brand-wash); }
-.cal-card-top { display: flex; align-items: center; gap: 6px; min-height: 24px; }
+.cal-card-top { display: flex; align-items: center; gap: 6px; }
 .kind-badge { padding: 1px 8px; border-radius: 5px; font-size: 11.5px; font-weight: 600; }
 .kind-badge[data-kind="interview"] { background: var(--ui-kind-interview-bg); color: var(--ui-kind-interview-ink); }
 .kind-badge[data-kind="assessment"] { background: var(--ui-kind-assessment-bg); color: var(--ui-kind-assessment-ink); }
@@ -934,7 +937,8 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .kind-badge[data-kind="other"] { background: var(--ui-kind-other-bg); color: var(--ui-kind-other-ink); }
 .cal-flag { padding: 1px 7px; border-radius: 5px; background: var(--ui-line-soft); color: var(--ui-muted); font-size: 11.5px; }
 .cal-flag[data-tone="overdue"] { background: var(--ui-danger-pale); color: var(--ui-danger); }
-.cal-card h3 { margin: 0; font-size: 15px; line-height: 1.45; font-weight: 650; overflow-wrap: anywhere; }
+.cal-card-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.cal-card h3 { min-width: 0; margin: 0; font-size: 15px; line-height: 1.45; font-weight: 650; overflow-wrap: anywhere; }
 .cal-card[data-state="done"] h3 { color: var(--ui-faint); text-decoration: line-through; }
 .cal-card-where { display: flex; align-items: flex-start; gap: 6px; margin: -2px 0 0; color: var(--ui-muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .cal-card-where .icon { flex: none; width: 14px; height: 14px; margin-top: 3px; }
@@ -952,7 +956,7 @@ dialog.resume-dialog.tone-danger { border-color: #edc5c5; }
 .cal-card-actions button.primary { background: var(--ui-brand); border-color: var(--ui-brand); }
 .cal-card-actions button.primary:hover:not(:disabled) { background: var(--ui-brand-hover); border-color: var(--ui-brand-hover); }
 .cal-card-actions .link-button { margin-left: auto; font-size: 12.5px; }
-.todo-detail-menu { position: relative; margin-left: auto; }
+.todo-detail-menu { position: relative; flex: none; }
 .todo-detail-menu > summary { display: grid; place-items: center; width: 28px; height: 24px; list-style: none; border-radius: 6px; color: var(--ui-muted); cursor: pointer; }
 .todo-detail-menu > summary::-webkit-details-marker { display: none; }
 .todo-detail-menu > summary:hover { background: var(--ui-line-soft); }

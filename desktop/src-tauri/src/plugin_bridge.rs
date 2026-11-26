@@ -14,6 +14,7 @@ use resume_pro_protocol::{
     ErrorCode, MessageType, Request, MAX_ENVELOPE_BYTES,
 };
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 
 /// A successful answer: the envelope-level `resultId` and the response payload.
 #[derive(Debug)]
@@ -63,6 +64,8 @@ fn resume_read(request: &Request, store: &ArchiveStore) -> Result<Answer, ErrorC
     ensure_current_identity(request, store)?;
     let overview = store.resume_overview().map_err(code_of)?;
     let profile = store.get_profile().map_err(code_of)?;
+    // 分组是桌面端的整理信息。已发布的扩展协议只接受 key 和 value。
+    let wire_profile = archive_store::resume::without_profile_custom_groups(profile.profile);
     let templates = overview.templates.into_iter().map(|summary| json!({
         "id": summary.id,
         "name": summary.name,
@@ -78,7 +81,7 @@ fn resume_read(request: &Request, store: &ArchiveStore) -> Result<Answer, ErrorC
     let payload = json!({
         "templates": templates,
         "activeTemplate": active,
-        "profile": profile.profile,
+        "profile": wire_profile,
         "profileRevision": profile.revision
     });
     let payload_size = serde_json::to_vec(&payload).map_err(|_| ErrorCode::Unavailable)?.len();
@@ -107,10 +110,27 @@ fn resume_update(request: &Request, store: &ArchiveStore) -> Result<Answer, Erro
             store.get_profile().map_err(code_of)?.revision
         }
         Some("saveProfile") => {
-            let profile = request.payload.get("profile").ok_or(ErrorCode::InvalidPayload)?.clone();
+            let mut profile = request.payload.get("profile").ok_or(ErrorCode::InvalidPayload)?.clone();
             archive_store::reject_profile_secrets(&profile).map_err(|_| ErrorCode::SecretForbidden)?;
             let expected = request.payload["expectedRevision"].as_i64().ok_or(ErrorCode::InvalidPayload)?;
-            store.save_profile(profile, expected).map_err(code_of)?.revision
+            store.transaction(|tx| {
+                // 扩展保存现有字段的值时保留原来的分组，新字段留待用户归类。
+                let current = tx.get_profile()?;
+                let mut groups = HashMap::new();
+                for item in current.profile["custom"].as_array().into_iter().flatten() {
+                    if let Some(key) = item["key"].as_str() {
+                        groups.entry(key).or_insert_with(|| archive_store::resume::profile_custom_group(&item["group"]));
+                    }
+                }
+                if let Some(fields) = profile.get_mut("custom").and_then(Value::as_array_mut) {
+                    for item in fields.iter_mut().filter_map(Value::as_object_mut) {
+                        if let Some(group) = item.get("key").and_then(Value::as_str).and_then(|key| groups.remove(key).flatten()) {
+                            item.insert("group".into(), json!(group));
+                        }
+                    }
+                }
+                tx.save_profile(profile, expected)
+            }).map_err(code_of)?.revision
         }
         Some("saveTemplate") => {
             let id = request.payload["templateId"].as_str().ok_or(ErrorCode::InvalidPayload)?.to_ascii_lowercase();
@@ -794,6 +814,36 @@ mod tests {
             "expectedRevision": 1
         }));
         assert_eq!(apply(&secret, &store).err(), Some(ErrorCode::SecretForbidden));
+    }
+
+    #[test]
+    fn native_profile_keeps_desktop_groups_across_ungrouped_extension_updates() {
+        let (_dir, store) = store();
+        store.save_profile(json!({
+            "values": {}, "family": [], "custom": [
+                {"key": "论文题目", "value": "旧值", "group": "education"},
+                {"key": "保存后删除的字段", "value": "", "group": "basic"}
+            ]
+        }), 0).unwrap();
+        let read = v2_request("resume.read", &store.identity(), json!({}));
+        let wire_profile = checked_v2_response(&read, &apply(&read, &store).unwrap());
+        assert_eq!(wire_profile["payload"]["profile"]["custom"][0], json!({"key": "论文题目", "value": "旧值"}));
+
+        let save = v2_request("resume.update", &store.identity(), json!({
+            "op": "saveProfile", "expectedRevision": 1, "profile": {
+                "values": {}, "family": [], "custom": [
+                    {"key": "论文题目", "value": "新值"},
+                    {"key": "来自网页的字段", "value": ""}
+                ]
+            }
+        }));
+        apply(&save, &store).unwrap();
+        let saved = store.get_profile().unwrap();
+        assert_eq!(saved.revision, 2);
+        assert_eq!(saved.profile["custom"], json!([
+            {"key": "论文题目", "value": "新值", "group": "education"},
+            {"key": "来自网页的字段", "value": ""}
+        ]));
     }
 
     #[test]
