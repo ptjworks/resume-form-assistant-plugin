@@ -149,7 +149,7 @@ function element() {
   };
 }
 
-async function panel({ read, installType = 'normal', ready = null, sessionRead = null }) {
+async function panel({ read, installType = 'normal', ready = null, sessionRead = null, session = {} }) {
   const elements = new Map();
   const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   const created = [];
@@ -165,7 +165,10 @@ async function panel({ read, installType = 'normal', ready = null, sessionRead =
     management: { getSelf: async () => ({ installType }) },
     storage: {
       local: { get: async () => ({}) },
-      session: { get: sessionRead || (async () => (ready ? { extensionUpdateReady: { version: ready } } : {})) },
+      session: {
+        get: sessionRead || (async () => ({ extensionUpdateReady: ready ? { version: ready } : undefined, ...session })),
+        set: async values => { Object.assign(session, values); }
+      },
       onChanged: { addListener(listener) { storageListeners.push(listener); } }
     },
     tabs: {
@@ -192,8 +195,9 @@ async function panel({ read, installType = 'normal', ready = null, sessionRead =
   await tick();
   const strip = get('update-reminder');
   const action = get('update-reminder-action');
+  const dismiss = get('update-reminder-dismiss');
   return {
-    strip, text: () => get('update-reminder-text').textContent, action, created, reloads: () => reloads, tick,
+    strip, text: () => get('update-reminder-text').textContent, action, dismiss, created, reloads: () => reloads, tick,
     click: async () => { await action.listeners.click(); await tick(); },
     sessionChanged: async version => { for (const listener of storageListeners) listener({ extensionUpdateReady: { newValue: version ? { version } : undefined } }, 'session'); await tick(); }
   };
@@ -204,6 +208,7 @@ const data = { templates: [], activeTemplate: null, profile: { values: {}, famil
 test('侧栏：桌面太旧时一直提示，点了打开下载页', async () => {
   const p = await panel({ read: { status: 'ok', data, desktopVersion: '0.4.4' } });
   assert.equal(p.strip.hidden, false);
+  assert.equal(p.dismiss.hidden, true);
   assert.match(p.text(), /0\.4\.4/);
   assert.equal(p.action.textContent, '去下载');
   await p.click();
@@ -220,10 +225,50 @@ test('侧栏：桌面版本对得上、没连上桌面时都不提示', async ()
 test('侧栏：解压安装的插件提示改装商店版', async () => {
   const p = await panel({ read: { status: 'ok', data, desktopVersion: '0.5.0' }, installType: 'development' });
   assert.equal(p.strip.hidden, false);
+  assert.equal(p.dismiss.hidden, false);
   assert.match(p.text(), /解压安装/);
   assert.match(p.text(), /待同步/, '移除插件会删掉还没同步到桌面的记录');
   await p.click();
   assert.deepEqual(p.created, [reminders.STORE_URL]);
+});
+
+test('侧栏：关闭解压安装提示后，同一浏览器会话内重开侧栏也不再显示', async () => {
+  const session = {};
+  const read = { status: 'ok', data, desktopVersion: '0.5.0' };
+  const p = await panel({ read, installType: 'development', session });
+  p.dismiss.listeners.click();
+  assert.equal(p.strip.hidden, true);
+  await p.sessionChanged('0.5.0');
+  assert.equal(p.strip.hidden, true, '重新渲染时也保持关闭');
+
+  const reopened = await panel({ read, installType: 'development', session });
+  assert.equal(reopened.strip.hidden, true);
+  await reopened.sessionChanged('0.5.1');
+  assert.equal(reopened.strip.hidden, false);
+  assert.equal(reopened.action.textContent, '重新加载');
+  assert.equal(reopened.dismiss.hidden, true);
+});
+
+test('侧栏：重开时等会话关闭记录读完，解压安装提示不会先闪现', async () => {
+  let answer;
+  const late = new Promise(resolve => { answer = resolve; });
+  const p = await panel({
+    read: { status: 'ok', data, desktopVersion: '0.5.0' },
+    installType: 'development',
+    sessionRead: () => late
+  });
+  assert.equal(p.strip.hidden, true);
+  answer({ unpackedExtensionReminderDismissed: true });
+  await p.tick();
+  assert.equal(p.strip.hidden, true);
+});
+
+test('侧栏：关闭解压安装提示后仍可显示桌面更新提醒', async () => {
+  const p = await panel({ read: { status: 'ok', data, desktopVersion: '0.4.4' }, installType: 'development' });
+  p.dismiss.listeners.click();
+  assert.equal(p.strip.hidden, false);
+  assert.equal(p.action.textContent, '去下载');
+  assert.equal(p.dismiss.hidden, true);
 });
 
 test('侧栏：新版本已下载时给「重新加载」，后台记下的变化也跟着显示', async () => {

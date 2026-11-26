@@ -70,6 +70,8 @@ button:disabled { cursor: not-allowed; }
 .status-strip__icon { margin-top: 1px; }
 .status-strip__body { display: grid; gap: 3px; min-width: 0; }
 .status-strip button { justify-self: start; min-height: 24px; padding: 0; border: 0; background: transparent; color: var(--accent-strong); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+.status-strip .status-strip__dismiss { display: grid; flex: 0 0 24px; place-items: center; margin-left: auto; border-radius: 4px; color: inherit; }
+.status-strip__dismiss:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
 .status-strip.is-warn { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); }
 .status-strip.is-info { border-color: var(--accent-line); background: var(--ok-bg); color: var(--accent-strong); }
 
@@ -99,6 +101,12 @@ button:disabled { cursor: not-allowed; }
 .fill-top__row .template-picker { flex: 1; min-width: 0; }
 .template-picker .dock-select { min-height: 38px; padding-right: 30px; border-radius: 8px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") right 8px center / 16px no-repeat; font-size: 14px; font-weight: 600; text-overflow: ellipsis; -webkit-appearance: none; appearance: none; cursor: pointer; }
 .template-picker .dock-select:disabled { color: var(--muted); cursor: not-allowed; }
+#template-picker-trigger { text-align: left; }
+#template-picker-value { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#template-picker-list { position: fixed; inset: auto; margin: 0; padding: 3px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink); box-shadow: 0 6px 18px #18181b24; list-style: none; }
+#template-picker-list li { padding: 6px 8px; border-radius: 4px; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; cursor: pointer; }
+#template-picker-list li[aria-selected="true"] { color: var(--accent-strong); font-weight: 650; }
+#template-picker-list li:hover, #template-picker-list li.is-active { background: var(--accent-pale); }
 .template-meta { margin: 0; color: var(--muted); font-size: 12px; }
 .template-meta:empty { display: none; }
 .page-state { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0; color: var(--subtle); font-size: 12px; }

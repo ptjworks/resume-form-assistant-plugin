@@ -8,6 +8,7 @@
     updateReminder: document.getElementById("update-reminder"),
     updateReminderText: document.getElementById("update-reminder-text"),
     updateReminderAction: document.getElementById("update-reminder-action"),
+    updateReminderDismiss: document.getElementById("update-reminder-dismiss"),
     jobAssist: document.getElementById("job-assist"),
     jobAssistText: document.getElementById("job-assist-text"),
     jobAssistCancel: document.getElementById("job-assist-cancel"),
@@ -182,6 +183,7 @@
       archive: document.getElementById("task-flow-archive")
     }
   };
+  const templatePicker = installTemplatePicker();
   let currentTabId = null;
   let currentStore = null;
   let desktopMode = "unavailable";
@@ -192,6 +194,9 @@
   // 启动时那次读取比变化通知晚回来时，不能拿旧值盖掉通知里的新值。
   let readyVersionChanged = false;
   const UPDATE_READY_KEY = "extensionUpdateReady";
+  const STORE_REMINDER_DISMISSED_KEY = "unpackedExtensionReminderDismissed";
+  let storeReminderDismissed = false;
+  let storeReminderStateLoaded = false;
   let aiUnconfigured = false;
   let aiUnconfiguredChanged = false;
   let aiHintDismissed = false;
@@ -418,6 +423,7 @@
     elements.desktopPill.dataset.tone = storeLoaded ? pill[1] : "idle";
     renderPageCard();
     elements.templateSelect.disabled = Boolean(copy) || !(currentStore?.templates?.length);
+    templatePicker?.sync();
     // No template is not an error: the profile alone can still fill. Say where templates come from.
     elements.templateEmpty.hidden = desktopMode !== "ready" || Boolean(currentStore?.templates?.length);
     // 字段编辑（#273）只对桌面里的当前模板开放；没有模板、没连上桌面时不给入口。
@@ -498,11 +504,133 @@
     elements.jobSummaryMeta.textContent = job ? [job.company || "公司未识别", job.location].filter(Boolean).join(" · ") : "";
   }
 
+  function installTemplatePicker() {
+    const select = elements.templateSelect;
+    const trigger = document.getElementById("template-picker-trigger");
+    const value = document.getElementById("template-picker-value");
+    const list = document.getElementById("template-picker-list");
+    if (typeof list?.showPopover !== "function") return null;
+    const isOpen = () => list.matches(":popover-open");
+    const close = () => { if (isOpen()) list.hidePopover(); };
+    let active = 0;
+    let typed = "";
+    let typedAt = 0;
+
+    function sync() {
+      value.textContent = select.selectedOptions[0]?.label || "";
+      trigger.disabled = select.disabled;
+      if (trigger.disabled) close();
+    }
+    function place() {
+      const { left, width, bottom } = trigger.getBoundingClientRect();
+      const room = window.innerHeight - bottom - 6;
+      if (!width || room < 20) return false;
+      list.style.left = `${left}px`;
+      list.style.top = `${bottom + 3}px`;
+      list.style.width = `${width}px`;
+      list.style.maxHeight = `${Math.min(room, 206)}px`;
+      return true;
+    }
+    function highlight(index) {
+      list.children[active]?.classList.remove("is-active");
+      active = index;
+      const item = list.children[index];
+      if (!item) return;
+      item.classList.add("is-active");
+      trigger.setAttribute("aria-activedescendant", item.id);
+      item.scrollIntoView({ block: "nearest" });
+    }
+    function prepareOptions() {
+      if (trigger.disabled) return false;
+      if (window.innerHeight - trigger.getBoundingClientRect().bottom < 110) {
+        trigger.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
+      }
+      if (!place()) return false;
+      const options = Array.from(select.options, (option, index) => {
+        const item = document.createElement("li");
+        item.id = `template-picker-option-${index}`;
+        item.dataset.index = String(index);
+        item.setAttribute("role", "option");
+        item.setAttribute("aria-selected", String(option.selected));
+        item.textContent = option.label;
+        return item;
+      });
+      list.replaceChildren(...options);
+      return true;
+    }
+    function choose(index) {
+      close();
+      if (!select.options[index] || select.selectedIndex === index) return;
+      select.selectedIndex = index;
+      sync();
+      select.dispatchEvent(new Event("input", { bubbles: true }));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    function follow() {
+      if (isOpen() && !place()) close();
+    }
+
+    trigger.addEventListener("keydown", (event) => {
+      const { key } = event;
+      if (key === "Tab") { close(); return; }
+      if (key === "Escape" && isOpen()) {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      } else if (key === "ArrowDown" || key === "ArrowUp") {
+        event.preventDefault();
+        if (isOpen()) highlight(Math.min(list.children.length - 1, Math.max(0, active + (key === "ArrowDown" ? 1 : -1))));
+        else trigger.click();
+      } else if (isOpen() && (key === "Home" || key === "End")) {
+        event.preventDefault();
+        highlight(key === "Home" ? 0 : list.children.length - 1);
+      } else if (isOpen() && (key === "Enter" || key === " ")) {
+        event.preventDefault();
+        choose(active);
+      } else if (key.length === 1 && key !== " " && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing) {
+        const now = Date.now();
+        typed = now - typedAt > 700 ? key : typed + key;
+        typedAt = now;
+        const index = Array.from(select.options).findIndex((option) => option.label.toLowerCase().startsWith(typed.toLowerCase()));
+        if (index >= 0) {
+          event.preventDefault();
+          if (isOpen()) highlight(index);
+          else choose(index);
+        }
+      }
+    });
+    list.addEventListener("mousedown", (event) => { if (event.target.closest("li")) event.preventDefault(); });
+    list.addEventListener("click", (event) => {
+      const item = event.target.closest("li");
+      if (item) choose(Number(item.dataset.index));
+    });
+    list.addEventListener("beforetoggle", (event) => {
+      if (event.newState === "open") {
+        if (!prepareOptions()) { event.preventDefault(); return; }
+        active = Math.max(0, select.selectedIndex);
+        trigger.setAttribute("aria-expanded", "true");
+      } else {
+        trigger.setAttribute("aria-expanded", "false");
+        trigger.removeAttribute("aria-activedescendant");
+      }
+    });
+    list.addEventListener("toggle", () => { if (isOpen()) highlight(active); });
+    window.addEventListener("resize", follow);
+    document.addEventListener("scroll", follow, true);
+    document.getElementById("template-picker-label").htmlFor = trigger.id;
+    select.hidden = true;
+    list.hidden = false;
+    trigger.hidden = false;
+    sync();
+    return { close, sync, trigger };
+  }
+
   function renderFromStore() {
     const oldGroups = Array.from(elements.fieldGroups.querySelectorAll(".field-group"));
     const openGroupKeys = new Set(oldGroups.filter((group) => group.open).map((group) => group.dataset.groupKey));
     const templates = currentStore?.templates || [];
     const selected = selectedTemplate();
+    templatePicker?.close();
     elements.templateSelect.innerHTML = templates.length
       ? templates.map((template) => `<option value="${escapeHtml(template.id)}"${template.id === selected?.id ? " selected" : ""}>${escapeHtml(template.name)}</option>`).join("")
       : '<option value="">暂无模板</option>';
@@ -1947,7 +2075,7 @@
       // Back where the flow was started, or its entry button when that control is gone.
       const entry = { job: elements.jobSaveButton, submit: elements.submitButton, repeat: elements.repeatButton, deep: elements.deepButton,
         upload: elements.fillButton, archive: elements.fillButton }[previous];
-      const target = [taskReturnFocus, entry, elements.fillButton, elements.templateSelect].find(usableFocus);
+      const target = [taskReturnFocus, entry, elements.fillButton, templatePicker?.trigger || elements.templateSelect].find(usableFocus);
       target?.focus?.();
       taskReturnFocus = null;
     }
@@ -2584,9 +2712,10 @@
   }, true);
   elements.fieldsManage.addEventListener("click", () => { openTemplateEditor().catch(() => toast("无法打开字段编辑。")); });
   elements.templateSelect.addEventListener("change", async () => {
+    const templateId = elements.templateSelect.value;
     // A plan made for the old template must not run with the new one.
     await sendToPage({ type: "RESUME_PANEL_REPEAT", action: "invalidate" }).catch(() => {});
-    const result = await chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_UPDATE", op: "setActiveTemplate", templateId: elements.templateSelect.value });
+    const result = await chrome.runtime.sendMessage({ type: "DESKTOP_RESUME_UPDATE", op: "setActiveTemplate", templateId });
     await loadStore();
     toast(result?.status === "missing_template" ? "这个模板在桌面里已经删掉了" : result?.status === "ok" ? "当前模板已切换。" : "桌面暂时无法切换模板。");
   });
@@ -2952,6 +3081,11 @@
       toast("当前操作不可用。");
     }
   });
+  elements.updateReminderDismiss.addEventListener("click", () => {
+    storeReminderDismissed = true;
+    renderUpdateReminder();
+    Promise.resolve(chrome.storage.session?.set?.({ [STORE_REMINDER_DISMISSED_KEY]: true })).catch(() => {});
+  });
   document.getElementById("open-manager").addEventListener("click", () => {
     if (selectedView === "mail" && desktopMode === "ready") {
       return desktopAction("home").catch(() => toast("当前操作不可用。"));
@@ -2989,29 +3123,36 @@
   const version = chrome.runtime.getManifest?.()?.version || "";
   elements.pluginVersion.textContent = version ? `插件 v${version}` : "";
   elements.pluginVersion.hidden = !version;
-  // 插件新版本已下载、解压安装、桌面太旧时，侧栏顶部一直提示，不能关。桌面版本只认这次连上时报的。
+  // 桌面版本只认这次连上时报的。关闭解压安装提醒后仍可显示其他更新提醒。
   function renderUpdateReminder() {
+    const dismissWasFocused = document.activeElement === elements.updateReminderDismiss;
     const notice = self.ResumeProUpdateReminder?.reminder({
       extensionVersion: version,
       installType,
       desktopVersion: desktopMode === "ready" ? desktopVersion : "",
-      readyVersion
+      readyVersion,
+      storeReminderDismissed: storeReminderDismissed || !storeReminderStateLoaded
     }) || null;
     elements.updateReminder.hidden = !notice;
     elements.updateReminderText.textContent = notice?.message || "";
     elements.updateReminderAction.textContent = notice?.action || "";
     elements.updateReminderAction.dataset.kind = notice?.kind || "";
+    elements.updateReminderDismiss.hidden = notice?.kind !== "store";
+    if (dismissWasFocused && elements.updateReminderDismiss.hidden) {
+      const next = notice ? elements.updateReminderAction : tabButtons.find((button) => button.dataset.tab === selectedView);
+      next?.focus({ preventScroll: true });
+    }
   }
   Promise.resolve(chrome.management?.getSelf?.())
     .then((info) => { installType = String(info?.installType || ""); renderUpdateReminder(); })
     .catch(() => {});
-  Promise.resolve(chrome.storage.session?.get?.(UPDATE_READY_KEY))
+  Promise.resolve(chrome.storage.session?.get?.([UPDATE_READY_KEY, STORE_REMINDER_DISMISSED_KEY]))
     .then((stored) => {
-      if (readyVersionChanged) return;
-      readyVersion = String(stored?.[UPDATE_READY_KEY]?.version || "");
-      renderUpdateReminder();
+      if (!readyVersionChanged) readyVersion = String(stored?.[UPDATE_READY_KEY]?.version || "");
+      if (stored?.[STORE_REMINDER_DISMISSED_KEY] === true) storeReminderDismissed = true;
     })
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => { storeReminderStateLoaded = true; renderUpdateReminder(); });
   Promise.resolve(chrome.storage.session?.get?.(AI_UNCONFIGURED_KEY))
     .then((stored) => {
       if (aiUnconfiguredChanged) return;
@@ -3033,6 +3174,10 @@
     if (area === "session" && changes[UPDATE_READY_KEY]) {
       readyVersionChanged = true;
       readyVersion = String(changes[UPDATE_READY_KEY].newValue?.version || "");
+      renderUpdateReminder();
+    }
+    if (area === "session" && changes[STORE_REMINDER_DISMISSED_KEY]?.newValue === true) {
+      storeReminderDismissed = true;
       renderUpdateReminder();
     }
     if (area === "session" && changes[AI_UNCONFIGURED_KEY]) {
