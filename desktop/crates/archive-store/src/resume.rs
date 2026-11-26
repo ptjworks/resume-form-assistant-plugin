@@ -298,9 +298,7 @@ pub fn validate_profile(profile: &Value) -> Result<(), StoreError> {
     for item in custom {
         let key = item.get("key").and_then(Value::as_str);
         let value = item.get("value").and_then(Value::as_str);
-        let invalid_group = item.get("group").is_some_and(|group| {
-            !matches!(group.as_str(), Some("basic" | "region" | "contact" | "education" | "skills" | "job"))
-        });
+        let invalid_group = item.get("group").is_some_and(|group| profile_custom_group(group).is_none());
         if key.is_none() || value.is_none() || invalid_group {
             return Err(bad());
         }
@@ -314,6 +312,11 @@ pub fn validate_profile(profile: &Value) -> Result<(), StoreError> {
         )));
     }
     Ok(())
+}
+
+pub fn profile_custom_group(value: &Value) -> Option<&str> {
+    let group = value.as_str()?;
+    matches!(group, "basic" | "region" | "contact" | "education" | "skills" | "job").then_some(group)
 }
 
 /// 分组是桌面整理信息，不属于插件的填写数据，也不占用原来的资料容量。

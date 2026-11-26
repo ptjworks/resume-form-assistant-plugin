@@ -63,11 +63,11 @@ export const profileApi: ProfileApi = {
     const custom = (raw as Partial<Profile> | null)?.custom;
     if (!Array.isArray(custom)) return normalized;
     // 分组只用于桌面整理。「我的信息」的匹配和同名去重仍用插件共用的规则。
-    const groups = new Map<string, string>();
+    const groups = new Map<string, string | undefined>();
     for (const item of custom) {
-      if (typeof item?.key !== "string" || !item.group || !customGroups.has(item.group)) continue;
+      if (typeof item?.key !== "string") continue;
       const key = sharedProfile.normalizeKey(item.key);
-      if (!groups.has(key)) groups.set(key, item.group);
+      if (!groups.has(key)) groups.set(key, item.group && customGroups.has(item.group) ? item.group : undefined);
     }
     for (const item of normalized.custom) {
       const group = groups.get(sharedProfile.normalizeKey(item.key));

@@ -116,12 +116,15 @@ fn resume_update(request: &Request, store: &ArchiveStore) -> Result<Answer, Erro
             store.transaction(|tx| {
                 // 扩展保存现有字段的值时保留原来的分组，新字段留待用户归类。
                 let current = tx.get_profile()?;
-                let groups: HashMap<_, _> = current.profile["custom"].as_array().into_iter().flatten()
-                    .filter_map(|item| Some((item["key"].as_str()?, item["group"].as_str()?)))
-                    .collect();
+                let mut groups = HashMap::new();
+                for item in current.profile["custom"].as_array().into_iter().flatten() {
+                    if let Some(key) = item["key"].as_str() {
+                        groups.entry(key).or_insert_with(|| archive_store::resume::profile_custom_group(&item["group"]));
+                    }
+                }
                 if let Some(fields) = profile.get_mut("custom").and_then(Value::as_array_mut) {
                     for item in fields.iter_mut().filter_map(Value::as_object_mut) {
-                        if let Some(group) = item.get("key").and_then(Value::as_str).and_then(|key| groups.get(key)) {
+                        if let Some(group) = item.get("key").and_then(Value::as_str).and_then(|key| groups.remove(key).flatten()) {
                             item.insert("group".into(), json!(group));
                         }
                     }

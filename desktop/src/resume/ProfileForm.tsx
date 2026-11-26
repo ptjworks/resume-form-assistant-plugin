@@ -100,7 +100,7 @@ function CustomFieldRow({
       </label>
       <div className="custom-field-actions">
         {onGroupChange ? (
-          <select aria-label="移到分组" value="" onChange={(event) => onGroupChange(event.target.value)}>
+          <select id={`custom-${index}-group`} aria-label="移到分组" value="" onChange={(event) => onGroupChange(event.target.value)}>
             <option value="" disabled>移到分组</option>
             {profileApi.PROFILE_SCHEMA.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
           </select>
@@ -221,6 +221,7 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
   const [dialogNotice, setDialogNotice] = useState<string | null>(null);
   const [dirty, setDirtyState] = useState(false);
   const [section, setSection] = useState(0);
+  const ungroupedCount = profile?.custom.filter((item) => !item.group).length ?? 0;
   const reloadPendingRef = useRef(false);
   const savingRef = useRef(false);
   const reloadButtonRef = useRef<HTMLButtonElement>(null);
@@ -352,6 +353,10 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (ungroupedCount === 0 && section === SECTIONS.length) setSection(0);
+  }, [ungroupedCount, section]);
 
   useEffect(() => {
     const id = focusAddedRef.current;
@@ -588,21 +593,24 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
     setNotice({ tone: "warn", text: "更新已加入当前草稿；你的修改仍未保存。" });
   };
 
-  const ungrouped = profile.custom.filter((item) => !item.group);
-  const sections = ungrouped.length ? [...SECTIONS, UNGROUPED] : SECTIONS;
+  const sections = ungroupedCount ? [...SECTIONS, UNGROUPED] : SECTIONS;
   const activeSection = sections[section] ? section : 0;
   const current = sections[activeSection];
   const pendingCounts = sections.map((item) => item.kind === "family" ? 0 : profile.custom.filter(
     (field) => field.group === (item.kind === "schema" ? item.id : undefined) && field.key.trim() && !field.value.trim(),
   ).length);
   const removeCustom = (index: number) => {
-    if (!profile.custom[index].group && ungrouped.length === 1) setSection(0);
+    if (!profile.custom[index].group && ungroupedCount === 1) setSection(0);
     updateProfile({ ...profile, custom: profile.custom.filter((_, i) => i !== index) });
   };
   const moveCustom = (index: number, group: string) => {
-    if (ungrouped.length === 1) {
+    if (ungroupedCount === 1) {
       setSection(SECTIONS.findIndex((item) => item.kind === "schema" && item.id === group));
       focusAddedRef.current = `custom-${index}-key`;
+    } else {
+      const next = profile.custom.findIndex((item, i) => i > index && !item.group);
+      const remaining = next >= 0 ? next : profile.custom.findIndex((item, i) => i !== index && !item.group);
+      focusAddedRef.current = `custom-${remaining}-group`;
     }
     updateProfile({ ...profile, custom: profile.custom.map((item, i) => i === index ? { ...item, group } : item) });
   };

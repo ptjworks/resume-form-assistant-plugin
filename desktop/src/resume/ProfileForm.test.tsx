@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { Invoke, ProfileRecordView } from "../api.ts";
 import { InvokeProvider } from "../react/invoke.tsx";
 import { ProfileForm } from "./ProfileForm.tsx";
-import { idNumberInfo } from "./profile.ts";
+import { idNumberInfo, profileApi } from "./profile.ts";
 import type { ProfileProbe } from "./ProfileForm.tsx";
 import type { Listen } from "./LegacyImport.tsx";
 
@@ -879,4 +879,48 @@ test("收纳网页或旧版的未归类字段，可以移到资料分组，清�
   await waitFor(() => expect(calls.find((c) => c.command === "save_profile_cmd")?.args?.profile).toMatchObject({
     custom: [{ key: "户籍派出所", value: "示例派出所", group: "region" }],
   }));
+});
+
+test("归类其中一条时，焦点留在下一条未归类字段", async () => {
+  const user = userEvent.setup();
+  mount(() => ({
+    ...record,
+    profile: { ...record.profile, custom: [...record.profile.custom, { key: "第二个问题", value: "" }] },
+  }));
+  await screen.findByLabelText("姓名");
+  await openGroup("未归类字段");
+  const first = screen.getByRole("group", { name: "户籍派出所" });
+  await user.selectOptions(within(first).getByLabelText("移到分组"), "region");
+  const remaining = screen.getByRole("group", { name: "第二个问题" });
+  expect(document.activeElement).toBe(within(remaining).getByLabelText("移到分组"));
+});
+
+test("外部更新移除最后一条未归类字段后，新增字段不会抢回当前分组", async () => {
+  let current = record;
+  const { fire } = mountWithListen(() => current);
+  await screen.findByLabelText("姓名");
+  await openGroup("未归类字段");
+
+  current = { ...record, revision: 4, profile: { ...record.profile, custom: [] } };
+  await act(async () => fire(4));
+  expect(await screen.findByRole("heading", { name: "基本信息", level: 2 })).toBeTruthy();
+
+  current = { ...record, revision: 5 };
+  await act(async () => fire(5));
+  expect(screen.getByRole("heading", { name: "基本信息", level: 2 })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /^未归类字段/ })).toBeTruthy();
+});
+
+test("读取旧档案时，未知分组和被合并的重复字段不会给主字段换组", () => {
+  const profile = profileApi.normalizeProfile({
+    values: {}, family: [], custom: [
+      { key: "备用邮箱", value: "", group: "unknown" },
+      { key: "备用邮箱：", value: "backup@example.test", group: "contact" },
+      { key: "第二外语", value: "法语", group: "skills" },
+    ],
+  });
+  expect(profile.custom).toEqual([
+    { key: "备用邮箱", value: "backup@example.test" },
+    { key: "第二外语", value: "法语", group: "skills" },
+  ]);
 });
