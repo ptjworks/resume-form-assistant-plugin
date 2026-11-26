@@ -1133,9 +1133,53 @@
     return Boolean(cls) && a.tagName === b.tagName && cls === attr(b, "class");
   }
 
-  const WORK_TITLE_SECTION = /^(?:(?:工作|实习)(?:经历|经验)?|employment|workexperience|internships?)\d*$/;
+  const WORK_TITLE_SECTION = /^(?:(?:工作|任职|实习)(?:经历|经验)?|employment|workexperience|internships?)\d*$/;
   const WORK_TITLE_COMPANY = /^(?:(?:实习|工作|任职)?(?:公司|单位|机构)(?:名称)?|雇主|employer|company(?:name)?)$/;
   const WORK_TITLE_POSITION = /^(?:(?:实习|工作|担任)?(?:职位|岗位|职务|角色)(?:名称)?|jobtitle|position|role)$/;
+  const RECORD_SECTION = /^(?:家庭(?:主要)?成员(?:信息|情况)?|家属(?:信息|情况)?|familymembers?|(?:教育|工作|任职|实习|项目)(?:经历|经验|背景)|(?:work|project|education)experience|internships?)$/;
+  const RECORD_CLASS = /(?:^|[-_\s])(?:row|record|entry|card|item)(?:$|[-_\s])/i;
+  const FORM_ITEM_CLASS = /(?:^|[-_\s])(?:form|field)[-_]?item(?:$|[-_\s])/i;
+
+  // 同一真实条目里的字段共用条目号。每道题各自数第几次出现，会让缺「职位」或「联系电话」的那一行把后面的字段错位。
+  function markRecordRows(controls) {
+    const containers = new Map();
+    for (const control of controls) {
+      const section = normalizeKey(control.section);
+      if (!control.sectionRoot || !RECORD_SECTION.test(section)) continue;
+      for (let row = control.root.parentElement; row && row !== control.sectionRoot; row = row.parentElement) {
+        const cls = attr(row, "class");
+        if (row.tagName !== "TR" && (!RECORD_CLASS.test(cls) || FORM_ITEM_CLASS.test(cls))) continue;
+        const parent = row.parentElement;
+        if (!containers.has(parent)) containers.set(parent, new Map());
+        const shapes = containers.get(parent);
+        const shape = JSON.stringify([section, row.tagName, cls]);
+        if (!shapes.has(shape)) shapes.set(shape, new Map());
+        const rows = shapes.get(shape);
+        if (!rows.has(row)) rows.set(row, []);
+        rows.get(row).push(control);
+      }
+    }
+    const assigned = new Map();
+    for (const [parent, shapes] of containers) {
+      for (const rows of shapes.values()) {
+        if (rows.size < 2) continue;
+        const ordered = Array.from(parent.children).filter(row => rows.has(row));
+        if (ordered.length < 2) continue;
+        const rowLabels = ordered.map(row => new Set(rows.get(row).map(field => normalizeKey(field.label)).filter(Boolean)));
+        if (!rowLabels.some(labels => labels.size > 1)) continue;
+        const adjacentShared = rowLabels.every((labels, index) => index === 0
+          || [...labels].some(label => rowLabels[index - 1].has(label)));
+        if (!adjacentShared) continue;
+        ordered.forEach((row, index) => rows.get(row).forEach(control => {
+          // 同时认出了内外两层时，选离字段更近的条目。
+          const other = assigned.get(control);
+          if (other && !other.contains(row)) return;
+          control.recordIndex = index + 1;
+          assigned.set(control, row);
+        }));
+      }
+    }
+  }
 
   function markWorkTitleRows(controls) {
     const scopes = new Map();
@@ -1310,6 +1354,7 @@
     });
     const kept = controls.filter((control) => control.fillable);
     markWorkTitleRows(kept);
+    markRecordRows(kept);
     // #408 控件一个都没读出来：出错的之外，只剩页头导航、站内搜索、表单外的控件和文件框（这些本来就不填）。
     // 有读出来、只是禁用或对不上题目的控件时不算，没填的原因在它们身上。
     const unreadable = Boolean(fault) && !kept.length
@@ -1339,8 +1384,9 @@
 
     let ambiguousSkipped = 0;
     kept.forEach((control) => {
+      const ordinal = control.recordIndex || control.repeatIndex;
       control.group = control.section
-        ? (control.repeatIndex ? `${control.section} ${control.repeatIndex}` : control.section)
+        ? (ordinal ? `${control.section} ${ordinal}` : control.section)
         : "";
       control.offerable = Boolean(control.label) && OFFERABLE_SOURCES.has(control.labelSource);
       if (!control.offerable) {
@@ -1425,6 +1471,7 @@
       group: control.group || "",
       workTitleRow: control.workTitleRow || null,
       workTitleRole: control.workTitleRole || "",
+      recordIndex: control.recordIndex || 0,
       repeatIndex: control.repeatIndex || 0,
       repeatCount: control.repeatCount || 0,
       custom: Boolean(control.custom),

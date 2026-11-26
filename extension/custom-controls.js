@@ -2353,11 +2353,13 @@
   // 贴着这个框的一块（认法同通用下拉，见 genericPopupFrom；校验提示不算），只点和要填的字相同的一项。
   // 点了返回 accepted；没有这样的一块（有的框要有按键才收下）、点不成或点了没换成这一项返回 typed。宿主都随后失焦、按文本框核对。
   // 有建议框但没有这一项报没有匹配的选项：恢复打字前的字，失焦收起建议框。不按 Esc：会冒泡到外层对话框（#395）。
-  async function suggest(ctx, raw, h) {
+  async function suggest(ctx, raw, h, { afterRollback = false } = {}) {
     const el = ctx.el, doc = el?.ownerDocument, View = doc?.defaultView;
     const wanted = trim(raw);
     if (el?.tagName !== 'INPUT' || el.readOnly || el.disabled || !['text', 'search'].includes(el.type) || !wanted || !View?.MutationObserver) return {};
     const info = { el, root: el, combo: el, library: 'generic', cascade: false, multiple: false, before: shownLayers(doc, h.visible) };
+    const listSelector = 'ul, ol, [role="listbox"]';
+    if (afterRollback) doc.querySelectorAll(listSelector).forEach(node => { if (h.visible(node)) info.before.add(node); });
     const touched = new Set();
     const watch = new View.MutationObserver(records => {
       for (const record of records) {
@@ -2367,6 +2369,7 @@
     });
     watch.observe(doc.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
     const before = String(el.value ?? '');
+    const dialog = dialogOf(el);
     let layer = null, undo = false;
     try {
       h.focus(el);
@@ -2376,10 +2379,28 @@
       let lastSeen = null, steadySince = Date.now();
       const look = () => {
         const layers = new Map();
+        const foreignDialog = node => {
+          const owner = dialogOf(node);
+          return node.matches(antd(node, DIALOGS)) || (owner && owner !== dialog);
+        };
         for (const node of touched) {
-          if (!node.isConnected || hintLayer(node, el)) continue;
+          if (!node.isConnected || hintLayer(node, el) || foreignDialog(node)) continue;
           const box = genericPopupFrom(node, info, h, 1);
-          if (box && !hintLayer(box, el) && !staleLayer(box, info) && (!layers.has(box) || node.contains(layers.get(box)))) layers.set(box, node);
+          if (!box || hintLayer(box, el) || staleLayer(box, info) || foreignDialog(box) || looksCalendar(node, box, h)) continue;
+          // 写后回滚也可能是校验或网页提示。只在有列表/选项结构、浮层内有重复候选项，或明确弹层容器里出现唯一精确匹配项时点选。
+          if (afterRollback && !box.matches(listSelector) && !box.querySelector('[role="option"]')) {
+            const positioned = el => ['absolute', 'fixed'].includes(View.getComputedStyle(el).position);
+            if (!positioned(node) && !positioned(box)) continue;
+            const list = genericOptions(box, h).filter(option => !layerWord(option, box));
+            const repeated = list.some((item, index) => index > 0 && item.node.parentElement === list[index - 1].node.parentElement
+              && item.node.tagName === list[index - 1].node.tagName);
+            const popupWord = el => /(?:popup|popper|popover|dropdown|suggest|autocomplete|menu|listbox|option|select)/i
+              .test(String(el?.getAttribute?.('class') || ''));
+            const singleExact = list.length === 1 && Boolean(sameOption(list, wanted, h.helpers).option)
+              && (popupWord(box) || popupWord(node) || popupWord(list[0].node));
+            if (!repeated && !singleExact) continue;
+          }
+          if (!layers.has(box) || node.contains(layers.get(box))) layers.set(box, node);
         }
         const found = Array.from(layers.keys());
         const outer = found.filter(node => !found.some(other => other !== node && other.contains(node)));

@@ -705,6 +705,102 @@ test("popup class words are matched whatever their case", async (t) => {
   assert.deepEqual(p.unfilledLine(), ["- 现居住地: input[text] after=previous overlay=list form=text reason=value_not_committed"]);
 });
 
+test("#577 rollback retries a plain text autocomplete and commits the exact new option", async (t) => {
+  const p = page(t, item("school", "学校", 'name="schoolPhoneLookup"'), [["学校", "示例大学"]]);
+  const input = p.input("school");
+  let selected = false;
+  let clicked = 0;
+  input.addEventListener("input", () => {
+    if (!input.value || p.doc.querySelector(".lookup-popup")) return;
+    const layer = p.doc.createElement("div");
+    layer.className = "lookup-popup";
+    layer.style.position = "absolute";
+    layer.innerHTML = "<div>示例大学分校</div><div>示例大学</div>";
+    layer.firstElementChild.onclick = () => assert.fail("a partial match must not be clicked");
+    layer.lastElementChild.onclick = () => { clicked++; selected = true; layer.remove(); };
+    p.doc.body.append(layer);
+  });
+  input.addEventListener("blur", () => {
+    p.doc.querySelector(".lookup-popup")?.remove();
+    if (!selected) p.w.setTimeout(() => { input.value = ""; }, 0);
+  });
+  assert.equal((await p.run()).filledCount, 1);
+  assert.equal(input.value, "示例大学");
+  assert.equal(clicked, 1);
+});
+
+test("#577 rollback also commits a single exact suggestion in a filtered autocomplete popup", async (t) => {
+  const p = page(t, item("school", "学校"), [["学校", "示例大学"]]);
+  const input = p.input("school");
+  let selected = false;
+  let clicked = 0;
+  input.addEventListener("input", () => {
+    if (!input.value || p.doc.querySelector(".lookup-popup")) return;
+    const layer = p.doc.createElement("div");
+    layer.className = "lookup-popup";
+    layer.style.position = "absolute";
+    layer.innerHTML = "<div>示例大学</div>";
+    layer.firstElementChild.onclick = () => { clicked++; selected = true; layer.remove(); };
+    p.doc.body.append(layer);
+  });
+  input.addEventListener("blur", () => {
+    p.doc.querySelector(".lookup-popup")?.remove();
+    if (!selected) p.w.setTimeout(() => { input.value = ""; }, 0);
+  });
+  assert.equal((await p.run()).filledCount, 1);
+  assert.equal(input.value, "示例大学");
+  assert.equal(clicked, 1);
+});
+
+test("#577 a rollback never clicks matching text in a page dialog or an ambiguous list", async (t) => {
+  for (const dialog of [true, false]) {
+    await t.test(dialog ? "dialog" : "ambiguous options", async (t) => {
+      const p = page(t, item("school", "学校"), [["学校", "示例大学"]]);
+      const input = p.input("school");
+      let clicked = 0;
+      input.addEventListener("input", () => {
+        if (!input.value || p.doc.querySelector(".lookup-popup")) return;
+        const layer = p.doc.createElement("div");
+        layer.className = "lookup-popup";
+        if (dialog) layer.setAttribute("role", "dialog");
+        layer.innerHTML = `<ul><li>示例大学</li><li>${dialog ? "其他院校" : "示例大学"}</li></ul>`;
+        layer.onclick = () => { clicked++; };
+        p.doc.body.append(layer);
+      });
+      input.addEventListener("blur", () => {
+        p.doc.querySelector(".lookup-popup")?.remove();
+        p.w.setTimeout(() => { input.value = ""; }, 0);
+      });
+      assert.equal((await p.run()).filledCount, 0);
+      assert.equal(input.value, "");
+      assert.equal(clicked, 0);
+    });
+  }
+});
+
+test("#528 a text field that receives input asynchronously gets one later change before blur", async (t) => {
+  const p = page(t, item("award", "获奖名称"), [["获奖名称", "虚构表彰"]]);
+  const input = p.input("award");
+  let model = "";
+  let accepted = "";
+  const changes = [];
+  input.addEventListener("input", () => {
+    const value = input.value;
+    model = "";
+    p.w.setTimeout(() => { model = value; }, 0);
+  });
+  input.addEventListener("change", () => {
+    changes.push(model);
+    accepted = model;
+  });
+  input.addEventListener("blur", () => {
+    p.w.setTimeout(() => { input.value = accepted; }, 0);
+  });
+  assert.equal((await p.run()).filledCount, 1);
+  assert.equal(input.value, "虚构表彰");
+  assert.deepEqual(changes, ["", "虚构表彰"]);
+});
+
 test("a popup seen in an earlier fill is not reported for the same box when this fill did not watch it", async (t) => {
   // 第一次按文本框填：打字冒出建议列表，失焦后被清空。第二次页面把它包成了日期组件，按日期框填，又被退回。
   const p = page(t, '<div class="form-item"><label for="birth">出生日期</label><span id="wrap"><input id="birth"></span></div>',

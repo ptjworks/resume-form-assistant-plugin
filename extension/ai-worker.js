@@ -18,7 +18,7 @@ const AI_SYSTEM_PROMPT = [
   "5. 带 fits 的字段（下拉框、单选框）只能从 fits 里挑一项，没有合适的就跳过",
   "6. 紧急联系人、父亲、母亲、配偶、家庭成员等字段只能用对应那个人的资料；不要把本人的资料给他们，也不要把一个人的资料给另一个人",
   "7. 籍贯、高考生源地、户口所在地是三个不同的问题，不能拿一个的资料填另一个",
-  "8. 同一段经历的几个字段（学校、专业、起止时间）用资料里同一段的几项：网页上第一段对资料里第一段，第二段对第二段；问最近一段的，用 shape 标着「本组最近一段」的那段；带 repeatIndex 的同名重复字段（如多行获奖、证书），repeatIndex=N 对应资料里的第 N 条，资料不足 N 条时跳过",
+  "8. 同一条经历或家庭成员记录的几个字段用资料里同一条的几项：网页上第一段对资料里第一段，第二段对第二段；recordIndex 是整条记录的行号，优先于题目各自的 repeatIndex；资料目录里带 recordIndex 的家庭成员按同一行号取资料。只有 repeatIndex 的同名字段（如多行获奖、证书）按重复序号取，资料不足时跳过；问最近一段的，用 shape 标着「本组最近一段」的那段",
   '9. 带 multiple 的字段可以多选：用 "refs":["r1","r2"] 给出几项',
   '10. 带 cascade 的字段是逐级选择（省 → 市 → 区县）：资料里一项写全了就给 ref；省、市、县分成几项的，按从上到下给 "refs"。带 cascadeLevel 的是同一组联动下拉的几级，每一级都给写着这个地区的那一项（写全了的一项可以给每一级）',
   '11. 字段只要日期里的年、月或日（出生年份、毕业月份分开的下拉）时加 "part":"year"、"month" 或 "day"；带 fits 的照 fits 里写的给，如 "ref":"r3.month"',
@@ -625,6 +625,7 @@ function buildCatalog(resumeFields) {
   const shortKeys = masked.slice(0, filled.length);
   const groupNames = masked.slice(filled.length);
   const latest = latestSpans(filled);
+  const familyRecords = helpers.familyRecordFields(filled);
   const values = new Map();
   const items = new Map();
   const entries = filled.map((field, index) => {
@@ -634,14 +635,16 @@ function buildCatalog(resumeFields) {
     const aka = aliasesOf(field.key);
     const shape = helpers.valueShape(field.value);
     const mark = latest.has(index) ? `${shape}，本组最近一段` : shape;
-    return { ref, group: groupNames[index], key: shortKeys[index], ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}) };
+    const record = familyRecords.get(field);
+    return { ref, group: groupNames[index], key: shortKeys[index], ...(aka ? { aka } : {}), ...(mark ? { shape: mark } : {}),
+      ...(record ? { recordIndex: record.index } : {}) };
   });
-  return { entries, values, items, recordKeys };
+  return { entries, values, items, recordKeys, familyRecords };
 }
 
 const EXPERIENCE_SECTIONS = [
   [/^(?:实习(?:经历|经验)?|internships?)\d*$/, "internship"],
-  [/^(?:工作(?:经历|经验)?|employment|workexperience)\d*$/, "employment"],
+  [/^(?:(?:工作|任职)(?:经历|经验)?|employment|workexperience)\d*$/, "employment"],
   [/^(?:项目(?:经历|经验)?|projects?|projectexperience)\d*$/, "project"]
 ];
 function experienceSection(label) {
@@ -930,8 +933,6 @@ function refMatches(payload, fields, catalog, allowed, withValues = false, rejec
     if (!list.length) return [];
     // 多选最多 20 项，别的题最多 8 项：再多的不填，报原因。
     if (list.length > (field.multiple === true ? 20 : 8)) return [{ fieldId: field.fieldId, value: "", blocked: "too_many_items" }];
-    const option = withValues && !field.fits ? optionMatch(item, field, list, catalog, allowed) : null;
-    if (option) return [option];
     // 日期控件要整个日期：AI 多给了年、月、日也按整项填，一段起止由页面按题目取开始或结束。
     const whole = isDateControl(field);
     const part = (DATE_PARTS.includes(item.part) && !whole) || SPAN_SIDES.includes(item.part) ? (list.length === 1 ? item.part : "") : "";
@@ -968,6 +969,20 @@ function refMatches(payload, fields, catalog, allowed, withValues = false, rejec
       return [];
     }
     if (!tokens.length) return [];
+    const helpers = ResumeProAIHelpers;
+    const sources = tokens.map(token => catalog.items.get(REF_TOKEN.exec(token)?.[1]));
+    if (sources.some(source => !helpers.personReferenceFits(field, source))) {
+      noteReject(field.fieldId, "wrong_person");
+      return [];
+    }
+    const familyIndex = field.recordIndex || field.repeatIndex || Number((/\s*(\d+)$/.exec(String(field.group ?? "")) || [])[1]) || 0;
+    if (familyIndex && helpers.isFamilySection(field.group) && !helpers.hasNamedPersonScope(field) && sources.some(source => {
+      const record = catalog.familyRecords.get(source);
+      return record && record.index !== familyIndex;
+    })) {
+      noteReject(field.fieldId, "wrong_record");
+      return [];
+    }
     // #301 网页上工作经历、实习经历分开两栏时，实习的资料不进工作经历一栏，工作的资料不进实习一栏。
     const ownSection = experienceSection(String(field.group ?? "").replace(/\s*\d+$/, ""));
     if ((ownSection === "employment" && pageSections.has("internship")) || (ownSection === "internship" && pageSections.has("employment"))) {
@@ -980,6 +995,8 @@ function refMatches(payload, fields, catalog, allowed, withValues = false, rejec
         return [];
       }
     }
+    const option = withValues && !field.fits ? optionMatch(item, field, list, catalog, allowed) : null;
+    if (option) return [option];
     if (isTextAnswer(field) && !answersOnTopic(field, tokens, catalog)) {
       noteReject(field.fieldId, "off_topic");
       return [];

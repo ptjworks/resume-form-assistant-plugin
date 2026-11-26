@@ -76,7 +76,7 @@
         { id: "language", key: "外语语种", placeholder: "英语", aliases: ["外语"] },
         { id: "languageLevel", key: "外语等级", placeholder: "CET-6" },
         { id: "languageScore", key: "外语成绩" },
-        { id: "computerLevel", key: "计算机水平" },
+        { id: "computerLevel", key: "计算机水平", aliases: ["计算机能力"] },
         { id: "skills", key: "技能特长", type: "textarea" }
       ]
     },

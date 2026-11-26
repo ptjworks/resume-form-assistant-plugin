@@ -136,6 +136,30 @@ test("用户第一次点「预览并提交」：同步发生在 pointerdown，�
   assert.deepEqual(s.site.log, ["blur:name", "blur:phone", "site-pointerdown", "site-click"]);
 });
 
+test("#528 保存并进入下一项先同步文本，缺照片时仍由网站和用户处理确认", async () => {
+  const h = createSubmitHarness();
+  const s = buildSite(h);
+  s.submit.setAttribute("type", "button");
+  s.submit.textContent = "保存并进入下一项";
+  await fillSession(h, [[s.name, "虚构姓名"]]);
+  s.site.pageFocused = true;
+  s.site.log.length = 0;
+  let confirmed = false;
+  let saves = 0;
+  s.submit.addEventListener("click", () => {
+    assert.equal(s.site.model.name, "虚构姓名");
+    s.site.log.push("site-photo-confirm");
+    if (confirmed) saves++;
+  });
+
+  h.mouseClick(s.submit);
+  assert.deepEqual(s.site.log, ["blur:name", "site-pointerdown", "site-click", "site-photo-confirm"]);
+  assert.equal(saves, 0);
+  confirmed = true;
+  h.mouseClick(s.submit);
+  assert.equal(saves, 1);
+});
+
 test("网站第一次整表校验就能读到插件填的值，不再标红", async () => {
   const h = createSubmitHarness();
   const s = buildSite(h);
