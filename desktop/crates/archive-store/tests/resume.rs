@@ -435,6 +435,19 @@ fn an_oversized_profile_is_refused() {
 }
 
 #[test]
+fn grouping_a_custom_field_does_not_use_the_plugin_profile_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path());
+    let mut profile = serde_json::json!({
+        "values": {"name": ""}, "family": [], "custom": [{"key": "论文题目", "value": "示例"}]
+    });
+    let base_len = serde_json::to_vec(&profile).unwrap().len();
+    profile["values"]["name"] = serde_json::json!("a".repeat(MAX_PROFILE_BYTES - base_len));
+    profile["custom"][0]["group"] = serde_json::json!("education");
+    assert_eq!(db.save_profile(profile, 0).unwrap().profile["custom"][0]["group"], "education");
+}
+
+#[test]
 fn the_template_count_is_capped() {
     let dir = tempfile::tempdir().unwrap();
     let db = open(dir.path());

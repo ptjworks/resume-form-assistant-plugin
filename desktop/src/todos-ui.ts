@@ -465,9 +465,11 @@ export function mountTodos(
         aria-current="${todo.id === selectedId}" aria-label="${escapeHtml(todo.title)}">
       <div class="cal-card-top">
         <span class="kind-badge" data-kind="${entry.kind}">${KIND_LABEL[entry.kind]}</span>${flag}
+      </div>
+      <div class="cal-card-title">
+        <h3>${escapeHtml(todo.title)}</h3>
         ${menuItems ? `<details class="todo-detail-menu"><summary aria-label="更多待办操作" title="更多待办操作">${ICON.more}</summary>${menuItems}</details>` : ""}
       </div>
-      <h3>${escapeHtml(todo.title)}</h3>
       <p class="cal-card-where">${ICON.building}<span>${where || "未关联申请信息"}${todo.interviewRound ? ` · 第 ${todo.interviewRound} 轮` : ""}</span></p>
       <div class="cal-card-facts">
         <div class="todo-detail-row">${ICON.calendar}<div><span>到期时间</span><strong>${escapeHtml(describeDue(todo))}</strong></div></div>

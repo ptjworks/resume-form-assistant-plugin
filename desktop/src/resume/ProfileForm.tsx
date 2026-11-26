@@ -36,11 +36,13 @@ function CustomFieldRow({
   item,
   onChange,
   onRemove,
+  onGroupChange,
 }: {
   index: number;
   item: { key: string; value: string };
   onChange(field: "key" | "value", value: string): void;
   onRemove(): void;
+  onGroupChange?(group: string): void;
 }) {
   const keyRef = useRef<HTMLTextAreaElement>(null);
   const valueRef = useRef<HTMLTextAreaElement>(null);
@@ -97,6 +99,12 @@ function CustomFieldRow({
         />
       </label>
       <div className="custom-field-actions">
+        {onGroupChange ? (
+          <select aria-label="移到分组" value="" onChange={(event) => onGroupChange(event.target.value)}>
+            <option value="" disabled>移到分组</option>
+            {profileApi.PROFILE_SCHEMA.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        ) : null}
         <span className="custom-field-status">{item.key && !item.value ? <span className="pill warn">待补充</span> : null}</span>
         <button type="button" onClick={onRemove}>
           删除
@@ -175,16 +183,15 @@ export interface ProfileProbe {
 }
 
 type Section =
-  | { kind: "schema"; name: string; index: number }
+  | { kind: "schema"; name: string; index: number; id: string }
   | { kind: "family"; name: string }
   | { kind: "custom"; name: string };
 
-// 左侧的八个分组（#257）：六组固定字段，按 PROFILE_SCHEMA 原顺序，再加家庭成员与补充字段。
 const SECTIONS: Section[] = [
-  ...profileApi.PROFILE_SCHEMA.map((group, index): Section => ({ kind: "schema", name: group.name, index })),
+  ...profileApi.PROFILE_SCHEMA.map((group, index): Section => ({ kind: "schema", name: group.name, index, id: group.id })),
   { kind: "family", name: profileApi.FAMILY_GROUP },
-  { kind: "custom", name: profileApi.CUSTOM_GROUP },
 ];
+const UNGROUPED: Section = { kind: "custom", name: "未归类字段" };
 
 type ConflictView = { kind: "list" } | { kind: "confirm-remote"; id: string } | { kind: "rename"; id: string; draft: string; error: string | null };
 
@@ -451,14 +458,9 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
     focusAddedRef.current = `family-${profile.family.length}-relation`;
     updateProfile({ ...profile, family: [...profile.family, emptyMember()] });
   };
-  const addCustom = () => {
+  const addCustom = (group: string) => {
     focusAddedRef.current = `custom-${profile.custom.length}-key`;
-    updateProfile({ ...profile, custom: [...profile.custom, { key: "", value: "" }] });
-  };
-  // #553：固定字段的几组里也要能加字段。新字段统一放进「补充字段」（它们没有所属分组），所以切过去再新建一行。
-  const addFieldElsewhere = () => {
-    setSection(SECTIONS.findIndex((item) => item.kind === "custom"));
-    addCustom();
+    updateProfile({ ...profile, custom: [...profile.custom, { key: "", value: "", group }] });
   };
   const setCustom = (index: number, field: "key" | "value", value: string) =>
     updateProfile({ ...profile, custom: profile.custom.map((c, i) => (i === index ? { ...c, [field]: value } : c)) });
@@ -586,8 +588,24 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
     setNotice({ tone: "warn", text: "更新已加入当前草稿；你的修改仍未保存。" });
   };
 
-  const current = SECTIONS[section] ?? SECTIONS[0];
-  const pendingCount = profileApi.countPendingFields(profile);
+  const ungrouped = profile.custom.filter((item) => !item.group);
+  const sections = ungrouped.length ? [...SECTIONS, UNGROUPED] : SECTIONS;
+  const activeSection = sections[section] ? section : 0;
+  const current = sections[activeSection];
+  const pendingCounts = sections.map((item) => item.kind === "family" ? 0 : profile.custom.filter(
+    (field) => field.group === (item.kind === "schema" ? item.id : undefined) && field.key.trim() && !field.value.trim(),
+  ).length);
+  const removeCustom = (index: number) => {
+    if (!profile.custom[index].group && ungrouped.length === 1) setSection(0);
+    updateProfile({ ...profile, custom: profile.custom.filter((_, i) => i !== index) });
+  };
+  const moveCustom = (index: number, group: string) => {
+    if (ungrouped.length === 1) {
+      setSection(SECTIONS.findIndex((item) => item.kind === "schema" && item.id === group));
+      focusAddedRef.current = `custom-${index}-key`;
+    }
+    updateProfile({ ...profile, custom: profile.custom.map((item, i) => i === index ? { ...item, group } : item) });
+  };
   const syncVisible = externalChange || deferredExternalChange || conflict || Boolean(pendingRemote);
   const newerPending = Boolean(pendingRemote && pendingExternalRevisionRef.current > pendingRemote.revision);
   const conflicts = inspection?.conflicts ?? [];
@@ -733,23 +751,48 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
     );
   })();
 
-  // 八组都挂着、只显示当前这组：切换分组不会卸掉别组的输入框，焦点和草稿都不受影响。
+  const renderCustomFields = (group?: string) => {
+    const fields = profile.custom.flatMap((item, index) => item.group === group ? [{ item, index }] : []);
+    if (!fields.length) return null;
+    return (
+      <fieldset className={group ? "profile-custom profile-custom--grouped" : "profile-custom"}>
+        <legend className="sr-only">{group ? "自定义字段" : UNGROUPED.name}</legend>
+        {group ? null : <p className="resume-panel-note">这里收纳从网页添加或旧版未分组的字段，可以将它们移到对应的资料分组。</p>}
+        <div className="custom-field-head" aria-hidden="true"><span>字段名</span><span>内容</span><span /></div>
+        {fields.map(({ item, index }) => (
+          <CustomFieldRow
+            key={index}
+            index={index}
+            item={item}
+            onChange={(field, value) => setCustom(index, field, value)}
+            onRemove={() => removeCustom(index)}
+            onGroupChange={group ? undefined : (destination) => moveCustom(index, destination)}
+          />
+        ))}
+      </fieldset>
+    );
+  };
+
+  // 切换只改变显示的分组，其他分组的输入框仍然保留。
   const renderSection = (item: Section) => {
     if (item.kind === "schema") {
       const group = profileApi.PROFILE_SCHEMA[item.index];
       return (
-        <fieldset className="profile-fields">
-          <legend className="sr-only">{group.name}</legend>
-          {group.fields.map((def) => (
-            <FieldInput
-              key={def.id}
-              id={`profile-${def.id}`}
-              def={def}
-              value={profile.values[def.id] ?? ""}
-              onChange={(value) => setValue(def.id, value)}
-            />
-          ))}
-        </fieldset>
+        <>
+          <fieldset className="profile-fields">
+            <legend className="sr-only">{group.name}</legend>
+            {group.fields.map((def) => (
+              <FieldInput
+                key={def.id}
+                id={`profile-${def.id}`}
+                def={def}
+                value={profile.values[def.id] ?? ""}
+                onChange={(value) => setValue(def.id, value)}
+              />
+            ))}
+          </fieldset>
+          {renderCustomFields(item.id)}
+        </>
       );
     }
     if (item.kind === "family") {
@@ -799,30 +842,7 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
         </fieldset>
       );
     }
-    return (
-      <fieldset className="profile-custom">
-        <legend className="sr-only">{profileApi.CUSTOM_GROUP}</legend>
-        <p className="resume-panel-note">从网页上「加到我的信息」的字段会出现在这里，补上内容后下次就能自动填。</p>
-        {profile.custom.length ? (
-          <div className="custom-field-head" aria-hidden="true">
-            <span>字段名</span>
-            <span>内容</span>
-            <span />
-          </div>
-        ) : (
-          <p className="muted">还没有补充字段，点下方「添加补充字段」。</p>
-        )}
-        {profile.custom.map((item, index) => (
-          <CustomFieldRow
-            key={index}
-            index={index}
-            item={item}
-            onChange={(field, value) => setCustom(index, field, value)}
-            onRemove={() => updateProfile({ ...profile, custom: profile.custom.filter((_, i) => i !== index) })}
-          />
-        ))}
-      </fieldset>
-    );
+    return renderCustomFields();
   };
 
   return (
@@ -833,24 +853,23 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
           <p>选择一组，集中编辑</p>
         </div>
         <div className="profile-nav-list">
-          {SECTIONS.map((item, index) => (
+          {sections.map((item, index) => (
             <button
               key={item.name}
               type="button"
               className={item.kind === "family" ? "has-divider" : undefined}
-              aria-current={index === section ? "true" : undefined}
+              aria-current={index === activeSection ? "true" : undefined}
               onClick={() => setSection(index)}
             >
               <span>{item.name}</span>
-              {item.kind === "custom" && pendingCount ? (
-                <span className="profile-nav-badge">{pendingCount} 待补充</span>
+              {pendingCounts[index] ? (
+                <span className="profile-nav-badge">{pendingCounts[index]} 待补充</span>
               ) : (
                 <span className="profile-nav-arrow" aria-hidden="true">›</span>
               )}
             </button>
           ))}
         </div>
-        <p className="resume-card-foot">插件添加的新字段会出现在「补充字段」。</p>
       </nav>
       <form
         className="resume-card profile-form"
@@ -862,16 +881,16 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
       >
         <div className="profile-form-head">
           <div>
-            <p className="resume-kicker">资料分组 · {String(section + 1).padStart(2, "0")} / {String(SECTIONS.length).padStart(2, "0")}</p>
+            <p className="resume-kicker">资料分组 · {String(activeSection + 1).padStart(2, "0")} / {String(sections.length).padStart(2, "0")}</p>
             <h2>{current.name}</h2>
           </div>
           <label className="profile-group-select">
             <span className="sr-only">切换信息分组</span>
-            <select value={section} onChange={(event) => setSection(Number(event.target.value))}>
-              {SECTIONS.map((item, index) => (
+            <select value={activeSection} onChange={(event) => setSection(Number(event.target.value))}>
+              {sections.map((item, index) => (
                 <option key={item.name} value={index}>
                   {item.name}
-                  {item.kind === "custom" && pendingCount ? `（${pendingCount} 待补充）` : ""}
+                  {pendingCounts[index] ? `（${pendingCounts[index]} 待补充）` : ""}
                 </option>
               ))}
             </select>
@@ -905,8 +924,8 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
           </div>
         ) : null}
         <div className="profile-form-body">
-          {SECTIONS.map((item, index) => (
-            <div key={item.name} hidden={index !== section}>
+          {sections.map((item, index) => (
+            <div key={item.name} hidden={index !== activeSection}>
               {renderSection(item)}
             </div>
           ))}
@@ -922,11 +941,9 @@ export function ProfileForm({ listen, probe }: { listen?: Listen; probe?: Mutabl
           <div className="profile-form-actions">
             {current.kind === "family" ? (
               <button type="button" onClick={addMember}>添加家庭成员</button>
-            ) : current.kind === "custom" ? (
-              <button type="button" onClick={addCustom}>添加补充字段</button>
-            ) : (
-              <button type="button" title="新字段会放进「补充字段」" onClick={addFieldElsewhere}>添加字段</button>
-            )}
+            ) : current.kind === "schema" ? (
+              <button type="button" onClick={() => addCustom(current.id)}>添加字段</button>
+            ) : null}
             <button type="submit" className="primary" disabled={busy || reloading || confirmDiscard}>
               {busy ? "正在保存…" : "保存我的信息"}
             </button>

@@ -78,8 +78,8 @@ test("左侧八个分组按原顺序排列，切换分组只换右侧表单、�
   const name = await screen.findByLabelText("姓名");
   const nav = screen.getByRole("navigation", { name: "信息分组" });
   const labels = within(nav).getAllByRole("button").map((button) => button.textContent?.replace(/›|\d+ 待补充/g, "").trim());
-  expect(labels).toEqual(["基本信息", "户籍与地区", "联系方式", "教育补充", "语言与技能", "求职补充", "家庭主要成员", "补充字段"]);
-  expect(within(nav).getByRole("button", { name: /^补充字段/ }).textContent).toContain("1 待补充");
+  expect(labels).toEqual(["基本信息", "户籍与地区", "联系方式", "教育补充", "语言与技能", "求职补充", "家庭主要成员", "未归类字段"]);
+  expect(within(nav).getByRole("button", { name: /^未归类字段/ }).textContent).toContain("1 待补充");
   await user.type(name, "五");
   await openGroup("联系方式");
   expect(screen.getByRole("heading", { name: "联系方式" })).toBeTruthy();
@@ -96,7 +96,7 @@ test("左侧八个分组按原顺序排列，切换分组只换右侧表单、�
 test("待补充的补充字段要标出来", async () => {
   mount(() => record);
   await screen.findByLabelText("姓名");
-  await openGroup("补充字段");
+  await openGroup("未归类字段");
   const row = await screen.findByRole("group", { name: /户籍派出所/ });
   expect(within(row).getByText("待补充")).toBeTruthy();
 });
@@ -176,10 +176,10 @@ test("可以加家庭成员和补充字段", async () => {
   await openGroup("家庭主要成员");
   await user.click(screen.getByRole("button", { name: "添加家庭成员" }));
   expect(screen.getByRole("group", { name: "家庭成员 2" })).toBeTruthy();
-  await openGroup("补充字段");
-  await user.click(screen.getByRole("button", { name: "添加补充字段" }));
-  const keys = screen.getAllByLabelText("字段名");
-  await user.type(keys[keys.length - 1], "紧急联系人邮箱");
+  await openGroup("联系方式");
+  await user.click(screen.getByRole("button", { name: "添加字段" }));
+  const row = screen.getByRole("group", { name: "补充字段 2" });
+  await user.type(within(row).getByLabelText("字段名"), "紧急联系人邮箱");
   await user.click(screen.getByRole("button", { name: "保存我的信息" }));
   await waitFor(() => expect(calls.some((c) => c.command === "save_profile_cmd")).toBe(true));
   const saved = calls.find((c) => c.command === "save_profile_cmd")!.args!.profile as { custom: Array<{ key: string }> };
@@ -201,8 +201,7 @@ test("补充字段没填字段名时不标待补充", async () => {
   const user = userEvent.setup();
   mount(() => record);
   await screen.findByLabelText("姓名");
-  await openGroup("补充字段");
-  await user.click(screen.getByRole("button", { name: "添加补充字段" }));
+  await user.click(screen.getByRole("button", { name: "添加字段" }));
   const newRow = screen.getByRole("group", { name: "补充字段 2" });
   expect(within(newRow).queryByText("待补充")).toBeNull();
 });
@@ -282,10 +281,10 @@ test("同名补充字段显示冲突，确认放弃后才能重新读取（#191�
   });
   const name = await screen.findByLabelText("姓名");
   await user.type(name, "五");
-  await openGroup("补充字段");
-  await user.click(screen.getByRole("button", { name: "添加补充字段" }));
-  await user.type(screen.getAllByLabelText("字段名").at(-1)!, "国籍");
-  await user.type(screen.getAllByLabelText("内容").at(-1)!, "中国");
+  await user.click(screen.getByRole("button", { name: "添加字段" }));
+  const row = screen.getByRole("group", { name: "补充字段 2" });
+  await user.type(within(row).getByLabelText("字段名"), "国籍");
+  await user.type(within(row).getByLabelText("内容"), "中国");
   await act(async () => fire());
   await screen.findByText(/有 1 处更新需要确认/);
   await user.click(screen.getByRole("button", { name: "查看并处理" }));
@@ -335,10 +334,10 @@ test("同名字段可保留当前内容，处理前不允许整份保存（#191�
     return reads === 1 ? record : updated;
   });
   await screen.findByLabelText("姓名");
-  await openGroup("补充字段");
-  await user.click(screen.getByRole("button", { name: "添加补充字段" }));
-  await user.type(screen.getAllByLabelText("字段名").at(-1)!, "国籍");
-  await user.type(screen.getAllByLabelText("内容").at(-1)!, "中国");
+  await user.click(screen.getByRole("button", { name: "添加字段" }));
+  const row = screen.getByRole("group", { name: "补充字段 2" });
+  await user.type(within(row).getByLabelText("字段名"), "国籍");
+  await user.type(within(row).getByLabelText("内容"), "中国");
   await act(async () => fire());
   await screen.findByText(/有 1 处更新需要确认/);
   await user.click(screen.getByRole("button", { name: "保存我的信息" }));
@@ -352,7 +351,7 @@ test("同名字段可保留当前内容，处理前不允许整份保存（#191�
   await user.click(screen.getByRole("button", { name: "保存我的信息" }));
   const saved = calls.find((call) => call.command === "save_profile_cmd")?.args;
   expect(saved?.revision).toBe(4);
-  expect((saved?.profile as typeof record.profile).custom.filter((field) => field.key === "国籍")).toEqual([{ key: "国籍", value: "中国" }]);
+  expect((saved?.profile as typeof record.profile).custom.filter((field) => field.key === "国籍")).toEqual([{ key: "国籍", value: "中国", group: "basic" }]);
 });
 
 test("同名字段分别保留时先改名，使用外部版本需二次确认（#191）", async () => {
@@ -364,10 +363,10 @@ test("同名字段分别保留时先改名，使用外部版本需二次确认�
   };
   const { fire } = mountWithListen(() => (++reads === 1 ? record : updated));
   await screen.findByLabelText("姓名");
-  await openGroup("补充字段");
-  await user.click(screen.getByRole("button", { name: "添加补充字段" }));
-  await user.type(screen.getAllByLabelText("字段名").at(-1)!, "国籍");
-  await user.type(screen.getAllByLabelText("内容").at(-1)!, "中国");
+  await user.click(screen.getByRole("button", { name: "添加字段" }));
+  const row = screen.getByRole("group", { name: "补充字段 2" });
+  await user.type(within(row).getByLabelText("字段名"), "国籍");
+  await user.type(within(row).getByLabelText("内容"), "中国");
   await act(async () => fire());
   await screen.findByText(/有 1 处更新需要确认/);
   await user.click(screen.getByRole("button", { name: "查看并处理" }));
@@ -390,6 +389,7 @@ test("同名字段分别保留时先改名，使用外部版本需二次确认�
   expect(within(conflictItem()).getByText(/将改名为「个人国籍说明」/)).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "应用选择，继续编辑" }));
   expect(screen.getByRole("group", { name: "个人国籍说明" })).toBeTruthy();
+  await openGroup("未归类字段");
   expect(screen.getByRole("group", { name: "国籍" })).toBeTruthy();
 });
 
@@ -701,7 +701,7 @@ test("补充字段的长题目整句显示，字段名和内容的框一样高",
   const longKey = "在校期间是否有补考、重修情况？如有，请列出具体科目、次数以及当时的原因说明";
   mount(() => ({ ...record, profile: { ...record.profile, custom: [{ key: longKey, value: "" }] } }));
   await screen.findByLabelText("姓名");
-  await openGroup("补充字段");
+  await openGroup("未归类字段");
   const row = await screen.findByRole("group", { name: longKey });
   const key = within(row).getByLabelText("字段名") as HTMLTextAreaElement;
   const value = within(row).getByLabelText("内容") as HTMLTextAreaElement;
@@ -715,7 +715,7 @@ test("补充字段的长题目整句显示，字段名和内容的框一样高",
 test("补充字段里回车不换行，粘贴进来的换行变成空格", async () => {
   const calls = mount((command) => (command === "save_profile_cmd" ? { revision: 4 } : record));
   await screen.findByLabelText("姓名");
-  await openGroup("补充字段");
+  await openGroup("未归类字段");
   const row = await screen.findByRole("group", { name: /户籍派出所/ });
   const value = within(row).getByLabelText("内容") as HTMLTextAreaElement;
   await userEvent.click(value);
@@ -737,8 +737,7 @@ test("添加按钮和保存按钮并排在页脚，只在对应分组出现；�
   expect(screen.queryByRole("button", { name: "添加补充字段" })).toBeNull();
   expect(screen.queryByRole("button", { name: "添加家庭成员" })).toBeNull();
 
-  await openGroup("补充字段");
-  const addCustom = screen.getByRole("button", { name: "添加补充字段" });
+  const addCustom = screen.getByRole("button", { name: "添加字段" });
   expect(addCustom.parentElement).toBe(save.parentElement);
   await user.click(addCustom);
   expect(document.activeElement).toBe(within(screen.getByRole("group", { name: "补充字段 2" })).getByLabelText("字段名"));
@@ -835,23 +834,49 @@ test("干净的表单收到 sync 直接换成新档案", async () => {
   expect(screen.getByText("填写后点击保存")).toBeTruthy();
 });
 
-test("固定字段的分组（如基本信息）里也能「添加字段」：新字段放进补充字段，焦点落到新的一行", async () => {
+test("新字段留在添加时的分组，保存后仍显示在同一分组", async () => {
   const user = userEvent.setup();
-  const calls = mount(() => record);
+  const calls = mount((command, args) =>
+    command === "save_profile_cmd" ? { profile: args?.profile, revision: 4 } : record,
+  );
   await screen.findByLabelText("姓名");
-  const add = screen.getByRole("button", { name: "添加字段" });
-  expect(add.parentElement).toBe(screen.getByRole("button", { name: "保存我的信息" }).parentElement);
-  await user.click(add);
-  // 切到了「补充字段」，新增的是最后一行，焦点在它的字段名上。
-  expect(screen.getByRole("heading", { name: "补充字段", level: 2 })).toBeTruthy();
+  await openGroup("教育补充");
+  await user.click(screen.getByRole("button", { name: "添加字段" }));
+  expect(screen.getByRole("heading", { name: "教育补充", level: 2 })).toBeTruthy();
   const row = screen.getByRole("group", { name: "补充字段 2" });
   expect(document.activeElement).toBe(within(row).getByLabelText("字段名"));
   await user.type(within(row).getByLabelText("字段名"), "毕业论文题目");
   await user.type(within(row).getByLabelText("内容"), "示例题目");
   await user.click(screen.getByRole("button", { name: "保存我的信息" }));
   await waitFor(() => expect(calls.some((c) => c.command === "save_profile_cmd")).toBe(true));
-  const saved = calls.find((c) => c.command === "save_profile_cmd")!.args!.profile as { custom: Array<{ key: string; value: string }> };
-  expect(saved.custom.find((c) => c.key === "毕业论文题目")?.value).toBe("示例题目");
-  // 补充字段和家庭成员各有自己的添加按钮，不重复出现「添加字段」。
+  const saved = calls.find((c) => c.command === "save_profile_cmd")!.args!.profile as typeof record.profile;
+  expect(saved.custom.find((c) => c.key === "毕业论文题目")).toEqual({
+    key: "毕业论文题目", value: "示例题目", group: "education",
+  });
+  await openGroup("未归类字段");
+  expect(screen.queryByRole("group", { name: "毕业论文题目" })).toBeNull();
   expect(screen.queryByRole("button", { name: "添加字段" })).toBeNull();
+  await openGroup("教育补充");
+  expect(within(screen.getByRole("group", { name: "毕业论文题目" })).getByLabelText("内容")).toHaveProperty("value", "示例题目");
+});
+
+test("收纳网页或旧版的未归类字段，可以移到资料分组，清空后隐藏入口", async () => {
+  const user = userEvent.setup();
+  const calls = mount((command, args) =>
+    command === "save_profile_cmd" ? { profile: args?.profile, revision: 4 } : record,
+  );
+  await screen.findByLabelText("姓名");
+  await openGroup("未归类字段");
+  const oldRow = screen.getByRole("group", { name: "户籍派出所" });
+  await user.type(within(oldRow).getByLabelText("内容"), "示例派出所");
+  await user.selectOptions(within(oldRow).getByLabelText("移到分组"), "region");
+  const nav = screen.getByRole("navigation", { name: "信息分组" });
+  expect(within(nav).queryByRole("button", { name: /未归类字段/ })).toBeNull();
+  expect(screen.getByRole("heading", { name: "户籍与地区", level: 2 })).toBeTruthy();
+  const row = screen.getByRole("group", { name: "户籍派出所" });
+  expect(within(row).getByLabelText("内容")).toHaveProperty("value", "示例派出所");
+  await user.click(screen.getByRole("button", { name: "保存我的信息" }));
+  await waitFor(() => expect(calls.find((c) => c.command === "save_profile_cmd")?.args?.profile).toMatchObject({
+    custom: [{ key: "户籍派出所", value: "示例派出所", group: "region" }],
+  }));
 });

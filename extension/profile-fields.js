@@ -7,6 +7,7 @@
   // aliases 只用来判断「网页上这个字段我们已经有了」，不会作为字段名交出去。
   const PROFILE_SCHEMA = [
     {
+      id: "basic",
       name: "基本信息",
       fields: [
         { id: "name", key: "姓名", aliases: ["真实姓名"] },
@@ -26,6 +27,7 @@
       ]
     },
     {
+      id: "region",
       name: "户籍与地区",
       fields: [
         { id: "nativeProvince", key: "籍贯省", label: "籍贯（省）" },
@@ -42,6 +44,7 @@
       ]
     },
     {
+      id: "contact",
       name: "联系方式",
       fields: [
         { id: "phone", key: "手机号码", aliases: ["手机", "手机号", "移动电话", "联系电话"] },
@@ -52,6 +55,7 @@
       ]
     },
     {
+      id: "education",
       name: "教育补充",
       fields: [
         { id: "highestEducation", key: "最高学历", type: "select", options: ["博士研究生", "硕士研究生", "大学本科", "大学专科", "高中及以下"], aliases: ["学历"] },
@@ -66,6 +70,7 @@
       ]
     },
     {
+      id: "skills",
       name: "语言与技能",
       fields: [
         { id: "language", key: "外语语种", placeholder: "英语", aliases: ["外语"] },
@@ -76,6 +81,7 @@
       ]
     },
     {
+      id: "job",
       name: "求职补充",
       fields: [
         { id: "expectedCity", key: "期望工作地点" },

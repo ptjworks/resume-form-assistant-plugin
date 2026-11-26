@@ -23,7 +23,7 @@ function customMap(items: CustomField[]): Map<string, CustomField> {
 }
 
 function sameCustom(left?: CustomField, right?: CustomField): boolean {
-  return left?.key === right?.key && left?.value === right?.value;
+  return left?.key === right?.key && left?.value === right?.value && left?.group === right?.group;
 }
 
 function familySummary(profile: Profile): string {
